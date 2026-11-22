@@ -26,6 +26,7 @@ import { historicalMessage } from "./ScientHistoricalContext.ts";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  handoffCoverage,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -207,6 +208,10 @@ describe("handoff budget", () => {
       })?.text,
       "File change: src/a.ts, src/b.ts, src/new.ts",
     );
+    assert.equal(
+      historicalMessage({ ...base, type: "file_change", fileName: "src/a.ts", changes: [] })?.text,
+      "File change: src/a.ts",
+    );
     assert.isNull(
       historicalMessage({
         ...base,
@@ -316,6 +321,21 @@ describe("handoff budget", () => {
     assert.isAtMost(historyCost(selected.messages, selected.context), 3_000);
   });
 
+  it("points history recovery at the omitted items instead of a read from the thread's start", () => {
+    const omitted = message("item:omitted", "assistant", "o".repeat(4_000));
+    const selected = selectHistory({
+      messages: [
+        messages[0]!,
+        omitted,
+        ...Array.from({ length: 3 }, (_, i) => message(`item:recent-${i}`, "assistant", "recent")),
+      ],
+      coverage: handoffCoverage({ threadId, coveredRunOrdinals: { from: 1, to: 46 }, items: [] }),
+      budget: 3_000,
+    });
+    assert.deepEqual(selected.omittedItemIds, [omitted.itemId]);
+    assert.include(selected.context, omitted.itemId);
+  });
+
   it("counts JSON escaping and UTF-8 bytes across many messages", () => {
     const candidates = Array.from({ length: 500 }, (_, i) =>
       message(`item:${i}`, i % 2 ? "assistant" : "user", '\u0000\\"🧪界'.repeat(15)),
@@ -398,6 +418,17 @@ describe("handoff budget", () => {
       );
     }
     assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
+    // The work reserve never takes more than half of a small local window.
+    for (const [modelContextWindow, nativeContextEstimate, expected] of [
+      [8_192, 0, 4_086],
+      [32_768, 0, 16_758],
+      [131_072, 50_000, 48_294],
+    ] as const) {
+      assert.equal(
+        handoffBudget({ ...base, tokenCap: 64_000, modelContextWindow, nativeContextEstimate }),
+        expected,
+      );
+    }
   });
 
   it("keeps measured occupancy across a model change", () => {
@@ -526,13 +557,15 @@ describe("handoff budget", () => {
         assert.isAtMost(historyCost(selected.messages, selected.context), budget);
       }
       assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 16_000);
-      assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), 0);
+      // 20k window: half is reserved for work, then 27 prompt bytes and 8,192 per image.
+      const smallWindowBudget = count === 1 ? 1_781 : 0;
+      assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), smallWindowBudget);
       assert.equal(
         handoffBudget({
           ...input,
           providerThread: { ...providerThread, contextUsage: { usedTokens: 0, maxTokens: 20_000 } },
         }),
-        0,
+        smallWindowBudget,
       );
       assert.equal(
         handoffBudget({
@@ -543,13 +576,13 @@ describe("handoff budget", () => {
             contextUsage: { usedTokens: 0, maxTokens: 1_000_000, autoCompactThreshold: 20_000 },
           },
         }),
-        0,
+        smallWindowBudget,
       );
     }
   });
 });
 
-describe("handoff delivery", () => {
+describe("Scient handoff source omissions", () => {
   it.effect.each(
     [true, false].map((native) => ({
       caseTitle: `carries source omissions through ${native ? "native injection" : "inline fallback"} within the same history budget`,
@@ -576,251 +609,6 @@ describe("handoff delivery", () => {
       assert.include(context, '"range-truncated"');
       assert.include(context, '"throughMessageN":2');
       assert.isAtMost(Buffer.byteLength(context), 8_000);
-    }),
-  );
-
-  it.effect.each(
-    [true, false].map((native) => ({
-      caseTitle: `records omitted recovery coverage separately from ${native ? "injected" : "inline"} text`,
-      native,
-    })),
-  )("$caseTitle", ({ native }) =>
-    Effect.gen(function* () {
-      const omittedBeforeDelivery = TurnItemId.make("item:omitted-during-preparation");
-      const oversized = message("item:oversized", "user", "x".repeat(20_000));
-      let durable: OrchestrationV2ContextHandoff = {
-        ...handoff,
-        history: {
-          ...handoff.history!,
-          messages: [...messages, oversized],
-          omittedItems: 1,
-          omittedItemIds: [omittedBeforeDelivery],
-        },
-      };
-      const result = yield* deliverContextHandoffs({
-        handoffs: [durable],
-        providerThread,
-        budget: 16_000,
-        alreadyDeliveredItemIds: new Set(),
-        inject: (value) => {
-          assert.include(value.context, "omitted 2 items");
-          assert.notInclude(
-            value.messages.map((item) => item.itemId),
-            oversized.itemId,
-          );
-          return Effect.succeed(native);
-        },
-        persist: (value) =>
-          Effect.sync(() => {
-            durable = value;
-          }),
-      });
-      assert.equal(durable.delivery?.status, native ? "injected" : "pending");
-      yield* result.delivered;
-      assert.equal(durable.delivery?.status, native ? "injected" : "inline");
-      assert.deepEqual(
-        durable.delivery?.itemIds,
-        messages.map((item) => item.itemId),
-      );
-      assert.deepEqual(durable.delivery?.omittedItemIds, [omittedBeforeDelivery, oversized.itemId]);
-      assert.deepEqual(decodeHandoff(durable).delivery, durable.delivery);
-    }),
-  );
-
-  it.effect("persists successful injection before turn start and skips it on retry", () =>
-    Effect.gen(function* () {
-      let durable = handoff;
-      const history: unknown[] = [];
-      const statuses: string[] = [];
-      const input = {
-        providerThread,
-        budget: 16_000,
-        alreadyDeliveredItemIds: new Set<string>(),
-        inject: (value: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
-          Effect.sync(() => {
-            history.push(...historyResponseItems(value.messages, value.context));
-            return true;
-          }),
-        persist: (value: OrchestrationV2ContextHandoff) =>
-          Effect.sync(() => {
-            durable = value;
-            statuses.push(value.delivery!.status);
-          }),
-      };
-      const first = yield* deliverContextHandoffs({ ...input, handoffs: [durable] });
-      assert.equal(first.context, "");
-      assert.deepEqual(statuses, ["pending", "injected"]);
-      assert.lengthOf(history, 3);
-      // No turn has started. Reconstruct from the durable projection as a retry would.
-      const second = yield* deliverContextHandoffs({ ...input, handoffs: [durable] });
-      assert.equal(second.context, "");
-      assert.lengthOf(history, 3);
-    }),
-  );
-
-  it.effect(
-    "uses the same selection on explicit native fallback, marking only accepted input",
-    () =>
-      Effect.gen(function* () {
-        let durable = handoff;
-        const result = yield* deliverContextHandoffs({
-          handoffs: [handoff],
-          providerThread,
-          budget: 16_000,
-          alreadyDeliveredItemIds: new Set(),
-          inject: () => Effect.succeed(false),
-          persist: (value) =>
-            Effect.sync(() => {
-              durable = value;
-            }),
-        });
-        assert.include(result.context, messages[0]!.text);
-        assert.include(result.context, messages[1]!.text);
-        assert.equal(durable.delivery?.status, "pending");
-        yield* result.delivered;
-        assert.equal(durable.delivery?.status, "inline");
-      }),
-  );
-
-  it.effect(
-    "defers unsupported compaction history until a normal turn without marking delivery uncertain",
-    () =>
-      Effect.gen(function* () {
-        let durable = handoff;
-        const persist = (value: OrchestrationV2ContextHandoff) =>
-          Effect.sync(() => {
-            durable = value;
-          });
-        const compact = yield* deliverContextHandoffs({
-          handoffs: [durable],
-          providerThread,
-          budget: 16_000,
-          alreadyDeliveredItemIds: new Set(),
-          deferInline: true,
-          inject: () => Effect.succeed(false),
-          persist,
-        });
-        yield* compact.delivered;
-        assert.equal(compact.context, "");
-        assert.isUndefined((() => durable.delivery)());
-        const next = yield* deliverContextHandoffs({
-          handoffs: [durable],
-          providerThread,
-          budget: 16_000,
-          alreadyDeliveredItemIds: new Set(),
-          inject: () => Effect.succeed(false),
-          persist,
-        });
-        assert.include(next.context, messages[0]!.text);
-        yield* next.delivered;
-        assert.equal(durable.delivery?.status, "inline");
-      }),
-  );
-
-  it.effect("bounds accumulated recovery markers while keeping omitted history discoverable", () =>
-    Effect.gen(function* () {
-      const many = Array.from({ length: 100 }, (_, index) => ({
-        ...handoff,
-        id: ContextHandoffId.make(`handoff:retry:${index}`),
-      }));
-      let captured: ProviderAdapter.ProviderAdapterV2HistoricalContext | undefined;
-      const result = yield* deliverContextHandoffs({
-        handoffs: many,
-        providerThread,
-        budget: 2_500,
-        alreadyDeliveredItemIds: new Set(),
-        inject: (history) =>
-          Effect.sync(() => {
-            captured = history;
-            return true;
-          }),
-        persist: () => Effect.void,
-      });
-      assert.equal(result.context, "");
-      assert.isDefined(captured);
-      assert.include(captured.context, "detailed coverage references omitted");
-      assert.include(captured.context, "scient_thread_inspect");
-      assert.include(captured.context, threadId);
-      assert.isAtMost(historyCost(captured.messages, captured.context), 2_500);
-      assert.isAbove(captured.messages.length, 0);
-    }),
-  );
-
-  it.effect("does not redeliver after ambiguous injection failure", () =>
-    Effect.gen(function* () {
-      let durable = handoff;
-      let calls = 0;
-      const input = {
-        providerThread,
-        budget: 16_000,
-        alreadyDeliveredItemIds: new Set<string>(),
-        inject: () =>
-          Effect.sync(() => {
-            calls++;
-          }).pipe(Effect.andThen(Effect.fail("connection lost"))),
-        persist: (value: OrchestrationV2ContextHandoff) =>
-          Effect.sync(() => {
-            durable = value;
-          }),
-      };
-      yield* deliverContextHandoffs({ ...input, handoffs: [durable] }).pipe(Effect.result);
-      assert.equal(durable.delivery?.status, "pending");
-      const retry = yield* deliverContextHandoffs({ ...input, handoffs: [durable] }).pipe(
-        Effect.result,
-      );
-      assert.equal(retry._tag, "Failure");
-      assert.equal(calls, 1);
-    }),
-  );
-
-  it.effect("budgets multiple handoffs together and skips previously delivered items", () =>
-    Effect.gen(function* () {
-      const extra = {
-        ...handoff,
-        id: ContextHandoffId.make("handoff:two"),
-        history: {
-          ...handoff.history!,
-          messages: [...messages, message("item:three", "assistant", "Latest result")],
-        },
-      };
-      let delivered: ReadonlyArray<unknown> = [];
-      yield* deliverContextHandoffs({
-        handoffs: [handoff, extra],
-        providerThread,
-        budget: 2_500,
-        alreadyDeliveredItemIds: new Set(["item:one"]),
-        inject: (value) =>
-          Effect.sync(() => {
-            delivered = historyResponseItems(value.messages, value.context);
-            return true;
-          }),
-        persist: () => Effect.void,
-      });
-      const serialized = yield* encodeJson(delivered);
-      assert.isAtMost(Buffer.byteLength(serialized), 2_500);
-      assert.notInclude(serialized, "Preserve every line");
-      assert.equal(serialized.split("Partial work").length - 1, 1);
-      assert.include(serialized, "Latest result");
-    }),
-  );
-
-  it.effect("fails before delivery when even the coverage marker cannot fit", () =>
-    Effect.gen(function* () {
-      let calls = 0;
-      const result = yield* deliverContextHandoffs({
-        handoffs: [handoff],
-        providerThread,
-        budget: 0,
-        alreadyDeliveredItemIds: new Set(),
-        inject: () =>
-          Effect.sync(() => {
-            calls++;
-            return true;
-          }),
-        persist: () => Effect.void,
-      }).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      assert.equal(calls, 0);
     }),
   );
 });
@@ -1042,7 +830,11 @@ describe("Scient serialized handoff allowance", () => {
       scientHandoffByteBudget({ ...input, attachments: [image] }),
       Math.max(0, available - 8_192 * 3),
     );
-    assert.equal(scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }), 0);
+    // A small window reserves half of itself for work, not the whole window.
+    assert.equal(
+      scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }),
+      (16_000 - 7_000 - 4 - 8_000) * 3,
+    );
   });
 });
 

@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { Button } from "~/components/ui/button";
 import { LatexSelect } from "./LatexSelect";
 import { processVisualDocument, processVisualDocumentAsync } from "./visualProcessing";
@@ -18,9 +19,15 @@ import {
   bibliographyChoices,
   bibliographyPaths,
   documentReferenceChoices,
+  EQUATION_REFERENCE_TITLE,
   inlineBibliographyChoices,
   type LatexReferenceChoice,
 } from "./latexAuthoringModel";
+import {
+  LIBRARY_BIBLIOGRAPHY_HINT,
+  libraryLatexCitationChoices,
+} from "../sources/libraryCitations";
+import { useLibraryCitations } from "../sources/useLibraryCitations";
 
 export const LatexReferenceDialog = memo(
   function LatexReferenceDialog(props: {
@@ -35,6 +42,8 @@ export const LatexReferenceDialog = memo(
     relativePath?: string | undefined;
     onInsert: (command: string, key: string) => void;
   }) {
+    const gt = useGT();
+    const messages = useMessages();
     const [query, setQuery] = useState("");
     const mode = props.mode ?? "reference";
     const [selected, setSelected] = useState<string[]>([]);
@@ -158,7 +167,7 @@ export const LatexReferenceDialog = memo(
     ) {
       setPreviousObjectInputs(objectInputs);
       if (props.open && mode === "reference") {
-        setDocumentObjects(objectsInWorker ? [] : documentReferenceChoices(props.source));
+        setDocumentObjects(objectsInWorker ? [] : documentReferenceChoices(props.source, messages));
         setObjectsPending(objectsInWorker);
       }
     }
@@ -173,7 +182,29 @@ export const LatexReferenceDialog = memo(
     const inlineSources = props.open
       ? mergedInlineBibliographyChoices(props.source, props.setupSource)
       : [];
-    const candidates = mode === "reference" ? documentObjects : [...inlineSources, ...references];
+    const library = useLibraryCitations({
+      environmentId: mode === "citation" && props.cwd ? (props.environmentId ?? null) : null,
+      root: props.cwd ?? "",
+      refresh: String(props.open),
+    });
+    const fileChoices = [...inlineSources, ...references];
+    const libraryChoices = libraryLatexCitationChoices(
+      library ?? [],
+      new Set(fileChoices.map((entry) => entry.key)),
+    );
+    const candidates =
+      mode === "reference"
+        ? documentObjects.map((choice) =>
+            choice.command === "eqref"
+              ? { ...choice, title: messages(EQUATION_REFERENCE_TITLE) }
+              : choice,
+          )
+        : [...fileChoices, ...libraryChoices];
+    // The managed references.bib sits at the project root.
+    const librarySelectedWithoutBibliography =
+      mode === "citation" &&
+      !paths.includes("references.bib") &&
+      selected.some((key) => libraryChoices.some((entry) => entry.key === key));
     const occurrences = new Map<string, number>();
     const choices = candidates
       .map((entry) => {
@@ -214,12 +245,12 @@ export const LatexReferenceDialog = memo(
         >
           <DialogHeader>
             <DialogTitle>
-              {mode === "citation" ? "Insert citation" : "Insert cross-reference"}
+              {mode === "citation" ? gt("Insert citation") : gt("Insert cross-reference")}
             </DialogTitle>
             <DialogDescription>
               {mode === "citation"
-                ? "Choose one or more sources from your bibliography."
-                : "Choose a labelled heading, equation, figure, table, or statement."}
+                ? gt("Choose one or more sources from your bibliography.")
+                : gt("Choose a labelled heading, equation, figure, table, or statement.")}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -231,10 +262,10 @@ export const LatexReferenceDialog = memo(
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={
                   mode === "citation"
-                    ? "Search title, author, year, or key…"
-                    : "Find a section, equation, figure, or table…"
+                    ? gt("Search title, author, year, or key…")
+                    : gt("Find a section, equation, figure, or table…")
                 }
-                aria-label="Search references"
+                aria-label={gt("Search references")}
               />
               <div className="scient-writing-choices">
                 {choices.map(({ entry, identity }) => (
@@ -253,7 +284,10 @@ export const LatexReferenceDialog = memo(
                     }
                   >
                     <span>
-                      <strong>{entry.title}</strong>
+                      <strong>
+                        {/* The worker reads long documents in English; its equations are named here. */}
+                        {entry.command === "eqref" ? gt("Equation") : entry.title}
+                      </strong>
                       <small>{entry.detail}</small>
                     </span>
                   </button>
@@ -261,38 +295,49 @@ export const LatexReferenceDialog = memo(
                 {choices.length === 0 ? (
                   <p>
                     {objectsPending && mode === "reference"
-                      ? "Reading document references…"
+                      ? gt("Reading document references…")
                       : pending && mode === "citation"
-                        ? "Reading project bibliography…"
+                        ? gt("Reading project bibliography…")
                         : mode === "citation"
-                          ? "No matching bibliography entries. Link a .bib file in LaTeX, or enter a citation key below."
-                          : "No matching labelled objects in this file. Add a reference label to an object, or enter a key below."}
+                          ? gt(
+                              "No matching bibliography entries. Link a .bib file in LaTeX, or enter a citation key below.",
+                            )
+                          : gt(
+                              "No matching labelled objects in this file. Add a reference label to an object, or enter a key below.",
+                            )}
                   </p>
                 ) : null}
               </div>
               {unavailable.length && mode === "citation" ? (
                 <p role="status">
-                  Could not read: {unavailable.join(", ")}. You can still insert a key.
+                  {gt("Could not read: {paths}. You can still insert a key.", {
+                    paths: unavailable.join(", "),
+                  })}
                 </p>
               ) : null}
               <label className="scient-writing-field">
-                {mode === "citation" ? "Citation form" : "Display"}
+                {mode === "citation"
+                  ? gt("Citation form")
+                  : gt("Display", { $context: "reference display" })}
                 <LatexSelect
                   value={form}
                   onValueChange={(value) => setForm(value)}
-                  aria-label={mode === "citation" ? "Citation form" : "Reference display"}
+                  aria-label={mode === "citation" ? gt("Citation form") : gt("Reference display")}
                   options={[
-                    { value: "automatic", label: "Document default" },
+                    { value: "automatic", label: gt("Document default") },
                     ...(mode === "citation"
                       ? biblatex || natbib
                         ? [
-                            { value: "parenthetical", label: "Parenthetical" },
-                            { value: "text", label: "In the sentence" },
+                            { value: "parenthetical", label: gt("Parenthetical") },
+                            { value: "text", label: gt("In the sentence") },
                           ]
                         : []
                       : [
-                          { value: "number", label: "Number" },
-                          { value: "page", label: "Page number" },
+                          {
+                            value: "number",
+                            label: gt("Number", { $context: "reference display" }),
+                          },
+                          { value: "page", label: gt("Page number") },
                         ]),
                   ]}
                 />
@@ -301,15 +346,32 @@ export const LatexReferenceDialog = memo(
                 <div className="grid gap-2">
                   <p>
                     {mode === "citation"
-                      ? `${selected.length} source${selected.length === 1 ? "" : "s"} selected`
-                      : selectedChoice?.title}
+                      ? gt(
+                          "{count, plural, one {{count} source selected} other {{count} sources selected}}",
+                          { count: selected.length },
+                        )
+                      : selectedChoice?.command === "eqref"
+                        ? gt("Equation")
+                        : selectedChoice?.title}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    {mode === "citation" ? `Citation keys: ${keys}` : `Reference label: ${keys}`}.
-                    Appearance follows the document; final numbers appear after compilation.
+                    {mode === "citation"
+                      ? gt(
+                          "Citation keys: {keys}. Appearance follows the document; final numbers appear after compilation.",
+                          { keys },
+                        )
+                      : gt(
+                          "Reference label: {keys}. Appearance follows the document; final numbers appear after compilation.",
+                          { keys },
+                        )}
                   </p>
+                  {librarySelectedWithoutBibliography ? (
+                    <p className="text-sm text-muted-foreground">
+                      {messages(LIBRARY_BIBLIOGRAPHY_HINT)}
+                    </p>
+                  ) : null}
                   <Button disabled={!validKeys(keys)} onClick={() => insert(command, keys)}>
-                    {mode === "citation" ? "Insert citation" : "Insert reference"}
+                    {mode === "citation" ? gt("Insert citation") : gt("Insert reference")}
                   </Button>
                 </div>
               )}
@@ -330,7 +392,7 @@ export const LatexReferenceDialog = memo(
                 }}
               >
                 <label>
-                  Known {mode === "citation" ? "keys (comma-separated)" : "label"}
+                  {mode === "citation" ? gt("Known keys (comma-separated)") : gt("Known label")}
                   <input
                     value={key}
                     onChange={(event) => setKey(event.target.value)}
@@ -341,7 +403,7 @@ export const LatexReferenceDialog = memo(
                   type="submit"
                   disabled={!validKeys(key) || (mode === "reference" && key.includes(","))}
                 >
-                  Insert
+                  <T context="insert action">Insert</T>
                 </Button>
               </form>
             </div>

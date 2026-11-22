@@ -20,7 +20,6 @@ import { OrchestratorV2 } from "./Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -29,6 +28,8 @@ import {
   readProviderReplayTranscript,
 } from "@t3tools/provider-testing/replayTranscript";
 import { PROPOSED_PLAN_PROMPT } from "./testkit/fixtures/shared.ts";
+import { conversationForkOf, forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 
 it.live(
   "freezes the received partial native proposal and retains its first timestamp through later deltas",
@@ -54,7 +55,8 @@ it.live(
         const gate = makeProviderReplayGate(["remaining-plan-deltas"]);
         yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
         const registry = CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
-          transcript,
+          // SCIENT-FORK: the recording names its thread after its own title.
+          materializeCodexThreadSetup(transcript, () => "Partial plan"),
           { replayGate: gate },
         );
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(
@@ -74,7 +76,6 @@ it.live(
           const sink = yield* EventSinkV2;
           const worker = yield* OrchestrationEffectWorkerV2;
           const outbox = yield* EffectOutboxV2;
-          const forks = yield* ConversationForkService;
           const threadId = ThreadId.make("inherited-partial-plan");
           const forkId = ThreadId.make("inherited-partial-plan-fork");
           const projectId = ProjectId.make("inherited-partial-plan-project");
@@ -174,7 +175,7 @@ it.live(
           assert.ok(proposal?.kind === "proposed_plan");
           assert.equal(proposal.markdown, item.markdown);
           const forkCommandId = CommandId.make("partial-plan-fork");
-          yield* forks.dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: forkCommandId,
             originThreadId: threadId,
@@ -183,10 +184,7 @@ it.live(
             workspaceMode: "local",
           });
           // A local fork copies only the running plan and is ready at once.
-          assert.equal(
-            (yield* orchestrator.getThreadProjection(forkId)).thread.conversationFork?.status,
-            "ready",
-          );
+          assert.equal((yield* conversationForkOf(forkId))?.status, "ready");
           assert.isFalse(
             (yield* outbox.listByCommandId(forkCommandId)).some(
               (effect) => effect.request.type === "scient-fork.provision",

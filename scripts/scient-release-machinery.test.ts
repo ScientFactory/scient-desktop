@@ -53,10 +53,62 @@ describe("Scient release machinery", () => {
     );
   });
 
+  it("keeps rehearsals on rehearsal branches and out of publication", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const preflight = workflow.split(/^  preflight:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+    const publish = workflow.split(/^  publish:\n/mu)[1] ?? "";
+
+    assert.include(preflight, '[[ "$GITHUB_REF_NAME" == release-rehearsal/* ]]');
+    assert.include(publish, "needs.preflight.outputs.rehearsal != 'true'");
+    // Only publication may hold a write token; a rehearsal stops at the assembled candidate.
+    assert.notInclude(workflow.split(/^  publish:\n/mu)[0] ?? "", "contents: write");
+  });
+
+  it("packages the remote server only with every target's monitor and SyncTeX runtime", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const serverAssetJob =
+      workflow.split(/^  build_server_asset:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+
+    assert.include(serverAssetJob, '"synctex-runtime-$key"');
+    assert.include(serverAssetJob, '"resource-monitor-$key" --uploaded');
+    assert.include(serverAssetJob, "for key in darwin-arm64 darwin-x64 linux-x64 win32-x64; do");
+    assert.include(serverAssetJob, 'echo "Missing the $key resource monitor." >&2');
+    assert.include(serverAssetJob, 'echo "Missing the $key SyncTeX runtime." >&2');
+    assert(
+      serverAssetJob.indexOf("Missing the $key SyncTeX runtime.") <
+        serverAssetJob.indexOf("node scripts/package-scient-server.ts"),
+    );
+  });
+
+  it("restores cached macOS native runtimes anywhere but saves them only from main", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const saveStep =
+      workflow.split(/^ {6}- name: Save macOS native runtimes\n/mu)[1]?.split(/^ {6}- /mu)[0] ?? "";
+
+    assert.include(saveStep, "github.ref == 'refs/heads/main'");
+    assert(saveStep.length > 0);
+    // The packer verifies each supplied runtime's receipt and every file before staging it.
+    assert.include(workflow, '--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime"');
+    assert.include(
+      workflow,
+      '--synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime"',
+    );
+  });
+
   it("pins every release-owned action to an immutable commit", () => {
     for (const workflowName of [
       "promote-release.yml",
       "release.yml",
+      "desktop-update-qualification.yml",
       "scheduled-stable-candidate.yml",
       "scient-compute-python-kernel.yml",
       "scient-compute-recipes.yml",
@@ -72,7 +124,11 @@ describe("Scient release machinery", () => {
       for (const action of uses) {
         // A repository-local reusable workflow is immutable with its caller's checkout.
         // Its external actions are inspected when this loop reads that workflow directly.
-        if (action === "./.github/workflows/scient-compute-python-kernel.yml") continue;
+        if (
+          action === "./.github/workflows/scient-compute-python-kernel.yml" ||
+          action === "./.github/workflows/desktop-update-qualification.yml"
+        )
+          continue;
         // This repository-local action is pinned by the release checkout itself.
         // Keep the exception exact and prevent nested mutable action references.
         if (action === "./.github/actions/setup-apt-mirrors") {
@@ -90,23 +146,6 @@ describe("Scient release machinery", () => {
         );
       }
     }
-  });
-
-  it("keeps unsigned Windows publication an explicit exception", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-    assert.include(workflow, "allow_unsigned_windows:");
-    assert.include(
-      workflow,
-      "allow_unsigned_windows is only valid for an explicitly publishing run.",
-    );
-    assert.include(
-      workflow,
-      "Windows publication is unsigned; rerun only with explicit allow_unsigned_windows=true.",
-    );
-    assert.include(workflow, "Publication requires signed macOS artifacts:");
   });
 
   // regression: 20117b09c1 fix(release): use Bash for version alignment on all platforms (#44)

@@ -15,12 +15,12 @@ import {
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
@@ -32,10 +32,10 @@ import { buildScientLatexForInvocation } from "./latexHandler.ts";
 import {
   assertCurrentDocumentBuildProject,
   publishProjectPdfOutput,
-  isWindowsAbsolutePath,
   type ProjectDocumentBuildBoundaryError,
   resolveDocumentBuildProject,
   resolveProjectPdfOutput,
+  resolveProjectSourceFile,
   prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
 import { ScientDocumentsToolkit, ScientPdfBuildToolError } from "./tools.ts";
@@ -78,7 +78,7 @@ const workspacePublicationReceipt = (
   ...("mutationId" in cause ? { mutationId: cause.mutationId } : {}),
 });
 
-const HTML_EXTENSIONS = new Set([".html", ".htm", ".xhtml"]);
+const HTML_EXTENSIONS = [".html", ".htm", ".xhtml"];
 const PRODUCER_ID = ArtifactProducerId.make("scient.html-pdf");
 const decodeHostResult = Schema.decodeUnknownEffect(ControlledHtmlPdfRenderResult);
 
@@ -99,72 +99,11 @@ const sourceLogicalDocumentKey = (canonicalPath: string): LogicalDocumentKey =>
 const boundaryToolError = (cause: ProjectDocumentBuildBoundaryError) =>
   toolError(cause.code, cause.message, cause);
 
-const resolveHtmlSourceFile = Effect.fn("ScientPdfBuild.resolveHtmlSourceFile")(function* (
-  root: string,
-  requestedPath: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  if (
-    requestedPath.includes("\0") ||
-    path.isAbsolute(requestedPath) ||
-    isWindowsAbsolutePath(requestedPath)
-  ) {
-    return yield* toolError(
-      "invalid-source-path",
-      "sourcePath must be relative to the current Scient project.",
-    );
-  }
-  const segments = requestedPath.split(/[\\/]/u);
-  if (
-    segments.some((segment) => segment === "..") ||
-    !HTML_EXTENSIONS.has(path.extname(requestedPath).toLowerCase())
-  ) {
-    return yield* toolError(
-      "invalid-source-path",
-      "sourcePath must identify a project-relative .html, .htm, or .xhtml file.",
-    );
-  }
-
-  const canonicalRoot = yield* fileSystem
-    .realPath(root)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("project-changed", "The current project workspace is unavailable."),
-      ),
-    );
-  const candidatePath = path.resolve(canonicalRoot, requestedPath);
-  const canonicalPath = yield* fileSystem
-    .realPath(candidatePath)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("source-not-found", "The HTML source file was not found in this project."),
-      ),
-    );
-  const relativePath = path.relative(canonicalRoot, canonicalPath);
-  if (
-    relativePath === "" ||
-    relativePath === ".." ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  ) {
-    return yield* toolError(
-      "invalid-source-path",
-      "The HTML source must remain inside the current project workspace.",
-    );
-  }
-  const info = yield* fileSystem
-    .stat(canonicalPath)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("source-not-found", "The HTML source file could not be inspected."),
-      ),
-    );
-  if (info.type !== "File") {
-    return yield* toolError("source-not-found", "The HTML source path does not identify a file.");
-  }
-  return { canonicalPath, sourcePath: relativePath.split(path.sep).join("/") };
-});
+const resolveHtmlSourceFile = (root: string, requestedPath: string) =>
+  resolveProjectSourceFile(root, requestedPath, {
+    label: "HTML",
+    extensions: HTML_EXTENSIONS,
+  }).pipe(Effect.mapError((cause) => toolError(cause.code, cause.message)));
 
 const resolveHtmlSource = Effect.fn("ScientPdfBuild.resolveHtmlSource")(function* (
   root: string,
@@ -270,7 +209,7 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
       abandonQuietly(generatedDocuments, handle, "HTML source authorization failed."),
     ),
     Effect.mapError(() =>
-      toolError("source-not-found", "Scient could not authorize the HTML source."),
+      toolError("publication-failed", "Scient could not authorize the HTML source."),
     ),
   );
 
@@ -470,10 +409,13 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
 export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer(
   Effect.gen(function* () {
     // Built documents return signed asset links.
-    const withAssetSigner = Effect.provideService(
-      AssetSigner.AssetSigner,
-      yield* AssetSigner.AssetSigner,
-    );
+    const signer = yield* AssetSigner.AssetSigner;
+    const revisions = yield* WorkspacePreviewRevisions.WorkspacePreviewRevisions;
+    const withAssetSigner = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(AssetSigner.AssetSigner, signer),
+        Effect.provideService(WorkspacePreviewRevisions.WorkspacePreviewRevisions, revisions),
+      );
     return {
       scient_pdf_build: (input) =>
         observeAnalyticsEffect(buildScientPdfForInvocation(input).pipe(withAssetSigner), {

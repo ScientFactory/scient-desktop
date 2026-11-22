@@ -30,27 +30,30 @@ vi.mock(import("../../scient/desktopUpdate/SidebarOtherUpdates"), async (origina
   SidebarOtherUpdates: () => null,
 }));
 
-function setup(channel: "beta" | "latest") {
-  state.update = {
+// Offered updates download in the background, so the pill presents a ready one.
+function setup(channel: "beta" | "latest"): DesktopUpdateState {
+  const update: DesktopUpdateState = {
     enabled: true,
-    status: "available",
+    status: "downloaded",
     channel,
     currentVersion: "0.6.23",
     hostArch: "arm64",
     appArch: "arm64",
     runningUnderArm64Translation: false,
     availableVersion: "0.6.24-beta.20261020.1",
-    downloadedVersion: null,
+    downloadedVersion: "0.6.24-beta.20261020.1",
     releaseNotes: [
       { version: "0.6.24-beta.20261020.1", items: ["A reviewed Beta change"], totalItems: 1 },
     ],
     omittedReleaseCount: 0,
-    downloadPercent: null,
+    downloadPercent: 100,
     checkedAt: null,
     message: null,
     errorContext: null,
-    canRetry: false,
+    canRetry: true,
   };
+  state.update = update;
+  return update;
 }
 
 it.each(["beta", "latest"] as const)(
@@ -73,3 +76,22 @@ it.each(["beta", "latest"] as const)(
     } else expect(document.body.textContent).not.toContain("A reviewed Beta change");
   },
 );
+
+it("shows the icon rail's header brand through a check, then the Update button once ready", async () => {
+  const ready = setup("latest");
+  state.update = { ...ready, status: "checking", availableVersion: null, downloadedVersion: null };
+  const header = () => (
+    <SidebarProvider>
+      <SidebarUpdatePill placement="header" idleContent={<span>Scient</span>} />
+    </SidebarProvider>
+  );
+  await using screen = await render(header());
+  await expect.element(screen.getByText("Scient")).toBeVisible();
+  expect(screen.container.querySelector("button")).toBeNull();
+
+  // A check must not leave the header holding the brand once an update is ready.
+  state.update = ready;
+  await screen.rerender(header());
+  await expect.element(screen.getByRole("button", { name: /^Update:/ })).toBeVisible();
+  expect(screen.container.textContent).not.toContain("Scient");
+});

@@ -8,7 +8,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
+import type { DesktopPreviewSignInBlockedEvent as PreviewManagerSignInBlocked } from "@t3tools/contracts";
 import { describe, expect, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -46,6 +48,7 @@ const managerLayer = PreviewManager.layer.pipe(
         isPartition: (partition) => partition.startsWith("persist:scient-next-preview-"),
         getSession: () => Effect.succeed({ on: vi.fn() } as unknown as Electron.Session),
         clearCookies: () => Effect.void,
+        cookiesCleared: () => Effect.void,
         clearCache: () => Effect.void,
       }),
     ),
@@ -358,5 +361,130 @@ describe("PreviewManager with several app windows", () => {
           yield* manager.startRecording("tab_moved");
         }),
       ),
+  );
+});
+
+/** A guest whose listeners the test can fire, showing `page` with `history` before it. */
+const makeListeningGuest = (
+  id: number,
+  hostWebContents: unknown,
+  history: ReadonlyArray<string>,
+) => {
+  const listeners = new Map<string, Array<(...args: never[]) => void>>();
+  const { guest } = makeGuest(id, hostWebContents);
+  Object.assign(guest, {
+    on: (event: string, listener: (...args: never[]) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+    },
+    getURL: () => history.at(-1),
+    navigationHistory: {
+      canGoBack: () => false,
+      canGoForward: () => false,
+      getAllEntries: () => history.map((url) => ({ url })),
+      getActiveIndex: () => history.length - 1,
+    },
+  });
+  const emit = (event: string, ...args: unknown[]) => {
+    for (const listener of listeners.get(event) ?? [])
+      (listener as (...a: unknown[]) => void)(...args);
+  };
+  return { guest, emit };
+};
+
+describe("PreviewManager and Google's sign-in", () => {
+  const SITE = "https://www.overleaf.com/login?next=/project";
+  const OAUTH = "https://accounts.google.com/o/oauth2/v2/auth?client_id=x&state=secret";
+  const IDENTIFIER = "https://accounts.google.com/v3/signin/identifier";
+  const REJECTED = "https://accounts.google.com/v3/signin/rejected";
+
+  effectIt.effect(
+    "lets Google's sign-in load, then explains its refusal and restarts at the site",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const window = makeAppWindow(7);
+          const { guest, emit } = makeListeningGuest(41, window.webContents, [SITE]);
+          fromId.mockImplementation((id) => (id === 41 ? guest : null));
+          const blocked = yield* Queue.unbounded<PreviewManagerSignInBlocked>();
+          const failures = yield* Queue.unbounded<string>();
+          yield* manager.subscribeSignInBlocked((event) => Queue.offer(blocked, event));
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            state.navStatus.kind === "LoadFailed"
+              ? Queue.offer(failures, state.navStatus.description)
+              : Effect.void,
+          );
+          yield* manager.setMainWindow(window.window);
+          yield* manager.createTab("tab_1");
+          yield* manager.registerWebview("tab_1", 41);
+
+          // The site's OAuth page goes on to Google's sign-in, which loads for Google to decide.
+          emit("did-start-navigation", { url: OAUTH, isMainFrame: true, isSameDocument: false });
+          emit("did-redirect-navigation", { url: IDENTIFIER, isMainFrame: true });
+          emit("did-navigate", {}, IDENTIFIER, 200, "OK");
+          emit("did-frame-navigate", {}, IDENTIFIER, 200, "OK", false, 1, 2);
+          expect(yield* Queue.size(blocked)).toBe(0);
+
+          // Google refuses: explained, restarting at the site the sign-in came from.
+          emit("did-start-navigation", { url: REJECTED, isMainFrame: true, isSameDocument: false });
+          emit("did-navigate", {}, REJECTED, 200, "OK");
+          expect(yield* Queue.take(blocked)).toEqual({
+            tabId: "tab_1",
+            page: "rejected",
+            context: "tab",
+            restartUrl: "https://www.overleaf.com/",
+            pageUrl: REJECTED,
+          });
+
+          // A failed load keeps Chromium's own description and reports nothing.
+          emit("did-fail-load", {}, -105, "ERR_NAME_NOT_RESOLVED", OAUTH, true);
+          expect(yield* Queue.take(failures)).toBe("ERR_NAME_NOT_RESOLVED");
+          expect(yield* Queue.size(blocked)).toBe(0);
+
+          // A frame Google refused is explained over the page holding it.
+          emit("did-frame-navigate", {}, REJECTED, 200, "OK", false, 1, 2);
+          expect(yield* Queue.take(blocked)).toEqual(
+            expect.objectContaining({ page: "rejected", context: "frame", pageUrl: SITE }),
+          );
+        }),
+      ),
+  );
+
+  effectIt.effect("closes a popup Google refused and tells its tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const window = makeAppWindow(7);
+        const { guest, emit } = makeListeningGuest(41, window.webContents, [SITE]);
+        fromId.mockImplementation((id) => (id === 41 ? guest : null));
+        const blocked = yield* Queue.unbounded<PreviewManagerSignInBlocked>();
+        yield* manager.subscribeSignInBlocked((event) => Queue.offer(blocked, event));
+        yield* manager.setMainWindow(window.window);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 41);
+
+        const popupListeners = new Map<string, (...args: unknown[]) => void>();
+        const popup = {
+          isDestroyed: () => false,
+          close: vi.fn(),
+          webContents: {
+            setIgnoreMenuShortcuts: vi.fn(),
+            setWindowOpenHandler: vi.fn(),
+            on: (event: string, listener: (...args: unknown[]) => void) =>
+              popupListeners.set(event, listener),
+          },
+        };
+        emit("did-create-window", popup);
+        popupListeners.get("did-navigate")?.({}, IDENTIFIER, 200, "OK");
+        expect(popup.close).not.toHaveBeenCalled();
+        popupListeners.get("did-navigate")?.({}, REJECTED, 200, "OK");
+        expect(yield* Queue.take(blocked)).toEqual({
+          tabId: "tab_1",
+          page: "rejected",
+          context: "popup",
+          restartUrl: "https://www.overleaf.com/",
+          pageUrl: SITE,
+        });
+        expect(popup.close).toHaveBeenCalledOnce();
+      }),
+    ),
   );
 });

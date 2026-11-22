@@ -30,6 +30,12 @@ const isRepoRootTestRun = process.cwd() === import.meta.dirname;
 
 const RESTRICTED_IMPORT_PATHS = [
   {
+    name: "react-native",
+    importNames: ["FlatList"],
+    message:
+      "Use LegendList from @legendapp/list/react-native, with renderScrollComponent={NativeScrollView} in a screen. Pass whatever renderItem reads through extraData: rows only re-render when their item or extraData changes.",
+  },
+  {
     name: "@t3tools/client-runtime",
     message:
       "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
@@ -44,6 +50,12 @@ const RESTRICTED_IMPORT_PATHS = [
     importNames: ["ScrollViewMarker"],
     message:
       "Use NativeScrollViewMarker or NativeScrollView (src/native/NativeScrollViewMarker.tsx): they carry the header's scroll-edge blur under the Duo's vertical bar.",
+  },
+  {
+    name: "react-native",
+    importNames: ["RefreshControl"],
+    message:
+      "Use RefreshControl from src/components/ui/RefreshControl: Android bottom sheets own the pull at the top, so it steps aside there.",
   },
 ];
 
@@ -81,6 +93,11 @@ const SCIENT_LEGACY_WEB_LINT_FILES = [
   "apps/web/src/components/usage/usageChartGeometry.ts",
   "apps/web/src/components/usage/usageProviders.ts",
 ] as const;
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — release notes stay English.
+/** Release notes are prose written for each release, like the user docs, and stay English. */
+const SCIENT_ENGLISH_ONLY_FILES = ["apps/web/src/scient/releaseNotes/catalog.ts"] as const;
 // SCIENT-FORK:END
 
 const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
@@ -164,6 +181,7 @@ export default defineConfig({
       NodeURL.fileURLToPath(
         new URL("./packages/shared/src/testing/providerEnv.ts", import.meta.url),
       ),
+      NodeURL.fileURLToPath(new URL("./packages/shared/src/testing/gitEnv.ts", import.meta.url)),
     ],
     ...(isRepoRootTestRun
       ? {
@@ -244,6 +262,9 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // SCIENT-FORK:START — skill templates are example programs agents copy, not Scient code.
+      "apps/server/src/scient/skills/built-ins/*/templates/**",
+      // SCIENT-FORK:END
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
@@ -346,6 +367,12 @@ export default defineConfig({
           "packages/provider-testing/**",
         ],
         rules: { "t3code/prefer-effect-fn": "off" },
+      },
+      {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "apps/desktop/src/**"],
+        // Users still pick their own project icon from the full Lucide set.
+        excludeFiles: ["apps/web/src/projectIconOptions.ts"],
+        rules: { "t3code/no-sparkles-icon": "error" },
       },
       {
         files: ["apps/web/**/*.test.{ts,tsx}"],
@@ -606,6 +633,26 @@ export default defineConfig({
         },
       },
       // SCIENT-FORK:END
+      // Registered always so a disable comment for intentional English counts as used.
+      // `vp run i18n:untranslated` counts what it flags.
+      {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "packages/client-runtime/src/**"],
+        excludeFiles: [
+          "**/*.{test,spec,bench}.{ts,tsx}",
+          "**/{test,testkit,testing,fixtures}/**",
+          "**/*.test-fixtures.ts",
+          "**/{test-fixtures,*TestFixtures}.ts",
+          "apps/mobile/src/features/development/**",
+          "packages/client-runtime/src/rpc/**",
+        ],
+        rules: { "t3code/no-untranslated-copy": "error" },
+      },
+      // SCIENT-FORK:START — release notes stay English.
+      {
+        files: [...SCIENT_ENGLISH_ONLY_FILES],
+        rules: { "t3code/no-untranslated-copy": "off" },
+      },
+      // SCIENT-FORK:END
       {
         // React Compiler owns memoization; upstream rules do not ban redundant useMemo/useCallback.
         files: ["apps/web/src/**/*.{ts,tsx}"],
@@ -670,6 +717,7 @@ export default defineConfig({
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
+          "apps/mobile/src/components/ComposerSurface.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",

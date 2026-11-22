@@ -2,8 +2,10 @@
 // kept only here, and a skipped, local-only or conflict-marked file can be sent anyway. A
 // decision waits for the tab's next Sync, which carries it.
 import type { ScientOverleafReview } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import {
@@ -14,20 +16,20 @@ import {
 } from "./overleafModel";
 
 /** Why the rule leaves a new file out, in a few words. */
-function skippedReasonText(reason: string): string {
+function skippedReasonText(reason: string, resolve: MessageResolver): string {
   switch (reason) {
     case "build-output":
-      return "Build output";
+      return resolve(msg("Build output"));
     case "hidden":
-      return "Hidden file";
+      return resolve(msg("Hidden file"));
     case "scient-project-file":
-      return "Scient project file";
+      return resolve(msg("Scient project file"));
     case "too-large":
-      return "Over Overleaf's 50 MB limit";
+      return resolve(msg("Over Overleaf's 50 MB limit"));
     case "lfs-pointer":
-      return "Git LFS pointer";
+      return resolve(msg("Git LFS pointer"));
     default:
-      return "Skipped";
+      return resolve(msg("Skipped", { $context: "why a new file is not sent to Overleaf" }));
   }
 }
 
@@ -38,12 +40,13 @@ function DecisionButton(props: {
   readonly disabled: boolean;
   readonly onPress: () => void;
 }) {
+  const gt = useGT();
   return (
     <button
       type="button"
       aria-pressed={props.pressed}
       disabled={props.disabled}
-      aria-label={`${props.label}: ${props.path}`}
+      aria-label={gt("{action}: {path}", { action: props.label, path: props.path })}
       className={cn(
         "h-5 shrink-0 cursor-pointer rounded px-1.5 text-2xs transition-colors duration-75",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -93,6 +96,8 @@ export function OverleafNewFiles(props: {
   readonly disabled?: boolean;
 }) {
   const { review, folder, decisions, onDecide } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const toggle = (path: string, decision: OverleafFileDecision) =>
     onDecide(path, decisions.get(path) === decision ? null : decision);
   const sending = newFilesToSend(review, decisions);
@@ -100,12 +105,18 @@ export function OverleafNewFiles(props: {
   return (
     <>
       {review.additions.length > 0 ? (
-        <section className="flex flex-col gap-1" aria-label="New files">
+        <section className="flex flex-col gap-1" aria-label={gt("New files")}>
           <h3 className="flex items-baseline justify-between gap-2 px-1 text-xs font-medium text-muted-foreground">
-            New files
+            <T>New files</T>
             <span className="font-normal" data-overleaf-new-files>
-              {sending === 1 ? "1 will be sent" : `${sending} will be sent`}
-              {pending ? " at the next sync" : ""}
+              {pending
+                ? gt(
+                    "{count, plural, one {{count} will be sent at the next sync} other {{count} will be sent at the next sync}}",
+                    { count: sending },
+                  )
+                : gt("{count, plural, one {{count} will be sent} other {{count} will be sent}}", {
+                    count: sending,
+                  })}
             </span>
           </h3>
           <ul className="flex flex-col">
@@ -121,7 +132,7 @@ export function OverleafNewFiles(props: {
                   onOpenFile={props.onOpenFile}
                 >
                   <DecisionButton
-                    label="Keep only here"
+                    label={gt("Keep only here")}
                     path={addition.path}
                     pressed={decisions.get(addition.path) === "keep"}
                     disabled={props.disabled ?? false}
@@ -133,12 +144,12 @@ export function OverleafNewFiles(props: {
                   key={addition.path}
                   path={addition.path}
                   folder={folder}
-                  note={skippedReasonText(addition.skippedBecause ?? "")}
+                  note={skippedReasonText(addition.skippedBecause ?? "", messages)}
                   onOpenFile={props.onOpenFile}
                 >
                   {UNSENDABLE_REASONS.has(addition.skippedBecause ?? "") ? null : (
                     <DecisionButton
-                      label="Send this file"
+                      label={gt("Send this file")}
                       path={addition.path}
                       pressed={decisions.get(addition.path) === "send"}
                       disabled={props.disabled ?? false}
@@ -152,8 +163,10 @@ export function OverleafNewFiles(props: {
         </section>
       ) : null}
       {review.unresolvedMarkers.length > 0 ? (
-        <section className="flex flex-col gap-1" aria-label="Waiting for conflicts">
-          <h3 className="px-1 text-xs font-medium text-muted-foreground">Waiting for conflicts</h3>
+        <section className="flex flex-col gap-1" aria-label={gt("Waiting for conflicts")}>
+          <h3 className="px-1 text-xs font-medium text-muted-foreground">
+            <T>Waiting for conflicts</T>
+          </h3>
           <ul className="flex flex-col">
             {review.unresolvedMarkers.map((path) => (
               <FileRow
@@ -164,7 +177,7 @@ export function OverleafNewFiles(props: {
                 onOpenFile={props.onOpenFile}
               >
                 <DecisionButton
-                  label="Send it anyway"
+                  label={gt("Send it anyway")}
                   path={path}
                   pressed={decisions.get(path) === "release"}
                   disabled={props.disabled ?? false}
@@ -176,8 +189,10 @@ export function OverleafNewFiles(props: {
         </section>
       ) : null}
       {review.localOnly.length > 0 ? (
-        <section className="flex flex-col gap-1" aria-label="Kept only here">
-          <h3 className="px-1 text-xs font-medium text-muted-foreground">Kept only here</h3>
+        <section className="flex flex-col gap-1" aria-label={gt("Kept only here")}>
+          <h3 className="px-1 text-xs font-medium text-muted-foreground">
+            <T>Kept only here</T>
+          </h3>
           <ul className="flex flex-col">
             {review.localOnly.map((path) => (
               <FileRow
@@ -188,7 +203,7 @@ export function OverleafNewFiles(props: {
                 onOpenFile={props.onOpenFile}
               >
                 <DecisionButton
-                  label="Send this file"
+                  label={gt("Send this file")}
                   path={path}
                   pressed={decisions.get(path) === "send"}
                   disabled={props.disabled ?? false}

@@ -262,6 +262,17 @@ describe("Accounts decisions", () => {
       (form) => form.kind === "api-key" && form.envName === "ANTHROPIC_API_KEY",
     );
     expect(anthropic).toMatchObject({ auth: { type: "header", name: "x-api-key" } });
+    const research = Object.fromEntries(
+      forms.flatMap((form) =>
+        form.kind === "api-key" && form.envName ? [[form.envName, form.auth]] : [],
+      ),
+    );
+    expect(research).toMatchObject({
+      NCBI_API_KEY: { type: "query", name: "api_key" },
+      SEMANTIC_SCHOLAR_API_KEY: { type: "header", name: "x-api-key" },
+      OPENALEX_API_KEY: { type: "query", name: "api_key" },
+      UNPAYWALL_EMAIL: { type: "query", name: "email" },
+    });
     expect(secretFields(catalogueDetails(null, "example.com"))).toEqual(["password", "totp"]);
     const gh = forms.find((form) => form.kind === "cli-login" && form.tool === "gh");
     expect(gh && secretFields(gh)).toEqual(["GH_TOKEN"]);
@@ -606,6 +617,19 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
   // Droid's own word that it holds the sign-in; a local server or one asking to sign in is not.
   expect(rows([droid]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["droid", "Linear", droid.instanceId],
+  ]);
+  // Scient Agent's own ChatGPT sign-in reports the ChatGPT apps it reaches; its MCP settings do not count.
+  const scient = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-scient"),
+    driver: ProviderDriverKind.make("scient"),
+    mcpServers: [
+      { name: "Gmail", status: "connected" as const, scope: "chatgpt", signedIn: true },
+      { name: "local-files", status: "unknown" as const, scope: "user" },
+    ],
+  };
+  expect(rows([scient]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
+    ["scient", "Gmail", scient.instanceId],
   ]);
   expect(
     rows([

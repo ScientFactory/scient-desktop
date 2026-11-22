@@ -24,6 +24,12 @@ export interface OmpTurnState {
   readonly staleRunEnded?: boolean;
 }
 
+/** Why an OMP turn's outcome stayed unconfirmed. */
+export type OmpUnconfirmedReason =
+  | "prompt_result_timeout"
+  | "drain_busy"
+  | "idle_confirmation_failed";
+
 export type OmpTurnSignal =
   | { readonly type: "begin"; readonly staleRunId?: number }
   | {
@@ -45,7 +51,11 @@ export type OmpTurnSignal =
   | { readonly type: "agent-start"; readonly runId?: number }
   | { readonly type: "agent-end"; readonly terminal: boolean; readonly runId?: number }
   | { readonly type: "drain-idle" }
-  | { readonly type: "unconfirmed" }
+  | {
+      readonly type: "unconfirmed";
+      /** Which confirmation never came; analytics only. */
+      readonly reason?: OmpUnconfirmedReason;
+    }
   | { readonly type: "process-exit" };
 
 export interface OmpTurnTransition {

@@ -29,6 +29,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -40,6 +41,12 @@ const modelSelection = { instanceId, model: "test-model" };
 const database = SqlitePersistenceMemory;
 const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
 const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+  // SCIENT-FORK: these threads track no other folders.
+  Layer.provide(
+    Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+      forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+    }),
+  ),
   Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
   Layer.provide(
     Layer.mergeAll(
@@ -324,7 +331,10 @@ it.live(
         assert.isFalse(
           yield* checkpointStore.hasCheckpointRef({ cwd: beforeRoot, checkpointRef: baseline.ref }),
         );
-        yield* checkpoints.restore({ scope: executionScope, checkpoint: baseline });
+        yield* checkpoints.restore({
+          targets: [{ scope: executionScope, checkpoint: baseline }],
+          scopes: [executionScope],
+        });
         assert.equal(yield* fs.readFileString(`${afterRoot}/README.md`), afterBytes);
         assert.equal(yield* fs.readFileString(`${beforeRoot}/README.md`), beforeBytes);
       }).pipe(

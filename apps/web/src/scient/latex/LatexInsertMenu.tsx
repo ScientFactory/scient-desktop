@@ -1,4 +1,4 @@
-import { BookOpen, Image as ImageIcon, NotebookText, Shapes, Tag } from "lucide-react";
+import { BookOpen, ChartColumn, Image as ImageIcon, NotebookText, Shapes, Tag } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { MenuSeparator, MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
@@ -9,6 +9,7 @@ import {
   type InsertMenuAction,
   type InsertMenuLayout,
 } from "../writing/InsertMenu";
+import { T } from "gt-react";
 
 export interface LatexInsertAction extends InsertMenuAction {
   description: string;
@@ -31,6 +32,7 @@ const SUBMENU = { "data-latex-insert-menu": "", "data-dock-command-scope": "late
 const ICON = "size-4 text-muted-foreground";
 const ICONS: Readonly<Record<string, ReactNode>> = {
   figure: <ImageIcon className={ICON} />,
+  result: <ChartColumn className={ICON} />,
   citation: <BookOpen className={ICON} />,
   reference: <Tag className={ICON} />,
   footnote: <NotebookText className={ICON} />,
@@ -51,13 +53,16 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
       <>
         {item("figure")}
         {table}
+        {item("result")}
         {item("code")}
         {item("verbatim")}
         <MenuSeparator />
         <MenuSub>
           <MenuSubTrigger>
             <BookOpen className={ICON} />
-            <span>References</span>
+            <span>
+              <T>References</T>
+            </span>
           </MenuSubTrigger>
           <MenuSubPopup {...SUBMENU}>
             {["citation", "reference", "link"].map(item)}
@@ -68,7 +73,9 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
         <MenuSub>
           <MenuSubTrigger>
             <Shapes className={ICON} />
-            <span>Theorems &amp; proofs</span>
+            <span>
+              <T>Theorems &amp; proofs</T>
+            </span>
           </MenuSubTrigger>
           <MenuSubPopup {...SUBMENU}>
             {STATEMENTS.slice(0, 5).map(item)}
@@ -79,7 +86,9 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
-          <MenuSubTrigger>Document blocks</MenuSubTrigger>
+          <MenuSubTrigger>
+            <T>Document blocks</T>
+          </MenuSubTrigger>
           <MenuSubPopup {...SUBMENU}>
             {["abstract", "contents", "bibliography"].map(item)}
             <MenuSeparator />

@@ -114,6 +114,19 @@ export const LocalConnectorSetupItem = Schema.Struct({
 });
 export type LocalConnectorSetupItem = typeof LocalConnectorSetupItem.Type;
 
+/**
+ * `missing`: no Accounts sign-in is linked. `linked`: Scient hands the program the site's session.
+ * `needs-user`: signing in again needs the person (a captcha, a text-message code).
+ */
+export const LocalConnectorSignIn = Schema.Struct({
+  site: TrimmedNonEmptyString,
+  state: Schema.Literals(["missing", "linked", "needs-user"]),
+  accountId: Schema.optional(TrimmedNonEmptyString),
+  /** The linked Accounts sign-in's name. */
+  account: Schema.optional(TrimmedNonEmptyString),
+});
+export type LocalConnectorSignIn = typeof LocalConnectorSignIn.Type;
+
 export const LocalConnectorSummary = Schema.Struct({
   kind: LocalConnectorKind,
   /** The folder holding the connector's `manifest.json`, on the environment's computer. */
@@ -129,6 +142,16 @@ export const LocalConnectorSummary = Schema.Struct({
   problem: Schema.optional(TrimmedNonEmptyString),
   /** Copies running now, one per agent session that uses it. */
   running: NonNegativeInt,
+  /** Scient keeps the folder (removed with the connector); false for a bundle used in place. */
+  owned: Schema.Boolean,
+  /** Who made the last change to its folder. */
+  changedBy: Schema.optional(Schema.Literals(["you", "agent"])),
+  /** The bundle this is the user's own copy of, by name, after an agent changed it. */
+  forkedFrom: Schema.optional(TrimmedNonEmptyString),
+  /** The last change to its folder can be undone. */
+  canUndo: Schema.Boolean,
+  /** The website it signs in to with the user's saved sign-in from Accounts. */
+  signIn: Schema.optional(LocalConnectorSignIn),
 });
 export type LocalConnectorSummary = typeof LocalConnectorSummary.Type;
 
@@ -174,6 +197,13 @@ export type ConnectorStatus = typeof ConnectorStatus.Type;
  */
 export { ExtensionIconDataUri, isExtensionIconDataUri } from "./extensionIcon.ts";
 
+/** Agents a connector goes to, when the person chose some; absent means every agent. */
+export const ConnectorAgents = Schema.Array(ProviderInstanceId).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64),
+);
+export type ConnectorAgents = typeof ConnectorAgents.Type;
+
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
   serverName: ConnectorServerName,
@@ -191,6 +221,8 @@ export const ConnectorSummary = Schema.Struct({
   authRevision: NonNegativeInt,
   /** Projects whose sessions receive this connector. Shared model with Secrets. */
   availability: GrantScope,
+  /** Agents whose sessions receive it; absent means every agent that takes connectors. */
+  agents: Schema.optional(ConnectorAgents),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   /** Most recent user-facing failure, cleared by the next success. */
@@ -354,6 +386,13 @@ export const LocalPackage = Schema.Struct({
 });
 export type LocalPackage = typeof LocalPackage.Type;
 
+/** An MCP Bundle (`.mcpb`) an MCP Registry entry publishes by https address and SHA-256. */
+export const LocalBundleDownload = Schema.Struct({
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048), Schema.isPattern(/^https:\/\//)),
+  sha256: TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+});
+export type LocalBundleDownload = typeof LocalBundleDownload.Type;
+
 /** Where a server set up in another app was found. */
 export const LocalImportSource = Schema.Union([
   Schema.Struct({
@@ -417,10 +456,19 @@ export const ConnectorAddInput = Schema.Struct({
       package: LocalPackage,
       environment: LocalEnvironmentListInput,
     }),
+    /** A registry entry's `localBundle`: downloaded, checked against its hash, unpacked. */
+    Schema.Struct({
+      type: Schema.Literal("registry-bundle"),
+      name: ConnectorNameInput,
+      version: ConnectorNameInput,
+      bundle: LocalBundleDownload,
+    }),
   ]),
   displayName: Schema.optional(ConnectorNameInput),
   /** Shown in Installed; from the Discover entry the connector was added from. */
   description: Schema.optional(ConnectorDescriptionInput),
+  /** Only these agents get it; absent means every agent. */
+  agents: Schema.optional(ConnectorAgents),
   oauthClient: Schema.optional(ConnectorOAuthClientInput),
   /** API-key style servers. */
   credential: Schema.optional(
@@ -479,14 +527,35 @@ export const ConnectorUpdateInput = Schema.Struct({
   displayName: Schema.optional(ConnectorNameInput),
   enabled: Schema.optional(Schema.Boolean),
   availability: Schema.optional(GrantScope),
+  /** Only these agents get it; null gives it to every agent again. */
+  agents: Schema.optional(Schema.NullOr(ConnectorAgents)),
   /** Local connectors: stop every running copy; agents start a fresh one on their next request. */
   restart: Schema.optional(Schema.Literal(true)),
   /** Local connectors: change settings and keys; running copies restart. */
   localSetup: Schema.optional(
-    Schema.Struct({ settings: LocalBundleSettingsInput, keys: LocalKeysInput }),
+    Schema.Struct({
+      settings: LocalBundleSettingsInput,
+      keys: LocalKeysInput,
+      /** The Accounts website or university sign-in it uses for its `signIn` site. */
+      signIn: Schema.optional(TrimmedNonEmptyString),
+    }),
   ),
 });
 export type ConnectorUpdateInput = typeof ConnectorUpdateInput.Type;
+
+/** Undoes the last change to a local connector's folder, or brings a removed one back. */
+export const ConnectorUndoInput = Schema.Struct({ connectorId: ConnectorId });
+export type ConnectorUndoInput = typeof ConnectorUndoInput.Type;
+
+export const ConnectorExportInput = Schema.Struct({ connectorId: ConnectorId });
+export type ConnectorExportInput = typeof ConnectorExportInput.Type;
+
+/** A local connector as an MCP Bundle (`.mcpb`), to share. */
+export const ConnectorExport = Schema.Struct({
+  fileName: TrimmedNonEmptyString,
+  base64: Schema.String,
+});
+export type ConnectorExport = typeof ConnectorExport.Type;
 
 export const LocalBundleInspectInput = Schema.Struct({ path: LocalPathInput });
 export type LocalBundleInspectInput = typeof LocalBundleInspectInput.Type;
@@ -560,18 +629,19 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 
 /** Scient-curated catalog sections. Registry servers without curation appear only under "all". */
 export const ExtensionCategory = Schema.Literals([
-  "featured",
+  "most-used",
   "papers",
   "biology",
+  "code",
+  "data",
+  "physics-math",
+  "files",
+  "communication",
+  "projects",
+  "figures",
   "chemistry",
   "earth",
-  "physics-math",
   "social-science",
-  "data",
-  "writing",
-  "figures",
-  "code",
-  "teamwork",
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
@@ -585,7 +655,7 @@ export type DiscoverSearchScope = typeof DiscoverSearchScope.Type;
 export const DiscoverSearchInput = Schema.Struct({
   scope: DiscoverSearchScope,
   query: Schema.optional(Schema.String),
-  /** Curated membership or server-owned Registry keyword searches. */
+  /** `curated` only: the category's browsable picks (community servers are search-only). */
   category: Schema.optional(ExtensionCategory),
   /** `registry` only: the registry's paging cursor. */
   cursor: Schema.optional(TrimmedNonEmptyString),
@@ -640,6 +710,8 @@ export const DiscoverEntry = Schema.Struct({
   remotes: Schema.Array(DiscoverRemote),
   /** A registry package Scient can run locally; offered only when no remote is installable. */
   localPackage: Schema.optional(LocalPackage),
+  /** A registry bundle Scient can download and run; offered when nothing above is. */
+  localBundle: Schema.optional(LocalBundleDownload),
   installable: Schema.Boolean,
   /** Why the entry cannot be installed as a connector (for example local packages only). */
   unsupportedReason: Schema.optional(TrimmedNonEmptyString),
@@ -697,6 +769,8 @@ export const ExtensionDeliverySkipReason = Schema.Literals([
   "needs-credential",
   "disabled",
   "project-deselected",
+  /** The person chose other agents for this connector. */
+  "agent-deselected",
   "transport-unsupported",
   "name-collision",
   /** The agent could not say which MCP servers it already has, so no connector name was safe. */

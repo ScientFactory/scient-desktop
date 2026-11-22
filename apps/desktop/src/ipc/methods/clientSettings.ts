@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { applyLanguage } from "../../i18n/messages.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 // SCIENT-FORK:START — several app windows share one desktop process.
@@ -33,6 +34,7 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
     // Sent before this reply, so the next window to read after it also has the message.
     yield* notifyOtherWindows(event, IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, settings);
     yield* snapShot.configure(settings);
+    yield* applyLanguage(settings.language);
   }),
   // SCIENT-FORK:END
 });

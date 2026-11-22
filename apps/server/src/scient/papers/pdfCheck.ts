@@ -55,6 +55,27 @@ export function pdfVerdict(
   return matched / title.length >= TITLE_WORDS_NEEDED ? "the-paper" : "another-paper";
 }
 
+/**
+ * Whether a PDF's own text names this paper: its DOI, or most of its title. Stricter than
+ * `pdfVerdict`, which lets an unreadable scan pass; this is for a file whose origin is unknown.
+ */
+export function pdfNamesPaper(
+  paper: Pick<Paper, "doi" | "title" | "pages">,
+  facts: PdfFacts,
+): boolean {
+  // A preview or a supplement fails here; an unreadable scan, which passes there, fails below.
+  if (pdfVerdict(paper, facts) !== "the-paper" || facts.text.length < MIN_READABLE_TEXT)
+    return false;
+  if (paper.doi !== undefined && facts.text.toLowerCase().includes(paper.doi.toLowerCase()))
+    return true;
+  const title = wordsOf(paper.title ?? "");
+  const found = new Set(wordsOf(facts.text));
+  return (
+    title.length > 0 &&
+    title.filter((word) => found.has(word)).length / title.length >= TITLE_WORDS_NEEDED
+  );
+}
+
 /** What a PDF says about itself; nothing when it can't be parsed. */
 export const readPdfFacts = (bytes: Uint8Array) =>
   Effect.tryPromise({

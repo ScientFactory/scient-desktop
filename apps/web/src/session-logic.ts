@@ -1,13 +1,18 @@
 import {
   browserActionPresentation,
-  foldedQuestionAnswerMessageIds,
+  foldedQuestionAnswerRunIdByMessageId,
 } from "./scient/threadTimeline/presentation";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
+import { msg } from "gt-react";
+// SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
+import { customEndpointFailureNote } from "./scient/providerConnection/customEndpointFailureNote";
+// SCIENT-FORK:END
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   checkpointSupportsRewind,
   type AssetResource,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -21,21 +26,22 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
-import {
-  classifyToolActivity,
-  collectToolFilePaths,
-  formatReadToolLabel,
-  formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivityCopy";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
-import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  htmlRenderFromToolItem,
+  mcpAppFromToolItem,
+  sentMessageFromToolItem,
+} from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
   workEntryIndicatesToolFailure,
 } from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { repositoryCheckpointScopeIds } from "@t3tools/client-runtime/state/thread-repositories";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -52,6 +58,7 @@ import {
   type SessionPhase,
   type TurnDiffSummary,
 } from "./types";
+import { m, type MessageResolver } from "./i18n/messages";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
@@ -60,9 +67,9 @@ import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-pres
 import { scientSkillUsageLabel } from "./scient/skills/scientSkillUsageLabel";
 // SCIENT-FORK:END
 
-export { formatDuration } from "@t3tools/shared/orchestrationTiming";
-
-// SCIENT-FORK:START — Scient provider picker options live in a Scient module.
+// SCIENT-FORK:START — Scient provider picker options live in a Scient module; Scient's
+// thread tasks bar still reads formatDuration from here.
+export { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 export { PROVIDER_OPTIONS, type ProviderPickerKind } from "./scient/sessionLogic/providerOptions";
 // SCIENT-FORK:END
 
@@ -137,6 +144,13 @@ export type TimelineEntry = (
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly htmlRender: HtmlRenderReference;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "sent-message";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly text: string;
     }
   | {
       readonly id: string;
@@ -254,6 +268,8 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "secret_request",
   "link_request",
   "subagent",
+  // SCIENT-FORK: a thread room message the agent has not been given.
+  "room_message",
 ]);
 
 const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -315,33 +331,60 @@ function projectedWorkEntryTone(item: OrchestrationV2TurnItem): WorkLogEntry["to
 
 export function providerErrorPresentation(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "error" }>,
+  resolve: MessageResolver = m,
 ): { readonly label: string; readonly detail: string } {
   if (item.retry === undefined) {
     return {
       label:
         item.failure.class === "usage_limit"
-          ? "Usage limit reached"
-          : item.title?.trim() || "Provider error",
-      detail: item.failure.message,
+          ? resolve(msg("Usage limit reached"))
+          : item.title?.trim() || resolve(msg("Provider error")),
+      // SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
+      detail: [item.failure.message, customEndpointFailureNote(item.failure, resolve)]
+        .filter((part) => part !== null)
+        .join("\n\n"),
+      // SCIENT-FORK:END
     };
   }
   const progress =
     item.retry.maxAttempts === null
       ? `${item.retry.attempt}`
       : `${item.retry.attempt}/${item.retry.maxAttempts}`;
+  const counts = { progress, attempt: item.retry.attempt };
   const label =
     item.status === "running"
-      ? `Retrying provider (${progress})`
+      ? resolve(msg("Retrying provider ({progress})", { progress }))
       : item.status === "completed"
-        ? `Provider recovered (${progress} retries)`
+        ? resolve(
+            msg(
+              "{attempt, plural, one {Provider recovered ({progress} retries)} other {Provider recovered ({progress} retries)}}",
+            ),
+            counts,
+          )
         : item.status === "failed"
-          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
-          : `Provider retry stopped (${progress})`;
+          ? item.failure.class === "usage_limit"
+            ? resolve(
+                msg(
+                  "{attempt, plural, one {Usage limit reached after {progress} retries} other {Usage limit reached after {progress} retries}}",
+                ),
+                counts,
+              )
+            : resolve(
+                msg(
+                  "{attempt, plural, one {Provider error after {progress} retries} other {Provider error after {progress} retries}}",
+                ),
+                counts,
+              )
+          : resolve(msg("Provider retry stopped ({progress})", { progress }));
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
       ? item.retry.retryDelayMs < 1_000
-        ? ` Retrying in ${item.retry.retryDelayMs}ms.`
-        : ` Retrying in ${(item.retry.retryDelayMs / 1_000).toFixed(1).replace(/\.0$/u, "")}s.`
+        ? ` ${resolve(msg("Retrying in {delay}ms.", { delay: item.retry.retryDelayMs }))}`
+        : ` ${resolve(
+            msg("Retrying in {delay}s.", {
+              delay: (item.retry.retryDelayMs / 1_000).toFixed(1).replace(/\.0$/u, ""),
+            }),
+          )}`
       : "";
   return {
     label,
@@ -349,7 +392,10 @@ export function providerErrorPresentation(
   };
 }
 
-function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry {
+function projectedWorkEntry(
+  row: OrchestrationV2ProjectedTurnItem,
+  resolve: MessageResolver,
+): WorkLogEntry {
   const { item } = row;
   const title = item.title?.trim() || null;
   const common = {
@@ -368,28 +414,28 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "thread_created":
       return {
         ...common,
-        label: "Created thread",
+        label: resolve(msg("Created thread")),
       };
     case "compaction":
       return {
         ...common,
-        label: contextCompactionLabel(item),
+        label: contextCompactionLabel(item, resolve),
         sourceActivityKind: "context-compaction",
         ...(item.summary ? { detail: item.summary } : {}),
       };
     case "reasoning":
       return {
         ...common,
-        label: title ?? "Thinking",
+        label: title ?? resolve(msg("Thinking", { $context: "status of an agent reasoning" })),
         ...(item.text ? { detail: item.text } : {}),
       };
     case "command_execution":
       return {
         ...common,
-        label: title ?? "Ran command",
+        label: title ?? resolve(msg("Ran command")),
         command: item.input,
         rawCommand: item.input,
-        toolTitle: title ?? "Command",
+        toolTitle: title ?? resolve(msg("Command", { $context: "noun, a shell command tool" })),
         toolData: item,
       };
     case "file_change": {
@@ -398,33 +444,38 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         label:
           title ??
           (item.changes !== undefined && item.changes.length > 1
-            ? `Changed ${item.changes.length} files`
-            : `Changed ${item.fileName}`),
-        changedFiles: item.changes?.map((change) => change.path) ?? [item.fileName],
-        toolTitle: title ?? "File change",
+            ? resolve(
+                msg("{count, plural, one {Changed {count} file} other {Changed {count} files}}"),
+                { count: item.changes.length },
+              )
+            : resolve(msg("Changed {fileName}", { fileName: item.fileName }))),
+        changedFiles: item.changes?.length
+          ? item.changes.map((change) => change.path)
+          : [item.fileName],
+        toolTitle: title ?? resolve(msg("File change", { $context: "noun, a tool title" })),
         toolData: item,
       };
     }
     case "file_search":
       return {
         ...common,
-        label: title ?? formatSearchToolLabel(item) ?? "Searched files",
+        label: title ?? formatSearchToolLabel(item, resolve) ?? resolve(msg("Searched files")),
         ...(item.pattern ? { detail: item.pattern } : {}),
-        toolTitle: title ?? "File search",
+        toolTitle: title ?? resolve(msg("File search", { $context: "noun, a tool title" })),
         toolData: item,
       };
     case "web_search":
       return {
         ...common,
-        label: title ?? "Searched the web",
+        label: title ?? resolve(msg("Searched the web")),
         ...(item.patterns?.length ? { detail: item.patterns.join(", ") } : {}),
-        toolTitle: title ?? "Web search",
+        toolTitle: title ?? resolve(msg("Web search", { $context: "noun, a tool title" })),
         toolData: item,
       };
     case "checkpoint":
       return {
         ...common,
-        label: title ?? "Checkpoint captured",
+        label: title ?? resolve(msg("Checkpoint captured")),
         changedFiles: item.files.map((file) => file.path),
         toolData: item,
       };
@@ -432,10 +483,10 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       return {
         ...common,
         label: item.message,
-        sourceActivityKind: "runtime.warning",
+        ...(item.level === "info" ? {} : { sourceActivityKind: "runtime.warning" }),
       };
     case "error": {
-      const presentation = providerErrorPresentation(item);
+      const presentation = providerErrorPresentation(item, resolve);
       return {
         ...common,
         ...presentation,
@@ -448,11 +499,15 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       };
     }
     case "dynamic_tool": {
-      const skillUsageLabel = scientSkillUsageLabel({
-        tool: item.toolName,
-        arguments: item.input,
-        status: item.status,
-      });
+      const skillUsageLabel = scientSkillUsageLabel(
+        {
+          tool: item.toolName,
+          arguments: item.input,
+          status: item.status,
+        },
+        // SCIENT-FORK: the skill row label in the active language.
+        resolve,
+      );
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
         data: { toolName: item.toolName ?? undefined, input: item.input },
@@ -464,11 +519,17 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
           skillUsageLabel ??
           title ??
           (classified === "read"
-            ? formatReadToolLabel(readPath ?? "")
+            ? formatReadToolLabel(readPath ?? "", 0, resolve)
             : classified === "search"
-              ? (formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call")
-              : (item.toolName ?? "Tool call")),
-        toolTitle: skillUsageLabel ?? title ?? item.toolName ?? "Tool",
+              ? (formatSearchToolLabel({ input: item.input }, resolve) ??
+                item.toolName ??
+                resolve(msg("Tool call", { $context: "noun" })))
+              : (item.toolName ?? resolve(msg("Tool call", { $context: "noun" })))),
+        toolTitle:
+          skillUsageLabel ??
+          title ??
+          item.toolName ??
+          resolve(msg("Tool", { $context: "noun, a tool title" })),
         toolData: { input: item.input, output: item.output },
         ...browserActionPresentation(item.input, item.output),
       };
@@ -481,20 +542,30 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         item.steps.find((step) => step.status === "pending");
       return {
         ...common,
-        label: `Tasks ${done}/${item.steps.length}${current ? ` · ${current.text}` : ""}`,
+        label: current
+          ? resolve(msg("Tasks {done}/{total} · {current}"), {
+              done,
+              total: item.steps.length,
+              current: current.text,
+            })
+          : resolve(msg("Tasks {done}/{total}"), { done, total: item.steps.length }),
       };
     }
     case "approval_request":
       return {
         ...common,
-        label: title ?? "Approval requested",
+        label: title ?? resolve(msg("Approval requested")),
         detail: item.prompt ?? item.requestKind,
         toolData: item,
       };
     case "user_input_request":
       return {
         ...common,
-        label: title ?? (item.questionAnswer ? "Answered questions" : "Input requested"),
+        label:
+          title ??
+          (item.questionAnswer
+            ? resolve(msg("Answered questions"))
+            : resolve(msg("Input requested"))),
         ...(item.questionAnswer ? { questionAnswer: item.questionAnswer } : {}),
         toolData: item,
       };
@@ -516,6 +587,7 @@ export interface TimelineEntriesInput {
   readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
   readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   readonly plans?: ReadonlyArray<OrchestrationV2PlanArtifact>;
+  readonly resolve?: MessageResolver;
 }
 
 export interface TimelineEntriesProjection {
@@ -551,7 +623,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
-  const foldedAnswerMessageIds = foldedQuestionAnswerMessageIds(input.visibleTurnItems);
+  // An answer that started a later run stays a normal message at that run's position.
+  // SCIENT-FORK: imported answers name their own message (scient/threadTimeline/presentation.ts).
+  const foldedAnswerRunIdByMessageId = foldedQuestionAnswerRunIdByMessageId(input.visibleTurnItems);
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
@@ -562,7 +636,11 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       item.status === "pending"
     )
       continue;
-    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    if (
+      item.type === "user_message" &&
+      foldedAnswerRunIdByMessageId.get(item.messageId) === item.runId
+    )
+      continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
@@ -606,6 +684,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
               createdBy: item.createdBy,
               creationSource: item.creationSource,
               ...(item.senderThreadId !== undefined ? { senderThreadId: item.senderThreadId } : {}),
+              ...(item.linkedSender !== undefined ? { linkedSender: item.linkedSender } : {}),
               ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),
               ...(item.scheduledTaskId !== undefined
                 ? { scheduledTaskId: item.scheduledTaskId }
@@ -664,24 +743,31 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (mcpApp !== undefined) {
+    const sentMessage =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? sentMessageFromToolItem(item)
+        : undefined;
+    if (sentMessage !== undefined) {
       entries.push({
         id: item.id,
-        kind: "mcp-app",
+        kind: "sent-message",
         createdAt,
         runId: item.runId,
-        // SCIENT-FORK: the item's own thread, which for a fork's shared history is
-        // the fork: it serves the version the fork shows.
-        sourceThreadId: item.threadId,
-        itemId: row.sourceItemId,
-        revision: turnItemDetailRevision(item),
-        mcpApp,
+        text: sentMessage,
         ...attemptMetadata,
       });
       continue;
     }
 
+    // SCIENT-FORK:START — a thread room message leaves the thread once deleted or sent to the
+    // agent; the agent's message stands in for it.
+    if (
+      item.type === "room_message" &&
+      (item.deletedAt !== undefined ||
+        item.deliveries?.some((delivery) => delivery.status === "sent") === true)
+    )
+      continue;
+    // SCIENT-FORK:END
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
       entries.push({
         id: item.id,
@@ -697,12 +783,32 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       id: item.id,
       kind: "work",
       createdAt,
-      entry: projectedWorkEntry(row),
+      entry: projectedWorkEntry(row, input.resolve ?? m),
       ...attemptMetadata,
     });
+
+    const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
+    if (mcpApp !== undefined) {
+      entries.push({
+        id: `mcp-app:${item.id}`,
+        kind: "mcp-app",
+        createdAt,
+        runId: item.runId,
+        // SCIENT-FORK: the item's own thread, which for a fork's shared history is
+        // the fork: it serves the version the fork shows.
+        sourceThreadId: item.threadId,
+        itemId: row.sourceItemId,
+        revision: turnItemDetailRevision(item),
+        mcpApp,
+        ...attemptMetadata,
+      });
+    }
   }
 
-  const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
+  const retainedMessageIds = new Set([
+    ...committedMessageIds,
+    ...foldedAnswerRunIdByMessageId.keys(),
+  ]);
   for (const message of input.anchoredMessages ?? []) {
     if (retainedMessageIds.has(message.id)) continue;
     retainedMessageIds.add(message.id);
@@ -833,24 +939,34 @@ export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMe
   return shallow(previousMetadata, nextMetadata);
 }
 
+function streamedTextMetadata(item: OrchestrationV2TurnItem) {
+  if (item.type === "proposed_plan" && item.streaming) {
+    const { markdown: _markdown, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  if ((item.type === "assistant_message" || item.type === "reasoning") && item.streaming) {
+    const { text: _text, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  return null;
+}
+
 export function isStreamingTurnItemTextUpdate(
   previous: OrchestrationV2ProjectedTurnItem,
   next: OrchestrationV2ProjectedTurnItem,
 ): boolean {
   const { item: previousItem, ...previousSource } = previous;
   const { item: nextItem, ...nextSource } = next;
+  const previousMetadata = streamedTextMetadata(previousItem);
+  const nextMetadata = streamedTextMetadata(nextItem);
   if (
-    previousItem.type !== "assistant_message" ||
-    nextItem.type !== "assistant_message" ||
-    !previousItem.streaming ||
-    !nextItem.streaming ||
+    previousMetadata === null ||
+    nextMetadata === null ||
     !shallow(previousSource, nextSource) ||
     projectedItemCreatedAt(previous) !== projectedItemCreatedAt(next)
   ) {
     return false;
   }
-  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previousItem;
-  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = nextItem;
   // Wire decoding recreates timestamps and attachments; compare only the changed item's metadata.
   return Equal.equals(previousMetadata, nextMetadata);
 }
@@ -871,9 +987,25 @@ function canRederiveInPlace(
     item.item.type !== "user_message" &&
     item.item.type !== "assistant_message" &&
     item.item.type !== "user_input_request" &&
+    // An app call projects two entries; in-place reuse replaces one.
+    (previousItem.item.type !== "dynamic_tool" ||
+      mcpAppFromToolItem(previousItem.item) === undefined) &&
     ((input.anchoredMessages?.length ?? 0) === 0 ||
       projectedItemCreatedAt(item) === projectedItemCreatedAt(previousItem))
   );
+}
+
+/** Entries read only each plan's status; streaming plans rebuild artifacts with every delta. */
+function samePlanStatuses(
+  next: TimelineEntriesInput["plans"],
+  previous: TimelineEntriesInput["plans"],
+): boolean {
+  if (next === previous) return true;
+  if (next === undefined || previous === undefined || next.length !== previous.length) return false;
+  return next.every((plan, index) => {
+    const before = previous[index]!;
+    return plan.id === before.id && plan.kind === before.kind && plan.status === before.status;
+  });
 }
 
 function reuseTimelineEntries(
@@ -888,7 +1020,8 @@ function reuseTimelineEntries(
     !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
     !shallow(input.attempts, before.attempts) ||
     !shallow(input.nodes, before.nodes) ||
-    !shallow(input.plans, before.plans)
+    !samePlanStatuses(input.plans, before.plans) ||
+    input.resolve !== before.resolve
   ) {
     return null;
   }
@@ -904,7 +1037,7 @@ function reuseTimelineEntries(
   if (appended) {
     const appendedItems = input.visibleTurnItems.slice(before.visibleTurnItems.length);
     const foldedAnswerIds = appendedItems.some(({ item }) => item.type === "user_message")
-      ? foldedQuestionAnswerMessageIds(input.visibleTurnItems)
+      ? foldedQuestionAnswerRunIdByMessageId(input.visibleTurnItems)
       : undefined;
     if (
       appendedItems.some(
@@ -925,7 +1058,11 @@ function reuseTimelineEntries(
     const previousItem = before.visibleTurnItems[index]!;
     const item = input.visibleTurnItems[index]!;
     if (item === previousItem) continue;
-    if (isStreamingTurnItemTextUpdate(previousItem, item)) {
+    // Reasoning and plan text re-derive below; only assistant text patches the message.
+    if (
+      item.item.type === "assistant_message" &&
+      isStreamingTurnItemTextUpdate(previousItem, item)
+    ) {
       replacements.set(previousItem, item);
       continue;
     }
@@ -1016,15 +1153,14 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-  readonly threadStartCheckpointReady: boolean;
+  readonly threadStartCheckpointAvailable: boolean;
   readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const rewindTurnCountByRunId = new Map<RunId, number>();
+  const turnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
-    // SCIENT-FORK: a boundary without a file snapshot still rewinds the conversation.
-    if (checkpointSupportsRewind(checkpoint, false)) {
-      rewindTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
+    if (isRewindableCheckpoint(checkpoint)) {
+      turnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
   const targetByRunId = new Map<RunId, number | undefined>();
@@ -1047,10 +1183,10 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       targetByRunId.set(
         runId,
         previousRunId === null
-          ? input.threadStartCheckpointReady
+          ? input.threadStartCheckpointAvailable
             ? 0
             : undefined
-          : rewindTurnCountByRunId.get(previousRunId),
+          : turnCountByRunId.get(previousRunId),
       );
       previousRunId = runId;
     }
@@ -1068,21 +1204,36 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
+// A missing snapshot (no git, or a side chat) still pins a conversation position; only
+// restoring files needs a ready one.
+function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
+  // SCIENT-FORK: a failed snapshot (oversized workspace) also pins its position; only a
+  // rolled-back (stale) boundary does not.
+  return checkpointSupportsRewind(checkpoint, false);
+}
+
 export function findRevertCheckpoint(
-  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  projection:
+    | Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">
+    | null
+    | undefined,
   turnCount: number,
 ): OrchestrationV2Checkpoint | undefined {
+  if (projection == null) return undefined;
+  // A tracked repository's baseline also sits at ordinal zero; it is never a rewind target.
+  const repositoryScopeIds = repositoryCheckpointScopeIds(projection.checkpointScopes);
   const atTurn = (checkpoint: OrchestrationV2Checkpoint) =>
-    turnCount === 0
+    !repositoryScopeIds.has(checkpoint.scopeId) &&
+    (turnCount === 0
       ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
-      : checkpoint.appRunOrdinal === turnCount;
+      : checkpoint.appRunOrdinal === turnCount);
   // SCIENT-FORK: prefer a captured snapshot; any current boundary still rewinds the conversation.
   return (
-    checkpoints.findLast(
+    projection.checkpoints.findLast(
       (checkpoint) => checkpointSupportsRewind(checkpoint, true) && atTurn(checkpoint),
     ) ??
-    checkpoints.findLast(
-      (checkpoint) => checkpointSupportsRewind(checkpoint, false) && atTurn(checkpoint),
+    projection.checkpoints.findLast(
+      (checkpoint) => isRewindableCheckpoint(checkpoint) && atTurn(checkpoint),
     )
   );
 }

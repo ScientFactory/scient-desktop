@@ -1,12 +1,11 @@
-import { Check, Copy } from "lucide";
-import { PlayIcon, WrapTextIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, PlayIcon, WrapTextIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 
 /** A block can override wrapping locally; a new global preference resets it. */
 export function useCodeBlockWordWrap() {
@@ -36,6 +35,7 @@ export function CodeBlockActions({
   readonly onRunShellCommand?: ((command: string) => void) | undefined;
   readonly isStreaming?: boolean;
 }) {
+  const gt = useGT();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(false);
@@ -47,8 +47,8 @@ export function CodeBlockActions({
       if (timer.current !== null) clearTimeout(timer.current);
     };
   }, []);
-  const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
-  const copyLabel = copied ? "Copied" : "Copy code";
+  const wrapLabel = wrapped ? gt("Disable line wrap") : gt("Wrap lines");
+  const copyLabel = copied ? gt("Copied") : gt("Copy code");
   const source = readCode();
   const command = source.trim();
   const canRun =
@@ -60,7 +60,12 @@ export function CodeBlockActions({
     !/[\p{Cc}\p{Cf}]/u.test(source.slice(0, -1));
   const copy = async () => {
     try {
-      const didCopy = await writeTextToClipboard(readCode(), "code");
+      // The fence's closing newline is not part of the command.
+      const code = readCode();
+      const didCopy = await writeTextToClipboard(
+        code.endsWith("\n") ? code.slice(0, -1) : code,
+        namedClipboardTarget("code"),
+      );
       if (!didCopy || !mounted.current) return;
       if (timer.current !== null) clearTimeout(timer.current);
       setCopied(true);
@@ -78,7 +83,7 @@ export function CodeBlockActions({
     <span
       className="flex shrink-0 items-center gap-0.5"
       role="toolbar"
-      aria-label="Code block actions"
+      aria-label={gt("Code block actions")}
     >
       <Tooltip>
         <TooltipTrigger
@@ -107,13 +112,15 @@ export function CodeBlockActions({
                 variant="ghost-muted"
                 size="icon-xs"
                 onClick={() => onRunShellCommand?.(command)}
-                aria-label="Run in terminal"
+                aria-label={gt("Run in terminal")}
               />
             }
           >
             <PlayIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="top">Run in terminal</TooltipPopup>
+          <TooltipPopup side="top">
+            <T>Run in terminal</T>
+          </TooltipPopup>
         </Tooltip>
       ) : null}
       <Tooltip>
@@ -128,7 +135,7 @@ export function CodeBlockActions({
             />
           }
         >
-          <MorphIcon className="size-3" icon={copied ? Check : Copy} />
+          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
         </TooltipTrigger>
         <TooltipPopup side="top">{copyLabel}</TooltipPopup>
       </Tooltip>

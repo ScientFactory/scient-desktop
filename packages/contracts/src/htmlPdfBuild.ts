@@ -7,6 +7,7 @@ import {
   BrowserPdfExportProfile,
   BrowserPdfExportSourceSignals,
 } from "./browserPdfExport.ts";
+import { isSignedAssetPath } from "./scient/signedAssetPath.ts";
 import { isTrimmedUnadvertised } from "./scientToolSchemas.ts";
 
 const BoundedText = Schema.String.check(Schema.isMaxLength(2_048));
@@ -20,10 +21,10 @@ const ProjectPath = Schema.String.check(
 /** The deliberately small public input for a project-owned HTML document build. */
 export const ScientPdfBuildInput = Schema.Struct({
   sourcePath: ProjectPath.annotate({
-    description: "Project-relative .html, .htm, or .xhtml file.",
+    description: "A .html, .htm, or .xhtml file in the project, relative or absolute.",
   }),
   outputPath: ProjectPath.annotate({
-    description: "Project-relative .pdf path. An existing file is replaced.",
+    description: "A .pdf path in the project. An existing file is replaced.",
   }),
 });
 export type ScientPdfBuildInput = typeof ScientPdfBuildInput.Type;
@@ -34,6 +35,7 @@ export const ControlledHtmlPdfRenderRequest = Schema.Struct({
     Schema.isTrimmed(),
     Schema.isNonEmpty(),
     Schema.isMaxLength(32_768),
+    isSignedAssetPath(),
   ),
 });
 export type ControlledHtmlPdfRenderRequest = typeof ControlledHtmlPdfRenderRequest.Type;

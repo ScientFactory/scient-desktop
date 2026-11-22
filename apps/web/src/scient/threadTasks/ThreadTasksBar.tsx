@@ -1,6 +1,7 @@
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
 import { CheckIcon, CircleDotIcon, CircleIcon, ListTodoIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { ComposerBanner } from "~/components/chat/ComposerBanner";
@@ -19,9 +20,9 @@ const MAX_DISMISSED_LISTS = 200;
 const MAX_TASK_SEGMENTS = 10;
 
 const stepStatusLabels = {
-  pending: "Pending",
-  running: "Running",
-  completed: "Completed",
+  pending: msg("Pending", { $context: "task status" }),
+  running: msg("Running", { $context: "task status" }),
+  completed: msg("Completed", { $context: "task status" }),
 } satisfies Record<TaskStep["status"], string>;
 
 function TaskSegments({ steps }: { readonly steps: readonly TaskStep[] }) {
@@ -46,6 +47,7 @@ function TaskSegments({ steps }: { readonly steps: readonly TaskStep[] }) {
 }
 
 function TaskRow({ step }: { readonly step: TaskStep }) {
+  const m = useMessages();
   return (
     <ComposerBanner.Row render={<li />} className="items-start py-1 pe-2">
       <ComposerBanner.Icon
@@ -76,7 +78,7 @@ function TaskRow({ step }: { readonly step: TaskStep }) {
               : "text-muted-foreground/70",
         )}
       >
-        <span className="sr-only">{stepStatusLabels[step.status]}: </span>
+        <span className="sr-only">{m(stepStatusLabels[step.status])}: </span>
         {step.text}
       </ComposerBanner.Content>
       {step.durationMs === undefined ? null : (
@@ -92,6 +94,7 @@ function TaskRow({ step }: { readonly step: TaskStep }) {
 
 /** The thread's unfinished tasks, held on the composer so they stay in view while the thread moves. */
 export function ThreadTasksBar({ projection }: { readonly projection: ThreadStructure | null }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const [dismissedLists, setDismissedLists] = useLocalStorage(
     DISMISSED_LISTS_KEY,
@@ -117,7 +120,19 @@ export function ThreadTasksBar({ projection }: { readonly projection: ThreadStru
           <ComposerBanner.Row
             render={<button type="button" />}
             aria-expanded={expanded}
-            aria-label={`${expanded ? "Collapse tasks" : "Tasks"}: ${completed} of ${total} complete. Current task: ${current?.text}`}
+            aria-label={
+              expanded
+                ? gt("Collapse tasks: {completed} of {total} complete. Current task: {task}", {
+                    completed,
+                    total,
+                    task: current?.text ?? "",
+                  })
+                : gt("Tasks: {completed} of {total} complete. Current task: {task}", {
+                    completed,
+                    total,
+                    task: current?.text ?? "",
+                  })
+            }
             className="min-w-0 flex-1"
             onClick={() => setExpanded((open) => !open)}
             // Opening the list must not take focus from the message being typed.
@@ -127,7 +142,9 @@ export function ThreadTasksBar({ projection }: { readonly projection: ThreadStru
               <ListTodoIcon />
             </ComposerBanner.Icon>
             <ComposerBanner.Content>
-              <span className="shrink-0 text-muted-foreground">Tasks</span>
+              <span className="shrink-0 text-muted-foreground">
+                <T>Tasks</T>
+              </span>
               <span className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80">
                 {current?.text}
               </span>
@@ -141,7 +158,7 @@ export function ThreadTasksBar({ projection }: { readonly projection: ThreadStru
             </ComposerBanner.Actions>
           </ComposerBanner.Row>
           <ComposerBanner.Dismiss
-            aria-label="Dismiss tasks"
+            aria-label={gt("Dismiss tasks")}
             className="rounded-se-xl"
             onClick={() =>
               setDismissedLists((dismissed) => [...dismissed, listKey].slice(-MAX_DISMISSED_LISTS))
@@ -153,7 +170,7 @@ export function ThreadTasksBar({ projection }: { readonly projection: ThreadStru
           <ComposerBanner.Scroll>
             <ComposerBanner.Children
               render={<ul role="list" />}
-              aria-label={`Task list. ${completed} of ${total} complete.`}
+              aria-label={gt("Task list. {completed} of {total} complete.", { completed, total })}
             >
               {list.steps.map((step) => (
                 <TaskRow key={step.id} step={step} />

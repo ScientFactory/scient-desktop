@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedString } from "../baseSchemas.ts";
 import type { CustomModelSetting as CustomModelSchema } from "../model.ts";
+import { SCIENT_AGENT_DEFAULT_IDLE_COMPACTION } from "./idleCompaction.ts";
 
 export const SCIENT_PROVIDER_ENABLED_DEFAULTS = {
   omp: false,
@@ -74,6 +75,16 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
     { order: ["binaryPath", "homePath", "profile"] },
   );
 
+  // The modes of Claude's `idleCompaction`; `resolveIdleCompaction` reads either provider's. The
+  // form shows the first option for a missing key and removes the key when it is chosen, so the
+  // first option is the mode a missing key resolves to, and "Use default" is stored explicitly.
+  const SCIENT_AGENT_IDLE_COMPACTION_MODES = [
+    { value: SCIENT_AGENT_DEFAULT_IDLE_COMPACTION, label: "Before the cache expires" },
+    { value: "onReturn", label: "When you return" },
+    { value: "off", label: "Never" },
+    { value: "default", label: "Use default" },
+  ] as const;
+
   /**
    * Scient Agent keeps its state in a directory this server assigns, so it has
    * no home or profile setting. It is Scient's own agent, so it is on by default.
@@ -104,8 +115,32 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
           providerSettingsForm: { control: "switch" },
         }),
       ),
+      imageGeneration: Schema.Boolean.pipe(
+        Schema.withDecodingDefault(Effect.succeed(true)),
+        Schema.annotateKey({
+          title: "Image generation",
+          description:
+            "Lets Scient Agent make and edit pictures, such as figures and diagrams, with a signed-in ChatGPT or Google Antigravity account. It uses that account's quota.",
+          providerSettingsForm: { control: "switch" },
+        }),
+      ),
+      idleCompaction: Schema.Literals(
+        SCIENT_AGENT_IDLE_COMPACTION_MODES.map((mode) => mode.value),
+      ).pipe(
+        Schema.withDecodingDefault(Effect.succeed(SCIENT_AGENT_DEFAULT_IDLE_COMPACTION)),
+        Schema.annotateKey({
+          title: "Compact idle threads",
+          description:
+            "When to compact an idle thread over 200,000 tokens: before its prompt cache expires (the default), after you return, or never. Use default follows Providers > Advanced.",
+          providerSettingsForm: {
+            control: "select",
+            options: SCIENT_AGENT_IDLE_COMPACTION_MODES,
+            clearWhenEmpty: "omit",
+          },
+        }),
+      ),
     },
-    { order: ["binaryPath", "computerControl"] },
+    { order: ["binaryPath", "computerControl", "imageGeneration", "idleCompaction"] },
   );
 
   const DroidSettings = makeProviderSettingsSchema(

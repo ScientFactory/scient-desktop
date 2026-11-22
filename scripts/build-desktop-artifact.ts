@@ -80,7 +80,9 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
+import { resolveParcelWatcherNativeDependencies } from "./lib/scient-parcel-watcher-build.ts";
 import { validatePackagedFilePublication } from "./lib/scient-file-publication-build.ts";
+import { resolveTaggedSourceVersion } from "./lib/tagged-source-version.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1217,6 +1219,7 @@ import {
   WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
 } from "./scient/conversationAssociation.ts";
 export { renderWindowsConversationAssociationInclude, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE };
+import { renderWindowsInstallFolderMacros } from "./scient/installFolderProtection.ts";
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/file-exchange",
@@ -1247,6 +1250,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!apps/desktop/prod-resources/apple-speech",
+  "!apps/desktop/prod-resources/apple-speech/**/*",
 
   "!apps/desktop/prod-resources/windows-server",
   "!apps/desktop/prod-resources/windows-server/**/*",
@@ -1376,13 +1381,30 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/node-pty/build",
   "node_modules/node-pty/third_party/conpty",
   "node_modules/@ff-labs/fff-bin-win32-",
+  // SCIENT-FORK
+  "node_modules/@parcel/watcher-win32-",
   "node_modules/@yuuang/ffi-rs-win32-",
   // These loaders select separate Linux packages when the WSL Node host runs.
   // Exclude only their Windows variants from this tarball, not the sidecar.
   "node_modules/@napi-rs/canvas-win32-",
   "node_modules/@napi-rs/keyring-win32-",
   "node_modules/@cursor/sdk-win32-",
+  "node_modules/@koromix/koffi-win32-",
+  "node_modules/@transcribe-cpp/win32-",
 ] as const;
+// SCIENT-FORK:START — Scient builds its own WSL archive; Windows packages never load there.
+// A package built for Windows names its target (`koffi-win32-x64`, `win32-x64-cpu-vulkan`); none
+// can load in WSL, so a new one that the list above misses fails the build instead of shipping.
+const WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE = /^node_modules\/(?:@[^/]+\/)?[^/]*win32-/;
+
+export const findForbiddenWslRuntimeArchiveMember = (members: ReadonlyArray<string>) =>
+  members.find(
+    (member) =>
+      member.endsWith(".map") ||
+      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)) ||
+      WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE.test(member),
+  );
+// SCIENT-FORK:END
 // Build and ship the WSL archive only with Linux pty.node; otherwise every launch extracts an unusable cache.
 export const bundlesWslRuntime = (input: {
   readonly arch: typeof BuildArch.Type;
@@ -1432,6 +1454,9 @@ export const LINUX_CAPTURE_EXTRA_RESOURCES = [
 ] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
+] as const;
+export const MAC_APPLE_SPEECH_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/apple-speech", to: "apple-speech" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -1754,6 +1779,12 @@ export function resolveMergedStageDependencies(input: {
     ...selectCliRuntimeExternalDependencies(input.serverDependencies),
     ...input.desktopDependencies,
     ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
+    // SCIENT-FORK
+    ...resolveParcelWatcherNativeDependencies(
+      input.platform,
+      input.arch,
+      input.serverDependencies["@parcel/watcher"],
+    ),
   };
 }
 
@@ -2601,6 +2632,13 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
 
 export const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
   function* (input: { readonly asarPath: string; readonly verbose: boolean }) {
+    // A PR preview's bundle is untrusted and this job may hold signing secrets, so never run it.
+    if (yield* Config.Boolean("T3CODE_DESKTOP_UNTRUSTED_BUNDLE").pipe(Config.withDefault(false))) {
+      yield* Effect.log(
+        "[desktop-artifact] Skipped the bundle self-check for an untrusted bundle.",
+      );
+      return;
+    }
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
@@ -2847,6 +2885,31 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
       { cwd: input.repoRoot },
     ),
     { label: "build Linux browser secret helper", verbose: input.verbose },
+  );
+});
+
+export const stageAppleSpeech = Effect.fn("stageAppleSpeech")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "mac") return;
+  const path = yield* Path.Path;
+  yield* runCommand(
+    ChildProcess.make(
+      "node",
+      [
+        path.join(input.repoRoot, "apps/desktop/scripts/build-apple-speech.mjs"),
+        "--arch",
+        input.arch,
+        "--output",
+        path.join(input.stageResourcesDir, "apple-speech", "t3-apple-speech"),
+      ],
+      { cwd: input.repoRoot },
+    ),
+    { label: "build macOS Apple Speech helper", verbose: input.verbose },
   );
 });
 
@@ -3287,6 +3350,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
+      ...(platform === "mac" ? MAC_APPLE_SPEECH_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -3325,6 +3389,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "Commands you run in Scient may need to add events to your calendars.",
         NSCameraUsageDescription:
           "Scient lets commands run by terminals and coding agents use the camera.",
+        NSSpeechRecognitionUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} transcribes your dictation on this Mac when you choose Apple Speech.`,
       },
       // SCIENT-FORK:START — do not register http(s) or HTML associations while activation is held.
       protocols: [
@@ -3396,6 +3461,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       },
     };
+    // SCIENT-FORK: Scient's release checks and download links name AppImages by version, so T3's
+    // version-free names wait for a release change of their own.
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
       // AppStream consumers associate this metadata with our scient.desktop entry.
@@ -3656,6 +3723,18 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
       // ffi-rs) from the extracted copy of this same tree.
       ...resolveFffNativeDependencies("win", input.arch, input.fffNodeVersion),
       ...resolveFffNativeDependencies("linux", input.arch, input.fffNodeVersion),
+      // SCIENT-FORK:START
+      ...resolveParcelWatcherNativeDependencies(
+        "win",
+        input.arch,
+        input.runtimeExternalDependencies["@parcel/watcher"],
+      ),
+      ...resolveParcelWatcherNativeDependencies(
+        "linux",
+        input.arch,
+        input.runtimeExternalDependencies["@parcel/watcher"],
+      ),
+      // SCIENT-FORK:END
     },
   });
   const sidecarPatchedDependencies = createStagePatchedDependencies(
@@ -4210,11 +4289,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const members = parseWslRuntimeArchiveMembers(listing.stdout);
-    const forbiddenMember = members.find(
-      (member) =>
-        member.endsWith(".map") ||
-        WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
-    );
+    const forbiddenMember = findForbiddenWslRuntimeArchiveMember(members);
     if (forbiddenMember !== undefined) {
       return yield* invalidWslRuntime(
         new Error(`WSL runtime archive contains forbidden member ${forbiddenMember}`),
@@ -4321,6 +4396,34 @@ export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMac
   },
 );
 
+export class LinuxPackagedAppMissingError extends Schema.TaggedError<LinuxPackagedAppMissingError>()(
+  "LinuxPackagedAppMissingError",
+  { stageDistDir: Schema.String },
+) {
+  override get message(): string {
+    return `Expected electron-builder to leave resources/app.asar under ${this.stageDistDir}/linux*-unpacked.`;
+  }
+}
+
+export const validateLinuxPackagedPayload = Effect.fn(
+  "desktopArtifact.validateLinuxPackagedPayload",
+)(function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asarPaths = (yield* fs.readDirectory(input.stageDistDir))
+    .filter((entry) => entry.startsWith("linux") && entry.endsWith("-unpacked"))
+    .map((entry) => path.join(input.stageDistDir, entry, "resources/app.asar"));
+  if (asarPaths.length === 0) {
+    return yield* new LinuxPackagedAppMissingError({ stageDistDir: input.stageDistDir });
+  }
+  for (const asarPath of asarPaths) {
+    yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
+  }
+  yield* Effect.log(
+    `[desktop-artifact] Validated Linux payload (${String(asarPaths.length)} app bundle(s)).`,
+  );
+});
+
 const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -4359,7 +4462,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     });
   }
 
-  const appVersion = options.version ?? serverPackageJson.version;
+  const appVersion =
+    options.version ?? resolveTaggedSourceVersion(repoRoot, serverPackageJson.version);
   yield* validateDesktopBuildPackageVersions({
     buildVersion: appVersion,
     serverVersion: serverPackageJson.version,
@@ -4612,6 +4716,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
+  yield* stageAppleSpeech({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
 
   yield* assertPlatformBuildResources(
     options.platform,
@@ -4690,7 +4801,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     // SCIENT-FORK:START
     yield* fs.writeFileString(
       path.join(stageResourcesDir, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE),
-      renderWindowsConversationAssociationInclude(previewChannel, nativePreviewPath !== undefined),
+      renderWindowsInstallFolderMacros() +
+        renderWindowsConversationAssociationInclude(
+          previewChannel,
+          nativePreviewPath !== undefined,
+        ),
     );
     // SCIENT-FORK:END
   }
@@ -5068,6 +5183,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         stderrTail: "Qualified preview DLL missing from packaged resources.",
       });
     }
+  }
+  // The probe runs on the host Node, so a cross-arch build skips it.
+  if (
+    options.platform === "linux" &&
+    hostPlatform === "linux" &&
+    options.arch === (yield* HostProcess.Architecture)
+  ) {
+    yield* validateLinuxPackagedPayload({ stageDistDir, verbose: options.verbose });
   }
   // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
   if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {

@@ -3,6 +3,10 @@ import type {
   ServerProviderVersionAdvisory,
   ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
+import { providerStatusMessageText } from "../../scient/providerConnection/providerStatusMessageCopy";
 
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
@@ -24,6 +28,40 @@ export const PROVIDER_STATUS_STYLES = {
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
+/** The server names a custom endpoint in English; other auth labels are product or plan names. */
+export function providerAuthLabel(
+  auth: Pick<ServerProvider["auth"], "label" | "type">,
+  resolve: MessageResolver = m,
+): string | undefined {
+  if (auth.type === "customEndpoint") return resolve(msg("Custom API endpoint"));
+  return auth.label ?? auth.type;
+}
+
+// SCIENT-FORK:START — a custom endpoint names its server and where it was set, whatever else
+// the card shows for the account.
+function providerEndpointText(
+  auth: Pick<ServerProvider["auth"], "type" | "endpoint" | "endpointSource">,
+  resolve: MessageResolver,
+): string | null {
+  if (auth.type !== "customEndpoint" || auth.endpoint === undefined) return null;
+  const endpoint = auth.endpoint;
+  if (auth.endpointSource === "claude-settings")
+    return resolve(
+      msg("Sends requests to {endpoint}. Set by ANTHROPIC_BASE_URL in Claude's settings.", {
+        endpoint,
+      }),
+    );
+  if (auth.endpointSource === "environment")
+    return resolve(
+      msg(
+        "Sends requests to {endpoint}. Set by the ANTHROPIC_BASE_URL environment variable, in this provider's settings or on this computer.",
+        { endpoint },
+      ),
+    );
+  return resolve(msg("Sends requests to {endpoint}.", { endpoint }));
+}
+// SCIENT-FORK:END
+
 // Antigravity's local health check verifies installation, not Google sign-in.
 // API-key and Agent Platform warnings still need attention.
 function isAntigravitySignInUnchecked(provider: ServerProvider): boolean {
@@ -44,63 +82,79 @@ export function getProviderStatusKey(provider: ServerProvider | undefined): Prov
   return provider?.status ?? "warning";
 }
 
-export function getProviderSummary(provider: ServerProvider | undefined) {
+export function getProviderSummary(
+  provider: ServerProvider | undefined,
+  resolve: MessageResolver = m,
+) {
   if (!provider) {
     return {
-      headline: "Checking provider status",
-      detail: "Waiting for the server to report installation and authentication details.",
+      headline: resolve(msg("Checking provider status")),
+      detail: resolve(
+        msg("Waiting for the server to report installation and authentication details."),
+      ),
     };
   }
   if (!provider.enabled || provider.status === "disabled") {
     return {
-      headline: "Disabled",
+      headline: resolve(msg("Disabled", { $context: "provider status" })),
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in Scient.",
+        provider.message ??
+        resolve(msg("This provider is installed but disabled for new sessions in Scient.")),
     };
   }
   if (!provider.installed) {
     return {
-      headline: "Not found",
+      headline: resolve(msg("Not found", { $context: "provider status, CLI is missing" })),
       // Lifecycle presentation already provides the next action; passive probe details belong in diagnostics.
       // Repeating executable paths and PATH troubleshooting in a collapsed row exposes internals.
       detail: null,
     };
   }
   if (provider.auth.status === "unauthenticated") {
-    const authLabel = provider.auth.label ?? provider.auth.type;
+    const authLabel = providerAuthLabel(provider.auth, resolve);
     return {
-      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
+      headline: authLabel
+        ? resolve(msg("Not authenticated · {method}", { method: authLabel }))
+        : resolve(msg("Not authenticated")),
       detail: provider.message ?? null,
     };
   }
   if (isAntigravitySignInUnchecked(provider)) {
     return {
-      headline: "Installed · Sign-in not checked",
+      headline: resolve(msg("Installed · Sign-in not checked")),
       detail: provider.message ?? null,
     };
   }
   if (provider.status === "warning") {
     return {
-      headline: "Needs attention",
-      detail:
-        provider.message ?? "The provider is installed, but the server could not fully verify it.",
+      headline: resolve(msg("Needs attention")),
+      detail: provider.message
+        ? providerStatusMessageText(provider.message, resolve)
+        : resolve(msg("The provider is installed, but the server could not fully verify it.")),
     };
   }
   if (provider.status === "error") {
     return {
-      headline: "Unavailable",
-      detail: provider.message ?? "The provider failed its startup checks.",
+      headline: resolve(msg("Unavailable", { $context: "provider status" })),
+      detail: provider.message ?? resolve(msg("The provider failed its startup checks.")),
     };
   }
   if (provider.auth.status === "authenticated") {
-    const authLabel = provider.auth.label ?? provider.auth.type;
+    const authLabel = providerAuthLabel(provider.auth, resolve);
     return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
-      detail: provider.message ?? null,
+      headline: authLabel
+        ? resolve(msg("Authenticated · {method}", { method: authLabel }))
+        : resolve(msg("Authenticated")),
+      // SCIENT-FORK:START — a custom endpoint names its server and where it was set.
+      detail:
+        [provider.message, providerEndpointText(provider.auth, resolve)]
+          .filter((part) => part != null)
+          .join(" ") || null,
+      // SCIENT-FORK:END
     };
   }
   return {
-    headline: "Available",
+    headline: resolve(msg("Available", { $context: "provider status" })),
     detail: provider.message ?? null,
   };
 }
@@ -116,15 +170,16 @@ export function getProviderVersionLabel(version: string | null | undefined) {
 }
 
 const COMPATIBILITY_TITLES = {
-  graceful: "Limited support",
-  unsupported: "Unsupported version",
-  broken: "Known broken version",
+  graceful: msg("Limited support"),
+  unsupported: msg("Unsupported version"),
+  broken: msg("Known broken version"),
 } as const;
 
 export function getProviderVersionAdvisoryPresentation(
   advisory: ServerProviderVersionAdvisory | undefined,
   compatibility?: ServerProviderCompatibilityAdvisory | undefined,
   showCompatibility = true,
+  resolve: MessageResolver = m,
 ): {
   readonly title: string;
   readonly detail: string;
@@ -147,10 +202,12 @@ export function getProviderVersionAdvisoryPresentation(
     // Latest package versions cannot be updated into recommendations requiring another package.
     const isAlreadyLatest = advisory?.status === "current";
     return {
-      title: COMPATIBILITY_TITLES[compatibility.status],
+      title: resolve(COMPATIBILITY_TITLES[compatibility.status]),
       detail:
         compatibility.message ??
-        (recommendation ? `Use ${recommendation} for full support.` : "Update for full support."),
+        (recommendation
+          ? resolve(msg("Use {version} for full support.", { version: recommendation }))
+          : resolve(msg("Update for full support."))),
       updateCommand:
         targetVersion || latestIsIncompatible || isAlreadyLatest
           ? null
@@ -168,17 +225,16 @@ export function getProviderVersionAdvisoryPresentation(
     return null;
   }
 
-  const label = "Update available";
   const version = advisory.latestVersion;
   const versionLabel = getProviderVersionLabel(version);
 
   return {
-    title: label,
+    title: resolve(msg("Update available")),
     detail:
       advisory.message ??
       (versionLabel
-        ? `${label}: install ${versionLabel}.`
-        : `${label}: install the latest provider version.`),
+        ? resolve(msg("Update available: install {version}.", { version: versionLabel }))
+        : resolve(msg("Update available: install the latest provider version."))),
     updateCommand: advisory.updateCommand,
     emphasis: "normal" as const,
     targetVersion: null,

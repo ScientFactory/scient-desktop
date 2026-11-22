@@ -45,8 +45,8 @@ import * as yazl from "yazl";
 
 import * as ServerConfig from "../../config.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
+import { latestHistory } from "../storage/FolderHistory.ts";
 import {
-  latestHistory,
   folderSignature,
   skillsFolderUsage,
   readSkillFolder,

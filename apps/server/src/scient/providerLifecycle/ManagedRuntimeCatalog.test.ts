@@ -13,12 +13,13 @@ import {
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
   SCIENT_AGENT_TARGETS,
-  MUSE_TARGETS,
   resolveMuseArtifactPolicy,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
+import { MUSE_SUPPORTED_TARGETS as MUSE_TARGETS } from "@scientfactory/provider-runtime/testing";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -534,6 +535,80 @@ describe("managed runtime catalog resolution", () => {
       true,
     );
     assert.strictEqual(artifact.auxiliaryExecutablePaths?.includes("codex-path/rg"), true);
+  });
+
+  it("keeps contract 1 Muse clients on what they can download and offers contract 2 more", () => {
+    const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
+    const muse = bundled.providers.muse!;
+    const sized = (bytes: number): ManagedRuntimeCatalogData => {
+      const version = "1.4.24-R9131.1";
+      return {
+        schemaVersion: 1,
+        providers: {
+          ...bundled.providers,
+          muse: {
+            ...muse,
+            version,
+            artifacts: Object.fromEntries(
+              Object.entries(muse.artifacts).map(([key, artifact]) => [
+                key,
+                {
+                  ...artifact,
+                  url: artifact.url.replace(muse.version, version),
+                  ...(key === "win32-x64" ? { size: bytes } : {}),
+                },
+              ]),
+            ),
+          },
+        },
+      };
+    };
+    const feed = sized(578 * 1024 * 1024);
+    const contractOneClient = {
+      ...bundled,
+      providers: { ...bundled.providers, muse: { ...muse, contractRevision: 1 } },
+    };
+    assert.deepStrictEqual(
+      mergeManagedRuntimeCatalogs(contractOneClient, feed).providers.muse,
+      contractOneClient.providers.muse,
+    );
+    const policy = resolveMuseArtifactPolicy({ platform: "win32", arch: "x64" })!;
+    assert.isUndefined(
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 1 }),
+    );
+    assert.strictEqual(
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 2 })?.size,
+      578 * 1024 * 1024,
+    );
+    assert.isUndefined(
+      resolveManagedRuntimeCatalogArtifact({
+        catalog: sized(1024 * 1024 * 1024 + 1),
+        policy,
+        contractRevision: 2,
+      }),
+    );
+    assert.deepStrictEqual(MANAGED_RUNTIME_POLICY.muse, { revision: 2, historicalRevisions: [1] });
+    // Repair reads what is installed in full, but only offers what this build can download.
+    const installed = resolveManagedRuntimeCatalogArtifact({
+      catalog: feed,
+      policy,
+      contractRevision: 2,
+    })!;
+    const bundledArtifact = resolveManagedRuntimeCatalogArtifact({
+      catalog: bundled,
+      policy,
+      contractRevision: 2,
+    })!;
+    const repair = (size: number) =>
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact,
+        artifactPolicy: policy,
+        candidateArtifact: bundledArtifact,
+        activeArtifact: { ...managedRuntimeArtifactReceipt(installed), size },
+      });
+    assert.strictEqual(repair(578 * 1024 * 1024)?.version, "1.4.24-R9131.1");
+    // Too large to fetch again, and nothing as new on offer: no repair, rather than a downgrade.
+    assert.isUndefined(repair(1024 * 1024 * 1024 + 1));
   });
 
   it("protects revision 1 through 4 clients while accepting the new Codex contract", () => {

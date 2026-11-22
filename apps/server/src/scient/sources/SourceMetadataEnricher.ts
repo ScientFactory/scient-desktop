@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Metadata enrichment uses bounded HTTPS requests.
+// @effect-diagnostics nodeBuiltinImport:off -- The enrichment deadline uses an unref'ed native timer.
 // @effect-diagnostics globalDate:off -- Retrieval evidence records an interoperable timestamp.
-import * as NodeHttps from "node:https";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
@@ -16,13 +15,15 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { XMLParser } from "fast-xml-parser";
 
+import {
+  METADATA_USER_AGENT as USER_AGENT,
+  requestMetadataJson,
+  requestMetadataText,
+} from "./metadataHttp.ts";
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
+import { runWithOpenAlexLimit } from "./ConnectorIdentifierLookup.ts";
 
-const METADATA_TIMEOUT_MS = 5_000;
 const ENRICHMENT_DEADLINE_MS = 6_500;
-const MAX_METADATA_RESPONSE_BYTES = 2 * 1024 * 1024;
-const USER_AGENT =
-  "Scient/0.0 (https://github.com/ScientFactory/scient-desktop; source metadata resolution)";
 
 const CrossrefResponse = Schema.Struct({
   message: Schema.Struct({
@@ -41,7 +42,16 @@ const EuropePmcSearchResponse = Schema.Struct({
   resultList: Schema.Struct({ result: Schema.Array(EuropePmcResult) }),
 });
 
+/** OpenAlex keeps an abstract as each word with its positions. */
+const OpenAlexAbstractResponse = Schema.Struct({
+  doi: Schema.optional(Schema.NullOr(Schema.String)),
+  abstract_inverted_index: Schema.optional(
+    Schema.NullOr(Schema.Record(Schema.String, Schema.Array(Schema.Int))),
+  ),
+});
+
 const decodeCrossrefResponse = Schema.decodeUnknownSync(CrossrefResponse);
+const decodeOpenAlexAbstractResponse = Schema.decodeUnknownSync(OpenAlexAbstractResponse);
 const decodeEuropePmcArticleResponse = Schema.decodeUnknownSync(EuropePmcArticleResponse);
 const decodeEuropePmcSearchResponse = Schema.decodeUnknownSync(EuropePmcSearchResponse);
 
@@ -58,7 +68,7 @@ const pubmedXmlParser = new XMLParser({
 
 type AbstractOrigin = Extract<
   ScientSourceFieldProvenance["origin"],
-  "crossref" | "europe-pmc" | "pubmed"
+  "crossref" | "europe-pmc" | "pubmed" | "openalex"
 >;
 
 interface AbstractEvidence {
@@ -73,6 +83,7 @@ export interface AbstractResolvers {
   readonly pubmed: (pmid: string) => Promise<AbstractEvidence | null>;
   readonly crossref: (doi: string) => Promise<AbstractEvidence | null>;
   readonly europePmc: (identifier: ScientSourceIdentifier) => Promise<AbstractEvidence | null>;
+  readonly openAlex: (doi: string) => Promise<AbstractEvidence | null>;
 }
 
 export interface EnrichmentOptions {
@@ -97,56 +108,6 @@ function trimmed(value: unknown): string | null {
   if (!Predicate.isString(value)) return null;
   const result = value.trim();
   return result ? result : null;
-}
-
-function requestMetadataText(
-  url: URL,
-  headers: Readonly<Record<string, string>>,
-  redirects = 0,
-): Promise<string> {
-  if (url.protocol !== "https:") throw new Error("Metadata requests must use HTTPS.");
-  if (redirects > 4) throw new Error("The metadata service redirected too many times.");
-  return new Promise((resolve, reject) => {
-    const request = NodeHttps.get(url, { headers }, (response) => {
-      const status = response.statusCode ?? 0;
-      if (status >= 300 && status < 400 && response.headers.location) {
-        response.resume();
-        void requestMetadataText(
-          new URL(response.headers.location, url),
-          headers,
-          redirects + 1,
-        ).then(resolve, reject);
-        return;
-      }
-      if (status < 200 || status >= 300) {
-        response.resume();
-        reject(new Error(`The metadata service returned HTTP ${status}.`));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let length = 0;
-      response.on("data", (chunk: Buffer) => {
-        length += chunk.byteLength;
-        if (length > MAX_METADATA_RESPONSE_BYTES) {
-          request.destroy(new Error("The metadata service returned too much data."));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    });
-    request.setTimeout(METADATA_TIMEOUT_MS, () => {
-      request.destroy(new Error("The metadata request timed out."));
-    });
-    request.on("error", reject);
-  });
-}
-
-export async function requestMetadataJson(
-  url: URL,
-  headers: Readonly<Record<string, string>>,
-): Promise<unknown> {
-  return JSON.parse(await requestMetadataText(url, headers)) as unknown;
 }
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -330,10 +291,52 @@ async function resolveEuropePmcAbstract(
   }
 }
 
+function evidenceFromOpenAlex(
+  work: typeof OpenAlexAbstractResponse.Type,
+  doi: string,
+): AbstractEvidence | null {
+  const found = work.doi?.replace(/^https?:\/\/(?:dx\.)?doi\.org\//iu, "") ?? "";
+  const index = work.abstract_inverted_index;
+  if (
+    !index ||
+    normalizePersistentIdentifier("doi", found) !== normalizePersistentIdentifier("doi", doi)
+  )
+    return null;
+  const words: string[] = [];
+  for (const [word, positions] of Object.entries(index))
+    for (const position of positions) words[position] = word;
+  const abstract = normalizeScientSourceAbstractDocument(
+    words.filter((word) => word !== undefined).join(" "),
+  );
+  return abstract
+    ? {
+        abstract: abstract.text,
+        sections: abstract.sections,
+        origin: "openalex",
+        sourceField: "works/{doi}/abstract_inverted_index",
+        sourceIdentifier: { scheme: "doi", value: doi },
+      }
+    : null;
+}
+
+async function resolveOpenAlexAbstract(doi: string): Promise<AbstractEvidence | null> {
+  try {
+    const url = new URL(`https://api.openalex.org/works/doi:${encodeURI(doi)}`);
+    url.searchParams.set("select", "doi,abstract_inverted_index");
+    const value = await runWithOpenAlexLimit(() =>
+      requestMetadataJson(url, { Accept: "application/json", "User-Agent": USER_AGENT }),
+    );
+    return evidenceFromOpenAlex(decodeOpenAlexAbstractResponse(value), doi);
+  } catch {
+    return null;
+  }
+}
+
 const defaultResolvers: AbstractResolvers = {
   pubmed: resolvePubmedAbstract,
   crossref: resolveCrossrefAbstract,
   europePmc: resolveEuropePmcAbstract,
+  openAlex: resolveOpenAlexAbstract,
 };
 
 function identifier(
@@ -368,6 +371,7 @@ export async function enrichScientSourceCandidate(
   if (doi) {
     attempts.push(() => resolvers.crossref(doi.value));
     if (!pmid) attempts.push(() => resolvers.europePmc(doi));
+    attempts.push(() => resolvers.openAlex(doi.value));
   }
   const deadlineAt = Date.now() + (options.deadlineMs ?? ENRICHMENT_DEADLINE_MS);
   let evidence: AbstractEvidence | null = null;
@@ -398,5 +402,6 @@ export async function enrichScientSourceCandidate(
 export const sourceMetadataEnricherInternals = {
   evidenceFromEuropePmc,
   parsePubmedAbstract,
+  evidenceFromOpenAlex,
   resolveCrossrefAbstract,
 };

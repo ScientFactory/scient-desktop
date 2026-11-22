@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useContext, useId, useState, type ReactNode } from "react";
 import { Input } from "~/components/ui/input";
 import {
@@ -62,7 +63,7 @@ function BoxColor(props: { label: string; value: string; onChange: (value: strin
           ))}
         </datalist>
         <DockCommandItem disabled={!valid} onClick={() => props.onChange(value)}>
-          Apply
+          <T>Apply</T>
         </DockCommandItem>
       </LatexContextMenuForm>
       <MenuSeparator />
@@ -98,18 +99,19 @@ function BoxDimension(props: { label: string; value: string; onChange: (value: s
         onChange={setValue}
       />
       <DockCommandItem disabled={!valid} onClick={() => props.onChange(value)}>
-        Apply
+        <T>Apply</T>
       </DockCommandItem>
     </LatexContextMenuForm>
   );
 }
 
 function BoxPadding(props: { value: string; onChange: (value: string) => void }) {
+  const gt = useGT();
   const choices = [
-    { value: "0mm", label: "None" },
-    { value: "1mm", label: "Compact" },
-    { value: "3mm", label: "Normal" },
-    { value: "5mm", label: "Spacious" },
+    { value: "0mm", label: gt("None", { $context: "box padding" }) },
+    { value: "1mm", label: gt("Compact") },
+    { value: "3mm", label: gt("Normal", { $context: "box padding" }) },
+    { value: "5mm", label: gt("Spacious") },
   ];
   const selected = choices.find(
     (choice) => latexLayoutLength(choice.value) === latexLayoutLength(props.value),
@@ -128,8 +130,8 @@ function BoxPadding(props: { value: string; onChange: (value: string) => void })
         ))}
       </MenuRadioGroup>
       <MenuSeparator />
-      <BoxSubmenu label="Custom" contentSized>
-        <BoxDimension label="Padding" value={props.value} onChange={props.onChange} />
+      <BoxSubmenu label={gt("Custom", { $context: "custom size" })} contentSized>
+        <BoxDimension label={gt("Padding")} value={props.value} onChange={props.onChange} />
       </BoxSubmenu>
     </>
   );
@@ -148,64 +150,65 @@ export function LatexBoxControls(props: {
   onOption: (name: string, value: string | null) => void;
   onTitle: () => void;
 }) {
+  const gt = useGT();
   const rounded = Number.parseFloat(props.radius) > 0;
   return (
     <>
       <DockMenu
-        label="Box appearance"
-        icon="Appearance"
+        label={gt("Box appearance")}
+        icon={gt("Appearance")}
         commandScope="latex"
         disabled={!props.editable}
       >
-        <BoxSubmenu label="Background">
+        <BoxSubmenu label={gt("Background")}>
           <BoxColor
-            label="Box background"
+            label={gt("Box background")}
             value={props.background}
             onChange={(value) => props.onOption("colback", value)}
           />
         </BoxSubmenu>
-        <BoxSubmenu label="Border">
+        <BoxSubmenu label={gt("Border", { $context: "box border" })}>
           <DockCommandItem onClick={() => props.onOption("boxrule", "0pt")}>
-            No border
+            <T>No border</T>
           </DockCommandItem>
           <MenuSeparator />
-          <BoxSubmenu label="Color">
+          <BoxSubmenu label={gt("Color", { $context: "box border color" })}>
             <BoxColor
-              label="Box border color"
+              label={gt("Box border color")}
               value={props.border}
               onChange={(value) => props.onOption("colframe", value)}
             />
           </BoxSubmenu>
-          <BoxSubmenu label="Thickness" contentSized>
+          <BoxSubmenu label={gt("Thickness")} contentSized>
             <BoxDimension
-              label="Thickness"
+              label={gt("Thickness")}
               value={props.borderWidth}
               onChange={(value) => props.onOption("boxrule", value)}
             />
           </BoxSubmenu>
         </BoxSubmenu>
-        <BoxSubmenu label="Corners">
+        <BoxSubmenu label={gt("Corners")}>
           <MenuRadioGroup value={rounded ? "rounded" : "square"}>
             <DockCommandRadioItem value="square" onClick={() => props.onOption("arc", "0pt")}>
-              Square
+              <T context="box corners">Square</T>
             </DockCommandRadioItem>
             <DockCommandRadioItem
               value="rounded"
               onClick={() => props.onOption("arc", rounded ? props.radius : "1mm")}
             >
-              Rounded
+              <T>Rounded</T>
             </DockCommandRadioItem>
           </MenuRadioGroup>
           <MenuSeparator />
-          <BoxSubmenu label="Custom" contentSized>
+          <BoxSubmenu label={gt("Custom", { $context: "custom size" })} contentSized>
             <BoxDimension
-              label="Radius"
+              label={gt("Radius")}
               value={props.radius}
               onChange={(value) => props.onOption("arc", value)}
             />
           </BoxSubmenu>
         </BoxSubmenu>
-        <BoxSubmenu label="Padding">
+        <BoxSubmenu label={gt("Padding")}>
           <BoxPadding value={props.padding} onChange={(value) => props.onOption("boxsep", value)} />
         </BoxSubmenu>
         <MenuSeparator />
@@ -215,17 +218,17 @@ export function LatexBoxControls(props: {
           closeOnClick={false}
           onCheckedChange={(checked) => props.onOption("breakable", checked ? "" : null)}
         >
-          Allow page breaks
+          <T>Allow page breaks</T>
         </MenuCheckboxItem>
       </DockMenu>
       <button
         type="button"
         className={dockButtonClass()}
         disabled={!props.editable}
-        aria-label={props.hasTitle ? "Edit box title" : "Add box title"}
+        aria-label={props.hasTitle ? gt("Edit box title") : gt("Add box title")}
         onClick={props.onTitle}
       >
-        Title
+        <T context="box title button">Title</T>
       </button>
     </>
   );

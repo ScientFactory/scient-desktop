@@ -111,6 +111,14 @@ says when Scient last checked its qualified-release catalog. If the latest check
 says so with the reason and the time of the last successful check, and Scient keeps using the
 catalog it already has. When automatic update checks are off, the line says that instead.
 
+A download has no overall time limit: on a slow connection it keeps going while data arrives, and
+continues from what it already has after a dropped connection. If an install, update, or repair you
+started fails in a way that usually passes (a lost connection, a busy server) or Scient closes
+during it, Scient tries the same reviewed release again on its own about 5 minutes, 30 minutes, and
+2 hours later, then every 4 hours. It stops once it succeeds, or when you cancel, remove the runtime,
+disable the provider, or start another change to it; a release that changed in the meantime is not
+installed in its place.
+
 Scient downloads, verifies, and tests a new runtime while you keep working. Switching to it restarts
 that provider, so while one of its turns or background tasks (subagents, workflows, monitors) is
 running, the button shows **Waiting**; your conversations continue on the next message. Cancel a
@@ -167,6 +175,36 @@ code goes to that live process and is not saved as provider state.
 
 Being signed in does not always mean the account has a supported subscription, remaining quota, or a
 usable model. Scient keeps those states separate and reports the provider's actual result.
+
+## Model visibility and subscription defaults
+
+Scient hides a known set of older or non-preferred subscription models by default, using
+exact model IDs rather than an allowlist or a family-prefix rule. Newly discovered IDs are
+visible automatically. Hidden models remain available to show again in **Settings > Providers >
+Models**. Your saved visibility, ordering, favorites, and custom models take priority over
+these defaults; this policy does not rewrite existing conversations, explicit model choices,
+or your global default.
+
+The current subscription choices are:
+
+| Subscription | Visible current choices                                                                              | Preferred implicit default |
+| ------------ | ---------------------------------------------------------------------------------------------------- | -------------------------- |
+| OpenAI       | Sol 6.1 (`gpt-6.1-sol`), Terra 6.1 (`gpt-6.1-terra`), Astra 6 (`gpt-6-astra`), Luna 6 (`gpt-6-luna`) | Sol 6.1                    |
+| Anthropic    | Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.2                                                           | Opus 5.5                   |
+| Antigravity  | Gemini 4 Argon, Gemini 4 Hydrogen, Claude Opus 5.5                                                   | Gemini 4 Hydrogen          |
+| Muse Code    | Wonder 1.0, Wonder Full 1.0, Ember 1.0                                                               | Wonder Full 1.0            |
+
+These are preferences, not a promise of account access. An implicit subscription selection
+uses the preferred model only when the provider actually offers it and it is eligible;
+it does not substitute whichever model happens to appear first in the catalog. Standalone
+Antigravity and Muse Code use the same preferred choices when offered. Scient Agent does not
+offer Antigravity accounts.
+
+Older current OpenAI and Anthropic models are hidden by default. Antigravity also hides
+Gemini 3.8 Flash, Claude Sonnet 5.5, GPT-OSS 120B Medium, and the CLI catalog's Gemini 4 Carbon;
+Muse hides Spark, contributor variants, and AssetGen models. These rules apply to the known
+exact IDs, not future versions with similar names. For quota fallback and explicit recovery,
+see [Usage and limits](./usage.md#subscription-quota-fallback).
 
 ## Disabled, remote, and unsupported providers
 

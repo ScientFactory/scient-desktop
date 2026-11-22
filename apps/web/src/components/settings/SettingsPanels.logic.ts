@@ -8,7 +8,11 @@ import type {
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+} from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -18,6 +22,9 @@ import {
 import type { DesktopUpdateChannelPolicy } from "@t3tools/shared/scientDesktopIdentity";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export function shouldShowDesktopUpdateChannelSelector(input: {
   readonly hasDesktopBridge: boolean;
@@ -27,6 +34,7 @@ export function shouldShowDesktopUpdateChannelSelector(input: {
 }
 
 export function formatAboutVersionLabel(version: string, stageLabel: string | null): string {
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- build stage name, shown as the stage pill shows it
   return stageLabel === "Dev" ? `${version} · Dev` : version;
 }
 
@@ -98,24 +106,27 @@ type TypographySettings = Pick<
 >;
 
 /** Labels the font rows whose typography differs from the defaults. */
-export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
+export function getChangedTypographySettingLabels(
+  settings: TypographySettings,
+  resolve: MessageResolver = m,
+): string[] {
   return [
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
     settings.fontWeightInterface !== DEFAULT_UNIFIED_SETTINGS.fontWeightInterface ||
     settings.fontSizeInterface !== DEFAULT_UNIFIED_SETTINGS.fontSizeInterface
-      ? ["Interface font"]
+      ? [resolve(msg("Interface font"))]
       : []),
     ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer ||
     settings.fontSizePrompt !== DEFAULT_UNIFIED_SETTINGS.fontSizePrompt
-      ? ["Prompt font"]
+      ? [resolve(msg("Prompt font"))]
       : []),
     ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ||
     settings.fontSizeCode !== DEFAULT_UNIFIED_SETTINGS.fontSizeCode
-      ? ["Code font"]
+      ? [resolve(msg("Code font"))]
       : []),
     ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal ||
     settings.fontSizeTerminal !== DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal
-      ? ["Terminal font"]
+      ? [resolve(msg("Terminal font"))]
       : []),
   ];
 }
@@ -148,31 +159,34 @@ function isSamePreviewViewport(
     : true;
 }
 
-export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
+export function getChangedBrowserSettingLabels(
+  settings: BrowserDefaultSettings,
+  resolve: MessageResolver = m,
+): string[] {
   return [
     ...(isSamePreviewViewport(
       settings.browserDefaultViewport,
       DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport,
     )
       ? []
-      : ["Browser viewport"]),
+      : [resolve(msg("Browser viewport"))]),
     ...(settings.browserDefaultZoomFactor !== DEFAULT_UNIFIED_SETTINGS.browserDefaultZoomFactor
-      ? ["Browser zoom"]
+      ? [resolve(msg("Browser zoom"))]
       : []),
     ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
-      ? ["Browser appearance"]
+      ? [resolve(msg("Browser appearance"))]
       : []),
     ...(settings.browserRecordingFrameRate !== DEFAULT_UNIFIED_SETTINGS.browserRecordingFrameRate
-      ? ["Recording frame rate"]
+      ? [resolve(msg("Recording frame rate"))]
       : []),
-    ...(settings.browserRecordingShowKeyPresses ? ["Recording key presses"] : []),
-    ...(settings.browserRecordingShowMousePresses ? ["Recording mouse presses"] : []),
+    ...(settings.browserRecordingShowKeyPresses ? [resolve(msg("Recording key presses"))] : []),
+    ...(settings.browserRecordingShowMousePresses ? [resolve(msg("Recording mouse presses"))] : []),
     ...(settings.browserLinkTarget !== DEFAULT_UNIFIED_SETTINGS.browserLinkTarget
-      ? ["Open links in"]
+      ? [resolve(msg("Open links in"))]
       : []),
     ...(settings.browserSearchEngine !== DEFAULT_UNIFIED_SETTINGS.browserSearchEngine ||
     settings.browserCustomSearchUrl !== DEFAULT_UNIFIED_SETTINGS.browserCustomSearchUrl
-      ? ["Search engine"]
+      ? [resolve(msg("Search engine"))]
       : []),
     // SCIENT-FORK:START — Scient Browser: search suggestions.
     ...(settings.browserSearchSuggestions !== DEFAULT_UNIFIED_SETTINGS.browserSearchSuggestions
@@ -181,10 +195,10 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
     // SCIENT-FORK:END
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
-      ? ["Floating preview"]
+      ? [resolve(msg("Floating preview"))]
       : []),
     ...(settings.pullRequestLinksOpenInApp !== DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp
-      ? ["Open pull requests in Scient"]
+      ? [resolve(msg("Open pull requests in Scient"))]
       : []),
   ];
 }
@@ -291,4 +305,74 @@ export function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
+}
+
+/**
+ * Saving a shorter age settles threads at once, so typing stays in `draft` until the edit is
+ * finished. `pending` is the submission in flight; `saved` is the only value a draft falls back to.
+ */
+export interface AutoSettleDaysField {
+  readonly saved: number;
+  readonly draft: string;
+  readonly dirty: boolean;
+  readonly pending: number | null;
+  readonly revision: number;
+}
+
+export function autoSettleDaysField(saved: number): AutoSettleDaysField {
+  return { saved, draft: String(saved), dirty: false, pending: null, revision: 0 };
+}
+
+export function syncAutoSettleDaysField(
+  field: AutoSettleDaysField,
+  saved: number,
+): AutoSettleDaysField {
+  // An earlier save can be confirmed while a later one is still in flight.
+  const pending = field.pending === saved ? null : field.pending;
+  if (field.saved === saved && pending === field.pending) return field;
+  return {
+    ...field,
+    saved,
+    pending,
+    draft: field.dirty ? field.draft : String(pending ?? saved),
+  };
+}
+
+export function editAutoSettleDaysField(
+  field: AutoSettleDaysField,
+  draft: string,
+): AutoSettleDaysField {
+  return { ...field, draft, dirty: true };
+}
+
+export function cancelAutoSettleDaysField(field: AutoSettleDaysField): AutoSettleDaysField {
+  return { ...field, draft: String(field.pending ?? field.saved), dirty: false };
+}
+
+export function commitAutoSettleDaysField(field: AutoSettleDaysField): {
+  readonly field: AutoSettleDaysField;
+  readonly submit: number | null;
+} {
+  const current = field.pending ?? field.saved;
+  const days = field.draft.trim() === "" ? Number.NaN : Number(field.draft);
+  if (
+    !Number.isInteger(days) ||
+    days < MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS ||
+    days > MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
+  ) {
+    return { field: { ...field, draft: String(current), dirty: false }, submit: null };
+  }
+  const settled = { ...field, draft: String(days), dirty: false };
+  // An edit ending on the saved value is sent again: a save can land on the shown environment
+  // and fail on another, and retyping the number is how it is retried.
+  if (!field.dirty || days === field.pending) return { field: settled, submit: null };
+  return { field: { ...settled, pending: days, revision: field.revision + 1 }, submit: days };
+}
+
+export function failAutoSettleDaysField(
+  field: AutoSettleDaysField,
+  revision: number,
+): AutoSettleDaysField {
+  if (field.revision !== revision) return field;
+  return { ...field, pending: null, draft: field.dirty ? field.draft : String(field.saved) };
 }

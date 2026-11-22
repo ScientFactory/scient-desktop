@@ -739,6 +739,10 @@ export const AccountPaperForSourceResult = Schema.Union([
   }),
 ]);
 
+/** Which version of the work a PDF is; "unknown" when its repository did not say. */
+export const PaperVersion = Schema.Literals(["published", "accepted", "preprint", "unknown"]);
+export type PaperVersion = typeof PaperVersion.Type;
+
 export const PaperItemState = Schema.Literals([
   "waiting",
   "saved",
@@ -756,16 +760,21 @@ export const PaperAsked = Schema.Struct({
   source: Schema.optional(
     Schema.Struct({ sourceId: TrimmedNonEmptyString, expectedRevision: Schema.Int }),
   ),
+  /** For the Library: the saved PDF goes on the paper's Source, which is added when missing. */
+  library: Schema.optional(Schema.Boolean),
 });
 export type PaperAsked = typeof PaperAsked.Type;
 
 const PaperNeed = {
-  kind: Schema.Literals(["university", "sign-in", "check"]),
+  /** "access": a university is connected, but the conversation that asked may not use it. */
+  kind: Schema.Literals(["university", "sign-in", "check", "terms", "access"]),
   site: Schema.optional(Schema.String),
-  /** The university to sign in to, for a "sign-in". */
+  /** The university to sign in to, for a "sign-in", or to allow, for an "access". */
   accountId: Schema.optional(AccountId),
   openUrl: Schema.optional(Schema.String),
   profileId: Schema.optional(Schema.String),
+  /** The live consent form: its SAML POST cannot be reconstructed from a URL. */
+  tabId: Schema.optional(PreviewTabId),
 } as const;
 
 export const PaperItem = Schema.Struct({
@@ -775,7 +784,10 @@ export const PaperItem = Schema.Struct({
   route: Schema.optional(Schema.Literals(["saved-before", "open-access", ...PaperRoute.literals])),
   /** False for an accepted manuscript or preprint. */
   published: Schema.optional(Schema.Boolean),
+  version: Schema.optional(PaperVersion),
   path: Schema.optional(Schema.String),
+  /** The Library source the PDF went on. */
+  sourceId: Schema.optional(TrimmedNonEmptyString),
   message: Schema.optional(Schema.String),
   /** What this paper waits on, while it is "needs-you". */
   needed: Schema.optional(Schema.Struct(PaperNeed)),
@@ -813,6 +825,12 @@ export const PaperQueueInput = Schema.Struct({
   root: Schema.String.check(Schema.isMaxLength(4096)),
 });
 export type PaperQueueInput = typeof PaperQueueInput.Type;
+
+export const PaperQueueContinueInput = Schema.Struct({
+  ...PaperQueueInput.fields,
+  terms: Schema.optional(Schema.Struct({ site: Schema.String, profileId: Schema.String })),
+});
+export type PaperQueueContinueInput = typeof PaperQueueContinueInput.Type;
 
 export const UniversitySearchInput = Schema.Struct({
   query: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
@@ -1345,10 +1363,32 @@ export const AccountSignInSeenInput = Schema.Struct({
 export type AccountSignInSeenInput = typeof AccountSignInSeenInput.Type;
 
 /** Every browser sign-in, or one. */
-export const AccountsCheckInput = Schema.Struct({ accountId: Schema.optional(AccountId) });
+export const AccountsCheckInput = Schema.Struct({
+  accountId: Schema.optional(AccountId),
+  /**
+   * Opening a university's menu (with `accountId`): only reads the site, never signs in, and skips
+   * one looked at in the last two minutes. An older server ignores it and runs a full check.
+   */
+  glance: Schema.optional(Schema.Boolean),
+});
 export type AccountsCheckInput = typeof AccountsCheckInput.Type;
 
 export const AccountsTestInput = Schema.Struct({ accountId: AccountId });
+
+/** Why a connector tool failed: the connector runtime's reason, as an analytics code. */
+export const ConnectorToolFailureClass = Schema.Literals([
+  "not_found",
+  "invalid_input",
+  "unreachable",
+  "not_an_mcp_server",
+  "sign_in_failed",
+  "registration_unsupported",
+  "limit_reached",
+  "state_unavailable",
+  "unsupported",
+  "provider_rejected",
+]);
+export type ConnectorToolFailureClass = typeof ConnectorToolFailureClass.Type;
 
 export class AccountsError extends Schema.TaggedError<AccountsError>()("AccountsError", {
   reason: Schema.Literals([
@@ -1360,6 +1400,8 @@ export class AccountsError extends Schema.TaggedError<AccountsError>()("Accounts
     "denied",
   ]),
   message: TrimmedNonEmptyString,
+  /** A connector tool's own reason, so analytics keep the real cause. */
+  failureClass: Schema.optional(ConnectorToolFailureClass),
 }) {}
 
 /** Value-free desktop session observations; missing profiles mean unknown. */

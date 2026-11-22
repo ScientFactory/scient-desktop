@@ -233,6 +233,7 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
       executionId: ComputeExecutionId,
       code: ComputeCode,
       source: ComputeExecutionSource,
+      actor: Schema.optional(ComputeExecutionActor),
     }),
   ),
 });

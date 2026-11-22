@@ -62,13 +62,17 @@ export type OverleafRetentionRefusal =
 export type OverleafVolumeIdentityResolver = VolumeIdentityResolver;
 
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code;
-/** Native helper failures carry their errno numerically on the result, not as `code`. */
+/** Native helper failures carry their errno or Windows error numerically on the result. */
 const isReadOnly = (error: unknown) => {
   if (["EACCES", "EPERM", "EROFS"].includes(errorCode(error) ?? "")) return true;
   const result = (
     error as { readonly result?: { readonly codeDomain: string; readonly code: number } | null }
   )?.result;
-  return result?.codeDomain === "errno" && [1, 13, 30].includes(result.code);
+  return (
+    (result?.codeDomain === "errno" && [1, 13, 30].includes(result.code)) ||
+    // ERROR_ACCESS_DENIED, ERROR_WRITE_PROTECT
+    (result?.codeDomain === "win32" && [5, 19].includes(result.code))
+  );
 };
 
 class Refused extends Schema.TaggedError<Refused>()("OverleafRetentionRefused", {
@@ -80,6 +84,24 @@ class Refused extends Schema.TaggedError<Refused>()("OverleafRetentionRefused", 
 }
 
 const isRefused = Schema.is(Refused);
+
+/** The helper's code for a volume that is not NTFS. */
+const WINDOWS_UNSUPPORTED_FILESYSTEM = 0x20000006;
+/** The refusal macOS and Linux give for what Windows' private-folder check threw, if any. */
+export function windowsPrivateRefusal(error: unknown): Refused | null {
+  // Missing and denied folders keep their code: the caller maps those.
+  if (errorCode(error) !== undefined) return null;
+  if (isReadOnly(error)) return new Refused({ reason: "read-only-parent" });
+  const result = (error as { readonly result?: { readonly code: number } | null })?.result;
+  if (result?.code === WINDOWS_UNSUPPORTED_FILESYSTEM)
+    return new Refused({ reason: "unsupported-filesystem" });
+  const reason = error instanceof Error ? error.message : "";
+  return reason === "sync-managed-folder" ||
+    reason === "unsafe-directory" ||
+    reason === "unsupported-filesystem"
+    ? new Refused({ reason })
+    : null;
+}
 
 /** Creates (or, with `create: false`, only checks) one owner-only, non-symlink directory. */
 async function ensurePrivate(
@@ -104,7 +126,11 @@ async function ensurePrivate(
     return;
   }
   if (HostProcess.Platform.defaultValue() === "win32") {
-    await windowsPrivateRetention(directory, create, helper);
+    try {
+      await windowsPrivateRetention(directory, create, helper);
+    } catch (error) {
+      throw windowsPrivateRefusal(error) ?? error;
+    }
     return;
   }
   if (create)
@@ -166,7 +192,14 @@ async function probeCapability(
  */
 async function proveCapability(directory: string, publicationHelper: string | null) {
   if (HostProcess.Platform.defaultValue() === "win32") {
-    await probeWindowsRetention(directory, publicationHelper);
+    let qualified: boolean;
+    try {
+      qualified = await probeWindowsRetention(directory, publicationHelper);
+    } catch (error) {
+      if (isReadOnly(error)) throw new Refused({ reason: "read-only-parent" });
+      throw error;
+    }
+    if (!qualified) throw new Refused({ reason: "unsupported-filesystem" });
     return;
   }
   // Seatbelt subpath rules use the data volume's ordinary spelling, not its firmlink alias.
@@ -559,7 +592,7 @@ export async function locateOverleafRetention(input: {
       input.publicationHelper,
       checkoutIdentity,
     );
-    if (after.identity.fileId !== found.identity.fileId)
+    if (!platformFileIdentity.equal(after.identity, found.identity))
       throw new Refused({ reason: "vault-replaced" });
     return { _tag: "ready", ...found };
   } catch (error) {

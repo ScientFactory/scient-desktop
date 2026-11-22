@@ -7,7 +7,8 @@ import {
   RefreshCwIcon,
   SearchIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import { type ReactNode, type Ref, useState } from "react";
 
 import { FileSurfaceFailure } from "~/components/files/fileSurfaceChrome";
 import { Button } from "~/components/ui/button";
@@ -33,8 +34,8 @@ import type { LazyWorkspaceTreeSnapshot } from "./LazyWorkspaceTreeController";
 export const FILE_SEARCH_LIMIT = 200;
 const DIRECTORY_VIEW_BY_WORKSPACE = new Map<string, ProjectDirectoryView>();
 const FILE_VISIBILITY_OPTIONS = [
-  { value: "ordinary", label: "Project files" },
-  { value: "with-internals", label: "All workspace internals" },
+  { value: "ordinary", label: msg("Project files") },
+  { value: "with-internals", label: msg("All workspace internals") },
 ] as const satisfies ReadonlyArray<{ value: ProjectDirectoryView; label: string }>;
 
 /**
@@ -65,6 +66,8 @@ export function WorkspaceFilesMenu(props: {
   /** Opens or closes every loaded folder; absent where that would walk too much. */
   folders?: { readonly allExpanded: boolean; readonly onToggle: () => void } | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <Menu>
       <Tooltip>
@@ -76,7 +79,7 @@ export function WorkspaceFilesMenu(props: {
                   type="button"
                   variant="ghost-muted"
                   size="icon-xs"
-                  aria-label="Files menu"
+                  aria-label={gt("Files menu")}
                 />
               }
             />
@@ -84,13 +87,15 @@ export function WorkspaceFilesMenu(props: {
         >
           <MoreHorizontal className="scient-quiet-icon size-4" />
         </TooltipTrigger>
-        <TooltipPopup>Files menu</TooltipPopup>
+        <TooltipPopup>
+          <T>Files menu</T>
+        </TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6} className="min-w-56">
         {props.refresh ? (
           <MenuItem onClick={props.refresh.onRefresh}>
             <RefreshCwIcon aria-hidden className="size-4 text-muted-foreground" />
-            {props.refresh.pending ? "Refreshing…" : "Refresh files"}
+            {props.refresh.pending ? gt("Refreshing…") : gt("Refresh files")}
           </MenuItem>
         ) : null}
         {props.folders ? (
@@ -100,19 +105,21 @@ export function WorkspaceFilesMenu(props: {
             ) : (
               <ChevronsUpDownIcon aria-hidden className="size-4 text-muted-foreground" />
             )}
-            {props.folders.allExpanded ? "Collapse all folders" : "Expand all folders"}
+            {props.folders.allExpanded ? gt("Collapse all folders") : gt("Expand all folders")}
           </MenuItem>
         ) : null}
         {props.refresh || props.folders ? <MenuSeparator /> : null}
         <MenuGroup>
-          <MenuGroupLabel>File visibility</MenuGroupLabel>
+          <MenuGroupLabel>
+            <T>File visibility</T>
+          </MenuGroupLabel>
           <MenuRadioGroup
             value={props.view}
             onValueChange={(value) => props.onViewChange(value as ProjectDirectoryView)}
           >
             {FILE_VISIBILITY_OPTIONS.map((option) => (
               <MenuRadioItem key={option.value} value={option.value}>
-                {option.label}
+                {messages(option.label)}
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
@@ -150,32 +157,33 @@ export function ScientFileTreeSurface(props: {
     hideTreeForSearch,
     normalizedSearchValue,
   } = props;
+  const gt = useGT();
   const searchEmptyMessage = isSearchPending
-    ? "Searching…"
+    ? gt("Searching…")
     : currentSearchError
-      ? "Couldn’t search unopened folders."
-      : `No files or folders match “${normalizedSearchValue}”.`;
+      ? gt("Couldn’t search unopened folders.")
+      : gt("No files or folders match “{query}”.", { query: normalizedSearchValue });
 
   return (
     <>
       <div className="sr-only" aria-live="polite">
         {isSearching
           ? isSearchPending
-            ? "Searching workspace files."
+            ? gt("Searching workspace files.")
             : currentSearchError
-              ? "Some workspace files could not be searched."
-              : `${props.matchingPathCount} matching workspace paths.`
+              ? gt("Some workspace files could not be searched.")
+              : gt("{count} matching workspace paths.", { count: props.matchingPathCount })
           : treeSnapshot.isPending
-            ? "Loading workspace files."
+            ? gt("Loading workspace files.")
             : treeSnapshot.failures.length > 0
-              ? "Some workspace files could not be loaded."
-              : "Workspace files loaded."}
+              ? gt("Some workspace files could not be loaded.")
+              : gt("Workspace files loaded.")}
       </div>
       {treeSnapshot.rootError && treeSnapshot.entries.size === 0 ? (
         <FileSurfaceFailure
           icon={FolderXIcon}
-          title="Couldn't load project files"
-          description="Scient couldn't list the files in this project."
+          title={gt("Couldn't load project files")}
+          description={gt("Scient couldn't list the files in this project.")}
           details={treeSnapshot.rootError}
           retrying={treeSnapshot.isPending}
           onRetry={() => props.onRetryDirectory("")}
@@ -193,10 +201,16 @@ export function ScientFileTreeSurface(props: {
                 props.onRetryDirectory(treeSnapshot.failures[0]?.relativeDirectory ?? "")
               }
             >
-              Couldn’t load {treeSnapshot.failures[0].relativeDirectory || "the workspace"}. Retry
+              {treeSnapshot.failures[0].relativeDirectory
+                ? gt("Couldn’t load {folder}. Retry", {
+                    folder: treeSnapshot.failures[0].relativeDirectory,
+                  })
+                : gt("Couldn’t load the workspace. Retry")}
             </button>
           ) : treeSnapshot.entries.size === 0 && treeSnapshot.isPending ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">Loading files…</div>
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              <T>Loading files…</T>
+            </div>
           ) : null}
           <div className="relative flex min-h-0 flex-1">
             {props.children}
@@ -209,12 +223,14 @@ export function ScientFileTreeSurface(props: {
           {isSearching ? (
             <div className="shrink-0 border-t border-border/50 px-3 py-1.5 scient-reading-micro leading-4 text-muted-foreground">
               {isSearchPending
-                ? "Searching unopened folders…"
+                ? gt("Searching unopened folders…")
                 : currentSearchError
-                  ? "Couldn’t search unopened folders. Loaded folders are still filtered."
+                  ? gt("Couldn’t search unopened folders. Loaded folders are still filtered.")
                   : hasCurrentSearch && props.searchTruncated
-                    ? `First ${FILE_SEARCH_LIMIT} indexed matches loaded; ignored paths may not appear.`
-                    : "Unopened folders use indexed search; ignored paths may not appear."}
+                    ? gt("First {limit} indexed matches loaded; ignored paths may not appear.", {
+                        limit: FILE_SEARCH_LIMIT,
+                      })
+                    : gt("Unopened folders use indexed search; ignored paths may not appear.")}
             </div>
           ) : null}
         </div>
@@ -227,21 +243,28 @@ export function ScientFileTreeSurface(props: {
  * The file search field. In a narrow header it folds into a search button
  * that opens the same field in a popover.
  */
-export function FileSearchField(props: {
+export function FileSearchField({
+  ref,
+  ...props
+}: {
   ariaLabel: string;
   name: string;
   onClose: () => void;
   onValueChange: (value: string) => void;
+  /** The inline field, which the Files panel's find shortcut focuses. */
+  ref?: Ref<HTMLInputElement>;
   value: string;
 }) {
+  const gt = useGT();
   const renderSearchInput = (autoFocus = false) => (
     <InputGroupInput
+      {...(autoFocus || !ref ? {} : { ref })}
       type="search"
       name={props.name}
       size="sm"
       value={props.value}
       aria-label={props.ariaLabel}
-      placeholder="Search files"
+      placeholder={gt("Search files")}
       data-workspace-focus-default
       spellCheck={false}
       autoFocus={autoFocus}

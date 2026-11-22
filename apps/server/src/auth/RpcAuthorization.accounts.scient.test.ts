@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   AccountId,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   WS_METHODS,
@@ -105,4 +106,83 @@ it.effect(
         requiredPermission: AuthOrchestrationReadScope,
       });
     }).pipe(Effect.scoped),
+);
+
+const paperClient = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    const reached: Array<string> = [];
+    const handlers = makeAccountsRpcHandlers({
+      accounts: service,
+      observeRpcEffect: (_method, effect) => effect,
+      observeRpcStream: (_method, stream) => stream,
+      check: () => Effect.succeed({ checked: 0 }),
+      linkKey: () => Effect.void,
+      paperForSource: () =>
+        Effect.sync(() => {
+          reached.push("paperForSource");
+          return { status: "waiting", message: "synthetic" } as const;
+        }),
+      papers: {
+        request: (input) =>
+          Effect.as(
+            Effect.sync(() => reached.push(`request:${input.papers.length}`)),
+            {},
+          ),
+        continue: () => Effect.die("not reached"),
+        list: () => Effect.die("not reached"),
+        signInAsPerson: () => Effect.die("not reached"),
+        universityBrowse: () => Effect.die("not reached"),
+        universities: () => Effect.die("not reached"),
+      },
+      plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
+      restoreKeptKeys: () => Effect.void,
+    });
+    const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(group.toLayer(handlers), RpcAuthorization.layer(scopes))),
+    );
+    return { client, reached };
+  });
+
+const source = { sourceId: "src_synthetic", expectedRevision: 1 };
+const attachingRequests = [
+  { root: "/synthetic", papers: [{ doi: "10.1000/plain" }, { doi: "10.1000/x", source }] },
+  { root: "/synthetic", papers: [{ doi: "10.1000/y", library: true }] },
+];
+
+it.effect("refuses a settings-only connection that would file papers into the Library", () =>
+  Effect.gen(function* () {
+    const { client, reached } = yield* paperClient([AuthSettingsWriteScope]);
+    const refused = [
+      client[WS_METHODS.accountsPaperForSource]({
+        root: "/synthetic",
+        ...source,
+        doi: "10.1000/x",
+      }),
+      ...attachingRequests.map((input) => client[WS_METHODS.accountsPapersRequest](input)),
+    ];
+    for (const call of refused)
+      expect(yield* call.pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
+    yield* client[WS_METHODS.accountsPapersRequest]({
+      root: "/synthetic",
+      papers: [{ doi: "10.1000/plain" }],
+    });
+    expect(reached).toEqual(["request:1"]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("lets a connection with the Library grant file papers into the Library", () =>
+  Effect.gen(function* () {
+    const { client, reached } = yield* paperClient([
+      AuthSettingsWriteScope,
+      AuthOrchestrationOperateScope,
+    ]);
+    yield* client[WS_METHODS.accountsPaperForSource]({ root: "/synthetic", ...source });
+    for (const input of attachingRequests) yield* client[WS_METHODS.accountsPapersRequest](input);
+    expect(reached).toEqual(["paperForSource", "request:2", "request:1"]);
+  }).pipe(Effect.scoped),
 );

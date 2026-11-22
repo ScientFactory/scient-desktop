@@ -1,0 +1,26 @@
+/* A hovered or focused row's tile rises over its neighbours and a strip of the page's background
+   covers the rule above it and the next row's rule below it. Legend's row containers contain
+   paint, which would clip that strip at the row's edge. */
+.sources-virtual-list div:has(> [data-sources-item]) {
+  contain: layout style !important;
+}
+.sources-virtual-list div:has(> [data-sources-item] > .sources-row-tile:is(:hover, :focus-within)),
+[data-sources-item]:has(> .sources-row-tile:is(:hover, :focus-within)) {
+  z-index: 1;
+}
+.sources-row-tile {
+  position: relative;
+  isolation: isolate;
+}
+.sources-row-tile::before {
+  content: "";
+  position: absolute;
+  inset: -1px 0;
+  z-index: -1;
+  background: var(--background);
+  opacity: 0;
+  pointer-events: none;
+}
+.sources-row-tile:is(:hover, :focus-within)::before {
+  opacity: 1;
+}

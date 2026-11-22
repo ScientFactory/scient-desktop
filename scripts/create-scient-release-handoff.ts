@@ -10,6 +10,8 @@ import {
   scientReleaseRepository,
 } from "@t3tools/shared/scientRelease";
 
+import { readWindowsSigningAttestation } from "./windows-publication-signing.ts";
+
 interface ReleaseAsset {
   readonly name: string;
   readonly size: number;
@@ -45,6 +47,12 @@ export function createScientReleaseHandoff(args: ReadonlyArray<string>): string 
   const sourceSha = value(args, "--source-sha");
   const sourceTree = value(args, "--source-tree");
   const output = NodePath.resolve(value(args, "--output"));
+  // Later publications read this to learn which publisher installed Windows clients pin.
+  const windows = args.includes("--windows-signing")
+    ? readWindowsSigningAttestation(
+        JSON.parse(NodeFS.readFileSync(value(args, "--windows-signing"), "utf8")) as unknown,
+      )
+    : null;
   const excluded = new Set([NodePath.basename(output), "SHA256SUMS.txt"]);
   const assets: ReleaseAsset[] = NodeFS.readdirSync(assetsDir)
     .filter((name) => !excluded.has(name))
@@ -70,6 +78,13 @@ export function createScientReleaseHandoff(args: ReadonlyArray<string>): string 
         version,
         tag: `v${version}`,
         distribution: { repository: distributionRepository, channel },
+        ...(windows === null
+          ? {}
+          : {
+              windows: windows.signed
+                ? { signed: true, publisherName: windows.publisherName }
+                : { signed: false },
+            }),
         source: {
           repository: sourceRepository,
           commit: sourceSha,

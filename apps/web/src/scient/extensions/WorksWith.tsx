@@ -1,4 +1,5 @@
 import type { ConnectorProviderSupport, ExtensionAudience } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
@@ -6,7 +7,13 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useExtensionsEnvironment, GHOST_LINK_CLASS } from "./ExtensionsPage";
-import { audienceLabel, audienceSupport, worksWithCardAgents } from "./extensionsView";
+import {
+  audienceLabel,
+  audienceNames,
+  audienceSupport,
+  listLabels,
+  worksWithCardAgents,
+} from "./extensionsView";
 
 /** An agent's logo with its name below; an amber dot marks one that works with limits. */
 function AgentTileContent({
@@ -36,7 +43,7 @@ function AgentTileContent({
 const AGENT_TILE_CLASS = "flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center";
 
 /** How long the pointer rests on "Works with" before its card opens. */
-const WORKS_WITH_OPEN_DELAY_MS = 200;
+export const WORKS_WITH_OPEN_DELAY_MS = 200;
 
 /**
  * A press pins the reason even if hover/focus just opened it; otherwise a tap following focus would
@@ -49,8 +56,9 @@ function LimitedAgentTile({
   readonly entry: ConnectorProviderSupport;
   readonly iconUrl: string | undefined;
 }) {
+  const gt = useGT();
   const [shown, setShown] = useState<"closed" | "shown" | "pinned">("closed");
-  const reason = entry.reason ?? "Works with limits";
+  const reason = entry.reason ?? gt("Works with limits");
   return (
     <Tooltip
       open={shown !== "closed"}
@@ -65,7 +73,7 @@ function LimitedAgentTile({
         render={
           <button
             type="button"
-            aria-label={`${entry.displayName}: ${reason}`}
+            aria-label={gt("{agent}: {reason}", { agent: entry.displayName, reason })}
             onClick={() => setShown((current) => (current === "pinned" ? "closed" : "pinned"))}
             className={cn(
               AGENT_TILE_CLASS,
@@ -92,13 +100,26 @@ export function WorksWithValue({
 }: {
   readonly audience?: ExtensionAudience | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { inventory, providers } = useExtensionsEnvironment();
-  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? []);
+  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? [], messages);
   if (support.length === 0) {
-    return <span className="text-muted-foreground">No agents reported</span>;
+    return (
+      <span className="text-muted-foreground">
+        <T>No agents reported</T>
+      </span>
+    );
   }
   const usable = worksWithCardAgents(audience, support);
-  const count = audienceLabel(audience);
+  // Beside its "Works with" label the value is the names alone; chosen agents are named.
+  const count =
+    audience.layer === "scient" && audience.agents !== undefined && usable.length > 0
+      ? listLabels(
+          usable.map((entry) => entry.displayName),
+          messages,
+        )
+      : audienceNames(audience, messages);
   if (usable.length === 0) return <span>{count}</span>;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
     providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
@@ -111,7 +132,7 @@ export function WorksWithValue({
         render={
           <button
             type="button"
-            aria-label={`Works with: ${count}`}
+            aria-label={gt("Works with: {names}", { names: count })}
             className={cn(GHOST_LINK_CLASS, "text-foreground")}
           />
         }
@@ -126,7 +147,7 @@ export function WorksWithValue({
         sideOffset={8}
         collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
         padding="comfortable"
-        aria-label="Agents"
+        aria-label={gt("Agents")}
         initialFocus={(openType) => openType === "keyboard"}
         className="w-max"
       >
@@ -157,5 +178,89 @@ export function WorksWithValue({
         </ScrollArea>
       </PopoverPopup>
     </Popover>
+  );
+}
+
+/**
+ * The agents an item works with, as their logos, for a table cell. Every agent reads "All
+ * agents"; an agent one step away from it shows dimmed, its step in the tooltip.
+ */
+export function WorksWithAgents({
+  audience = SCIENT_AUDIENCE,
+}: {
+  readonly audience?: ExtensionAudience | undefined;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const { inventory, providers } = useExtensionsEnvironment();
+  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? [], messages);
+  const usable = worksWithCardAgents(audience, support);
+  // Scient's own connectors and plugins reach every agent: say so, not eleven logos.
+  // "All agents" only when every agent has it now; one still to connect keeps its logo and reason.
+  if (
+    (audience.layer === "scient" && audience.agents === undefined) ||
+    (support.length > 1 &&
+      usable.length === support.length &&
+      usable.every((entry) => entry.status === "supported"))
+  )
+    return (
+      <span className="text-sm text-muted-foreground">
+        <T>All agents</T>
+      </span>
+    );
+  if (usable.length === 0)
+    return (
+      <span className="text-sm text-muted-foreground">{audienceNames(audience, messages)}</span>
+    );
+  const shown = usable.slice(0, 3);
+  const more = usable.length - shown.length;
+  const iconUrlOf = (entry: ConnectorProviderSupport) =>
+    providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
+  return (
+    <ul className="flex items-center gap-2.5" aria-label={audienceLabel(audience, messages)}>
+      {shown.map((entry) => (
+        <li key={entry.providerInstanceId}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  // Focusable, so the keyboard reaches an agent's name and why it is waiting.
+                  tabIndex={0}
+                  role="img"
+                  className={cn(
+                    "flex rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                    entry.status !== "supported" && "opacity-40",
+                  )}
+                  aria-label={
+                    entry.status === "supported"
+                      ? entry.displayName
+                      : gt("{agent}: {reason}", {
+                          agent: entry.displayName,
+                          reason: entry.reason ?? gt("Works with limits"),
+                        })
+                  }
+                />
+              }
+            >
+              <ProviderInstanceIcon
+                driverKind={entry.driver}
+                displayName={entry.displayName}
+                acpRegistryIconUrl={iconUrlOf(entry)}
+                iconClassName="size-5"
+              />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {entry.status === "supported"
+                ? entry.displayName
+                : gt("{agent}: {reason}", {
+                    agent: entry.displayName,
+                    reason: entry.reason ?? gt("Works with limits"),
+                  })}
+            </TooltipPopup>
+          </Tooltip>
+        </li>
+      ))}
+      {more > 0 ? <li className="text-xs text-muted-foreground">+{more}</li> : null}
+    </ul>
   );
 }

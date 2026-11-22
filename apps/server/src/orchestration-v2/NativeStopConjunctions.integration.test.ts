@@ -319,9 +319,13 @@ emit({ kind: "ready" });
               .pipe(Effect.orDie);
           return {
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+            renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
+            mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+            mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+            reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
             setPermissionMode: () =>
@@ -365,6 +369,7 @@ emit({ kind: "ready" });
         }).pipe(Effect.orDie),
       forkSession: () => Effect.die("No fork in Stop conjunction proof"),
       subagentLaunchToolUseId: () => Effect.succeed(null),
+      subagentModel: () => Effect.succeed(null),
       assertComplete: Effect.void,
     },
   });
@@ -608,7 +613,7 @@ it.effect.each(
             providerThreadId: turn.providerThreadId,
             providerTurnId: turn.id,
           });
-          const interrupt = yield* worker.runOnce.pipe(Effect.forkScoped);
+          const interrupt = yield* worker.runOnce().pipe(Effect.forkScoped);
           yield* Deferred.await(session.interruptEntered);
           yield* h.save("phase", {
             phase: "native interrupt entered",

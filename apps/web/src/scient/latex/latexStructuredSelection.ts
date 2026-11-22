@@ -19,9 +19,13 @@ import {
   latexSelectionBetween,
   latexSelectionObjectAtElement,
 } from "./latexObjectSelection";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 interface Scope {
   label: string;
+  /** Identity for scopes the commands treat specially; `label` is translated display text. */
+  kind?: "object" | "document";
   from: number;
   to: number;
   mark?: Mark;
@@ -29,19 +33,24 @@ interface Scope {
   before?: number;
   after?: number;
 }
+/** `msg()` strings, resolved with `m` when a selection is captured. */
 const labels: Readonly<Record<string, string>> = {
-  bold: "Bold",
-  italic: "Italic",
-  code: "Monospace",
-  underline: "Underline",
-  latexSmallCaps: "Small caps",
-  latexRoman: "Roman",
-  latexSans: "Sans",
-  latexSlanted: "Slanted",
-  latexUpright: "Upright",
-  latexMedium: "Medium",
-  latexColor: "Colored text",
-  latexBackground: "Text box",
+  bold: msg("Bold"),
+  italic: msg("Italic"),
+  code: msg("Monospace"),
+  underline: msg("Underline"),
+  latexSmallCaps: msg("Small caps"),
+  latexRoman: msg("Roman", { $context: "font style" }),
+  latexSans: msg("Sans", { $context: "font style" }),
+  latexSlanted: msg("Slanted", { $context: "font style" }),
+  latexUpright: msg("Upright", { $context: "font style" }),
+  latexMedium: msg("Medium", { $context: "font weight" }),
+  latexColor: msg("Colored text"),
+  latexBackground: msg("Text box"),
+};
+const markLabel = (name: string) => {
+  const label = labels[name];
+  return label === undefined ? name.replace(/^latex/u, "") : m(label);
 };
 
 export function latexContainerScope(element: HTMLElement): string[] {
@@ -78,7 +87,7 @@ function inlineScopes(view: EditorView, source: string | null): Scope[] {
     });
     scopes.push(
       ...runs.map((run) => ({
-        label: labels[mark.type.name] ?? mark.type.name.replace(/^latex/u, ""),
+        label: markLabel(mark.type.name),
         ...run,
         mark,
       })),
@@ -94,7 +103,7 @@ function inlineScopes(view: EditorView, source: string | null): Scope[] {
       return mark
         ? [
             {
-              label: labels[scope.mark] ?? scope.mark.replace(/^latex/u, ""),
+              label: markLabel(scope.mark),
               from: offset + scope.from,
               to: offset + scope.to,
               mark,
@@ -128,15 +137,20 @@ function proseScopes(view: EditorView, source: string | null): Scope[] {
     isLatexSelectionObject(selection.node) &&
     !latexObjectOwnsPointerSelection(selection.node)
   )
-    scopes.push({ label: "Object", from: selection.from, to: selection.to });
+    scopes.push({
+      label: m(msg("Object", { $context: "selection scope" })),
+      kind: "object",
+      from: selection.from,
+      to: selection.to,
+    });
   for (let depth = $head.depth; depth > 0; depth--) {
     const node = $head.node(depth);
     scopes.push({
       label:
         node.type.name === "paragraph"
-          ? "Paragraph"
+          ? m(msg("Paragraph"))
           : node.type.name === "heading"
-            ? "Heading"
+            ? m(msg("Heading"))
             : node.type.name,
       from: node.isTextblock ? $head.start(depth) : $head.before(depth),
       to: node.isTextblock ? $head.end(depth) : $head.after(depth),
@@ -144,7 +158,12 @@ function proseScopes(view: EditorView, source: string | null): Scope[] {
       after: $head.after(depth),
     });
   }
-  scopes.push({ label: "Document", from: 0, to: view.state.doc.content.size });
+  scopes.push({
+    label: m(msg("Document", { $context: "selection scope" })),
+    kind: "document",
+    from: 0,
+    to: view.state.doc.content.size,
+  });
   return scopes;
 }
 
@@ -343,7 +362,7 @@ export const LatexStructuredSelection = Extension.create<{
                 path: [
                   ...latexContainerScope(view.dom),
                   ...scopes
-                    .filter((scope) => scope.label !== "Document")
+                    .filter((scope) => scope.kind !== "document")
                     .toReversed()
                     .map((scope) => scope.label),
                 ],
@@ -463,7 +482,7 @@ export const LatexStructuredSelection = Extension.create<{
                   for (const match of text.matchAll(/[\p{L}\p{N}_]+/gu)) {
                     if (match.index <= at && match.index + match[0].length >= at) {
                       scopes.unshift({
-                        label: "Word",
+                        label: m(msg("Word", { $context: "selection scope" })),
                         from: selection.$from.start() + match.index,
                         to: selection.$from.start() + match.index + match[0].length,
                       });
@@ -488,14 +507,14 @@ export const LatexStructuredSelection = Extension.create<{
                 history.push({ bookmark: selection.getBookmark(), marks: storedMarks, scopeIndex });
                 scopeIndex = next + 1;
                 tr = tr.setSelection(
-                  scope.label === "Document"
+                  scope.kind === "document"
                     ? new AllSelection(tr.doc)
-                    : scope.label === "Object"
+                    : scope.kind === "object"
                       ? NodeSelection.create(tr.doc, scope.from)
                       : latexSelectionBetween(tr.doc, scope.from, scope.to),
                 );
               } else {
-                const scope = scopes.find((scope) => scope.label !== "Document");
+                const scope = scopes.find((scope) => scope.kind !== "document");
                 if (!scope) return false;
                 exitedScope = scope.mark ? scope : null;
                 const after = command === "leaveParentAfter";

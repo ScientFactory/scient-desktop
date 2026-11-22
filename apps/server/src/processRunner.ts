@@ -26,14 +26,14 @@ export interface ProcessRunInput {
   readonly stdin?: string | undefined;
   /** Receives every stdout chunk, including bytes beyond the buffered output limit. */
   readonly onStdoutChunk?: ((chunk: Uint8Array) => void) | undefined;
-  // SCIENT-FORK:START — binary stdin and an awaited stdout consumer for checkpoint capture.
-  /** Binary stdin. Ignored when text `stdin` is supplied. */
-  readonly stdinBytes?: Uint8Array | undefined;
+  // SCIENT-FORK:START — an awaited stdout consumer for checkpoint capture.
   /** Await each chunk before reading the next; failure closes and reaps the child. */
   readonly onStdoutChunkEffect?:
     | ((chunk: Uint8Array) => Effect.Effect<void, ProcessReadError>)
     | undefined;
   // SCIENT-FORK:END
+  /** Runs after successful spawn, before cancellation can interrupt acquisition. */
+  readonly onSpawn?: (() => void) | undefined;
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
@@ -307,7 +307,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       cause,
     });
 
-  const child = yield* spawner
+  const spawn = spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
@@ -326,18 +326,21 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       // Synchronous spawn throws arrive as defects; recover them too so callers see typed spawn failures.
       Effect.catchDefect((cause) => Effect.fail(toSpawnError(cause))),
     );
+  const child = yield* input.onSpawn === undefined
+    ? spawn
+    : spawn.pipe(
+        Effect.tap(() => Effect.sync(() => input.onSpawn?.())),
+        Effect.uninterruptible,
+      );
 
-  // SCIENT-FORK:START — text or binary stdin, and an awaited stdout consumer.
-  const stdin = input.stdin ?? input.stdinBytes;
+  const stdin = input.stdin;
   const onStdoutChunk = input.onStdoutChunk;
+  // SCIENT-FORK: an awaited stdout consumer.
   const onStdoutChunkEffect = input.onStdoutChunkEffect;
   const writeStdin =
     stdin === undefined
       ? Effect.void
-      : Stream.run(
-          typeof stdin === "string" ? Stream.encodeText(Stream.make(stdin)) : Stream.make(stdin),
-          child.stdin,
-        ).pipe(
+      : Stream.run(Stream.encodeText(Stream.make(stdin)), child.stdin).pipe(
           Effect.mapError(
             (cause) =>
               new ProcessStdinError({
@@ -345,12 +348,11 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
                 argumentCount: input.args.length,
                 cwd: input.cwd,
                 spawnCwd: input.spawnCwd,
-                stdinBytes: typeof stdin === "string" ? Buffer.byteLength(stdin) : stdin.byteLength,
+                stdinBytes: Buffer.byteLength(stdin),
                 cause,
               }),
           ),
         );
-  // SCIENT-FORK:END
 
   const [stdout, stderr] = yield* Effect.all(
     [

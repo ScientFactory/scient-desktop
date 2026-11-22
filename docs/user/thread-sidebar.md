@@ -18,6 +18,11 @@ the current project, or use a project's own new-thread action. A new thread carr
 your model and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
+A worktree needs a commit to start from. In a Git repository with no commits, no
+branches and no remote, a thread or scheduled task set to use a new worktree works
+in the project folder instead, as it would in a folder that is not a Git repository.
+The sidebar's **New thread** button asks which project to use even while the sidebar is
+filtered to one project, so **Add project** stays one step away.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
@@ -222,13 +227,20 @@ The small dashed chat button to the left of **New thread**, separated by a verti
 line, starts a chat without a project directly. Its tooltip is **Chat without a
 project**. It appears when the current environment offers scratch conversations.
 
+A new thread, and **Home**, which opens one in your most recent project, ask **What should we
+work on?** The chip above the message box shows the project. Open it to search your projects,
+**Add project**, or, where the machine offers scratch conversations, choose **No project**. Text
+you have typed moves with the thread when you pick another project or **No project**; **Add
+project** opens a fresh thread in the new project and leaves your text in this one.
+
 ### Threads without a project
 
-**No project** opens the usual composer. Before sending, its project picker lets you switch
-to a real project without losing the draft. The sidebar row and Add project flow stay the same.
+**No project** opens the usual composer. Before sending, the project chip above the message box
+lets you switch to a real project without losing the draft. The sidebar row and Add project flow
+stay the same.
 
 Scient creates one internal scratch project per machine and a separate plain folder for
-each conversation under its data directory. Files, Sources, Documents, and Compute use
+each conversation under its data directory. Files, Library, Documents, and Compute use
 that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
 conversation and its files into another existing project is not yet supported.
@@ -337,8 +349,8 @@ sections yet; it keeps its usual layout.
 
 Threads that are working or waiting on work they will resume from move into a collapsed
 **Working** section below the active list.
-That includes subagents, watched pull requests, and background commands or monitors the agent
-says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
+That includes subagents, watched pull requests with checks still running, Claude monitors,
+and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
 there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
@@ -436,6 +448,26 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Icon rail
+
+On web and desktop, a column of icons runs along the sidebar's edge. At the top are **Home**,
+**Library**, **Scheduled tasks**, **Extensions**, and **Code review** when your environment
+supports pull requests or issues. At the bottom are **Cloud conversations** when available,
+**Settings**, **Usage**, **Send feedback** in the desktop app, **Import conversation**, and your
+Scient Connect account. **Library** opens My Library over the window, in a new thread without a
+project; see [Open the Library](sources.md#open-the-library). **Code review** opens pull requests
+or issues, whichever you showed last; switch between them with **Pull requests | Issues** at the
+top of the page. On a wide window the rail stays at the window's edge when you collapse the
+sidebar, and on a short window it scrolls. With the rail on, the sidebar can't be dragged quite as
+narrow, so the thread list keeps room beside it.
+
+While a Scient update is ready, **Update** takes the place of the Scient name at the top of the
+sidebar. Updates for providers, other machines and Scient-managed runtimes show as a circle in the
+rail above **Settings**; see [Update Scient](updating.md).
+
+The rail is on by default. Turn off **Settings → Labs → Sidebar icon rail** to put these buttons
+back in a row at the bottom of the sidebar. Each device keeps its own choice.
+
 ## Find threads
 
 On web and desktop, press `Cmd/Ctrl+K` to open the command palette and search threads across
@@ -495,8 +527,8 @@ pauses updates until a window is reopened; the last count remains. Quitting Scie
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.
 Press **Resume** in an empty composer to continue a limited or interrupted turn
-manually. Do this when the provider reports no reset time, because nothing
-continues the turn on its own.
+manually when the provider supports native continuation, or send a message to continue.
+Do this when the provider reports no reset time, because nothing continues the turn on its own.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
@@ -516,11 +548,15 @@ retry and the normal snooze choices.
 
 ## Tool details
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+On web and desktop, use **Agents** to follow work delegated to subagents. Click
+a subagent there or on its conversation card to open it in the right panel,
+beside the thread you are in. See
+[Open a thread beside the one you are in](#open-a-thread-beside-the-one-you-are-in).
 On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to
 fill the screen; close the full-screen view to return to the parent and inspector.
 Stop on a thread also stops the subagents it delegated to.
+Before archiving the parent, wait for its delegated tasks to finish or cancel them.
 
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
@@ -553,27 +589,58 @@ To choose what the thread details card shows, right-click the card or open
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings
 back the standard rows.
 
+## Open a thread beside the one you are in
+
+On web and desktop, a subagent, a side chat, and a
+[thread on a linked machine](remote-access.md#read-a-linked-machines-threads)
+all open the same way. Click one to open it as a tab in the right panel, so the
+thread you are in stays in view. Hold ⌘ (Ctrl on Windows and Linux) while you
+click, or middle-click, to open it in the main view instead. With the keyboard,
+Enter and ⌘/Ctrl + Enter do the same. Right-click for **Open in side panel** and
+**Open in main view**.
+
+To make the main view the place a plain click opens them, set **Settings → Chat →
+Open subagents and side chats in** to **Main view**. The modifier then opens
+the side panel.
+
+From a tab, **Open in main view** at the top of the tab, or in the tab's
+right-click menu, moves it to the main view. The bottom of the view depends on
+the thread: a side chat or a subagent you delegated has a composer, a subagent
+the agent started is read-only, and a thread on a linked machine is read-only
+with **Connect to interact**.
+
+Other thread links open in the main view as before.
+
+On mobile these threads open in the inspector on layouts that have one, where
+Maximize fills the screen, and full screen everywhere else.
+
 ## Side chats
 
 A side chat lets you ask a question about a thread without adding to it. It starts
 with what the thread knows, and the thread keeps working while you ask.
 
 On web and desktop, start a message with `/side` or `/btw`, then your question.
-You can also open a new tab in the right panel with **+** and choose **Side chat**.
-The side chat opens as a tab there, with its own composer. Side chats do not show
-in the sidebar. Find one again under **Side chats** in thread details.
+You can also choose **Side chat** from the **+** menu in the right panel. The side
+chat opens as a tab there, with its own composer. Side chats do not show in the
+sidebar. Find one again under **Side chats** in thread details, where it opens
+[like a subagent does](#open-a-thread-beside-the-one-you-are-in).
 
 A side chat works in the same folder as the thread and starts with the permissions,
 model, and reasoning level shown in the thread's composer, including for its first
 reply. Change them for an individual side chat in its composer. Later changes to the
 parent do not change existing side chats.
 
-To use what you learned, choose **Bring back**. The thread gets the side chat with
-your next message there. Bring back is available while the thread is idle.
+To use what you learned, choose **Add to chat** at the top of the side chat, or type
+`@` and a word from its title in the thread's composer. The thread's message gets a
+link to the side chat, and the agent reads as much of it as it needs. This works
+while the thread is busy, once you have sent a message in the side chat. An agent on
+an external OpenCode server cannot read the link, so put the details in your message
+instead.
 
 Closing a side chat you never sent a message in deletes it. To delete one you used,
 choose **Delete** at the top of the side chat. Deleting a thread also deletes its
-side chats.
+side chats. Archiving a thread also archives its side chats and stops their work, and
+unarchiving the thread brings them back.
 
 On mobile, a thread lists its side chats above the composer. Tap one to open it and
 answer its questions.

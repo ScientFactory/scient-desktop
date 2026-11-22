@@ -183,6 +183,34 @@ session and remembered device. An import writes the profile's record before its 
 interrupted import still leaves a complete profile. A profile made in Scient carries
 `madeInScient`; one imported or made elsewhere can't be told apart, so none is ever folded away.
 
+#### Windows Chromium through the browser
+
+Chrome 127+ app-bound encryption keeps Windows Chrome and Edge cookie files (`v20`) from every
+other app. Since Chrome 144 (Edge too) a person can allow outside connections to their running
+browser: `chrome://inspect/#remote-debugging`, "Allow remote debugging for this browser instance",
+an app-wide `Local State` preference (`devtools.remote_debugging.user-enabled`, the policy
+`RemoteDebuggingAllowed` turns it off). The browser then listens on 127.0.0.1, writes
+`DevToolsActivePort` in its user data folder, answers plain HTTP with 404 and asks "Allow remote
+debugging?" for every WebSocket connection, naming no app and never remembering an answer; while a
+connection is open it shows the "controlled by automated test software" banner. The Chrome 136
+restriction on the default profile covers only the command-line debugging switches.
+
+`windowsImportBlock.connection` (`Sources.ts`) marks Chrome and Edge. Their sources list profiles
+from `Local State` alone, with `connection.settingsUrl`, while `unavailable` stays
+`appBoundEncryption` (their files are never read, passwords included). An import of such a profile
+(`browserConnectionImport.ts`, `browserConnection.ts`) refuses with `connectionOff` before opening
+anything when the browser neither listens nor saved the switch on; otherwise it starts the installed
+browser with `--profile-directory` and a `data:` page carrying a nonce (a running browser takes the
+tab and the process exits), connects, finds that tab by its nonce and reads
+`Network.getAllCookies` on it: the connection reaches only the last used profile directly, and
+Network commands act on the tab's own context (verified on Chrome 157 with two profiles, HttpOnly
+values included). The tab is closed and the cookies go through the import's usual writer. One
+connection per browser serves every profile of an import, reads queue, and it closes 10 s after
+the last one. A closed socket before it opens is the person's refusal (`connectionDeclined`); no
+answer in three minutes is `connectionUnanswered`. The renderer polls
+`accounts.browserConnection` (never asks the person) for the switch in `BrowserConnectStep`. Not
+tested on Windows hardware, with Windows security software or under organisation policies.
+
 Main is filled from the other profiles by one desktop writer, `fillMain`
 (`apps/desktop/src/scient/accounts/mainFill.ts`), under a lock per environment. Each unit (a
 registrable site, or every site of one multi-site sign-in) is one transaction in the shared
@@ -390,6 +418,12 @@ Local connectors' keys use `resolveBound` with a `local-connector` consumer
 project scope is checked against the thread's project. The connector keeps only the
 `account:<id>:token` ref; see
 [local connectors](scient-extensions.md#local-connectors).
+
+A local connector can also link a **website sign-in** for the site its manifest names
+(`signIn`). Scient hands it that site's current cookies, never the password, re-checks the
+sign-in's Off switches and scope on every exchange, and signs in again unattended (the
+`connector` caller of `guardedSignIn`, at most once per 2 minutes) when the connector reports an
+ended session; see [signed-in connectors](scient-extensions.md#signed-in-connectors).
 
 Plugin keys use the same two calls with a `plugin-key` consumer (agent, plugin,
 variable name, optional site and project). Without a site, `listBindable` offers
@@ -695,21 +729,60 @@ new ones encrypted with the same Safe Storage key `safeStorage` uses. The fuse i
 it off later loses every encrypted cookie. Agents are unaffected: they use profiles through the
 browser, and scripts get cookies through the browser host.
 
+## Google sign-in in Scient's browser
+
+Google decides each sign-in inside Scient's browser itself. Some go through, a password typed in
+the tab included (seen 2026-11-09); others end on its refusal ("This browser or app may not be
+secure", `/v3/signin/rejected`), even with the page reporting Chrome's identity (Electron 44,
+2026-11-04). A profile holding a Google session made elsewhere passes Google's account chooser
+and other sites' "Continue with Google" without asking for anything. So Scient stops none of
+Google's pages: they load as in any browser, and only Google's refusal is explained. From
+2026-11-13 to 2026-11-15 Scient cancelled every recognized sign-in page before it loaded; that
+broke sign-ins Google accepted, and in `<webview>` tabs a cancelled load fires no
+`did-fail-load`, so the explanation never showed.
+
+`followTabSignIn` (desktop `scient/browser/googleSignInRecovery.ts`, pages classified by
+`@t3tools/shared/scientGoogleSignIn`) reports the refusal when it commits in the tab
+(`did-navigate`), arrives without a page load (`did-navigate-in-page`) or commits in a frame
+(`did-frame-navigate`). A popup a page opened (`watchSignInPopup`) closes on the refusal and
+reports to its opener's tab. `PreviewManager` emits each report as
+`DesktopPreviewSignInBlockedEvent`, and the tab shows a notice over Google's refusal, or over the
+page whose popup or frame was refused (`GoogleSignInRecovery.tsx`): **Sign in in a Chrome window**
+into the tab's profile, or **Open in my browser**. Once the window brought the sign-in into the
+profile, the tab opens the site, or Google, again. Each event names the page it is about
+(`pageUrl`: for a popup, the opener's page when the popup opened); once the tab shows another page
+the notice no longer applies. Google's own sign-in starts again at accounts.google.com; another
+site's "Continue with Google" starts again at that site's https origin, never at a Google URL
+carrying OAuth state, because state, PKCE and the opener belong to the refused attempt.
+`followTabSignIn` keeps that origin from the moment the tab enters an OAuth page, across Google's
+redirects. Nothing opens by itself. Server-hosted tabs report nothing.
+
+On Windows Chromium hands WebAuthn to Windows, so a person whose Google passkey lives on a phone
+or in Google Password Manager meets the Windows Security dialog; cancelling it leaves Google's
+**Try another way**.
+
 ## Passkeys
 
-Upstream passkeys need Apple's restricted `com.apple.developer.web-browser.public-key-credential`
-entitlement in the release signing profile; Scient has requested it. Passkeys in Apple Passwords
-always need Touch ID or the Mac password. Nothing else in Accounts depends on the entitlement.
+On macOS, upstream passkeys need Apple's restricted
+`com.apple.developer.web-browser.public-key-credential` entitlement in the release signing
+profile; Scient has requested it. Passkeys in Apple Passwords always need Touch ID or the Mac
+password. On Windows Chromium hands WebAuthn to Windows Hello and its phone or security-key
+choices, which can't reach passkeys in Google Password Manager. Nothing else in Accounts depends
+on any of these.
 
 ## Honest limits
 
 - Hidden values stay out of the model's context, not out of reach of a same-user process.
 - An agent signed in to a site can do what that account can do there.
 - CAPTCHAs, push approvals, new-device checks and passkeys need the user.
-- Google's sign-in reaches its password step in this browser, with the default user agent; the rest
-  of the sign-in is unproven. Google sessions imported from Chrome don't reliably last: on 2026-10-30,
-  four of five imported profiles were signed out within four days, and the fifth came from a Chrome
-  profile idle for 12 days. Chrome's continued use is the likely cause, not yet proven.
+- Google can't be signed into inside Scient's browser; its sign-in pages are stopped and explained
+  (above). A Google sign-in copied in from a browser (import, Refresh, or the sign-in window) is a
+  copy of cookies, not a session Scient can renew. Google may tie a session to the browser and
+  computer that made it (Device Bound Session Credentials, Chrome on Windows since 2026, macOS
+  following); a copy then works until its short-lived cookie needs renewing. On 2026-10-30, four of
+  five Google profiles imported on macOS were signed out within four days; the fifth came from a
+  Chrome profile idle for 12 days. Whether binding is the cause is unproven: the
+  `accounts.google_copy.*` observations measure how long copies last, by source and platform.
 - Known values are not masked in chat or logs, and commits are not checked. These can get in the way
   of real work, so they follow one at a time.
 - With the system keychain denied, a private card can't be sealed, so it reports that and saves
@@ -797,9 +870,8 @@ provider environment. The existing proxy redacts reflected values in responses.
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
   menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's
   own profile: Scient has no record of most sites a profile is signed in to, so a missing record
-  doesn't mean signed out. Google refuses signing in from Scient's browser ("This browser or app
-  may not be secure", `/v3/signin/rejected`), even with the page reporting Chrome's identity
-  (Electron 44, 2026-11-04). Scient never offers a Google sign-in here as a way back
+  doesn't mean signed out. Google refuses signing in from Scient's browser (see Google sign-in in
+  Scient's browser), so Scient never offers a Google sign-in here as a way back
   (`googleRecovery`). A signed-out profile imported from a browser says to sign in there and
   offers Refresh from that browser; one with no source says to sign in in a browser and offers
   Import from a browser…. When Main's Google doesn't work, its browser sign-in row offers Copy
@@ -848,7 +920,13 @@ provider environment. The existing proxy redacts reflected values in responses.
   Shibboleth SP's `Login`, or a discovery service's `return` with `entityID`) as a further route. The route that worked last at a publisher is kept in memory by the paper service, not
   on the account, and a paper's result refreshes the university's last seen state. Reaching a page
   follows the browser profile; signing in follows the account. Publishers go one at a time with a
-  10-20 s pause, and back off only when they refuse.
+  10-20 s pause, and back off only when they refuse. A paper asked for the Library is filed on its
+  Sources record after it is saved (see [Scient Sources](scient-sources.md)); the queue item then
+  carries its `sourceId` and the PDF's `version`.
+  NEJM SAML legal-consent forms produce a `terms` request, distinct from a bot check.
+  Its live tab stays open because `authenticateSharedSP` can require a POST; the explicit
+  user Open action reveals that tab, never submits consent, and starts bounded retries in
+  the same profile. New attempts still reauthorize access and fetch the article separately.
 - Browser-sign-in rows name the profile agents use; the usual Signed out / Sign in again applies.
 - **API keys**: Get a key opens the service's key page in the default browser. A pasted key with a
   known prefix picks its catalogue entry and goes straight into the key input, never into search

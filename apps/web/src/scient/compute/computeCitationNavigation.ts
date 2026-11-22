@@ -7,8 +7,10 @@ import {
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
+import { msg } from "gt-react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
 import { scientComputeSurface } from "~/scient/rightPanel/surfaces";
@@ -106,8 +108,10 @@ export function openComputeCitation(
     runAfterPendingSave(`file:${path}`, () => panel.openFile(ref, path));
     toastManager.add({
       type: "info",
-      title: "Opening the original workspace file",
-      description: "This conversation has moved to another workspace. The quote is unchanged.",
+      title: m(msg("Opening the original workspace file")),
+      description: m(
+        msg("This conversation has moved to another workspace. The quote is unchanged."),
+      ),
     });
     return;
   }

@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import { applyPiModelSelection } from "@t3tools/provider-pi/server/modelSelection";
-import { piDiscoveredModelToServerProviderModel } from "@t3tools/provider-pi/server/model";
+import { piModelCapabilities } from "@t3tools/provider-pi/server/model";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const decodeBody = Schema.decodeUnknownSync(
@@ -126,16 +126,9 @@ export default function() {
             reasoning: true,
           });
           expect(discovered?.reasoningMetadata).toBeUndefined();
-          const composerModel = piDiscoveredModelToServerProviderModel({
-            id: discovered!.id,
-            provider: discovered!.provider,
-            ...(discovered?.reasoning === undefined ? {} : { reasoning: discovered.reasoning }),
-            ...(discovered?.thinkingLevelMap
-              ? { thinkingLevelMap: discovered.thinkingLevelMap }
-              : {}),
-            name: "Legacy model",
-          });
-          expect(composerModel?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          // What the composer offers for it, as Pi model discovery (status.ts) builds it.
+          const composerCapabilities = piModelCapabilities(discovered, undefined);
+          expect(composerCapabilities.optionDescriptors?.[0]).toMatchObject({
             options: expect.arrayContaining([{ id: "low", label: "Low" }]),
           });
           const selected = { provider: "scient_legacy", modelId: "gpt-5" };

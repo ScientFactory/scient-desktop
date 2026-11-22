@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import type { CustomModelConnection, CustomModelSaveInput } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import { Button } from "../ui/button";
@@ -31,6 +32,8 @@ export function CustomModelConnectionDialog({
   onDelete: () => void;
   onClose: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   // This dialog opens programmatically, so retain its invoking control for closure.
   const [opener] = useState(() => {
     if (typeof document === "undefined" || typeof HTMLElement === "undefined") return null;
@@ -51,12 +54,12 @@ export function CustomModelConnectionDialog({
   // A missing key's last four describe nothing that can still be used.
   const missing = Boolean(connection.credentialId) && keyMissing;
   const keyStatus = !connection.credentialId
-    ? "No API key"
+    ? gt("No API key")
     : missing
-      ? MISSING_KEY_STATUS
+      ? messages(MISSING_KEY_STATUS)
       : connection.apiKeySuffix
-        ? `Key ending in ${connection.apiKeySuffix}`
-        : "Key saved";
+        ? gt("Key ending in {suffix}", { suffix: connection.apiKeySuffix })
+        : gt("Key saved");
   const submit = async () => {
     setBusy(true);
     setError(null);
@@ -78,7 +81,7 @@ export function CustomModelConnectionDialog({
         setApiKey("");
         onClose();
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Could not save this connection.");
+        setError(cause instanceof Error ? cause.message : gt("Could not save this connection."));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -104,9 +107,13 @@ export function CustomModelConnectionDialog({
         }
       >
         <DialogHeader>
-          <DialogTitle>Manage {connection.name}</DialogTitle>
+          <DialogTitle>
+            <T>
+              Manage <Var>{connection.name}</Var>
+            </T>
+          </DialogTitle>
           <DialogDescription className="sr-only">
-            Rename this connection or change its API key.
+            <T>Rename this connection or change its API key.</T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -118,16 +125,24 @@ export function CustomModelConnectionDialog({
             }}
           >
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-[var(--control-radius)] bg-muted/60 px-3 py-2.5 text-xs">
-              <dt className="text-muted-foreground">Endpoint</dt>
+              <dt className="text-muted-foreground">
+                <T>Endpoint</T>
+              </dt>
               <dd className="min-w-0 break-all font-mono text-foreground">{connection.baseUrl}</dd>
-              <dt className="text-muted-foreground">API format</dt>
+              <dt className="text-muted-foreground">
+                <T>API format</T>
+              </dt>
               <dd className="text-foreground">{protocolName}</dd>
-              <dt className="text-muted-foreground">Credential</dt>
+              <dt className="text-muted-foreground">
+                <T>Credential</T>
+              </dt>
               <dd className="text-foreground">{keyStatus}</dd>
             </dl>
             <fieldset disabled={busy} className="space-y-4">
               <label className="flex min-w-0 flex-col gap-1.5">
-                <span className="text-sm/4 font-medium text-foreground">Name</span>
+                <span className="text-sm/4 font-medium text-foreground">
+                  <T context="connection name field">Name</T>
+                </span>
                 <Input
                   required
                   autoFocus
@@ -138,7 +153,7 @@ export function CustomModelConnectionDialog({
               </label>
               <label className="flex min-w-0 flex-col gap-1.5">
                 <span className="text-sm/4 font-medium text-foreground">
-                  {connection.credentialId && !missing ? "Replace API key" : "API key"}
+                  {connection.credentialId && !missing ? gt("Replace API key") : gt("API key")}
                 </span>
                 <Input
                   type="password"
@@ -150,10 +165,10 @@ export function CustomModelConnectionDialog({
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder={
                     missing
-                      ? "Enter the API key again"
+                      ? gt("Enter the API key again")
                       : connection.credentialId
-                        ? "Leave blank to keep"
-                        : "Optional"
+                        ? gt("Leave blank to keep")
+                        : gt("Optional")
                   }
                 />
               </label>
@@ -166,7 +181,7 @@ export function CustomModelConnectionDialog({
                       setApiKey("");
                     }}
                   />
-                  Remove saved key
+                  <T>Remove saved key</T>
                 </label>
               ) : null}
             </fieldset>
@@ -177,10 +192,10 @@ export function CustomModelConnectionDialog({
             ) : null}
             <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
               <Button type="button" variant="ghost-destructive" disabled={busy} onClick={onDelete}>
-                Delete connection
+                <T>Delete connection</T>
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? "Saving…" : "Save"}
+                {busy ? gt("Saving…") : gt("Save", { $context: "button, saves the connection" })}
               </Button>
             </div>
           </form>

@@ -1,3 +1,4 @@
+import { msg, useGT } from "gt-react";
 import type {
   EnvironmentId,
   ProviderConnectionMethod,
@@ -19,11 +20,12 @@ import {
 import { useEnvironmentIsOnThisDevice } from "./environmentLocality";
 import { oneClickSignInMethod } from "./oneClickSignIn";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
+import { m } from "~/i18n/messages";
 
 function actionErrorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "The provider action could not be completed.";
+    : m(msg("The provider action could not be completed."));
 }
 
 interface ProviderSettingsLifecycleActionProps {
@@ -65,6 +67,7 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
     props.provider,
     props.displayName,
   );
+  const gt = useGT();
   const operationActive = presentation.kind === "installing" || presentation.kind === "signing-in";
   const externalUpdateActive =
     props.externalUpdateRunning === true ||
@@ -73,7 +76,7 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
   const progressLabel = operationActive
     ? presentation.statusLabel
     : externalUpdateActive
-      ? "Updating"
+      ? gt("Updating", { $context: "provider status" })
       : null;
   return (
     <ProviderSettingsActions
@@ -84,7 +87,10 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
       {progressLabel !== null ? (
         <ActionDetail detail={operationActive ? presentation.detail : null}>
           <Button
-            aria-label={`${progressLabel} ${props.displayName}`}
+            aria-label={gt("{status} {provider}", {
+              status: progressLabel,
+              provider: props.displayName,
+            })}
             onClick={() => props.onManage()}
             size="compact"
             type="button"
@@ -95,7 +101,9 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
               {progressLabel}
               {operationActive && presentation.downloadPercent !== undefined ? (
                 <span
-                  aria-label={`Download progress ${presentation.downloadPercent}%`}
+                  aria-label={gt("Download progress {percent}%", {
+                    percent: presentation.downloadPercent,
+                  })}
                   className="text-[11px] font-normal tabular-nums text-muted-foreground"
                 >
                   {presentation.downloadPercent}%
@@ -131,7 +139,7 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
               variant="ghost-primary"
             >
               {presentation.kind === "failed" ? <RefreshCwIcon /> : <LogInIcon />}
-              {presentation.kind === "failed" ? "Retry" : "Sign in"}
+              {presentation.kind === "failed" ? gt("Retry") : gt("Sign in")}
             </Button>
           )}
         </ActionDetail>
@@ -146,7 +154,8 @@ function ProviderSettingsActions(props: {
   readonly displayName: string;
   readonly onManage: () => void;
 }) {
-  const manageLabel = `Manage ${props.displayName}`;
+  const gt = useGT();
+  const manageLabel = gt("Manage {provider}", { provider: props.displayName });
   return (
     <div className="flex shrink-0 items-center gap-0.5">
       {props.children}
@@ -161,7 +170,7 @@ function ProviderSettingsActions(props: {
               variant="ghost-muted"
             >
               <Settings2Icon />
-              {props.labeled ? "Manage" : null}
+              {props.labeled ? gt("Manage", { $context: "verb, provider settings button" }) : null}
             </Button>
           }
         />
@@ -195,6 +204,7 @@ function BrowserSignInButton(props: {
     provider: props.provider,
   });
   const onThisDevice = useEnvironmentIsOnThisDevice(props.environmentId);
+  const gt = useGT();
 
   const continueSignIn = (provider: ServerProvider) => {
     const operation = provider.connection?.operation;
@@ -222,7 +232,7 @@ function BrowserSignInButton(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not sign in to ${props.displayName}`,
+          title: m(msg("Could not sign in to {provider}", { provider: props.displayName })),
           description: actionErrorMessage(error),
         }),
       );
@@ -232,7 +242,7 @@ function BrowserSignInButton(props: {
   return (
     <Button onClick={() => void signIn()} size="compact" type="button" variant="ghost-primary">
       {props.retry ? <RefreshCwIcon /> : <LogInIcon />}
-      {props.retry ? "Retry" : "Sign in"}
+      {props.retry ? gt("Retry") : gt("Sign in")}
     </Button>
   );
 }
@@ -249,6 +259,7 @@ function InstallRuntimeButton(props: {
   });
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
+  const gt = useGT();
 
   const run = async () => {
     // A second click opens details, including before React renders the pending state.
@@ -267,7 +278,7 @@ function InstallRuntimeButton(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not install ${props.displayName}`,
+            title: m(msg("Could not install {provider}", { provider: props.displayName })),
             description: actionErrorMessage(error),
           }),
         );
@@ -280,10 +291,16 @@ function InstallRuntimeButton(props: {
     if (actionFailure) throw actionFailure.cause;
   };
 
-  const label = pending ? "Installing" : "Install";
+  const label = pending
+    ? gt("Installing", { $context: "provider status" })
+    : gt("Install", { $context: "verb, provider settings button" });
   return (
     <Button
-      aria-label={`${label} ${props.displayName}`}
+      aria-label={
+        pending
+          ? gt("Installing {provider}", { provider: props.displayName })
+          : gt("Install {provider}", { provider: props.displayName })
+      }
       onClick={run}
       size="compact"
       type="button"

@@ -1,4 +1,7 @@
 import { ASSISTANT_CITATION_MAX_TEXT_LENGTH } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export interface ComputeCodeSlice {
   readonly code: string;
@@ -15,14 +18,15 @@ export interface ComputeTextRange {
   readonly end: { readonly line: number; readonly character: number };
 }
 
+/** `label` is shown on the Run button, in the UI language. */
 export type ComputeRunTarget =
   | {
       readonly kind: "selection";
-      readonly label: "Run selection";
+      readonly label: string;
       readonly slice: ComputeCodeSlice;
     }
-  | { readonly kind: "cell"; readonly label: "Run cell"; readonly slice: ComputeCodeSlice }
-  | { readonly kind: "file"; readonly label: "Run file"; readonly slice: ComputeCodeSlice | null };
+  | { readonly kind: "cell"; readonly label: string; readonly slice: ComputeCodeSlice }
+  | { readonly kind: "file"; readonly label: string; readonly slice: ComputeCodeSlice | null };
 
 interface SourceLine {
   readonly start: number;
@@ -200,6 +204,7 @@ export function resolveComputeRunTarget(
   lineSelection: { readonly start: number; readonly end: number } | null,
   editorSelection: ComputeTextRange | null,
   marker?: RegExp,
+  resolve: MessageResolver = m,
 ): ComputeRunTarget {
   const exactSelection =
     editorSelection === null ? null : computeTextSelection(contents, editorSelection);
@@ -207,11 +212,11 @@ export function resolveComputeRunTarget(
     lineSelection === null ? null : computeLineSelection(contents, lineSelection);
   const selection = exactSelection ?? selectedLines;
   if (selection !== null) {
-    return { kind: "selection", label: "Run selection", slice: selection };
+    return { kind: "selection", label: resolve(msg("Run selection")), slice: selection };
   }
 
   const cell = computeActiveCell(contents, editorSelection, marker);
-  if (cell !== null) return { kind: "cell", label: "Run cell", slice: cell };
+  if (cell !== null) return { kind: "cell", label: resolve(msg("Run cell")), slice: cell };
 
-  return { kind: "file", label: "Run file", slice: computeFile(contents) };
+  return { kind: "file", label: resolve(msg("Run file")), slice: computeFile(contents) };
 }

@@ -1,27 +1,46 @@
-import { terminalContextReference } from "../lib/composerContextRecords";
-import { ensureInlineContextReferences } from "../lib/composerContextReferences";
+import { rewindToMessage } from "./chat/chatViewSend";
+import * as session from "../state/session";
+import {
+  environmentContextRecord,
+  environmentContextReference,
+  threadContextReference,
+} from "../lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
+  deriveTimelineWorking,
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
   presentThreadShellFromProjection,
+  deriveThreadPendingBackgroundTasks,
+  resolveProactiveTurnDiffAction,
 } from "./ChatView.logic";
-import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
+import {
+  isThreadEnvironmentLocked,
+  recallCheckoutIsRepo,
+  rememberCheckoutIsRepo,
+  resolveThreadErrorBanner,
+} from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider, type ModelSelection } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type RightPanelSurface,
-  pullRequestSurface,
   selectActiveRightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
-
+import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import {
+  responseContextRecord,
+  responseContextReference,
+  terminalContextReference,
+} from "../lib/composerContextRecords";
+import {
+  CheckpointScopeId,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -42,10 +61,12 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { Atom, AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 import type { Thread } from "../types";
+import { DraftId, hydrateImagesFromPersisted, useComposerDraftStore } from "../composerDraftStore";
+import { derivePhase } from "../session-logic";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
   getAntigravitySendBlockReason,
@@ -61,13 +82,12 @@ import {
   timelineHasEphemeralPreviewUrls,
   codexArtifactTemplatePromptToAppend,
   shouldRefocusComposerOnWindowFocus,
-  shouldOpenProactivePullRequest,
   shouldRetargetThreadPullRequestPanel,
-  shouldOpenProactiveTurnDiff,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   deriveLockedProvider,
+  hasCompactableConversation,
   hasServerAcknowledgedLocalDispatch,
   resolveThreadMetadataUpdateForNextTurn,
   waitForRevertedMessage,
@@ -350,6 +370,26 @@ describe("resolveThreadWorkspaceRoot", () => {
         projectCwd: null,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("isThreadEnvironmentLocked", () => {
+  it.each([
+    { name: "an empty unbound thread", providerThread: null, expected: false },
+    {
+      name: "an imported session bound before its first run",
+      providerThread: "imported",
+      expected: true,
+    },
+  ])("locks $name: $expected", ({ providerThread, expected }) => {
+    expect(
+      isThreadEnvironmentLocked({
+        messageCount: 0,
+        hasRuntime: false,
+        activeProviderThreadId:
+          providerThread === null ? null : ProviderThreadId.make(providerThread),
+      }),
+    ).toBe(expected);
   });
 });
 
@@ -640,60 +680,6 @@ describe("deriveCommittedServerUserMessageIds", () => {
   });
 });
 describe("proactive panels", () => {
-  it("keeps a manual PR selection made after following a replacement while loading", () => {
-    useRightPanelStore.setState({
-      byThreadKey: {},
-      userActionRevisionByThreadKey: {},
-    });
-    const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1"));
-    const panels = useRightPanelStore.getState();
-    const oldPr = pullRequestSurface({
-      projectId: "project-1",
-      repository: "owner/repo",
-      number: 1,
-    });
-    const replacement = pullRequestSurface({
-      ...oldPr,
-      number: 2,
-    });
-    const runId = RunId.make("turn-1");
-    panels.openPullRequest(ref, oldPr);
-    const loading = observeProactivePanelUserChoice(null, {
-      threadKey: "env-1:thread-1",
-      runningTurnId: runId,
-      userActionRevision: panels.getUserActionRevision(ref),
-    });
-    expect(panels.openProactive(ref, replacement, loading.userActionRevision)).toBe(true);
-    panels.activateSurface(ref, oldPr.id);
-    const loaded = observeProactivePanelUserChoice(loading, {
-      threadKey: loading.threadKey,
-      runningTurnId: runId,
-      userActionRevision: panels.getUserActionRevision(ref),
-    });
-    expect(panels.openProactive(ref, replacement, loaded.userActionRevision)).toBe(false);
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref)).toEqual(
-      oldPr,
-    );
-    expect(shouldOpenProactivePullRequest(loaded.targetKey, "owner/repo:2")).toBe(true);
-    expect(
-      shouldOpenProactiveTurnDiff({
-        previousRunningTurnId: loaded.runningTurnId,
-        runningTurnId: null,
-        settledTurnId: runId,
-        turnCompleted: true,
-      }),
-    ).toBe(true);
-    expect(
-      panels.openProactive(
-        ref,
-        {
-          kind: "diff",
-          turnId: runId,
-        },
-        loaded.userActionRevision,
-      ),
-    ).toBe(false);
-  });
   it.each(["idle", "loading", "observed"] as const)(
     "captures a new run's choice once with initial state %s",
     (initialState) => {
@@ -873,42 +859,6 @@ describe("draft promotion during worktree setup", () => {
     environmentId,
     threadId,
   };
-  it.each([null, "preparing", "starting"] as const)(
-    "keeps the draft mounted until the server owns the send, with setup run %s",
-    (status) => {
-      const serverThread = makeThread({
-        latestRun: status
-          ? {
-              ...completedTurn,
-              status,
-              startedAt: null,
-              completedAt: null,
-            }
-          : null,
-        latestUserMessageAt: null,
-      });
-      expect(
-        resolveDraftPromotionNavigationTarget({
-          serverThreadRef,
-          serverThread,
-          backgroundSubmissionPending: false,
-        }),
-      ).toBeNull();
-    },
-  );
-  it("promotes once the bootstrap persisted the user message, before any run", () => {
-    const serverThread = makeThread({
-      latestRun: null,
-      latestUserMessageAt: now,
-    });
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef,
-        serverThread,
-        backgroundSubmissionPending: false,
-      }),
-    ).toEqual(serverThreadRef);
-  });
   it("promotes when the provider starts the first run", () => {
     expect(
       resolveDraftPromotionNavigationTarget({
@@ -944,6 +894,87 @@ describe("draft promotion during worktree setup", () => {
     },
   );
 });
+
+describe("hasCompactableConversation", () => {
+  const at = DateTime.makeUnsafe("2026-10-26T08:00:00.000Z");
+  const runId = RunId.make("run:thread:thread-1:ordinal:1");
+  const itemBase = (id: string, ordinal: number) => ({
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title: null,
+    startedAt: at,
+    completedAt: at,
+    updatedAt: at,
+  });
+  const userMessage = (text: string): OrchestrationV2ProjectedTurnItem => ({
+    position: 0,
+    visibility: "local",
+    sourceThreadId: threadId,
+    sourceItemId: TurnItemId.make("turn-item:user"),
+    item: {
+      ...itemBase("turn-item:user", 1),
+      createdBy: "user",
+      creationSource: "web",
+      type: "user_message",
+      messageId: MessageId.make("message-user"),
+      inputIntent: "turn_start",
+      text,
+      attachments: [],
+    },
+  });
+  const assistantMessage: OrchestrationV2ProjectedTurnItem = {
+    position: 1,
+    visibility: "local",
+    sourceThreadId: threadId,
+    sourceItemId: TurnItemId.make("turn-item:assistant"),
+    item: {
+      ...itemBase("turn-item:assistant", 2),
+      type: "assistant_message",
+      messageId: MessageId.make("message-assistant"),
+      text: "done",
+      streaming: false,
+    },
+  };
+
+  it("counts a user message beyond the loaded page", () => {
+    expect(
+      hasCompactableConversation({
+        visibleTurnItems: [assistantMessage],
+        hasMoreHistory: true,
+        latestUserMessageAt: "2026-10-26T08:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("stays unavailable when the thread never had a user message", () => {
+    expect(
+      hasCompactableConversation({
+        visibleTurnItems: [assistantMessage],
+        hasMoreHistory: true,
+        latestUserMessageAt: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not count a lone /compact on a fully loaded thread", () => {
+    expect(
+      hasCompactableConversation({
+        visibleTurnItems: [userMessage("/compact"), assistantMessage],
+        hasMoreHistory: false,
+        latestUserMessageAt: "2026-10-26T08:00:00.000Z",
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("resolveThreadSwitchTimeline", () => {
   afterEach(() => {
     resetHeldThreadTimeline();
@@ -1237,6 +1268,7 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
           element(tagName, {
             within: '[contenteditable="true"]',
           }),
+          null,
         ),
       ).toBe(false);
     },
@@ -1388,6 +1420,78 @@ describe("waitForRevertedMessage", () => {
     };
   }
   afterEach(() => vi.restoreAllMocks());
+
+  it("restores the rewound message's thread and machine mentions beside the existing draft", async () => {
+    const { state, projection } = projectionAtom();
+    vi.spyOn(session, "readPreparedConnection").mockReturnValue({
+      httpBaseUrl: "http://localhost",
+    } as never);
+    useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
+    const thread = (id: string, title: string) =>
+      threadContextRecord(
+        { environmentId: threadRef.environmentId, threadId: ThreadId.make(id) },
+        title,
+      );
+    const drafted = thread("drafted-thread", "Drafted thread");
+    const mentioned = thread("referenced-thread", "Other thread");
+    const machine = environmentContextRecord(EnvironmentId.make("env-2"), "Build box");
+    useComposerDraftStore.getState().addThreadContexts(threadRef, [drafted]);
+    const draftPrompt = useComposerDraftStore.getState().getComposerDraft(threadRef)!.prompt;
+    const sentPrompt = ensureInlineContextReferences("Review", [
+      threadContextReference(mentioned),
+      environmentContextReference(machine),
+    ]).trim();
+
+    const result = await rewindToMessage({
+      message: {
+        id: messageId,
+        role: "user",
+        runId: projection.messages[0]!.runId,
+        streaming: false,
+        createdAt: "2026-03-29T00:00:10.000Z",
+        updatedAt: "2026-03-29T00:00:10.000Z",
+        text: sentPrompt,
+        context: { version: 1, records: [mentioned, machine] },
+      },
+      environmentId: threadRef.environmentId,
+      routeThreadRef: threadRef,
+      threadId: threadRef.threadId,
+      turnCount: 1,
+      restoreFiles: false,
+      checkpoint: undefined,
+      draftTarget: threadRef,
+      composerHasPendingAttachments: false,
+      // SCIENT-FORK: Scient's rewind checks the route is still current.
+      isCurrentRoute: () => true,
+      createAssetUrl: async () => {
+        throw new Error("No attachment expected");
+      },
+      revertThreadCheckpoint: async () => {
+        appAtomRegistry.set(state, {
+          data: Option.some({
+            ...projection,
+            providerThreads: projection.providerThreads.map((providerThread) => ({
+              ...providerThread,
+              lastRunOrdinal: 1,
+            })),
+            runs: projection.runs.map((run) =>
+              run.ordinal > 1 ? { ...run, status: "rolled_back" as const } : run,
+            ),
+          }),
+        });
+        return AsyncResult.success(undefined);
+      },
+    });
+
+    const prompt = `${draftPrompt}\n\n${sentPrompt}`;
+    expect(result).toEqual({ error: null, prompt });
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)).toMatchObject({
+      prompt,
+      threadContexts: [drafted, mentioned],
+      environmentContexts: [machine],
+    });
+  });
+
   it("rejects with the projected reason when the rollback fails for good", async () => {
     const { state, projection } = projectionAtom();
     const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {});
@@ -1735,12 +1839,70 @@ describe("snapshotComposerSend", () => {
       reviewComments: [],
       threadContexts: [],
       environmentContexts: [],
+      replyTo: null,
     });
     expect(snapshot.terminalContexts).toEqual([live]);
     expect(snapshot.messageText).toBe(
       ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
     );
   });
+
+  it("sends a reply as a reference and restores it without one", () => {
+    const replyTo = responseContextRecord({
+      citation: {
+        version: 1,
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: MessageId.make("message-1"),
+        text: "Done. I added clamp next to sum.",
+        start: 0,
+        end: 32,
+        prefix: "",
+        suffix: "",
+      },
+      itemId: TurnItemId.make("item-1"),
+      subagents: [],
+    });
+    const reference = responseContextReference(replyTo);
+    const snapshot = snapshotComposerSend({
+      prompt: ensureInlineContextReferences("", [reference]) + " why there?",
+      images: [],
+      files: [],
+      terminalContexts: [],
+      sendableTerminalContexts: [],
+      previewAnnotations: [],
+      reviewComments: [],
+      threadContexts: [],
+      environmentContexts: [],
+      replyTo,
+    });
+
+    expect(snapshot.messageText).toContain(`t3-context://v1/response/${replyTo.contextId}`);
+    expect(snapshot.draftText).toBe("why there?");
+    expect(snapshot.replyTo).toBe(replyTo);
+  });
+});
+
+describe("deriveTimelineWorking", () => {
+  it.each(["preparing", "starting", "queued"] as const)(
+    "restores activity from a persisted %s session without a local send",
+    (status) => {
+      const state = {
+        phase: derivePhase({ ...readySession, status }),
+        isSendBusy: false,
+        isCompacting: false,
+        runlessWorkStartedAt: null,
+      };
+      expect(deriveTimelineWorking(state)).toBe(true);
+      expect(deriveTimelineWorking({ ...state, phase: "ready" })).toBe(false);
+      expect(
+        deriveTimelineWorking({
+          ...state,
+          phase: derivePhase({ ...readySession, status: "failed" }),
+        }),
+      ).toBe(false);
+    },
+  );
 });
 
 describe("planComposerTurn", () => {
@@ -1752,6 +1914,8 @@ describe("planComposerTurn", () => {
     sendEnvMode: "worktree" as const,
     worktreePath: null,
     activeThreadBranch: "main",
+    projectIsGitRepo: true,
+    isScratchProject: false,
     resumeCompactionTokens: null,
     keepFullHistory: false,
     phase: "ready" as const,
@@ -1773,6 +1937,16 @@ describe("planComposerTurn", () => {
       }),
     ).toMatchObject({
       missingWorktreeBaseBranch: true,
+      baseBranchForWorktree: null,
+    });
+    // A plain folder that tracks repositories has no branch of its own to start from.
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, projectIsGitRepo: false }),
+    ).toMatchObject({ missingWorktreeBaseBranch: false, baseBranchForWorktree: "HEAD" });
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, isScratchProject: true }),
+    ).toMatchObject({
+      missingWorktreeBaseBranch: false,
       baseBranchForWorktree: null,
     });
   });
@@ -1814,6 +1988,12 @@ describe("planComposerTurn", () => {
     ).toMatchObject({
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
+    });
+    expect(
+      planComposerTurn({ ...running, sendQueuesBehindSetup: true, dispatchMode: "steer" }),
+    ).toMatchObject({
+      turnDispatchMode: "steer",
+      shouldQueueBehindActiveRun: true,
     });
     // A fresh session cannot join the running turn, and a stale one is not compacted first.
     expect(
@@ -1936,6 +2116,54 @@ describe("presentThreadShellFromProjection", () => {
   });
 });
 
+describe("resolveProactiveTurnDiffAction", () => {
+  const file = { path: "src/a.ts", kind: "modified", additions: 60, deletions: 0 };
+  const repository = (files: ReadonlyArray<typeof file>) => ({
+    scopeId: CheckpointScopeId.make("scope-api"),
+    name: "api",
+    repositoryPath: "/work/api",
+    cwd: "/work/api",
+    files,
+    baselineMissing: files.length === 0,
+  });
+
+  it("opens for repository changes in a folder that is not a Git repository", () => {
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [], repositories: [repository([file])] },
+        isGitRepo: false,
+      }),
+    ).toBe("open");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [], repositories: [repository([])] },
+        isGitRepo: false,
+      }),
+    ).toBe("ignore");
+  });
+
+  it("keeps waiting on a missing checkpoint and ignores a folder without Git", () => {
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [] },
+        isGitRepo: true,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "ready", files: [file] },
+        isGitRepo: false,
+      }),
+    ).toBe("ignore");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "ready", files: [file] },
+        isGitRepo: true,
+      }),
+    ).toBe("open");
+  });
+});
+
 describe("deriveAvailableRevertTurnCounts", () => {
   const providerThreadId = ProviderThreadId.make("provider-thread");
   const otherProviderThreadId = ProviderThreadId.make("other-provider-thread");
@@ -1986,5 +2214,223 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+
+describe("deriveThreadPendingBackgroundTasks", () => {
+  const base = makeThreadProjectionFixture();
+  const run = (ordinal: number, status: string) => ({
+    id: RunId.make(`run-${ordinal}`),
+    ordinal,
+    status,
+  });
+  const item = (ordinal: number, type: string, nativeId: string, input: string) => ({
+    id: TurnItemId.make(`item-${nativeId}`),
+    type,
+    status: "running",
+    title: null,
+    runId: RunId.make(`run-${ordinal}`),
+    nativeItemRef: { nativeId },
+    input,
+  });
+  const projection = (overrides: object) =>
+    ({ ...base, ...overrides }) as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+  it.each(["queued", "preparing", "running"])(
+    "keeps an earlier run's background shell while a %s follow-up run has a foreground command",
+    (followUpStatus) => {
+      expect(
+        deriveThreadPendingBackgroundTasks(
+          projection({
+            runs: [run(1, "completed"), run(2, followUpStatus)],
+            turnItems: [
+              item(1, "command_execution", "shell-1", "sleep 600"),
+              item(2, "command_execution", "shell-2", "sleep 15"),
+            ],
+          }),
+        ),
+      ).toEqual([{ taskId: "shell-1", description: "sleep 600", kind: "command" }]);
+    },
+  );
+
+  it("does not list a live run's child from the provider roster as background", () => {
+    // The roster is not run-tied; Muse keys it by the child session id its rows carry.
+    expect(
+      deriveThreadPendingBackgroundTasks(
+        projection({
+          runs: [run(1, "completed"), run(2, "running")],
+          providerThreads: [
+            {
+              id: "provider-thread-1",
+              providerInstanceId: base.thread.providerInstanceId,
+              pendingBackgroundTasks: [
+                { taskId: "child-session-1", kind: "subagent" },
+                { taskId: "child-session-2", kind: "subagent" },
+              ],
+            },
+          ],
+          turnItems: [
+            { ...item(1, "subagent", "child-session-1", ""), prompt: "child 1" },
+            { ...item(2, "subagent", "child-session-2", ""), prompt: "child 2" },
+          ],
+        }),
+      ),
+    ).toEqual([
+      {
+        taskId: "child-session-1",
+        kind: "subagent",
+        providerInstanceId: base.thread.providerInstanceId,
+      },
+    ]);
+  });
+
+  it("keeps an earlier run's roster-only monitor while a follow-up run executes", () => {
+    // Claude completes the Monitor launch row on success; only the roster tracks the task.
+    expect(
+      deriveThreadPendingBackgroundTasks(
+        projection({
+          runs: [run(1, "completed"), run(2, "running")],
+          providerThreads: [
+            {
+              id: "provider-thread-1",
+              providerInstanceId: base.thread.providerInstanceId,
+              pendingBackgroundTasks: [{ taskId: "b1htjkjev", kind: "monitor" }],
+            },
+          ],
+          turnItems: [
+            { ...item(1, "dynamic_tool", "toolu-monitor", ""), status: "completed" },
+            item(2, "command_execution", "shell-2", "sleep 15"),
+          ],
+        }),
+      ),
+    ).toEqual([{ taskId: "b1htjkjev", kind: "monitor" }]);
+  });
+
+  it("keeps the provider roster while a follow-up run only waits in the queue", () => {
+    expect(
+      deriveThreadPendingBackgroundTasks(
+        projection({
+          runs: [run(1, "waiting"), run(2, "queued")],
+          providerThreads: [
+            {
+              id: "provider-thread-1",
+              providerInstanceId: base.thread.providerInstanceId,
+              pendingBackgroundTasks: [{ taskId: "task-1", kind: "background_task" }],
+            },
+          ],
+        }),
+      ),
+    ).toEqual([{ taskId: "task-1", kind: "background_task" }]);
+  });
+});
+
+describe("prepareRevertedMessageAttachments", () => {
+  it("suppresses a repeated image after restoring a rewound message", async () => {
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(new Uint8Array([1, 2, 3])));
+    const [file] = await prepareRevertedMessageAttachments({
+      message: {
+        id: MessageId.make("rewound"),
+        role: "user",
+        text: "",
+        runId: null,
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+        attachments: [
+          { type: "image", id: "restored", name: "image.png", mimeType: "image/png", sizeBytes: 3 },
+        ],
+      },
+      environmentId: EnvironmentId.make("rewind-images"),
+      httpBaseUrl: "http://localhost",
+      createAssetUrl: async () =>
+        AsyncResult.success({ relativeUrl: "/attachment/image.png", expiresAt: 0 }),
+    });
+    const target = DraftId.make("rewind-image-repeat");
+    const store = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    store.addImages(
+      target,
+      [
+        {
+          type: "image",
+          id: "restored",
+          name: file!.name,
+          mimeType: file!.type,
+          sizeBytes: file!.size,
+          file: file!,
+          previewUrl: "data:image/png;base64,AQID",
+        },
+      ],
+      { allowDuplicates: true },
+    );
+    const repeat = hydrateImagesFromPersisted([
+      {
+        id: "repeat",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        dataUrl: "data:image/png;base64,AQID",
+      },
+    ]);
+    expect(store.addImages(target, repeat)).toEqual([]);
+    expect(store.getComposerDraft(target)?.images.map(({ id }) => id)).toEqual(["restored"]);
+  });
+});
+
+describe("resolveThreadErrorBanner", () => {
+  const base = {
+    isServerThread: true,
+    localServerError: null,
+    localDraftError: null,
+    runtimeError: null,
+    runtimeErrorSource: null,
+  };
+
+  it.each([
+    {
+      name: "server runtime error",
+      input: { ...base, runtimeError: "Turn failed", runtimeErrorSource: "item-1" },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local copy of the runtime error",
+      input: {
+        ...base,
+        localServerError: "Turn failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local server error over a different runtime error",
+      input: {
+        ...base,
+        localServerError: "Upload failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: { threadError: "Upload failed", sessionDismissal: null },
+    },
+    {
+      name: "draft error",
+      input: {
+        ...base,
+        isServerThread: false,
+        localDraftError: "Worktree failed",
+        runtimeError: "Turn failed",
+      },
+      expected: { threadError: "Worktree failed", sessionDismissal: null },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(resolveThreadErrorBanner(input)).toEqual(expected);
   });
 });

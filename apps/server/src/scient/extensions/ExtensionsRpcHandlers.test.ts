@@ -17,6 +17,8 @@ import {
   changeFeedLayer,
   ExtensionsChangeFeed,
   providerSupportChanges,
+  validateConnectorAgents,
+  providerStoreEntryError,
 } from "./ExtensionsRpcHandlers.ts";
 
 const provider = (
@@ -138,4 +140,62 @@ it.effect(
       ).pipe(Stream.runCollect);
       assert.lengthOf(changes, 2);
     }),
+);
+
+it.effect(
+  "validates supplied agent choices against configured instances without rewriting omitted or null choices",
+  () =>
+    Effect.gen(function* () {
+      const known = ProviderInstanceId.make("work");
+      const unknown = ProviderInstanceId.make("removed");
+      const snapshots = Effect.succeed([
+        provider("work", "codex"),
+        provider("disabled", "claudeAgent", { enabled: false }),
+      ]);
+      for (const agents of [[unknown], [unknown, ProviderInstanceId.make("missing")]]) {
+        const refused = yield* validateConnectorAgents({ agents }, snapshots).pipe(Effect.flip);
+        assert.equal(refused.reason, "invalid-input");
+        assert.include(refused.message, "None of the chosen agents is configured");
+      }
+      assert.deepEqual(
+        (yield* validateConnectorAgents({ agents: [unknown, known, known] }, snapshots)).agents,
+        [known],
+      );
+      assert.deepEqual(
+        (yield* validateConnectorAgents(
+          { agents: [ProviderInstanceId.make("disabled")] },
+          snapshots,
+        )).agents,
+        [ProviderInstanceId.make("disabled")],
+      );
+      assert.deepEqual(
+        yield* validateConnectorAgents({ agents: null }, Effect.die("must not read")),
+        { agents: null },
+      );
+      assert.deepEqual(yield* validateConnectorAgents({}, Effect.die("must not read")), {});
+      assert.deepEqual(yield* validateConnectorAgents({ agents: [] }, snapshots), { agents: [] });
+    }),
+);
+
+it.effect("keeps store timeouts and read failures distinct from a store's missing entry", () =>
+  Effect.gen(function* () {
+    for (const message of [
+      "The plugin store timed out.",
+      "Could not read the configured plugin marketplaces.",
+      "Connection refused",
+    ]) {
+      const error = yield* Effect.fail({ message }).pipe(
+        Effect.mapError(providerStoreEntryError),
+        Effect.flip,
+      );
+      assert.equal(error.reason, "state-unavailable");
+      assert.equal(error.message, message);
+    }
+    for (const message of [
+      "This plugin is no longer in the store.",
+      "This Codex plugin is no longer available.",
+    ]) {
+      assert.equal(providerStoreEntryError({ message }).reason, "not-found");
+    }
+  }),
 );

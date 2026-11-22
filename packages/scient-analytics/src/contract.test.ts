@@ -186,6 +186,57 @@ describe("Scient analytics contract", () => {
     });
   });
 
+  it("says why a sign-in failed and which page it waited on, from closed values only", () => {
+    const failed = normalizeInheritedEvent(
+      "provider.lifecycle.failed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "waiting_for_browser",
+        failureClass: "unknown",
+        failureReason: "timeout",
+        signInPage: "manual_fallback",
+      },
+      context,
+    );
+    expect(failed?.properties).toMatchObject({
+      failureReason: "timeout",
+      signInPage: "manual_fallback",
+    });
+    const completed = normalizeInheritedEvent(
+      "provider.lifecycle.completed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "verifying",
+        signInPage: "primary",
+        failureReason: "timeout",
+      },
+      context,
+    );
+    expect(completed?.properties).toMatchObject({ signInPage: "primary" });
+    expect(completed?.properties).not.toHaveProperty("failureReason");
+    const started = normalizeInheritedEvent(
+      "provider.lifecycle.started",
+      { provider: "claudeAgent", action: "sign-in", stage: "starting", signInPage: "primary" },
+      context,
+    );
+    expect(started?.properties).not.toHaveProperty("signInPage");
+    const stray = normalizeInheritedEvent(
+      "provider.lifecycle.failed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "waiting_for_browser",
+        failureReason: "the user's browser at /private/path",
+        signInPage: "https://example.invalid",
+      },
+      context,
+    );
+    expect(stray?.properties).not.toHaveProperty("signInPage");
+    expect(JSON.stringify(stray)).not.toContain("private");
+  });
+
   it("uses bounded duration and failure values", () => {
     expect(durationBucket(450)).toBe("under-1s");
     expect(durationBucket(75_000)).toBe("1-3m");
@@ -209,6 +260,54 @@ describe("Scient analytics contract", () => {
         failureClass: "unknown",
       },
     });
+    // The run's hash and the agent build pass; anything shaped otherwise is dropped.
+    const run = (runRef: string, providerVersion: string) =>
+      normalizeInheritedEvent(
+        "provider.turn.failed",
+        { provider: "scient", runRef, providerVersion, started: false },
+        context,
+      )?.properties;
+    expect(run("0123456789abcdef", "0.1.11")).toMatchObject({
+      runRef: "0123456789abcdef",
+      providerVersion: "0.1.11",
+      started: false,
+    });
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("runRef");
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("providerVersion");
+
+    // A turn that went to a user's own endpoint says so; only a boolean passes.
+    const endpoint = (customEndpoint: unknown) =>
+      normalizeInheritedEvent(
+        "provider.turn.failed",
+        { provider: "claudeAgent", customEndpoint },
+        context,
+      )?.properties;
+    expect(endpoint(true)).toMatchObject({ customEndpoint: true });
+    expect(endpoint("proxy.example")).not.toHaveProperty("customEndpoint");
+  });
+
+  it("keeps an extension's public identity: hosts, registry and plugin names", () => {
+    const properties = {
+      owner: "scient",
+      extensionKind: "connector",
+      connector: "io.github.acme/search",
+      connectorHost: "mcp.notion.com",
+      extensionName: "Notion",
+      plugin: "gmail",
+      marketplace: "openai-curated",
+      tool: "search_pages",
+      outcome: "ok",
+    };
+    const event = normalizeInheritedEvent("extension.tool.called", properties, context);
+    expect(event?.properties).toMatchObject(properties);
+    expect(
+      eventContractViolation({
+        name: "extension.tool.called",
+        privacyLevel: "product",
+        consentLevel: "product",
+        properties: event?.properties ?? {},
+      }),
+    ).toBeNull();
   });
 
   it("records events and fields without a Scient normalizer, as T3 does", () => {

@@ -8,6 +8,7 @@ import {
   INCOGNITO_BROWSER_PROFILE_ID,
   IsoDateTime,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type BrowserImportResult,
   type DesktopFillMainResult,
   type SessionCookie,
 } from "@t3tools/contracts";
@@ -127,14 +128,41 @@ export function jarStore(session: Electron.Session, send: CdpSend): CookieStore 
 }
 
 /**
+ * A store whose first write asks `proceed` first. Refused, it writes nothing from then on, so a
+ * copy that is stopped before its first write leaves the jar as it was.
+ */
+export function gatedStore(store: CookieStore, proceed: () => boolean) {
+  let gate: "open" | "committed" | "stopped" = "open";
+  const mayWrite = () => {
+    if (gate === "open") gate = proceed() ? "committed" : "stopped";
+    return gate === "committed";
+  };
+  return {
+    store: {
+      readUnit: store.readUnit,
+      set: (cookies) => (mayWrite() ? store.set(cookies) : Promise.resolve()),
+      remove: (cookies) => (mayWrite() ? store.remove(cookies) : Promise.resolve()),
+    } satisfies CookieStore,
+    mayWrite,
+    stopped: () => gate === "stopped",
+  };
+}
+
+/** A copy into Main stopped before its first write: Main is as it was. */
+class CopyStopped extends Schema.TaggedError<CopyStopped>()("CopyStopped", {}) {}
+
+/**
  * Copies the source session's units into Main, one transaction each; the source is only read.
- * `record` keeps what each unit it wrote holds, while the Main lock is still held.
+ * `record` keeps what each unit it wrote holds, while the Main lock is still held. `proceed` is
+ * asked right before the first change to Main (a cookie write, or Google's check, which writes);
+ * refused, Main is left untouched and the copy rejects.
  */
 export async function copyIntoMain(
   source: Electron.Session,
   main: Electron.Session,
   input: CopyRules,
   record?: (copies: ReadonlyArray<Omit<MainCopy, "from">>) => Promise<void>,
+  proceed: () => boolean = () => true,
 ): Promise<DesktopFillMainResult> {
   const tracker = mainInsertTracker(main);
   const failed = refusedIn(main);
@@ -142,7 +170,7 @@ export async function copyIntoMain(
   return withCookieDebugger(source, (readSource) =>
     withCookieDebugger(main, async (sendMain) => {
       const { cookies: jar, unsupported } = await readJar(readSource);
-      const store = jarStore(main, sendMain);
+      const { store, mayWrite, stopped } = gatedStore(jarStore(main, sendMain), proceed);
       const units: Array<{ sites: string[]; outcome: UnitOutcome }> = [];
       // Units sharing a site are one component, decided once, before anything is written.
       const planned = input.units ? mergeUnits(input.units) : jarUnits(jar, input.join);
@@ -150,9 +178,11 @@ export async function copyIntoMain(
       // writes cookies into Main, so the insert tracker can't vouch for it; it is asked right before
       // Google's unit, and the unit's watcher protects whatever a page writes after that.
       const googleDeadNow = async () =>
-        (await readGoogleSessions(main).catch(() => null))?.every((account) => !account.valid) ??
-        false;
+        (await readGoogleSessions(main, mayWrite).catch(() => null))?.every(
+          (account) => !account.valid,
+        ) ?? false;
       for (const unit of planned) {
+        if (stopped()) break;
         const sites = [...unitSites(unit)];
         const since = unit.flatMap((entry) => {
           const at = input.replaceAllowedSince?.[entry];
@@ -183,10 +213,13 @@ export async function copyIntoMain(
           } finally {
             foreign.stop();
           }
+          // Stopped before any write: nothing failed, and nothing is held against the site.
+          if (stopped()) break;
           if (outcome === "restore-failed") for (const entry of sites) failed.add(entry);
         }
         units.push({ sites: [...unit], outcome });
       }
+      if (stopped()) throw new CopyStopped();
       const nowSeconds = Date.now() / 1000;
       await record?.(
         planned.flatMap((unit, index) => {
@@ -254,12 +287,15 @@ export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: 
 
 /**
  * A copy into Main of what `stage` puts in a throwaway in-memory partition, so Main itself is
- * written only by the copy. Null when refused or when a jar can't be opened.
+ * written only by the copy. An import's own summary comes back with the copy's. Null when refused
+ * or when a jar can't be opened.
  */
 export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(function* <E, R>(
   environmentId: string,
   input: CopyRules,
-  stage: (scope: string) => Effect.Effect<unknown, E, R>,
+  stage: (scope: string) => Effect.Effect<BrowserImportResult | void, E, R>,
+  /** Asked under Main's lock, right before Main first changes; false leaves Main untouched. */
+  proceed: () => boolean = () => true,
 ) {
   const manager = yield* PreviewManager;
   const mainScope = resolvePartitionScope(environmentId, DEFAULT_BROWSER_PROFILE_ID);
@@ -268,14 +304,22 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
     .pipe(Effect.option);
   if (main._tag === "None") return null;
   const scope = `scient-import-staging:${crypto.randomUUID()}`;
-  yield* stage(scope);
+  const staged = yield* stage(scope);
   const staging = yield* manager.getBrowserSession(scope, false).pipe(Effect.option);
   if (staging._tag === "None") return null;
-  return yield* Effect.promise(() =>
-    underMainLock(environmentId, () => copyIntoMain(staging.value, main.value, input))
+  const filled = yield* Effect.promise(() =>
+    underMainLock(environmentId, () =>
+      copyIntoMain(staging.value, main.value, input, undefined, proceed),
+    )
       .catch(() => null)
       .finally(() => staging.value.clearStorageData().catch(() => undefined)),
   );
+  if (!filled || !staged) return filled;
+  const { imported, skipped, skippedByReason } = staged;
+  return {
+    ...filled,
+    importSummary: { imported, skipped, ...(skippedByReason ? { skippedByReason } : {}) },
+  } satisfies DesktopFillMainResult;
 });
 
 const copyRecords = Effect.gen(function* () {

@@ -11,7 +11,11 @@ import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer"
 
 import * as Dpop from "../cloud/dpop";
 import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
-import { resolveCloudPublicConfig, resolveRelayTracingConfig } from "../cloud/publicConfig";
+import {
+  relayTelemetryEnabled,
+  resolveCloudPublicConfig,
+  resolveRelayTracingConfig,
+} from "../cloud/publicConfig";
 import * as ClientTracer from "../observability/clientTracer";
 
 function configuredRelayUrl(): string {
@@ -30,6 +34,7 @@ const layerRelayTracing = RelayTracing.layer(
     serviceInstanceId: ClientTracer.serviceInstanceId,
     client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
   },
+  { isEnabled: () => relayTelemetryEnabled() === true },
 ).pipe(Layer.provide(layerHttpClient));
 
 type RuntimeLayerSource =

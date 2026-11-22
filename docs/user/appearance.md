@@ -21,6 +21,19 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Language
+
+On web and desktop, choose the app language under **Settings → General → Display → Language**:
+English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or
+Swedish. **System default** follows your computer's language. The desktop menus and dialogs
+follow the same choice.
+
+On mobile, choose it under **Settings → General → Language**. The phone saves its own choice,
+separately from your computer.
+
+Scient's own panels, such as the Library, Compute, documents, Overleaf and Accounts, follow it
+too. Your messages, agent replies, code, LaTeX and file names are never translated.
+
 ## Composer context
 
 Git-backed projects show branch and worktree controls below the composer while you create a thread.
@@ -51,6 +64,31 @@ in your operating system. Moving between threads does not replay those transitio
 Choose **Create theme** to adjust a palette, or import a Scient, T3 Code, or VS Code theme.
 The theme editor's color picker lets you select an area of the app to find the color to change.
 Export your theme as JSON to share it.
+
+### Custom CSS
+
+For a change that colors cannot make, open **Custom CSS** in the theme editor. The CSS is saved with
+the theme, applies after Scient's own styles on web and desktop, and is included in exports. Use
+`.dark` or `:root:not(.dark)` to target one appearance.
+
+Custom CSS cannot load files. `@import`, `image-set()`, and `url()` are ignored, except `url()`
+with a `data:` address or an `#id`. This keeps an imported theme from sending what is on your screen
+to another site. For a full-size image, use a [background image](#background-image).
+
+Class names in the app change between releases. For rules that keep working, target `data-slot`
+and other `data-` attributes, such as `[data-chat-header]` or `[data-slot="button"]`.
+
+If a rule hides something you need, run `scient theme set t3-chat` on the server to switch to the
+built-in Orchid theme, or press **Cmd+Option+A** on macOS or **Ctrl+Alt+A** on Windows/Linux to
+pick another theme.
+
+### Ask an agent
+
+An agent on the same machine as the server can restyle Scient for you. Ask it to change the look,
+for example "make Scient's chat header taller" or "give Scient a solarized theme". It publishes
+an [environment theme](./environment-theme.md) with colors and CSS, and web and desktop clients of
+that server switch to it. It can also switch them to light, dark, or system mode. The thread must
+run in Full access. Ask the agent to set a built-in theme to undo it.
 
 For themes published by your connected machine and server defaults, see
 [Environment themes](./environment-theme.md).

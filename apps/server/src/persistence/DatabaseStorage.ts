@@ -20,6 +20,11 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import { forkParked } from "../serverActivation.ts";
+// SCIENT-FORK:START — archived handoff history moves to shared bodies, and fork handoff
+// history to ranges, in the background.
+import { shareLegacyContextHistories } from "../orchestration-v2/scient-fork/ContextHistorySource.ts";
+import { convertForkHandoffHistory } from "../orchestration-v2/scient-fork/ForkHandoffRanges.ts";
+// SCIENT-FORK:END
 
 // Bound each reclaim pass to one minute of churn.
 const RECLAIM_PAGES_PER_PASS = 1024;
@@ -54,6 +59,9 @@ const make = Effect.gen(function* () {
   const statusRef = yield* SubscriptionRef.make<DatabaseStorageStatus | null>(null);
   const restart = yield* ServerRestart;
   const reclaimFiles = DatabaseMaintenance.reclaimFiles(path, config.dbPath);
+  // SCIENT-FORK:START — a request still here at start belongs to a repair that never finished.
+  yield* DatabaseMaintenance.settleInterruptedReclaim(config.dbPath).pipe(Effect.ignore);
+  // SCIENT-FORK:END
   let reclaimFailure = Option.getOrUndefined(
     yield* fs.readFileString(reclaimFiles.failure).pipe(Effect.option),
   );
@@ -118,18 +126,25 @@ const make = Effect.gen(function* () {
     Effect.catch((cause) => Effect.logWarning("Database storage inspection failed", { cause })),
   );
 
-  const reclaim = Effect.gen(function* () {
-    if (!(yield* readLayout).incrementalVacuum) return;
-    // The driver steps once per statement; incremental_vacuum frees one page per step. Yield between pages.
-    for (let page = 0; page < RECLAIM_PAGES_PER_PASS; page++) {
-      const free = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
-      if ((free[0]?.freelist_count ?? 0) === 0) break;
-      yield* sql`PRAGMA incremental_vacuum(1)`;
-      yield* Effect.yieldNow;
-    }
-  }).pipe(
-    Effect.catch((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
-  );
+  const reclaim = Effect.suspend(() => {
+    let page = 0;
+    return Effect.gen(function* () {
+      if (!(yield* readLayout).incrementalVacuum) return;
+      // The driver steps once per statement; incremental_vacuum frees one page per step. Yield between pages.
+      for (; page < RECLAIM_PAGES_PER_PASS; page++) {
+        const free = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
+        if ((free[0]?.freelist_count ?? 0) === 0) break;
+        yield* sql`PRAGMA incremental_vacuum(1)`;
+        yield* Effect.yieldNow;
+      }
+    }).pipe(
+      Effect.ensuring(Effect.suspend(() => Effect.annotateCurrentSpan("db.reclaimed_pages", page))),
+      Effect.catch((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
+      // The pass owns the span; tracing each page's two PRAGMAs floods the server trace.
+      Effect.withTracerEnabled(false),
+      Effect.withSpan("DatabaseStorage.reclaim"),
+    );
+  });
 
   // Even a pass that deletes nothing scans the event store. Persist completion
   // so restarting does not trigger another scan before the six-hour interval.
@@ -176,6 +191,45 @@ const make = Effect.gen(function* () {
       ),
     ),
   );
+  // SCIENT-FORK:START — share archived handoff bodies at 10% duty, once soon after start and
+  // then with each compaction interval (new legacy-path handoffs keep arriving).
+  const shareArchivedHistory = Effect.gen(function* () {
+    let sliceStarted = yield* Clock.monotonicTimeNanos;
+    const between = Effect.gen(function* () {
+      const elapsed = (yield* Clock.monotonicTimeNanos) - sliceStarted;
+      yield* Effect.sleep(Math.max(50, (Number(elapsed) / 1_000_000) * 9));
+      sliceStarted = yield* Clock.monotonicTimeNanos;
+    });
+    yield* shareLegacyContextHistories(sql, between).pipe(
+      Effect.flatMap((result) =>
+        result.converted > 0 || result.failed > 0
+          ? Effect.logInfo("Shared archived context history bodies", result)
+          : Effect.void,
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Sharing archived context history failed", { cause }),
+      ),
+    );
+    // Fork handoffs written before history ranges point at the fork's own list instead.
+    yield* convertForkHandoffHistory(sql, between).pipe(
+      Effect.flatMap((ranged) =>
+        ranged.rows > 0 || ranged.skippedSources > 0
+          ? Effect.logInfo("Converted fork handoff history to ranges", ranged)
+          : Effect.void,
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Converting fork handoff history failed", { cause }),
+      ),
+    );
+  });
+  yield* forkParked(
+    Effect.sleep("2 minutes").pipe(
+      Effect.andThen(
+        shareArchivedHistory.pipe(Effect.repeat(Schedule.spaced(COMPACTION_INTERVAL))),
+      ),
+    ),
+  );
+  // SCIENT-FORK:END
   yield* forkParked(
     publishStatus.pipe(
       Effect.andThen(Effect.sleep("1 minute")),
@@ -214,6 +268,9 @@ const make = Effect.gen(function* () {
     reclaimFailure = undefined;
     yield* publishStatus;
     const requestedAt = yield* Clock.currentTimeMillis;
+    // SCIENT-FORK:START — only this restart may run the repair (see runRequestedReclaim).
+    yield* DatabaseMaintenance.markReclaimRestartRequested;
+    // SCIENT-FORK:END
     // One step: a request interrupted between them would repair on some unrelated later exit.
     yield* Effect.uninterruptible(
       fs.writeFileString(reclaimFiles.request, String(requestedAt)).pipe(

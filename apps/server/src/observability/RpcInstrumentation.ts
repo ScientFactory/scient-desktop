@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as References from "effect/References";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -17,6 +18,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 // Trace queries and dashboards depend on these labels, including deviations from method prefixes.
 const RPC_AGGREGATES = {
   [ORCHESTRATION_WS_METHODS.getForkOptions]: "orchestration",
+  [ORCHESTRATION_WS_METHODS.awaitFork]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: "orchestration",
@@ -49,6 +51,10 @@ const RPC_AGGREGATES = {
   [WS_METHODS.providerAuthStart]: "provider",
   [WS_METHODS.providerConsumeResetCredit]: "provider",
   [WS_METHODS.providerAuthComplete]: "provider",
+  [WS_METHODS.providerMcpSignInStart]: "provider",
+  [WS_METHODS.providerMcpSignInComplete]: "provider",
+  // SCIENT-FORK: Antigravity plugin sign-in from its chat notice.
+  [WS_METHODS.pluginSignInOpen]: "provider",
   [WS_METHODS.chatGptReconnectProfile]: "provider",
   [WS_METHODS.chatGptImportProfile]: "provider",
   [WS_METHODS.chatGptHandoffSubscribe]: "provider",
@@ -71,9 +77,16 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetDatabaseStorage]: "server",
   [WS_METHODS.serverReclaimDatabaseSpace]: "server",
   [WS_METHODS.peerLinksList]: "peerLinks",
+  [WS_METHODS.peerLinksNames]: "peerLinks",
   [WS_METHODS.peerLinksLink]: "peerLinks",
   [WS_METHODS.peerLinksUnlink]: "peerLinks",
   [WS_METHODS.peerLinksAnswerRequest]: "peerLinks",
+  [WS_METHODS.peerLinksSubscribeThread]: "peerLinks",
+  [WS_METHODS.peerLinksThreadHistoryPage]: "peerLinks",
+  [WS_METHODS.peerLinksThreadItem]: "peerLinks",
+  [WS_METHODS.peerLinksPairClient]: "peerLinks",
+  [WS_METHODS.peerLinksPairLink]: "peerLinks",
+  [WS_METHODS.serverGetSettings]: "server",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",
   [WS_METHODS.serverPrepareAcpRegistryAgent]: "server",
@@ -87,6 +100,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverDisableAcpRegistryProvider]: "server",
   [WS_METHODS.serverLogoutAcpRegistry]: "server",
   [WS_METHODS.serverDiscoverSourceControl]: "server",
+  [WS_METHODS.serverCheckSecretSource]: "server",
   [WS_METHODS.serverGetTraceDiagnostics]: "server",
   [WS_METHODS.serverGetProcessDiagnostics]: "server",
   [WS_METHODS.serverGetHostResources]: "server",
@@ -110,8 +124,17 @@ const RPC_AGGREGATES = {
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: "scheduledTasks",
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.guestShareCreate]: "guest-share",
+  // SCIENT-FORK: thread rooms.
+  [WS_METHODS.threadRoomInvite]: "thread-room",
+  [WS_METHODS.threadRoomInviteLink]: "thread-room",
+  [WS_METHODS.threadRoomPresence]: "thread-room",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+  [WS_METHODS.scientConnectStatus]: "cloud",
+  [WS_METHODS.scientConnectAuthorize]: "cloud",
+  [WS_METHODS.scientConnectTurnOff]: "cloud",
+  // SCIENT-FORK:END
   [WS_METHODS.pullRequestsList]: "pull-requests",
   [WS_METHODS.pullRequestsListStats]: "pull-requests",
   [WS_METHODS.pullRequestsFilterOptions]: "pull-requests",
@@ -142,10 +165,25 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pullRequestsInvalidate]: "pull-requests",
   [WS_METHODS.pullRequestsReportState]: "pull-requests",
   [WS_METHODS.pullRequestsSubscribeRefreshes]: "pull-requests",
+  [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: "pull-requests",
   [WS_METHODS.pullRequestsReviewerCandidates]: "pull-requests",
   [WS_METHODS.pullRequestsRequestReviewers]: "pull-requests",
   [WS_METHODS.pullRequestsLabelCandidates]: "pull-requests",
   [WS_METHODS.pullRequestsSetLabels]: "pull-requests",
+  [WS_METHODS.issuesList]: "issues",
+  [WS_METHODS.issuesDetail]: "issues",
+  [WS_METHODS.issuesComments]: "issues",
+  [WS_METHODS.issuesTemplates]: "issues",
+  [WS_METHODS.issuesCandidates]: "issues",
+  [WS_METHODS.issuesLinkedThreads]: "issues",
+  [WS_METHODS.issuesCreate]: "issues",
+  [WS_METHODS.issuesComment]: "issues",
+  [WS_METHODS.issuesUpdate]: "issues",
+  [WS_METHODS.issuesSetState]: "issues",
+  [WS_METHODS.issuesReact]: "issues",
+  [WS_METHODS.issueTrackersList]: "issues",
+  [WS_METHODS.issueTrackersConnect]: "issues",
+  [WS_METHODS.issueTrackersBindProject]: "issues",
   [WS_METHODS.sourceControlLookupRepository]: "source-control",
   [WS_METHODS.sourceControlCloneRepository]: "source-control",
   [WS_METHODS.sourceControlPublishRepository]: "source-control",
@@ -170,6 +208,10 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsCreateFromThread]: "orchestration",
   [WS_METHODS.shellOpenInEditor]: "workspace",
   [WS_METHODS.filesystemBrowse]: "workspace",
+  [WS_METHODS.workspaceListFolders]: "workspace",
+  [WS_METHODS.workspaceScanFolders]: "workspace",
+  [WS_METHODS.workspaceTaskFolder]: "workspace",
+  [WS_METHODS.workspaceAddTaskFolderRepository]: "workspace",
   [WS_METHODS.filesystemGetMetadata]: "workspace",
   [WS_METHODS.agentSessionsScan]: "workspace",
   [WS_METHODS.agentSessionsImport]: "workspace",
@@ -259,7 +301,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.analysisPromoteRun]: "analysis",
   [WS_METHODS.computeInspectRuntimes]: "compute",
   [WS_METHODS.computeRuntimeInventory]: "compute",
-  [WS_METHODS.computeActiveWork]: "compute",
   [WS_METHODS.computeVerifyRuntime]: "compute",
   [WS_METHODS.computeManagedRuntimeStatus]: "compute",
   [WS_METHODS.computeManageRuntime]: "compute",
@@ -279,12 +320,21 @@ const RPC_AGGREGATES = {
   [WS_METHODS.dataReadFileTable]: "filesystem",
   [WS_METHODS.computeSaveOutput]: "compute",
   [WS_METHODS.computeSaveConsoleNotebook]: "compute",
+  [WS_METHODS.computeResultsResolve]: "compute",
+  [WS_METHODS.computeResultsList]: "compute",
+  [WS_METHODS.computeResultsPlaceFigure]: "compute",
+  [WS_METHODS.computeResultsRerun]: "compute",
+  [WS_METHODS.computeResultsPlaceLatex]: "compute",
+  [WS_METHODS.computeResultsPlacements]: "compute",
+  [WS_METHODS.computeResultsUpdateFiles]: "compute",
+  [WS_METHODS.computeResultsUndoUpdate]: "compute",
   [WS_METHODS.computeSubmitCells]: "compute",
   [WS_METHODS.notebookRead]: "filesystem",
   [WS_METHODS.notebookReadOutput]: "filesystem",
   [WS_METHODS.notebookEdit]: "filesystem",
   [WS_METHODS.notebookRecordRun]: "filesystem",
   [WS_METHODS.subscribeComputeSessions]: "subscribe",
+  [WS_METHODS.subscribeComputeActiveWork]: "subscribe",
   [WS_METHODS.skillsList]: "skills",
   [WS_METHODS.skillsReadDocument]: "skills",
   // SCIENT-FORK:START — external skill document reads.
@@ -373,6 +423,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.extensionsConnectorRemove]: "extensions",
   [WS_METHODS.extensionsConnectorTest]: "extensions",
   [WS_METHODS.extensionsConnectorInspectLocal]: "extensions",
+  [WS_METHODS.extensionsConnectorUndo]: "extensions",
+  [WS_METHODS.extensionsConnectorExport]: "extensions",
   [WS_METHODS.extensionsConnectorImportable]: "extensions",
   [WS_METHODS.extensionsDiscoverSearch]: "extensions",
   [WS_METHODS.extensionsDiscoverCatalog]: "extensions",
@@ -411,6 +463,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.editorsFlushRespond]: "editors",
   [WS_METHODS.editorsFlushLeave]: "editors",
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Agent voice RPCs: live calls and ChatGPT dictation.
+  [WS_METHODS.liveVoiceCall]: "liveVoice",
+  [WS_METHODS.liveVoiceMute]: "liveVoice",
+  [WS_METHODS.voiceDictateWithChatGpt]: "voice",
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   [WS_METHODS.projectsChangeEntries]: "projects",
   [WS_METHODS.projectsOpenWithApps]: "projects",
@@ -426,6 +483,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverPlanProviderRuntime]: "server",
   [WS_METHODS.serverStartProviderRuntime]: "server",
   [WS_METHODS.serverCancelProviderRuntime]: "server",
+  [WS_METHODS.serverObserveProviderRuntimePick]: "server",
   [WS_METHODS.serverSaveCustomModel]: "server",
   [WS_METHODS.serverRemoveCustomModel]: "server",
   [WS_METHODS.serverTestCustomModel]: "server",
@@ -461,13 +519,25 @@ export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect
   if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
     return measured.pipe(Effect.provideService(References.TracerEnabled, false));
   }
-  return measured.pipe(
-    Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
-      attributes: {
-        ...DEFAULT_RPC_SPAN_ATTRIBUTES,
-        "rpc.method": method,
-        "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
-      },
-    }),
+  // The ambient span is the socket's `GET /ws` request, open for the whole connection. Parenting
+  // every call to it grows one trace past the collector's per-trace limit, which then drops it.
+  return Effect.currentParentSpan.pipe(
+    Effect.option,
+    Effect.flatMap((connection) =>
+      measured.pipe(
+        Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
+          root: true,
+          links: Option.match(connection, {
+            onNone: () => [],
+            onSome: (span) => [{ span, attributes: {} }],
+          }),
+          attributes: {
+            ...DEFAULT_RPC_SPAN_ATTRIBUTES,
+            "rpc.method": method,
+            "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
+          },
+        }),
+      ),
+    ),
   );
 });

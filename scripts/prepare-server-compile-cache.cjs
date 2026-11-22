@@ -10,6 +10,11 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
     console.log(`[server-compile-cache] Skipping unsupported target ${electronPlatformName}`);
     return;
   }
+  // Generating the cache runs the bundle, and a PR preview's bundle must never run next to signing secrets.
+  if (process.env.T3CODE_DESKTOP_UNTRUSTED_BUNDLE === "true") {
+    console.log("[server-compile-cache] Skipping untrusted bundle");
+    return;
+  }
   const targetArch = ["ia32", "x64", "armv7l", "arm64", "universal"][arch];
   const runsWithRosetta =
     electronPlatformName === "darwin" &&
@@ -57,7 +62,11 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
       runner,
       `require(${JSON.stringify(helper)}).generatePreparedServerCache(${JSON.stringify(resources)}).then(()=>process.exit(0),e=>{console.error(e);process.exit(1)})`,
     );
-    result = spawnSync(executable, [runner], { env, encoding: "utf8", timeout: 120000 });
+    // SCIENT-FORK:START — under Rosetta on GitHub's 3-core macOS runners this took about two minutes
+    // by 2026-11-07 and then passed the native limit; give translated runs ten minutes.
+    const timeout = runsWithRosetta ? 600000 : 120000;
+    // SCIENT-FORK:END
+    result = spawnSync(executable, [runner], { env, encoding: "utf8", timeout });
   } finally {
     fs.rmSync(state, { recursive: true, force: true });
   }

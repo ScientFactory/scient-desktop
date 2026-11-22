@@ -239,9 +239,11 @@ const publicationLines = (
       ];
     case "not-sent":
       return [
-        publication.reason === "rate-limited"
-          ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
-          : "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
+        publication.reason === undefined
+          ? "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again."
+          : publication.reason === "rate-limited"
+            ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
+            : `Nothing was sent. ${notSentReason(publication.reason)}`,
       ];
     case "out-of-date":
       return ["Overleaf changed again while sending, so nothing was sent. Sync again."];
@@ -249,6 +251,21 @@ const publicationLines = (
       return [
         `Send #${publication.attemptNumber} got no answer from Overleaf, so it may or may not have arrived. Scient never sends it again; the next sync or a recover checks whether it arrived.`,
       ];
+  }
+};
+
+/** Why Git or Overleaf refused a send before anything went out. */
+const notSentReason = (reason: string): string => {
+  switch (reason) {
+    case "access-denied":
+    case "project-not-found":
+      return refusalReason({ reason });
+    case "unreachable":
+      return "Overleaf could not be reached. Sync again later.";
+    case "git-unavailable":
+      return "Git 2.39 or newer is needed on this project's server.";
+    default:
+      return "Git failed before sending. Sync again.";
   }
 };
 
@@ -260,7 +277,8 @@ const publicationLines = (
 const refusalReason = (refusal: ScientOverleafRefusal): string => {
   const filesystem = overleafFilesystemRefusalText(refusal.reason);
   if (filesystem !== null) return filesystem;
-  const at = refusal.path === undefined ? "" : ` (${refusal.path})`;
+  const names = refusal.paths ?? (refusal.path === undefined ? [] : [refusal.path]);
+  const at = names.length === 0 ? "" : ` (${names.join(", ")})`;
   switch (refusal.reason) {
     case "access-denied":
       return "Overleaf refused this project. Check the link, that the project is shared with your account, and your Overleaf token in Settings ▸ Synced folders.";
@@ -280,8 +298,9 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
     case "remote-forbidden":
       return `Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name)${at}.`;
     case "path-alias":
+      return `two names differ only by letter case or Unicode spelling${at}, so they cannot be synced as separate files. Rename one.`;
     case "alias-rename":
-      return "these names cannot be synced as separate files. Rename one.";
+      return `a file's name changed only by letter case or Unicode spelling${at}. Rename it back, or rename it through another name with a sync in between.`;
     case "unreviewed-path":
     case "remote-collides-with-excluded":
       return `Overleaf has a file where this folder has something that is not synced${at}. Move or rename it here or on Overleaf.`;
@@ -311,8 +330,15 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
       return `a synced file is on disk under a name that differs only by letter case or Unicode spelling${at}. Rename it back.`;
     case "release-held":
       return `${refusal.path ?? "a file"} can't be sent as it is: another file held for its conflict marks keeps that place on Overleaf. Settle that file's marks first, or leave it out of files.release.`;
+    case "held-file-clash":
+      return `a file held for its conflict marks keeps its place on Overleaf, where this sync puts another file or folder${at}. Settle that file's marks, or move the other one.`;
+    case "not-selectable":
+    case "not-local-only":
+      return `a file named in files.send or files.keepOnlyHere changed or is gone${at}. Preview again and decide from that review.`;
+    case "sync-managed-folder":
+      return "Scient can't keep copies of replaced files in a folder a cloud service syncs. Ask the user to move the project out of the cloud folder, then relink it.";
     default:
-      return `the review was refused (${refusal.reason})${at}.`;
+      return refusal.message ?? `the review was refused (${refusal.reason})${at}.`;
   }
 };
 
@@ -656,7 +682,11 @@ export const statusLines = (status: ScientOverleafStatus): string[] => {
       lines.push("Ready to sync.");
       break;
     case "disconnected":
-      lines.push("Disconnected. Connect the folder again to keep its history.");
+      lines.push(
+        status.reasons.length === 0
+          ? "Disconnected. Connect the folder again to keep its history."
+          : "Disconnected before an interrupted sync finished. Connect the folder to the same project again to finish it; until then, pulls, branch switches and checkpoint restores in this project are refused.",
+      );
       break;
     default:
       lines.push(`Needs attention: ${reasons.join("; ")}.`);

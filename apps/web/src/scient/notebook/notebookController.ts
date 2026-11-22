@@ -10,7 +10,10 @@ import type {
   NotebookRecordRunResult,
   NotebookView,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { createStore } from "zustand/vanilla";
+
+import { m } from "~/i18n/messages";
 
 import {
   notebookCellRun,
@@ -143,7 +146,7 @@ export function createNotebookController(transport: NotebookTransport) {
       if (result === null) {
         // What was typed stays on screen and in the queue, and goes out when the server answers.
         queue = [...edits, ...queue];
-        if (!failing) transport.onError("This notebook could not be saved. Trying again.");
+        if (!failing) transport.onError(m(msg("This notebook could not be saved. Trying again.")));
         failing = true;
         retryTimer = setTimeout(() => void startSending(), SAVE_RETRY_MS);
         return;
@@ -385,7 +388,7 @@ export function createNotebookController(transport: NotebookTransport) {
           });
           if (result === null) {
             recording.delete(executionId);
-            transport.onError("This cell's output could not be saved");
+            transport.onError(m(msg("This cell's output could not be saved")));
             continue;
           }
           revision = result.revision;

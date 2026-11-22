@@ -12,6 +12,7 @@ import {
   scientAgentAccountSections,
   scientAgentAnswerFor,
   scientAgentAnswerInput,
+  scientAgentSignedOutAccount,
 } from "./scientAgentAccountList";
 
 const entry = (
@@ -212,5 +213,46 @@ describe("scientAgentAccounts and scientAgentAccountOperation", () => {
         connection: { methods: [], canDisconnect: false, operation: null },
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("scientAgentSignedOutAccount", () => {
+  const withAccounts = (list: ReadonlyArray<ProviderConnectionAccount>): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("scient"),
+    driver: ProviderDriverKind.make("scient"),
+    enabled: true,
+    installed: true,
+    version: "0.1.6",
+    status: "ready",
+    auth: { status: "unknown", required: false },
+    checkedAt: "2026-11-13T00:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    connection: { methods: [], canDisconnect: false, operation: null, accounts: list },
+  });
+
+  it("names the selected model's account once its sign-in has ended", () => {
+    const provider = withAccounts(accounts);
+    expect(scientAgentSignedOutAccount(provider, "openai-codex/gpt-6-luna")?.id).toBe(
+      "openai-codex",
+    );
+    expect(scientAgentSignedOutAccount(provider, "anthropic/claude-opus-5-5")).toBeUndefined();
+    // A custom model, or Scient Agent's sibling Oh My Pi, has no account here.
+    expect(scientAgentSignedOutAccount(provider, "ollama/qwen")).toBeUndefined();
+    expect(
+      scientAgentSignedOutAccount(
+        { ...provider, driver: ProviderDriverKind.make("omp") },
+        "openai-codex/gpt-6-luna",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("answers for an entry that shares another entry's sign-in", () => {
+    const provider = withAccounts([
+      entry("openai-codex", { connected: true, canDisconnect: true }),
+      entry("openai-codex-device", { sameAccountAs: "openai-codex" }),
+    ]);
+    expect(scientAgentSignedOutAccount(provider, "openai-codex-device/gpt-6-luna")).toBeUndefined();
   });
 });

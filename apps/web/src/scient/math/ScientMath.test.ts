@@ -11,6 +11,10 @@ import {
   ScientInlineMath,
 } from "./ScientMath";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 describe("renderScientTexToHtml", () => {
   it("renders KaTeX markup for both modes", () => {
     const inline = renderScientTexToHtml("x^2", false);
@@ -23,6 +27,13 @@ describe("renderScientTexToHtml", () => {
   it("returns null for TeX KaTeX cannot parse, instead of error markup", () => {
     expect(renderScientTexToHtml("\\badcmd", false)).toBeNull();
     expect(renderScientTexToHtml("{unbalanced", false)).toBeNull();
+  });
+
+  it("typesets an equation that fails only because of an unescaped percent", () => {
+    const html = renderScientTexToHtml("\\text{3.18% yield}", false);
+
+    expect(html).not.toBeNull();
+    expect(html).toContain("yield");
   });
 
   it("caps pathological sizes so layout stays bounded", () => {

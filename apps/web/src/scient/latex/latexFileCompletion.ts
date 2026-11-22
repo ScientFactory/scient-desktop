@@ -1,5 +1,6 @@
 import type { Editor } from "@pierre/diffs/edit";
 import { sourceMathOwnsEvent, sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
+import type { LatexCompletionContext } from "./latexCommandCompletion";
 import { installLatexTextCompletion } from "./latexTextCompletion";
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
 import { latexDocumentColors } from "./latexColorBoxes";
@@ -10,6 +11,7 @@ export function installLatexFileCompletion<Annotation>(
   editor: Editor<"file", Annotation, undefined>,
   host: HTMLElement,
   editable: () => boolean,
+  citations?: LatexCompletionContext["citations"],
 ) {
   let snippet: { from: number; to: number } | null = null;
   let lastSource = "";
@@ -70,7 +72,7 @@ export function installLatexFileCompletion<Annotation>(
         colors: latexDocumentColors(preamble),
       };
     }
-    return { ...setup, source };
+    return { ...setup, source, ...(citations ? { citations } : {}) };
   };
   const completion = installLatexTextCompletion(
     host,

@@ -1,5 +1,6 @@
 import {
   AuthRelayReadScope,
+  AuthRelayConfigureScope,
   AuthRelayWriteScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
@@ -11,18 +12,26 @@ import {
 } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START — scient/connect
+import * as Option from "effect/Option";
+// SCIENT-FORK:END
 import * as HttpEffect from "effect/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
+// SCIENT-FORK:START — leaving Connect turns Cloud copy off.
+import { ServerSettingsService } from "../serverSettings.ts";
+// SCIENT-FORK:END
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
-import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
+// SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+import { ScientConnectHost } from "../scient/connect/ScientConnectHost.ts";
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — cloud routes follow Scient Connect's identity switch or an explicit opt-in.
 export const isScientCloudIntegrationDisabled = (
@@ -145,6 +154,7 @@ export const layer = HttpApiBuilder.group(
         .handle("checkReachability", () => cloudIntegrationDisabled())
         .handle("unlink", () => cloudIntegrationDisabled())
         .handle("preferences", () => cloudIntegrationDisabled())
+        .handle("liveActivityPreference", () => cloudIntegrationDisabled())
         .handle("health", () => cloudIntegrationDisabled())
         .handle("t3MintCredential", () => cloudIntegrationDisabled());
     }
@@ -153,27 +163,68 @@ export const layer = HttpApiBuilder.group(
 
     const cloudLink = yield* CloudLink.CloudLink;
     const reachability = yield* ConnectReachability.ConnectReachability;
+    // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+    // Serialized with Off, so a link that started before Off cannot finish after it.
+    const connectHost = yield* Effect.serviceOption(ScientConnectHost);
+    const applyWhileOn = <A, E, R>(apply: Effect.Effect<A, E, R>) =>
+      connectHost._tag === "None"
+        ? apply
+        : connectHost.value.whileOn(apply).pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: (result) => Effect.succeed(result),
+                onNone: () =>
+                  Effect.fail(
+                    new EnvironmentHttpConflictError({
+                      message:
+                        "Scient Connect is turned off on this computer. Turn it on in Settings > Sharing & access.",
+                    }),
+                  ),
+              }),
+            ),
+          );
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — the computer left the account, so it stops copying to it; copies stay.
+    const settings = yield* Effect.serviceOption(ServerSettingsService);
+    const stopCloudCopy =
+      settings._tag === "Some"
+        ? settings.value.updateSettings({ scientCloudSyncEnabled: false }).pipe(Effect.ignore)
+        : Effect.void;
+    // SCIENT-FORK:END
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
-          yield* requireEnvironmentScope(AuthRelayWriteScope);
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const proof = yield* toHttpError(cloudLink.linkProof(payload, request));
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          // SCIENT-FORK:START — an Off computer signs no proof, so the relay never provisions for it.
+          const proof = yield* applyWhileOn(toHttpError(cloudLink.linkProof(payload)));
+          // SCIENT-FORK:END
           yield* appendCloudCredentialResponseHeaders;
           return proof;
         }),
       )
       .handle("relayConfig", ({ payload }) =>
-        requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
-        ),
+        Effect.gen(function* () {
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+          return yield* applyWhileOn(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload)));
+          // SCIENT-FORK:END
+        }),
       )
       .handle("linkState", () =>
         Effect.gen(function* () {
           const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
           const state = yield* toHttpError(cloudLink.linkState());
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          return { ...state, linkableHere: canLinkHere(request, principal.subject) };
+          // Linking also writes relay preferences, so configure alone cannot finish it.
+          // SCIENT-FORK:START — a computer turned off in Scient Connect is turned on only here.
+          const onHere =
+            connectHost._tag === "None" ||
+            Option.isSome(yield* connectHost.value.whileOn(Effect.void));
+          // SCIENT-FORK:END
+          const linkableHere =
+            onHere &&
+            principal.scopes.has(AuthRelayConfigureScope) &&
+            principal.scopes.has(AuthRelayWriteScope);
+          return { ...state, linkableHere };
         }),
       )
       .handle("checkReachability", () =>
@@ -182,11 +233,21 @@ export const layer = HttpApiBuilder.group(
       .handle("unlink", () =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.unlink())),
+          // SCIENT-FORK:START
+          Effect.tap(() => stopCloudCopy),
+          // SCIENT-FORK:END
         ),
       )
       .handle("preferences", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.updatePreferences(payload))),
+        ),
+      )
+      .handle("liveActivityPreference", ({ payload }) =>
+        requireEnvironmentScope(AuthRelayWriteScope).pipe(
+          Effect.andThen(
+            toHttpError(cloudLink.updateLiveActivityPreference(payload.liveActivitiesEnabled)),
+          ),
         ),
       )
       .handle("health", ({ payload }) =>

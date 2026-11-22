@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import packageJson from "../../../package.json" with { type: "json" };
@@ -36,6 +37,8 @@ import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/
 import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+
+const CODEX_TEST_THREAD_TITLE = "Codex continuation test";
 
 export const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -62,7 +65,7 @@ function makeCodexTestAppThread(input: {
     creationSource: "web",
     id: input.threadId,
     projectId: ProjectId.make(`project-${input.threadId}`),
-    title: "Codex continuation test",
+    title: CODEX_TEST_THREAD_TITLE,
     providerInstanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
     modelSelection: CODEX_TEST_MODEL_SELECTION,
     runtimeMode: "full-access",
@@ -245,7 +248,7 @@ export function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: "auto",
           collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
@@ -283,6 +286,107 @@ export function codexReplayPreamble(input: {
   ];
 }
 
+function withReplayRequestId(
+  entry: CodexReplay.CodexAppServerReplayEntry,
+  id: number,
+): CodexReplay.CodexAppServerReplayEntry {
+  return entry.type !== "runtime_exit" && Predicate.isObject(entry.frame)
+    ? { ...entry, frame: { ...entry.frame, id } }
+    : entry;
+}
+
+// Upstream's helper from CodexAdapterV2.test.ts, for Scient's own Codex transcripts.
+/**
+ * Every turn/start follows a config/read, and a thread's first turn on a connection names it
+ * unless the transcript names it itself. A thread start, resume or fork follows a config/read
+ * unless it retries a failed request or the transcript reads config itself. Inserts those
+ * exchanges and shifts later client ids.
+ */
+function withConfigReadBeforeTurnStart(
+  entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
+  threadName = CODEX_TEST_THREAD_TITLE,
+): Array<CodexReplay.CodexAppServerReplayEntry> {
+  const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
+  let offset = 0;
+  let clientIds = new Map<number, number>();
+  let namedThreads = new Set<unknown>();
+  let transcriptReads = 0;
+  let previousOutbound: { readonly method: string; readonly id: number } | undefined;
+  let failedMethod: string | undefined;
+  for (const entry of entries) {
+    const frame = entry.type === "runtime_exit" ? undefined : entry.frame;
+    if (!Predicate.isObject(frame) || typeof frame.id !== "number") {
+      result.push(entry);
+      continue;
+    }
+    if (entry.type === "expect_outbound" && typeof frame.method === "string") {
+      const params = Predicate.isObject(frame.params) ? frame.params : {};
+      if (frame.method === "initialize") {
+        offset = 0;
+        clientIds = new Map();
+        namedThreads = new Set();
+      }
+      if (frame.method === "thread/name/set") namedThreads.add(params.threadId);
+      const exchanges: Array<readonly [string, unknown, unknown]> = [];
+      const isThreadRequest =
+        frame.method === "thread/start" ||
+        frame.method === "thread/resume" ||
+        frame.method === "thread/fork";
+      if (frame.method === "config/read") transcriptReads += 1;
+      else if (isThreadRequest && transcriptReads > 0) transcriptReads -= 1;
+      else if (
+        isThreadRequest &&
+        failedMethod !== frame.method &&
+        previousOutbound?.method !== "thread/unarchive"
+      ) {
+        exchanges.push([
+          "config/read",
+          { ...(params.cwd === undefined ? {} : { cwd: params.cwd }), includeLayers: false },
+          { config: {}, origins: {} },
+        ]);
+      }
+      if (frame.method === "turn/start") {
+        if (!namedThreads.has(params.threadId)) {
+          namedThreads.add(params.threadId);
+          exchanges.push(["thread/name/set", { threadId: params.threadId, name: threadName }, {}]);
+        }
+        exchanges.push([
+          "config/read",
+          { cwd: params.cwd, includeLayers: false },
+          { config: {}, origins: {} },
+        ]);
+      }
+      for (const [method, requestParams, response] of exchanges) {
+        const id = frame.id + offset;
+        result.push(
+          {
+            type: "expect_outbound",
+            label: method,
+            frame: { id, method, params: requestParams },
+          },
+          { type: "emit_inbound", label: method, frame: { id, result: response } },
+        );
+        offset += 1;
+      }
+      previousOutbound = { method: frame.method, id: frame.id };
+      failedMethod = undefined;
+      clientIds.set(frame.id, frame.id + offset);
+      result.push(withReplayRequestId(entry, frame.id + offset));
+      continue;
+    }
+    if (entry.type === "emit_inbound" && frame.id === previousOutbound?.id && "error" in frame) {
+      failedMethod = previousOutbound.method;
+    }
+    const mapped = clientIds.get(frame.id);
+    result.push(
+      entry.type === "emit_inbound" && frame.method === undefined && mapped !== undefined
+        ? withReplayRequestId(entry, mapped)
+        : entry,
+    );
+  }
+  return result;
+}
+
 export function makeCodexReplayTranscript(input: {
   readonly scenario: string;
   readonly entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>;
@@ -293,6 +397,17 @@ export function makeCodexReplayTranscript(input: {
     version: "0.144.0",
     scenario: input.scenario,
     entries: input.entries,
+  };
+}
+
+/** Applied where a transcript is replayed, so transcripts built from others keep one id space. */
+export function withConfigReads(
+  transcript: CodexReplay.CodexAppServerReplayTranscript,
+  options?: { readonly threadName?: string },
+): CodexReplay.CodexAppServerReplayTranscript {
+  return {
+    ...transcript,
+    entries: withConfigReadBeforeTurnStart(transcript.entries, options?.threadName),
   };
 }
 
@@ -326,7 +441,9 @@ export const makeCodexReplayHarness = (
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
     const continuationRequests: Array<ProviderContinuationRequest> = [];
-    const transcripts = [transcript, ...(options.additionalSessions ?? [])];
+    const transcripts = [transcript, ...(options.additionalSessions ?? [])].map((session) =>
+      withConfigReads(session),
+    );
     let sessionOrdinal = 0;
     const clientFactory: CodexAdapterV2.CodexAppServerClientFactory["Service"] = {
       open: (openInput) => {

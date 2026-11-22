@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Runtime from "effect/Runtime";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import {
@@ -27,6 +28,10 @@ import {
   compareExactServiceVersions,
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
+import {
+  legacyOwnerStartedBeforeRecord,
+  legacyOwnerStartTimeCommand,
+} from "./legacyServerOwner.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -80,35 +85,22 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   if (!isProcessAlive(state.pid)) return false;
   const recordedAt = Date.parse(state.startedAt);
   if (!Number.isFinite(recordedAt)) return true;
-  const windows = (yield* HostProcess.Platform) === "win32";
+  const platform = yield* HostProcess.Platform;
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner
     .run({
-      command: windows ? "powershell.exe" : "ps",
-      args: windows
-        ? [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            // SCIENT-FORK:START — Get-Process has no StartTime for SYSTEM, elevated or
-            // other-user processes, which a stale record's reused PID often names; CIM
-            // reads their creation time without elevation.
-            `(Get-CimInstance Win32_Process -Filter 'ProcessId=${state.pid}' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o')`,
-            // SCIENT-FORK:END
-          ]
-        : ["-p", String(state.pid), "-o", "lstart="],
-      env: { LC_ALL: "C", TZ: "UTC" },
+      ...legacyOwnerStartTimeCommand(state.pid, platform),
       // SCIENT-FORK:START — a cold PowerShell start can take most of 2s at login.
-      timeout: Duration.seconds(windows ? 5 : 2),
+      timeout: Duration.seconds(platform === "win32" ? 5 : 2),
       // SCIENT-FORK:END
       maxOutputBytes: 16_384,
     })
     .pipe(Effect.option);
-  if (Option.isNone(result) || result.value.code !== 0) return true;
-  const output = result.value.stdout.trim();
-  const startedAt = Date.parse(windows ? output : `${output} UTC`);
-  // ps reports whole seconds. Unknown identity stays conservative.
-  return !Number.isFinite(startedAt) || startedAt <= recordedAt + 1_000;
+  return legacyOwnerStartedBeforeRecord(
+    Option.isSome(result) && result.value.code === 0 ? result.value.stdout : undefined,
+    recordedAt,
+    platform,
+  );
 });
 
 // Pre-lock services become invisible when another server replaces their runtime
@@ -180,39 +172,26 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
   Effect.orElseSucceed(() => undefined),
 );
 
-/**
- * Hold an exclusive lock on the state directory until the scope closes. The
- * lock is an exclusive transaction on `server-owner.sqlite`, which never holds
- * data and must never be unlinked: the OS releases it when the process exits,
- * even on SIGKILL, so a crashed owner never blocks the next start.
- */
-export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(function* (
-  statePath: string,
-) {
+const ownershipLockPath = (stateDir: string) => NodePath.join(stateDir, "server-owner.sqlite");
+
+// SCIENT-FORK:START — maintenance keeps the server lock (see runRequestedReclaim).
+const maintenanceMarker = (stateDir: string) => NodePath.join(stateDir, "maintenance-in-progress");
+const MAINTENANCE_WAIT_SECONDS = 30 * 60;
+
+/** Holds the server lock while maintenance repairs a stopped server's database. A server
+ * started meanwhile sees the maintenance marker and waits instead of opening it mid-repair. */
+export const holdServerOwnershipForMaintenance = (statePath: string) => {
   const stateDir = NodePath.dirname(statePath);
-  const random = yield* SecureRandom.SecureRandom;
-  const ownerId = yield* random
-    .uuidV4()
-    .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
   const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
-  const lock = yield* Effect.acquireRelease(
+  return Effect.acquireRelease(
     Effect.try({
       try: () => {
         NodeFS.mkdirSync(stateDir, { recursive: true });
-        let before = NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
-        if (before === undefined) {
-          NodeFS.closeSync(NodeFS.openSync(lockPath, "a", 0o644));
-          before = NodeFS.statSync(lockPath, { bigint: true });
-        }
         const db = new NodeSqlite.DatabaseSync(lockPath);
         try {
           db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
-          const identity = NodeFS.statSync(lockPath, { bigint: true });
-          return {
-            db,
-            identity,
-            replacedDuringAcquire: before.dev !== identity.dev || before.ino !== identity.ino,
-          };
+          NodeFS.writeFileSync(maintenanceMarker(stateDir), "");
+          return db;
         } catch (cause) {
           db.close();
           throw cause;
@@ -223,16 +202,103 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
     }),
-    ({ db }) =>
-      readPersistedServerRuntimeState(statePath).pipe(
-        Effect.flatMap((state) =>
-          Option.isSome(state) && state.value.ownerId === ownerId
-            ? clearPersistedServerRuntimeState(statePath)
-            : Effect.void,
-        ),
-        Effect.ignore({ log: true }),
-        Effect.ensuring(Effect.sync(() => db.close())),
+    (db) =>
+      Effect.sync(() => {
+        try {
+          NodeFS.rmSync(maintenanceMarker(stateDir), { force: true });
+        } finally {
+          db.close();
+        }
+      }),
+  );
+};
+// SCIENT-FORK:END
+
+/**
+ * The lock is an exclusive transaction on `server-owner.sqlite`, which never
+ * holds data and must never be unlinked: the OS releases it when the process
+ * exits, even on SIGKILL, so a crashed owner never blocks the next start.
+ */
+const openOwnershipLock = (stateDir: string) =>
+  Effect.try({
+    try: () => {
+      const lockPath = ownershipLockPath(stateDir);
+      NodeFS.mkdirSync(stateDir, { recursive: true });
+      let before = NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
+      if (before === undefined) {
+        NodeFS.closeSync(NodeFS.openSync(lockPath, "a", 0o644));
+        before = NodeFS.statSync(lockPath, { bigint: true });
+      }
+      const db = new NodeSqlite.DatabaseSync(lockPath);
+      try {
+        // An idle service launcher probes this lock for a moment; wait out that probe.
+        db.exec("PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE;");
+        // SCIENT-FORK:START — holding the lock proves no repair is running; clear a stale marker.
+        NodeFS.rmSync(maintenanceMarker(stateDir), { force: true });
+        // SCIENT-FORK:END
+        const identity = NodeFS.statSync(lockPath, { bigint: true });
+        return {
+          db,
+          identity,
+          replacedDuringAcquire: before.dev !== identity.dev || before.ino !== identity.ino,
+        };
+      } catch (cause) {
+        db.close();
+        throw cause;
+      }
+    },
+    catch: (cause) =>
+      isSqliteBusy(cause)
+        ? new ServerAlreadyRunningError({ stateDir })
+        : new ServerOwnershipError({ stateDir, cause }),
+  });
+
+/** Hold only the ownership lock until the scope closes, without claiming the runtime state. */
+export const holdServerOwnershipLock = Effect.fn("holdServerOwnershipLock")(function* (
+  statePath: string,
+) {
+  yield* Effect.acquireRelease(openOwnershipLock(NodePath.dirname(statePath)), ({ db }) =>
+    Effect.sync(() => db.close()),
+  );
+});
+
+/** Hold an exclusive lock on the state directory until the scope closes. */
+export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(function* (
+  statePath: string,
+) {
+  const stateDir = NodePath.dirname(statePath);
+  const random = yield* SecureRandom.SecureRandom;
+  const ownerId = yield* random
+    .uuidV4()
+    .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
+  const lockPath = ownershipLockPath(stateDir);
+  const lock = yield* Effect.acquireRelease(openOwnershipLock(stateDir), ({ db }) =>
+    readPersistedServerRuntimeState(statePath).pipe(
+      Effect.flatMap((state) =>
+        Option.isSome(state) && state.value.ownerId === ownerId
+          ? clearPersistedServerRuntimeState(statePath)
+          : Effect.void,
       ),
+      Effect.ignore({ log: true }),
+      Effect.ensuring(Effect.sync(() => db.close())),
+    ),
+  ).pipe(
+    // SCIENT-FORK:START — a database repair holds the lock for minutes; wait for it to finish
+    // instead of failing the launch. Each attempt is atomic; the wait between them is
+    // outside acquisition, so cancelling the launch interrupts it.
+    Effect.tapError((error) =>
+      error._tag === "ServerAlreadyRunningError" && NodeFS.existsSync(maintenanceMarker(stateDir))
+        ? Effect.logInfo("Waiting for a database repair to finish before starting")
+        : Effect.void,
+    ),
+    Effect.retry({
+      while: (error) =>
+        error._tag === "ServerAlreadyRunningError" &&
+        NodeFS.existsSync(maintenanceMarker(stateDir)),
+      schedule: Schedule.spaced("1 second"),
+      times: MAINTENANCE_WAIT_SECONDS,
+    }),
+    // SCIENT-FORK:END
   );
 
   const previous = yield* readPersistedServerRuntimeState(statePath).pipe(

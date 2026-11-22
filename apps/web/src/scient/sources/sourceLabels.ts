@@ -1,3 +1,10 @@
+import type { ScientSourceStudyDesign, ScientSourceType } from "@scientfactory/scient-sources";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
+
+import { LIBRARY_LABELS } from "./libraryLabels";
+
 function isSameCalendarDay(left: Date, right: Date): boolean {
   return (
     left.getFullYear() === right.getFullYear() &&
@@ -9,6 +16,8 @@ function isSameCalendarDay(left: Date, right: Date): boolean {
 type ObservableSourceRecord = {
   readonly sourceId: string;
   readonly importedAt: string;
+  /** A pin this Library lacks, such as one whose source is in the Trash: never just added. */
+  readonly fromSnapshot?: true;
   readonly origin?:
     | {
         readonly actor?: string;
@@ -24,20 +33,107 @@ export function newlyObservedSourceIds(
 ): ReadonlyArray<string> {
   return records
     .filter((record) => {
+      if (record.fromSnapshot) return false;
       if (previousIds) return !previousIds.has(record.sourceId);
       return record.origin?.actor === "agent" && Date.parse(record.importedAt) >= recentCutoff;
     })
     .map((record) => record.sourceId);
 }
 
+const VERIFICATION_LABELS = {
+  verified: msg("Identifier verified"),
+  unchecked: msg("Not yet checked"),
+  unverified: msg("No identifier"),
+} as const;
+
+export function agentVerificationLabel(
+  record: {
+    readonly origin?: { readonly actor?: string } | null | undefined;
+    readonly verification?:
+      | { readonly state: keyof typeof VERIFICATION_LABELS; readonly problem?: string }
+      | undefined;
+  },
+  resolve: MessageResolver = m,
+): string {
+  // A checked identifier's problem is named by sourceTrustLabel instead.
+  if (record.origin?.actor !== "agent" || !record.verification || record.verification.problem) {
+    return "";
+  }
+  return ` · ${resolve(VERIFICATION_LABELS[record.verification.state])}`;
+}
+
+/**
+ * Where a listed source stands with this project, on a library server only: the Library view
+ * marks what is pinned here, and a pin this computer's library lacks says so.
+ */
+export function sourcePinLabel(
+  record: { readonly pinned?: boolean; readonly fromSnapshot?: true },
+  listed: "project" | "library" | undefined,
+  resolve: MessageResolver = m,
+): string {
+  if (record.fromSnapshot) return ` · ${resolve(LIBRARY_LABELS.notInThisLibrary)}`;
+  return listed === "library" && record.pinned ? ` · ${resolve(LIBRARY_LABELS.inThisProject)}` : "";
+}
+
+/** A PDF that names no title is titled by its file name until its details are found. */
+export function fileNameTitleLabel(
+  record: {
+    readonly fieldProvenance?: ReadonlyArray<{
+      readonly field: string;
+      readonly origin: string;
+      readonly sourceField: string | null;
+    }>;
+  },
+  resolve: MessageResolver = m,
+): string | null {
+  const title = record.fieldProvenance?.findLast((entry) => entry.field === "title");
+  return title?.origin === "local-pdf" && title.sourceField === "file-name"
+    ? resolve(msg("The title is the file name until this paper's details are found."))
+    : null;
+}
+
 export function sourceAddedLabel(
   importedAt: string,
   recentlyAdded: boolean,
   addedByAgent = false,
+  resolve: MessageResolver = m,
 ): string {
-  if (recentlyAdded) return addedByAgent ? "Just added by an agent" : "Just added";
+  if (recentlyAdded) {
+    return addedByAgent ? resolve(msg("Just added by an agent")) : resolve(msg("Just added"));
+  }
   const date = new Date(importedAt);
-  if (Number.isNaN(date.getTime())) return "Added to Scient";
-  if (isSameCalendarDay(date, new Date())) return "Added today";
-  return `Added ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date)}`;
+  if (Number.isNaN(date.getTime())) return resolve(msg("Added to Scient"));
+  if (isSameCalendarDay(date, new Date())) return resolve(msg("Added today"));
+  return resolve(
+    msg("Added {date}", {
+      date: new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date),
+    }),
+  );
 }
+
+export const SCIENT_SOURCE_STUDY_DESIGN_LABELS = {
+  "randomized-trial": msg("Randomized trial"),
+  "meta-analysis": msg("Meta-analysis"),
+  "systematic-review": msg("Systematic review"),
+  cohort: msg("Cohort study"),
+  "case-control": msg("Case-control study"),
+  "case-report": msg("Case report"),
+  review: msg("Review", { $context: "study design" }),
+  other: msg("Other design"),
+} as const satisfies Readonly<Record<ScientSourceStudyDesign, string>>;
+
+export const SCIENT_SOURCE_TYPE_LABELS = {
+  article: msg("Article"),
+  preprint: msg("Preprint"),
+  book: msg("Book"),
+  "book-chapter": msg("Book chapter"),
+  "conference-paper": msg("Conference paper"),
+  thesis: msg("Thesis"),
+  report: msg("Report"),
+  dataset: msg("Dataset"),
+  web: msg("Web source"),
+  software: msg("Software"),
+  presentation: msg("Presentation"),
+  manuscript: msg("Manuscript"),
+  other: msg("Other source"),
+} as const satisfies Readonly<Record<ScientSourceType, string>>;

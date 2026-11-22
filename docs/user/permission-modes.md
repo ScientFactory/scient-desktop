@@ -26,12 +26,16 @@ without prompting; commands and anything else still stop for approval.
 differently, and some read-only actions can proceed in **Supervised**. How this is enforced depends
 on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
 permission mode, Cursor uses Smart Auto review, Grok reviews automatically and sends you the
-commands its review blocks, and fx handles routine actions itself and sends you anything it still
-asks about. Providers without an equivalent (such as OpenCode and Antigravity)
-fall back to asking, like Supervised.
+commands its review blocks, Antigravity uses its own Auto review and sends you the actions it does
+not approve, and fx handles routine actions itself and sends you anything it still asks about.
+Providers without an equivalent (such as OpenCode) fall back to asking, like Supervised.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.
+
+Antigravity offers **Auto** only when your Antigravity sign-in provides its Auto mode; some accounts,
+including some personal Google accounts, do not. Without it, an Antigravity thread already set to
+**Auto** runs in **Supervised**.
 
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.
@@ -43,8 +47,8 @@ Approvals appear inline in the conversation. Approve or reject one and the agent
 there. Subagent approval requests appear in the parent conversation with the subagent's name, so
 you can respond without switching threads.
 
-Scient offers no **Auto-accept edits** or **Full access** for fx. An fx thread already set to either
-runs in **Supervised**.
+Scient offers no **Auto-accept edits** for fx, and **Full access** only with fx 0.0.14 or later. An fx
+thread set to a mode its fx lacks runs in **Supervised**.
 
 Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Its
 file-change approvals offer **Allow all edits this session**, while its command approvals have no

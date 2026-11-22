@@ -35,6 +35,7 @@ import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { CheckpointStore } from "../checkpointing/CheckpointStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -140,6 +141,12 @@ const withInitiatedWork = <A, E, R>(
             );
       const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
       const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+        // SCIENT-FORK: these threads track no other folders.
+        Layer.provide(
+          Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+            forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+          }),
+        ),
         Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
         Layer.provide(
           Layer.mergeAll(
@@ -417,7 +424,7 @@ const withInitiatedWork = <A, E, R>(
                           if (
                             !held &&
                             input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                            input.args.includes("fetch") &&
+                            input.args.includes("update-ref") &&
                             input.args.some((arg) =>
                               arg.endsWith(`/ordinal/${options.holdCaptureOrdinal}`),
                             )

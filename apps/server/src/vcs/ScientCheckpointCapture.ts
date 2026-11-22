@@ -1,23 +1,16 @@
 /**
- * Scient's checkpoint capture hardening for the Git driver: a changed-file size
- * limit, object staging in a scoped bare repository, publication by fetch, and
- * a whole-capture timeout. GitVcsDriver's capture calls these in order.
+ * Scient's limits on the Git driver's checkpoint capture: a changed-file size limit and one
+ * deadline for the whole capture, submodules included. Forks also witness the commit a capture
+ * is about to publish.
  */
 // @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem.stat follows symlinks; checkpoint accounting needs lstat.
 import * as NodeFSP from "node:fs/promises";
 
-import {
-  VcsCheckpointUnavailableError,
-  VcsProcessExitError,
-  VcsProcessTimeoutError,
-} from "@t3tools/contracts";
+import { VcsCheckpointUnavailableError, VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import type { VcsError } from "@t3tools/contracts";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 
 import type * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -28,7 +21,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const isCheckpointUnavailable = Schema.is(VcsCheckpointUnavailableError);
 
-/** Fork admission persists its expected OID before the first external ref write.
+/** Fork admission persists its expected OID before the capture writes objects or a ref.
  * Ordinary checkpoints have no pre-admission ownership record. */
 export class CheckpointPublicationWitness extends Context.Reference<
   (input: {
@@ -47,15 +40,18 @@ export class CheckpointPublicationWitness extends Context.Reference<
       Effect.void,
 }) {}
 
-const CHECKPOINT_LOOSE_TRANSFER_MAX_BYTES = 16 * 1024 * 1024;
-const GIT_DEFAULT_UNPACK_LIMIT = 100;
-
 const CHECKPOINT_CAPTURE_TIMEOUT_MS = 90_000;
 const CHECKPOINT_CAPTURE_MAX_FILE_BYTES = 512n * 1024n * 1024n;
 const CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES = 1024n * 1024n * 1024n;
-// Every turn's first message waits for this scan, so a workspace it cannot finish in time is
-// treated as too large, and a too-large workspace is not rescanned for a while.
-const CHECKPOINT_SIZE_SCAN_TIMEOUT_MS = 2_000;
+/**
+ * How long the changed-file size scan may run. Every turn's first message waits for it, so a
+ * workspace it cannot finish in time is treated as too large, and a too-large workspace is not
+ * rescanned for a while. Tests of capture itself raise it; a loaded runner is not a slow user.
+ */
+export class CheckpointSizeScanTimeout extends Context.Reference<number>(
+  "ScientCheckpointCapture/SizeScanTimeout",
+  { defaultValue: () => 2_000 },
+) {}
 const CHECKPOINT_SIZE_LIMIT_MEMORY_MS = 10 * 60_000;
 
 const checkpointFileError = (cwd: string, operation: string, error: { readonly message: string }) =>
@@ -86,6 +82,7 @@ export const makeCheckpointSizeCheck = (deps: {
     env: NodeJS.ProcessEnv,
   ) {
     const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    const scanTimeoutMs = yield* CheckpointSizeScanTimeout;
     const now = yield* Clock.currentTimeMillis;
     if (now < (tooLargeUntil.get(cwd) ?? 0))
       return yield* tooLarge(cwd, "Changed files were too large for file history a moment ago.");
@@ -145,7 +142,7 @@ export const makeCheckpointSizeCheck = (deps: {
         // Only stderr needs buffering. Every stdout byte goes through the awaited consumer.
         maxOutputBytes: 4096,
         outputMode: "truncate",
-        timeoutMs: CHECKPOINT_SIZE_SCAN_TIMEOUT_MS,
+        timeoutMs: scanTimeoutMs,
         onStdoutChunkEffect: (chunk) =>
           consumer.consume(chunk).pipe(
             Effect.mapError(
@@ -181,264 +178,15 @@ export const makeCheckpointSizeCheck = (deps: {
   });
 };
 
-/** The environment for Git commands that must not inherit a caller's repository. */
-export const checkpointCleanGitEnv = (): NodeJS.ProcessEnv => ({
-  ...process.env,
-  GIT_DIR: undefined,
-  GIT_WORK_TREE: undefined,
-  GIT_COMMON_DIR: undefined,
-  GIT_INDEX_FILE: undefined,
-  GIT_OBJECT_DIRECTORY: undefined,
-  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-});
+/** What remains of one capture's deadline for the work after its own commit, such as submodules. */
+export const remainingCheckpointCaptureMs = (startedAtMs: number, nowMs: number) =>
+  Math.max(0, CHECKPOINT_CAPTURE_TIMEOUT_MS - (nowMs - startedAtMs));
 
-// Git reads one alternate per line, so a directory holding a newline must be C-quoted.
-const gitAlternatesEntry = (objectDirectory: string) =>
-  objectDirectory.includes("\n")
-    ? `"${objectDirectory.replace(/["\\\n]/g, (char) => (char === "\n" ? "\\n" : `\\${char}`))}"\n`
-    : `${objectDirectory}\n`;
-
-export const prepareCheckpointStagingRepo = Effect.fnUntraced(function* (input: {
-  readonly execute: VcsDriver.VcsDriver["Service"]["execute"];
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly operation: string;
-  readonly cwd: string;
-  readonly gitCommonDir: string;
-  readonly commitEnv: NodeJS.ProcessEnv;
-  readonly cleanGitEnv: NodeJS.ProcessEnv;
-}) {
-  const { execute, fileSystem, path, operation, gitCommonDir, commitEnv, cleanGitEnv } = input;
-  // Git hashes workspace files into a scoped bare repository, so staging
-  // failures cannot strand pack files in the user's repository. Git then
-  // transfers the completed object graph and publishes the hidden ref.
-  const objectFormat = yield* execute({
-    operation,
-    cwd: input.cwd,
-    args: ["rev-parse", "--show-object-format"],
-    env: cleanGitEnv,
-    allowNonZeroExit: true,
-  });
-  const stagingRepo = yield* fileSystem
-    .makeTempDirectoryScoped({
-      prefix: "scient-checkpoint-",
-    })
-    .pipe(
-      Effect.mapError((error) =>
-        checkpointFileError(input.cwd, "create checkpoint staging repository", error),
-      ),
-    );
-  yield* execute({
-    operation,
-    cwd: input.cwd,
-    args: [
-      "init",
-      "--bare",
-      "--quiet",
-      ...(objectFormat.stdout.trim() === "sha256" ? ["--object-format=sha256"] : []),
-      stagingRepo,
-    ],
-    env: cleanGitEnv,
-  });
-  yield* fileSystem
-    .writeFileString(
-      path.join(stagingRepo, "objects", "info", "alternates"),
-      gitAlternatesEntry(path.join(gitCommonDir, "objects").replaceAll("\\", "/")),
-    )
-    .pipe(
-      Effect.mapError((error) =>
-        checkpointFileError(input.cwd, "prepare checkpoint staging repository", error),
-      ),
-    );
-  const stagedEnv: NodeJS.ProcessEnv = {
-    ...commitEnv,
-    GIT_OBJECT_DIRECTORY: path.join(stagingRepo, "objects"),
-    GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-  };
-  return { stagingRepo, stagedEnv, objectFormat: objectFormat.stdout.trim() };
-});
-
-/** Moves the staged commit's object graph into the user's repository and
- * publishes the hidden checkpoint ref there. */
-export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
-  readonly execute: VcsDriver.VcsDriver["Service"]["execute"];
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly gitCommonDir: string;
-  readonly objectFormat: string;
-  readonly operation: string;
-  readonly cwd: string;
-  readonly stagingRepo: string;
-  readonly stagedEnv: NodeJS.ProcessEnv;
-  readonly cleanGitEnv: NodeJS.ProcessEnv;
-  readonly durableWrite: ReadonlyArray<string>;
-  readonly commitOid: string;
-  readonly checkpointRef: string;
-}) {
-  const {
-    execute,
-    operation,
-    stagingRepo,
-    stagedEnv,
-    cleanGitEnv,
-    durableWrite,
-    commitOid,
-    fileSystem,
-    path,
-    gitCommonDir,
-    objectFormat,
-  } = input;
-  // Same precedence as fetch: fetch.unpackLimit, then transfer.unpackLimit, then 100.
-  const resolveUnpackLimit = (cwd: string, env: NodeJS.ProcessEnv) =>
-    execute({
-      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
-      cwd,
-      args: ["config", "--type=int", "--get-regexp", "^(fetch|transfer)\\.unpacklimit$"],
-      env,
-      allowNonZeroExit: true,
-    }).pipe(
-      Effect.map((result) => {
-        const limit = (section: string) => {
-          const values = [
-            ...result.stdout.matchAll(new RegExp(`^${section}\\.unpacklimit (-?\\d+)$`, "gm")),
-          ];
-          const value = Number(values.at(-1)?.[1] ?? -1);
-          return value >= 0 ? value : undefined;
-        };
-        return limit("fetch") ?? limit("transfer") ?? GIT_DEFAULT_UNPACK_LIMIT;
-      }),
-    );
-
-  // Pack only objects written to the staging repository; --local excludes
-  // unchanged workspace objects borrowed through its alternate, including
-  // the checkpoint's HEAD parent. Keep one pack regardless of the user's limit.
-  yield* (yield* CheckpointPublicationWitness)({
-    cwd: input.cwd,
-    checkpointRef: input.checkpointRef,
-    commitOid,
-  });
-  const packBase = path.join(stagingRepo, "checkpoint");
-  const packResult = yield* execute({
-    operation,
-    cwd: input.cwd,
-    args: [
-      "--git-dir",
-      stagingRepo,
-      "-c",
-      "pack.packSizeLimit=0",
-      "pack-objects",
-      "--revs",
-      "--local",
-      "-q",
-      packBase,
-    ],
-    stdin: `${commitOid}\n`,
-    env: stagedEnv,
-  });
-  const packHash = packResult.stdout.trim();
-  if (!/^[0-9a-f]+$/.test(packHash)) {
-    return yield* new VcsProcessExitError({
-      operation,
-      command: "git pack-objects",
-      cwd: input.cwd,
-      exitCode: 0,
-      detail: "git pack-objects returned an invalid pack name.",
-    });
-  }
-  const packPath = `${packBase}-${packHash}.pack`;
-  const packInfo = yield* fileSystem
-    .stat(packPath)
-    .pipe(
-      Effect.mapError((error) => checkpointFileError(input.cwd, "read checkpoint pack", error)),
-    );
-  const smallPack =
-    Number(packInfo.size) <= CHECKPOINT_LOOSE_TRANSFER_MAX_BYTES
-      ? yield* fileSystem
-          .readFile(packPath)
-          .pipe(
-            Effect.mapError((error) =>
-              checkpointFileError(input.cwd, "read checkpoint pack", error),
-            ),
-          )
-      : undefined;
-  const unpackLimit = yield* resolveUnpackLimit(input.cwd, cleanGitEnv);
-  // Pack header: "PACK", version, then the big-endian object count.
-  const packObjectCount =
-    smallPack === undefined || smallPack.byteLength < 12
-      ? Number.POSITIVE_INFINITY
-      : new DataView(smallPack.buffer, smallPack.byteOffset, 12).getUint32(8);
-
-  if (smallPack !== undefined && packObjectCount < unpackLimit) {
-    // Like a small fetch, store few objects loose instead of adding a pack per turn.
-    yield* execute({
-      operation,
-      cwd: input.cwd,
-      args: [...durableWrite, "unpack-objects", "-q"],
-      stdinBytes: smallPack,
-      env: cleanGitEnv,
-    });
-    // Never publish an incomplete checkpoint. This is the check fetch runs; doing
-    // it first keeps a failure from falling back to a full upload-pack transfer.
-    yield* execute({
-      operation,
-      cwd: input.cwd,
-      args: ["rev-list", "--objects", "--quiet", commitOid, "--not", "--all", "--alternate-refs"],
-      env: cleanGitEnv,
-    });
-    // Every object is local now, so fetch only checks connectivity, updates
-    // the ref and runs automatic maintenance, as any fetch would.
-    yield* execute({
-      operation,
-      cwd: input.cwd,
-      args: [
-        ...durableWrite,
-        "fetch",
-        "--quiet",
-        "--no-write-fetch-head",
-        "--no-tags",
-        "--no-recurse-submodules",
-        gitCommonDir,
-        `+${commitOid}:${input.checkpointRef}`,
-      ],
-      env: cleanGitEnv,
-    });
-  } else {
-    // Large transfers arrive as a bundle; fetch checks connectivity and keeps the pack.
-    const bundlePath = path.join(stagingRepo, "checkpoint.bundle");
-    const bundleHeader =
-      objectFormat === "sha256"
-        ? `# v3 git bundle\n@object-format=sha256\n${commitOid} refs/t3/staging\n\n`
-        : `# v2 git bundle\n${commitOid} refs/t3/staging\n\n`;
-    yield* fileSystem.writeFileString(bundlePath, bundleHeader, { flag: "wx" }).pipe(
-      Effect.andThen(
-        Stream.run(fileSystem.stream(packPath), fileSystem.sink(bundlePath, { flag: "a" })),
-      ),
-      Effect.mapError((error) => checkpointFileError(input.cwd, "write checkpoint bundle", error)),
-    );
-    yield* execute({
-      operation,
-      cwd: input.cwd,
-      args: [
-        ...durableWrite,
-        "fetch",
-        "--quiet",
-        "--no-write-fetch-head",
-        "--no-tags",
-        "--no-recurse-submodules",
-        bundlePath,
-        `+refs/t3/staging:${input.checkpointRef}`,
-      ],
-      env: cleanGitEnv,
-    });
-  }
-});
-
-/** Closes the staging scope and bounds the whole capture. */
-export const scopedCheckpointCapture =
+/** One deadline for the whole capture. */
+export const boundCheckpointCapture =
   (operation: string, cwd: string) =>
   <A, E, R>(capture: Effect.Effect<A, E, R>) =>
     capture.pipe(
-      Effect.scoped,
       Effect.timeoutOrElse({
         duration: CHECKPOINT_CAPTURE_TIMEOUT_MS,
         orElse: () =>

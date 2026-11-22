@@ -1,7 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 
 import type { NewDocumentChoice } from "./NewDocumentMenuItems";
 import { readNewDocumentDefaults } from "./documentPreferences";
@@ -65,7 +67,7 @@ export function useCreateNewDocument() {
           input.open(`${input.base}${name}`);
           return;
         }
-        toastManager.add({ type: "error", title: "The notebook could not be created." });
+        toastManager.add({ type: "error", title: m(msg("The notebook could not be created.")) });
       })();
       return;
     }
@@ -85,7 +87,7 @@ export function useCreateNewDocument() {
         skip: (relativePath) => pathHasLeftoverDrafts({ environmentId, cwd, relativePath }),
       });
       if (!placed) {
-        toastManager.add({ type: "error", title: "The document could not be created." });
+        toastManager.add({ type: "error", title: m(msg("The document could not be created.")) });
         return;
       }
       const { relativePath } = placed;

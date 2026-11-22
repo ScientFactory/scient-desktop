@@ -6,7 +6,8 @@ name: Scient Compute Languages
 on:
   # A full run is 17 machines, so a pull request runs it only while it has the compute-languages
   # label. GitHub matches paths against the whole pull request, so a path filter alone would rerun
-  # it on every push.
+  # it on every push. Adding the label runs every computer; a later push to the labeled pull
+  # request reruns Linux and Apple Silicon only, and main runs every computer after the merge.
   pull_request:
     types: [labeled, synchronize]
   push:
@@ -48,7 +49,10 @@ jobs:
       # Leaves room on the shared runners for everyone's CI.
       max-parallel: 8
       matrix:
-        runner: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
+        runner: >-
+          ${{ fromJSON(github.event.action == 'synchronize'
+          && '["ubuntu-24.04", "macos-15"]'
+          || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
         group: [compiled, scripts, math, lab]
         include:
           - runner: ubuntu-24.04

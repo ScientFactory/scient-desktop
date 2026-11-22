@@ -20,6 +20,8 @@ import {
 import { latexEquationReferencesKey, latexReferencePresentation } from "./latexEquationReferences";
 import { positionEquationNumbers } from "./mathEquationNumbers";
 import { focusAdmittedMathField } from "./mathFieldAdmissionFocus";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 export interface MathReadingNodeOptions {
   readingContext: (() => LatexCompletionContext) | null;
@@ -124,7 +126,8 @@ export function mathReadingNodeView(
     for (const [index, row] of rows.entries()) {
       const label = document.createElement("span");
       label.dataset.latexEquationRow = String(index);
-      if (row.number) label.setAttribute("aria-label", `Equation ${row.number}`);
+      if (row.number)
+        label.setAttribute("aria-label", m(msg("Equation {number}", { number: row.number })));
       label.textContent = row.display ?? "";
       band.append(label);
     }
@@ -263,7 +266,7 @@ export function mathReadingNodeView(
     const hint = dom.ownerDocument.createElement("span");
     hint.className = "scient-latex-math-admission-hint";
     hint.setAttribute("role", "status");
-    hint.textContent = "Preparing equation editor…";
+    hint.textContent = m(msg("Preparing equation editor…"));
     wrapper.append(hint);
     dom.dataset.mathEditorAdmission = "pending";
     const admissionDocument = dom.ownerDocument;
@@ -339,10 +342,10 @@ export function mathReadingNodeView(
       delete dom.dataset.mathEditorAdmission;
       hint.remove();
       if (failed && !disposed) {
-        hint.textContent = "Equation editor unavailable. ";
+        hint.textContent = m(msg("Equation editor unavailable.")) + " ";
         const retry = dom.ownerDocument.createElement("button");
         retry.type = "button";
-        retry.textContent = "Retry";
+        retry.textContent = m(msg("Retry"));
         retry.addEventListener("pointerdown", (event) => event.stopPropagation());
         retry.addEventListener("click", (event) => {
           event.stopPropagation();

@@ -11,19 +11,22 @@ export function windowsRuntimeFilesystemRetryDelay(
   operation: RuntimeFilesystemOperation,
   elapsedMs: number,
   attempt: number,
+  budgetMs = 15_000,
 ): number | undefined {
   if (
-    elapsedMs >= 15_000 ||
+    elapsedMs >= budgetMs ||
     !["EPERM", "EACCES", "EBUSY", ...(operation === "remove" ? ["ENOTEMPTY"] : [])].includes(
       String(code),
     )
   )
     return undefined;
-  return Math.min(100 * 2 ** Math.min(attempt, 4), 1_000, 15_000 - elapsedMs);
+  return Math.min(100 * 2 ** Math.min(attempt, 4), 1_000, budgetMs - elapsedMs);
 }
 
 interface RuntimeFilesystemOptions {
   readonly signal?: AbortSignal | undefined;
+  /** How long Windows sharing violations are retried; 15 s unless the caller can wait longer. */
+  readonly windowsRetryBudgetMs?: number | undefined;
 }
 
 interface RuntimeFilesystemDependencies {
@@ -67,6 +70,7 @@ export function makeRuntimeFilesystem(overrides: Partial<RuntimeFilesystemDepend
                 operation,
                 dependencies.now() - started,
                 attempt++,
+                options.windowsRetryBudgetMs,
               )
             : undefined;
         if (delay === undefined) throw cause;

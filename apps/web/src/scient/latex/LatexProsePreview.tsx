@@ -13,6 +13,8 @@ import type { JSONContent } from "@tiptap/core";
 import { latexColorCss, latexDocumentColors } from "./latexColorBoxes";
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
 import { installMathReadingPreview, mathReadingPreview } from "./mathReadingPreview";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 /** Small read-only prose projections share the source parser and never inject HTML. */
 export function appendLatexProsePreview(
@@ -91,7 +93,7 @@ export function appendLatexProsePreview(
       const number = target?.number ?? "?";
       reference.textContent = node.attrs?.name === "eqref" ? `(${number})` : number;
       reference.dataset.latexProseText = `[${key}]`;
-      reference.setAttribute("aria-label", `Go to reference ${key}`);
+      reference.setAttribute("aria-label", m(msg("Go to reference {key}", { key })));
       reference.disabled = !target;
       reference.onclick = (event) => {
         event.stopPropagation();

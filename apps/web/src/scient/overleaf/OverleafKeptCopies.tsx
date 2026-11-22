@@ -6,6 +6,7 @@ import type {
   ScientOverleafKeptCopies,
   ScientOverleafRestoreResult,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -13,11 +14,13 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useThreadRouteRef } from "~/hooks/useThreadRouteTarget";
 import { useFileContextMenu } from "~/fileContextMenu";
 import { toastManager } from "~/components/ui/toast";
+import type { MessageResolver } from "~/i18n/messages";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { listOverleafKeptCopies, overleafRequestId, restoreOverleafKeptCopy } from "./client";
+import { settleOverleafOperation } from "./overleafActions";
 import { connectionForPath, operationErrorText, workspacePathOf } from "./overleafModel";
 import {
   reloadOverleafWorkspaces,
@@ -31,35 +34,26 @@ type KeptCopy = ScientOverleafKeptCopies["copies"][number];
  * What a restore did. Only a complete apply put the copy back: a replanned one
  * wrote nothing, and one that needs attention may have stopped partway.
  */
-function restoreText(result: ScientOverleafRestoreResult): string {
+function restoreText(result: ScientOverleafRestoreResult, resolve: MessageResolver): string {
   switch (result._tag) {
     case "restored":
       return result.outcome === "complete"
-        ? "Restored. The next sync sends it."
+        ? resolve(msg("Restored. The next sync sends it."))
         : result.outcome === "replan"
-          ? "The file changed while restoring, so nothing was written. Try again."
-          : "The restore needs attention: it may have stopped partway. Check the file before syncing.";
+          ? resolve(msg("The file changed while restoring, so nothing was written. Try again."))
+          : resolve(
+              msg(
+                "The restore needs attention: it may have stopped partway. Check the file before syncing.",
+              ),
+            );
     case "stale":
-      return "The file or the copy changed since this list was read. Nothing was restored.";
+      return resolve(
+        msg("The file or the copy changed since this list was read. Nothing was restored."),
+      );
     case "unknown-copy":
-      return "That copy is no longer kept. Nothing was restored.";
+      return resolve(msg("That copy is no longer kept. Nothing was restored."));
     case "duplicate":
-      return "That restore already ran.";
-  }
-}
-
-// Outside the component: the React Compiler does not compile try/finally.
-async function settleOverleafOperation(
-  task: () => Promise<void>,
-  failed: (error: unknown) => void,
-  settled: () => void,
-): Promise<void> {
-  try {
-    await task();
-  } catch (error) {
-    failed(error);
-  } finally {
-    settled();
+      return resolve(msg("That restore already ran."));
   }
 }
 
@@ -69,14 +63,19 @@ function KeptInLinkedCopy(props: {
   readonly connection: OverleafConnection;
   readonly relativePath: string;
 }) {
+  const gt = useGT();
   const threadRef = useThreadRouteRef();
   const handleNewThread = useNewThreadHandler();
   const [message, setMessage] = useState<string | null>(null);
   return (
-    <section className="mt-4 flex flex-col gap-2 text-xs" aria-label="Kept by Overleaf sync">
-      <p className="font-medium">Kept by Overleaf sync</p>
+    <section className="mt-4 flex flex-col gap-2 text-xs" aria-label={gt("Kept by Overleaf sync")}>
+      <p className="font-medium">
+        <T>Kept by Overleaf sync</T>
+      </p>
       <div className="flex items-center gap-2">
-        <p className="min-w-0 flex-1 text-muted-foreground">Kept copies are in the main copy.</p>
+        <p className="min-w-0 flex-1 text-muted-foreground">
+          <T>Kept copies are in the main copy.</T>
+        </p>
         <Button
           size="xs"
           variant="outline"
@@ -88,11 +87,11 @@ function KeptInLinkedCopy(props: {
               handleNewThread,
               relativePath: props.relativePath,
             }).then((opened) => {
-              if (!opened) setMessage("The main copy's file couldn't be opened.");
+              if (!opened) setMessage(gt("The main copy's file couldn't be opened."));
             })
           }
         >
-          Open there
+          <T>Open there</T>
         </Button>
       </div>
       {message ? <p role="status">{message}</p> : null}
@@ -106,6 +105,8 @@ export function OverleafKeptCopies(props: {
   readonly relativePath: string;
 }) {
   const { environmentId, cwd, relativePath } = props;
+  const gt = useGT();
+  const messages = useMessages();
   // The app's own file reveal: offered only where this environment can show a local file.
   const revealLabel = useFileContextMenu(environmentId).capabilities.revealLabel;
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
@@ -127,7 +128,7 @@ export function OverleafKeptCopies(props: {
       });
       setCopies(listed.copies);
     } catch (error) {
-      setMessage(operationErrorText(error));
+      setMessage(operationErrorText(error, "sync", messages));
     }
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The menu showing reads the link's kept copies from the server; a read for a link no longer shown is dropped.
@@ -167,7 +168,11 @@ export function OverleafKeptCopies(props: {
       input: { cwd: copy.path, editor: "file-manager", reveal: true },
     });
     if (result._tag === "Failure")
-      toastManager.add({ type: "error", title: "Unable to reveal file", description: copy.path });
+      toastManager.add({
+        type: "error",
+        title: gt("Unable to reveal file"),
+        description: copy.path,
+      });
   };
 
   const restore = async (copy: KeptCopy) => {
@@ -186,10 +191,10 @@ export function OverleafKeptCopies(props: {
           keptRevision,
           currentRevision: copy.currentRevision,
         });
-        setMessage(restoreText(result));
+        setMessage(restoreText(result, messages));
         await load(connection.connectionId);
       },
-      (error) => setMessage(operationErrorText(error)),
+      (error) => setMessage(operationErrorText(error, "sync", messages)),
       () => {
         setBusy(false);
         void reloadOverleafWorkspaces(environmentId, cwd);
@@ -198,21 +203,28 @@ export function OverleafKeptCopies(props: {
   };
 
   return (
-    <section className="mt-4 flex flex-col gap-2 text-xs" aria-label="Kept by Overleaf sync">
-      <p className="font-medium">Kept by Overleaf sync</p>
+    <section className="mt-4 flex flex-col gap-2 text-xs" aria-label={gt("Kept by Overleaf sync")}>
+      <p className="font-medium">
+        <T>Kept by Overleaf sync</T>
+      </p>
       {copies === null && message === null ? (
         <p role="status" className="text-muted-foreground">
-          Loading…
+          <T>Loading…</T>
         </p>
       ) : mine.length === 0 && copies !== null ? (
-        <p className="text-muted-foreground">No kept copies of this file.</p>
+        <p className="text-muted-foreground">
+          <T>No kept copies of this file.</T>
+        </p>
       ) : (
         <ul className="flex flex-col gap-2">
           {mine.map((copy) => (
             <li key={copy.kept} className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate">
-                {new Date(copy.retainedAt).toLocaleString()}
-                {copy.state === "changed" ? " · changed since kept" : ""}
+                {copy.state === "changed"
+                  ? gt("{time} · changed since kept", {
+                      time: new Date(copy.retainedAt).toLocaleString(),
+                    })
+                  : new Date(copy.retainedAt).toLocaleString()}
               </span>
               <Button
                 size="xs"
@@ -220,7 +232,7 @@ export function OverleafKeptCopies(props: {
                 disabled={busy || copy.keptRevision === null || copy.unread}
                 onClick={() => void restore(copy)}
               >
-                Restore
+                <T context="button, restores a kept copy of the file">Restore</T>
               </Button>
               {revealLabel !== undefined ? (
                 <Button

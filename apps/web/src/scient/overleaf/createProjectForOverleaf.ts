@@ -8,8 +8,10 @@ import {
   type EnvironmentId,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import {
   findProjectByPath,
   inferProjectTitleFromPath,
@@ -38,7 +40,7 @@ export interface ProjectForOverleaf {
 function message(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "An error occurred.";
+    : m(msg("An error occurred."));
 }
 
 /**
@@ -52,7 +54,7 @@ export async function createProjectForOverleaf(input: {
 }): Promise<ProjectForOverleaf> {
   const { environmentId } = input;
   const prepared = readPreparedConnection(environmentId);
-  if (prepared === null) throw new Error("This environment is not connected.");
+  if (prepared === null) throw new Error(m(msg("This environment is not connected.")));
   // The server resolves `~` and symbolic links; its answer is the root from here on.
   const inspection = await inspectScientProjectForOpening(prepared, input.root);
   const cwd = inspection.root;
@@ -71,7 +73,7 @@ export async function createProjectForOverleaf(input: {
   }
 
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-    throw new Error("This connection cannot add projects.");
+    throw new Error(m(msg("This connection cannot add projects.")));
   }
   const projectId = newProjectId();
   const title = inferProjectTitleFromPath(cwd);
@@ -100,7 +102,7 @@ export async function createProjectForOverleaf(input: {
       (error: unknown) => {
         toastManager.add({
           type: "warning",
-          title: "Project made without Scient setup",
+          title: m(msg("Project made without Scient setup")),
           description: message(error),
         });
       },

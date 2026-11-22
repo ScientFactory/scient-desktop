@@ -8,18 +8,17 @@ import {
   renderCodexInlineDirectivesAsMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { codexArtifactTemplatePresentationLabel } from "./codexArtifactTemplates.ts";
+import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "./fileLinks.ts";
 import {
-  buildFileLinkParentSuffixByPath,
-  splitFilePathPosition,
-  fileLinkLabel,
-} from "./fileLinks.ts";
-import {
+  classifyMarkdownImageSource,
   isMarkdownFileLinkLabel,
   extractMarkdownLinkHrefs,
   extractInlineCodeSpans,
   inlineCodeFilePathCandidate,
-  resolveMarkdownFileLinkTarget,
+  resolveMarkdownFileLink,
+  shouldRenderMarkdownImageAsFileLink,
 } from "./markdownLinks.ts";
+import { mediaKindFromPath } from "./mediaPreview.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -28,16 +27,29 @@ import {
 // SCIENT-FORK:START — shared citation labels include scientific quotations and comments.
 import { composerCitationLabel, parseComposerCitationHref } from "./composerCitations.ts";
 // SCIENT-FORK:END
-import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
+import {
+  // SCIENT-FORK:START — document quotes keep their chip label in search.
+  isComputeCitation,
+  isFileCitation,
+  isOfficeCitation,
+  isPdfCitation,
+  // SCIENT-FORK:END
+  type OrchestrationV2ConversationMessage,
+} from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import {
   shouldPreserveAssistantLineBreaks,
+  remarkAssistantInsights,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSource,
+  decodeMarkdownLinkEscapes,
+  type ChatMarkdownImageProperties,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -80,28 +92,30 @@ export const THREAD_FIND_BLOCK_TAGS = new Set([
   "ul",
 ]);
 
-const assistantProcessor = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
-const assistantBreaksProcessor = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+function assistantTextProcessor(lineBreaks = false, renderInsights = false) {
+  return unified()
+    .use(remarkParse)
+    .use(renderInsights ? [remarkAssistantInsights] : [])
+    .use(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+}
+const assistantProcessor = assistantTextProcessor();
+const assistantBreaksProcessor = assistantTextProcessor(true);
+const insightProcessor = assistantTextProcessor(false, true);
+const insightBreaksProcessor = assistantTextProcessor(true, true);
 const userProcessor = unified()
   .use(remarkParse)
   .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
+  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS)
   .use(remarkRehype, { allowDangerousHtml: true });
 
 interface TextTree {
   readonly type: string;
   readonly tagName?: string;
   readonly value?: string;
-  readonly properties?: {
+  readonly properties?: ChatMarkdownImageProperties & {
     readonly href?: unknown;
-    readonly src?: unknown;
     readonly dataInlineCode?: unknown;
   };
   readonly children?: ReadonlyArray<TextTree>;
@@ -109,23 +123,41 @@ interface TextTree {
 
 function markdownThreadFindText(
   markdown: string,
-  userMessage = false,
-  cwd?: string,
-  skills: readonly InlineSkill[] = [],
-  lineBreaks = false,
+  {
+    userMessage = false,
+    cwd,
+    skills = [],
+    lineBreaks = false,
+    renderInsights = false,
+    theme,
+  }: {
+    userMessage?: boolean;
+    cwd: string | undefined;
+    skills?: readonly InlineSkill[];
+    lineBreaks?: boolean;
+    renderInsights?: boolean;
+    theme: "dark" | "light" | undefined;
+  },
 ): string[] {
   const processor = userMessage
     ? userProcessor
     : lineBreaks
       ? assistantBreaksProcessor
       : assistantProcessor;
-  const tree = processor.runSync(processor.parse(markdown));
+  const renderer = renderInsights
+    ? lineBreaks
+      ? insightBreaksProcessor
+      : insightProcessor
+    : processor;
+  const tree = renderer.runSync(renderer.parse(markdown), markdown);
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
+    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)).map(
+      decodeMarkdownLinkEscapes,
+    ),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
   ].flatMap((href) => {
-    const target = resolveMarkdownFileLinkTarget(href, cwd);
-    return target ? [splitFilePathPosition(target).path] : [];
+    const resolved = resolveMarkdownFileLink(href, cwd);
+    return resolved ? [resolved.position.path] : [];
   });
   const parentSuffixes = buildFileLinkParentSuffixByPath(paths);
   const segments: string[] = [];
@@ -144,7 +176,19 @@ function markdownThreadFindText(
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseComposerCitationHref(href) : null;
     if (citation) {
-      text += composerCitationLabel(citation);
+      // A document quote stays a chip with its label; a thread quote is a card.
+      if (
+        isFileCitation(citation) ||
+        isPdfCitation(citation) ||
+        isComputeCitation(citation) ||
+        isOfficeCitation(citation)
+      ) {
+        text += composerCitationLabel(citation);
+        return;
+      }
+      // The quote card is not searched, and it splits the text before it from its comment.
+      flush();
+      text += (citation.comment ?? "").replace(/\r?\n/g, " ");
       return;
     }
     // SCIENT-FORK:END
@@ -152,6 +196,19 @@ function markdownThreadFindText(
       let candidate: string | null = null;
       if (node.tagName === "a" && typeof href === "string") {
         candidate = href;
+      } else if (node.tagName === "img") {
+        const source = chatMarkdownImageSource(node.properties, theme);
+        if (source) {
+          const { authoredSrc, classifiedSrc } = source;
+          if (
+            shouldRenderMarkdownImageAsFileLink(
+              classifyMarkdownImageSource(classifiedSrc, cwd),
+              mediaKindFromPath(classifiedSrc),
+            )
+          ) {
+            candidate = authoredSrc;
+          }
+        }
       } else if (
         node.tagName === "code" &&
         !inPre &&
@@ -161,14 +218,13 @@ function markdownThreadFindText(
           (node.children ?? []).map((child) => child.value ?? "").join(""),
         );
       }
-      const target = candidate ? resolveMarkdownFileLinkTarget(candidate, cwd) : null;
-      if (target) {
+      const resolved = candidate ? resolveMarkdownFileLink(candidate, cwd) : null;
+      if (candidate && resolved) {
         const labelText = (node: TextTree): string =>
           node.value ?? (node.children ?? []).map(labelText).join("");
         const label = labelText(node);
-        if (node.tagName === "a" && candidate && !isMarkdownFileLinkLabel(label, candidate))
-          text += `${label} `;
-        text += fileLinkLabel(splitFilePathPosition(target), parentSuffixes);
+        if (node.tagName === "a" && !isMarkdownFileLinkLabel(label, candidate)) text += `${label} `;
+        text += fileLinkLabel(resolved.position, parentSuffixes);
         return;
       }
     }
@@ -210,10 +266,14 @@ function markdownThreadFindText(
 }
 
 /** Plans render `$skill` tokens literally (no skill chips), so they are indexed as written. */
-export function searchablePlanSegments(markdown: string, cwd?: string): readonly string[] {
+export function searchablePlanSegments(
+  markdown: string,
+  cwd?: string,
+  theme?: "dark" | "light",
+): readonly string[] {
   return [
     proposedPlanTitle(markdown) ?? "Proposed plan",
-    ...markdownThreadFindText(stripDisplayedPlanMarkdown(markdown), false, cwd, []),
+    ...markdownThreadFindText(stripDisplayedPlanMarkdown(markdown), { cwd, theme }),
   ];
 }
 
@@ -221,19 +281,20 @@ export function searchableMessageSegments(
   message: Pick<OrchestrationV2ConversationMessage, "role" | "text" | "streaming" | "context">,
   cwd?: string,
   skills: readonly InlineSkill[] = [],
+  theme?: "dark" | "light",
 ): readonly string[] | null {
   if (message.role === "user") {
     // Clients hide this prompt, so find must not match text nobody can see.
     if (isAttachmentOnlyBootstrapPrompt(message.text)) return [];
     const text = message.context ? message.text : upgradeLegacyContextMessage(message.text).text;
-    return markdownThreadFindText(text, true, cwd, skills);
+    return markdownThreadFindText(text, { userMessage: true, cwd, skills, theme });
   }
   if (message.role !== "assistant") return null;
-  return markdownThreadFindText(
-    message.text || (message.streaming ? "" : "(empty response)"),
-    false,
+  return markdownThreadFindText(message.text || (message.streaming ? "" : "(empty response)"), {
     cwd,
     skills,
-    shouldPreserveAssistantLineBreaks(message.text),
-  );
+    lineBreaks: shouldPreserveAssistantLineBreaks(message.text),
+    renderInsights: true,
+    theme,
+  });
 }

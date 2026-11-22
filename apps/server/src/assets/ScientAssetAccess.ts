@@ -54,9 +54,16 @@ export const isScientAssetClaims = (claims: {
   readonly kind: string;
 }): claims is ScientAssetClaims => SCIENT_ASSET_CLAIM_KINDS.has(claims.kind);
 
+const hasHiddenSegment = (segments: ReadonlyArray<string>) =>
+  segments.some((segment) => segment.startsWith("."));
+
 const resolveCanonicalEnvironmentDocumentFileForRequest = Effect.fn(
   "ScientAssetAccess.resolveCanonicalEnvironmentDocumentFileForRequest",
-)(function* (input: { readonly baseDirectory: string; readonly relativePath: string }) {
+)(function* (input: {
+  readonly baseDirectory: string;
+  readonly relativePath: string;
+  readonly entryFileName: string;
+}) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const canonicalCandidate = yield* optionOnNotFound(
@@ -77,7 +84,8 @@ const resolveCanonicalEnvironmentDocumentFileForRequest = Effect.fn(
     relative === "" ||
     relative === ".." ||
     relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
+    path.isAbsolute(relative) ||
+    (relative !== input.entryFileName && hasHiddenSegment(relative.split(path.sep)))
   ) {
     return null;
   }
@@ -414,13 +422,14 @@ export const resolveScientAsset = Effect.fnUntraced(function* (
       decodedPath.includes("\0") ||
       path.isAbsolute(decodedPath) ||
       segments.some((segment) => segment === "" || segment === "." || segment === "..") ||
-      (decodedPath !== claims.entryFileName && segments.some((segment) => segment.startsWith(".")))
+      (decodedPath !== claims.entryFileName && hasHiddenSegment(segments))
     ) {
       return null;
     }
     const documentFile = yield* resolveCanonicalEnvironmentDocumentFileForRequest({
       baseDirectory: claims.baseDirectory,
       relativePath: decodedPath,
+      entryFileName: claims.entryFileName,
     });
     return documentFile
       ? ({ kind: "file", path: documentFile, cacheControl: "no-store" } satisfies ResolvedAsset)

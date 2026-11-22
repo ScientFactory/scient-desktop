@@ -19,7 +19,7 @@ import {
 } from "@t3tools/shared/toolOutput";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
-import { decodePiModelSlug } from "./model.ts";
+import { decodePiModelSlug, encodePiModelSlug } from "./model.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -68,6 +68,39 @@ export function parsePiModelSlug(slug: string): { provider: string; modelId: str
   return decodePiModelSlug(slug) ?? null;
 }
 
+// Pi provider names and model ids may both contain "/", so a slug only splits
+// reliably through the `{provider, id}` pairs `get_available_models` reported.
+export function findReportedPiModel(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | undefined {
+  if (!Array.isArray(reportedModels)) return undefined;
+  const reported = reportedModels.flatMap((model) => {
+    const provider = piRecordString(model, "provider");
+    const modelId = piRecordString(model, "id");
+    return provider !== undefined && modelId !== undefined ? [{ provider, modelId }] : [];
+  });
+  // SCIENT-FORK:START — Scient's catalog publishes percent-encoded canonical slugs; match those
+  // first, then the raw `provider/id` form upstream slugs use.
+  const canonical = reported.find(
+    ({ provider, modelId }) => encodePiModelSlug(provider, modelId) === slug,
+  );
+  if (canonical !== undefined) return canonical;
+  // SCIENT-FORK:END
+  return reported.find(({ provider, modelId }) => `${provider}/${modelId}` === slug);
+}
+
+export function resolvePiModelSlug(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | null {
+  const reported = findReportedPiModel(slug, reportedModels);
+  if (reported !== undefined) return reported;
+  // SCIENT-FORK:START — unreported slugs must be canonical; Scient never guesses at a raw split.
+  return parsePiModelSlug(slug);
+  // SCIENT-FORK:END
+}
+
 export interface PiRpcSpawnOptions {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -88,6 +121,7 @@ export interface PiRpcConnection {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE = Duration.seconds(1);
+const TERMINATION_POLL_INTERVAL = Duration.millis(20);
 
 interface PendingPiRequest {
   readonly deferred: Deferred.Deferred<unknown, PiRpcError>;
@@ -179,13 +213,23 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
 const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
   kill: (signal: NodeJS.Signals) => boolean,
   hasExited: () => boolean,
+  groupGone: () => boolean,
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  yield* Effect.sleep(TERMINATION_GRACE);
+  // SCIENT-FORK:START — a group seen gone is never escalated: its id may already be recycled.
+  const gone = yield* Effect.sleep(TERMINATION_POLL_INTERVAL).pipe(
+    Effect.repeat({ until: groupGone }),
+    Effect.timeoutOption(TERMINATION_GRACE),
+  );
+  if (Option.isSome(gone)) return;
+  // SCIENT-FORK:END
   if (hasExited()) return;
   kill("SIGKILL");
 });
+// SCIENT-FORK:START — exported for the grace and escalation tests in rpc.scient.test.ts.
+export { terminatePiProcess };
+// SCIENT-FORK:END
 
 export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSpawnOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -236,6 +280,16 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     }
   };
 
+  // EPERM means a group member is still alive, so only ESRCH ends the SIGTERM grace early.
+  const processGroupGone = (): boolean => {
+    try {
+      signalProcessGroup(Number(child.pid), 0);
+      return false;
+    } catch (cause) {
+      return (cause as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
+    }
+  };
+
   // Windows process.kill leaves extension children and pipes alive; taskkill /T reaps the tree.
   const terminateWindowsTree = Effect.gen(function* () {
     if (hasExited()) return;
@@ -246,7 +300,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   }).pipe(Effect.scoped, Effect.ignore);
 
   const terminateProcess =
-    platform === "win32" ? terminateWindowsTree : terminatePiProcess(killProcessGroup, hasExited);
+    platform === "win32"
+      ? terminateWindowsTree
+      : terminatePiProcess(killProcessGroup, hasExited, processGroupGone);
 
   // Register teardown immediately after spawn so interrupted setup cannot leak a detached process.
   yield* Scope.addFinalizer(scope, terminateProcess.pipe(Effect.ignore, Effect.uninterruptible));
@@ -268,6 +324,13 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     yield* Queue.fail(outgoing, error);
     yield* Queue.fail(events, error);
   });
+  // SCIENT-FORK:START — a closed connection fails its in-flight requests; an interrupted
+  // reader never reaches failTransport, so a request awaiting a reply would wait forever.
+  yield* Scope.addFinalizer(
+    scope,
+    failTransport(new PiRpcError({ operation: "close", detail: "Pi connection closed" })),
+  );
+  // SCIENT-FORK:END
 
   const routeRecord =
     /* Protocol records and writes include streaming deltas; avoid a span per record. */

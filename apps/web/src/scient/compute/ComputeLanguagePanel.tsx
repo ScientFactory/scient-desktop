@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import type {
@@ -26,7 +27,8 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { ExtensionsSection } from "~/scient/extensions/ExtensionsPage";
 import {
@@ -34,6 +36,7 @@ import {
   ManagedRuntimeNotice,
   type ComputeManagedRuntimeController,
 } from "./ComputeManagedRuntimeControls";
+import { computeRuntimeText } from "./computeContractCopy";
 import { ComputeInstallationRow } from "./ComputeInstallationRow";
 import { ComputeRuntimeTest } from "./ComputeRuntimeTest";
 import {
@@ -77,18 +80,23 @@ export function ComputeLanguagePanel({
   refreshVersion: number;
   toolkitChange: ToolkitChange | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const part = computeScientPart(languageId);
   const summary = computeCurrentRuntimeSummary({ language, preference, managed: runtime.status });
   const selected = defaultComputeInstallation(language, preference, runtime.status);
-  const primary = computeLanguagePrimaryAction({
-    language,
-    summary,
-    managed: runtime.status,
-    selected,
-    failureRetry: runtime.failure?.retryAction,
-  });
+  const primary = computeLanguagePrimaryAction(
+    {
+      language,
+      summary,
+      managed: runtime.status,
+      selected,
+      failureRetry: runtime.failure?.retryAction,
+    },
+    messages,
+  );
   const unavailable = loading || refreshing || !environmentId;
   const disabled = unavailable || runtime.busy;
   const selection = useComputeInstallationSelection({
@@ -177,13 +185,15 @@ export function ComputeLanguagePanel({
     !toolkitOwnsNotice &&
     (Boolean(runtime.failure) || (runtime.status?.operation != null && !inlineProgress));
   const needs =
-    loading || summary.kind === "ready" || summary.kind === "update-managed" ? null : summary.title;
+    loading || summary.kind === "ready" || summary.kind === "update-managed"
+      ? null
+      : computeRuntimeText(summary.title, messages);
 
   return (
     <>
       <SettingsRow
         id={`${languageId}-runtime`}
-        title="Runtime"
+        title={gt("Runtime")}
         {...(needs === null
           ? {}
           : { description: <span data-compute-summary={languageId}>{needs}</span> })}
@@ -193,7 +203,7 @@ export function ComputeLanguagePanel({
         control={
           loading ? (
             <p className="text-xs text-muted-foreground" role="status">
-              Checking…
+              <T>Checking…</T>
             </p>
           ) : (
             <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -269,6 +279,8 @@ function RuntimePicker({
   selection: InstallationSelection;
   runtime: ComputeManagedRuntimeController;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const selected = defaultComputeInstallation(language, preference, runtime.status);
@@ -277,14 +289,20 @@ function RuntimePicker({
     (languageId === "python" && runtime.status?.selection === "managed");
   const value = explicit ? (selected?.executable ?? null) : AUTOMATIC_RUNTIME_OPTION;
   const current = !explicit
-    ? automaticComputeRuntimeLabel(selected)
+    ? computeRuntimeText(automaticComputeRuntimeLabel(selected), messages)
     : selected
-      ? computeRuntimePickerLabel(selected, name, language.installations)
-      : "Choose a runtime";
+      ? computeRuntimeText(
+          computeRuntimePickerLabel(selected, name, language.installations),
+          messages,
+        )
+      : gt("Choose a runtime");
   if (language.installations.length < 2 && !preference.executable.trim()) {
     return selected ? (
       <span className="text-xs text-muted-foreground">
-        {computeRuntimePickerLabel(selected, name, language.installations)}
+        {computeRuntimeText(
+          computeRuntimePickerLabel(selected, name, language.installations),
+          messages,
+        )}
       </span>
     ) : null;
   }
@@ -300,7 +318,7 @@ function RuntimePicker({
       <SelectTrigger
         size="sm"
         className="w-auto max-w-64"
-        aria-label={`Choose ${name} runtime`}
+        aria-label={gt("Choose {name} runtime", { name })}
         data-compute-runtime={selected?.executable ?? ""}
       >
         <SelectValue>{current}</SelectValue>
@@ -316,7 +334,7 @@ function RuntimePicker({
           value={AUTOMATIC_RUNTIME_OPTION}
           data-compute-runtime={AUTOMATIC_RUNTIME_OPTION}
         >
-          {explicit ? "Automatic" : current}
+          {explicit ? gt("Automatic", { $context: "runtime choice" }) : current}
         </SelectItem>
         <SelectSeparator />
         {language.installations.map((installation) => (
@@ -327,7 +345,10 @@ function RuntimePicker({
             data-compute-runtime={installation.executable}
           >
             <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
-              {computeRuntimePickerLabel(installation, name, language.installations)}
+              {computeRuntimeText(
+                computeRuntimePickerLabel(installation, name, language.installations),
+                messages,
+              )}
             </span>
           </SelectItem>
         ))}
@@ -357,6 +378,8 @@ function FoundInstallations({
   onVersion: (executable: string, version: string) => void;
   refresh: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const [open, setOpen] = useState(false);
@@ -368,10 +391,10 @@ function FoundInstallations({
     <>
       <FoundRow
         languageId={languageId}
-        label={foundCountLabel(found.length + tools.length)}
+        label={foundCountLabel(found.length + tools.length, messages)}
         note={
           languageId === "sql" && tools.length > 0
-            ? "Scient runs SQL in DuckDB. Agents can use these from a shell."
+            ? gt("Scient runs SQL in DuckDB. Agents can use these from a shell.")
             : undefined
         }
         onOpen={() => setOpen(true)}
@@ -390,7 +413,10 @@ function FoundInstallations({
                 <ComputeInstallationRow
                   key={`${installation.executable}:${fingerprint}`}
                   id={`${languageId}-installation-${index}`}
-                  title={computeRuntimePickerLabel(installation, name, language.installations)}
+                  title={computeRuntimeText(
+                    computeRuntimePickerLabel(installation, name, language.installations),
+                    messages,
+                  )}
                   installation={installation}
                   environmentId={environmentId}
                   languageId={languageId}
@@ -417,7 +443,7 @@ function FoundInstallations({
         >
           <AddLocationForm
             name={name}
-            action="Use"
+            action={gt("Use", { $context: "verb, uses a program path" })}
             path={path}
             onPathChange={setPath}
             disabled={disabled || selection.disabled}
@@ -429,8 +455,8 @@ function FoundInstallations({
   );
 }
 
-export function foundCountLabel(count: number): string {
-  return count === 0 ? "None" : String(count);
+export function foundCountLabel(count: number, resolve: MessageResolver = m): string {
+  return count === 0 ? resolve(msg("None", { $context: "nothing found" })) : String(count);
 }
 
 /** The one row that says what was found. Opening it shows the list. */
@@ -447,10 +473,11 @@ export function FoundRow({
   onOpen: () => void;
   refresh: ReactNode;
 }) {
+  const gt = useGT();
   return (
     <SettingsRow
       id={`${languageId}-found`}
-      title="Found on this computer"
+      title={gt("Found on this computer")}
       description={note}
       control={
         <div className="flex items-center gap-1">
@@ -458,7 +485,7 @@ export function FoundRow({
             size="xs"
             variant="ghost-muted"
             aria-haspopup="dialog"
-            aria-label={`Found on this computer: ${label}`}
+            aria-label={gt("Found on this computer: {count}", { count: label })}
             onClick={onOpen}
           >
             {label}
@@ -488,6 +515,7 @@ export function FoundDialog({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const text = query.trim().toLowerCase();
   const shown = entries.filter((entry) => entry.text.toLowerCase().includes(text));
@@ -495,15 +523,15 @@ export function FoundDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{name} on this computer</DialogTitle>
+          <DialogTitle>{gt("{name} on this computer", { name })}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-3">
             {entries.length >= SEARCH_FROM ? (
               <Input
                 type="search"
-                aria-label={`Find ${name} on this computer`}
-                placeholder={`Search ${entries.length} installations`}
+                aria-label={gt("Find {name} on this computer", { name })}
+                placeholder={gt("Search {count} installations", { count: entries.length })}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -515,7 +543,7 @@ export function FoundDialog({
                 ))}
                 {shown.length === 0 ? (
                   <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                    Nothing matches
+                    <T>Nothing matches</T>
                   </div>
                 ) : null}
               </div>
@@ -543,6 +571,8 @@ export function FoundToolRow({
   tool: ComputeFoundTool;
   control?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <SettingsRow
       id={`${languageId}-found-${tool.executable}`}
@@ -551,7 +581,14 @@ export function FoundToolRow({
       control={
         control ?? (
           <span className="text-xs text-muted-foreground">
-            {[tool.version, tool.origin ?? "System"].filter(Boolean).join(" · ")}
+            {[
+              tool.version,
+              tool.origin === null
+                ? gt("System", { $context: "where a runtime comes from" })
+                : computeRuntimeText(tool.origin, messages),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         )
       }
@@ -575,6 +612,7 @@ export function AddLocationForm({
   disabled: boolean;
   onAdd: (path: string) => Promise<boolean>;
 }) {
+  const gt = useGT();
   const add = async () => {
     if (await onAdd(path.trim())) onPathChange("");
   };
@@ -591,8 +629,8 @@ export function AddLocationForm({
         className="min-w-0 flex-1"
         value={path}
         disabled={disabled}
-        placeholder="Add a program path"
-        aria-label={`${name} program path`}
+        placeholder={gt("Add a program path")}
+        aria-label={gt("{name} program path", { name })}
         onChange={(event) => onPathChange(event.currentTarget.value)}
       />
       <Button variant="outline" type="submit" disabled={disabled || !path.trim()}>
@@ -610,6 +648,7 @@ export function RefreshRuntimesButton({
   busy: boolean;
   onRefresh: () => Promise<void>;
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -618,14 +657,16 @@ export function RefreshRuntimesButton({
             size="icon-xs"
             variant="ghost-muted"
             disabled={busy}
-            aria-label="Refresh scientific runtimes"
+            aria-label={gt("Refresh scientific runtimes")}
             onClick={() => void onRefresh()}
           >
             <RefreshCwIcon className={cn(busy ? "animate-spin" : undefined)} />
           </Button>
         }
       />
-      <TooltipPopup side="top">Find runtimes again</TooltipPopup>
+      <TooltipPopup side="top">
+        <T>Find runtimes again</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -649,38 +690,45 @@ export function ComputeScientPartSection({
   refreshing: boolean;
   children?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const part = computeScientPart(languageId);
   const status = runtime.status;
   const ownKernel = part === "kernel" && status?.selection === "existing";
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "runtime path" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("runtime path"),
+  });
   if (part === null || (!status?.installed && !ownKernel)) return null;
   const selected = defaultComputeInstallation(language, preference, status);
   const summary = computeCurrentRuntimeSummary({ language, preference, managed: status });
-  const primary = computeLanguagePrimaryAction({
-    language,
-    summary,
-    managed: status,
-    selected,
-    failureRetry: runtime.failure?.retryAction,
-  });
+  const primary = computeLanguagePrimaryAction(
+    {
+      language,
+      summary,
+      managed: status,
+      selected,
+      failureRetry: runtime.failure?.retryAction,
+    },
+    messages,
+  );
   const managed =
     part === "managed-python"
       ? language.installations.find((installation) => installation.source === "managed")
       : undefined;
   const title =
     part === "connection"
-      ? "MATLAB connection"
+      ? gt("MATLAB connection")
       : part === "kernel"
         ? (status?.displayName ?? name)
-        : "Scient-managed Python";
-  const owner = ownKernel ? `Your ${name}` : "Private to Scient";
+        : gt("Scient-managed Python");
+  const owner = ownKernel ? gt("Your {name}", { name }) : gt("Private to Scient");
   const detail =
     part === "connection"
-      ? "Connects Scient to MATLAB"
+      ? gt("Connects Scient to MATLAB")
       : languageId === "sql"
-        ? "Includes DuckDB"
+        ? gt("Includes DuckDB")
         : part === "kernel" && status?.runtimeVersion
           ? `${status.runtimeVersion} · ${owner}`
           : owner;
@@ -695,7 +743,7 @@ export function ComputeScientPartSection({
             installationActions={
               managed ? (
                 <MenuItem onClick={() => copyToClipboard(managed.executable, undefined)}>
-                  {isCopied ? "Copied" : "Copy path"}
+                  {isCopied ? gt("Copied") : gt("Copy path")}
                 </MenuItem>
               ) : null
             }

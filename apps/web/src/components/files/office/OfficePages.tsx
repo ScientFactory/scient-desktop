@@ -1,4 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- A page keeps its ordinal throughout incremental layout. */
+import { useGT } from "gt-react";
 import { observeResize } from "~/lib/observeResize";
 import {
   useEffect,
@@ -27,7 +28,7 @@ export type PaintPage = (
 export function OfficePages(props: {
   pages: readonly PageSize[];
   paint: PaintPage;
-  label: string;
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   scrollRef?: RefObject<((index: number, y?: number) => void) | null>;
@@ -112,13 +113,6 @@ export function OfficePages(props: {
   }, [mounted, props.pages.length]);
   // SCIENT-FORK:START — a page past those mounted so far mounts at once, then is scrolled to.
   const pending = useRef<{ index: number; y: number } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the container DOM node to a page once the page it was asked for has mounted
-  useLayoutEffect(() => {
-    const target = pending.current;
-    if (!target || target.index >= mounted) return;
-    pending.current = null;
-    scrollRef?.current?.(target.index, target.y);
-  }, [mounted, scrollRef]);
   const stopPending = () => {
     pending.current = null;
   };
@@ -130,7 +124,7 @@ export function OfficePages(props: {
         const row = rows.current.get(index);
         const page = props.pages[index];
         // SCIENT-FORK:START
-        if (!row && page) {
+        if ((!row || width === 0) && page) {
           pending.current = { index, y };
           setMounted((count) => Math.max(count, index + 1));
           return;
@@ -155,6 +149,15 @@ export function OfficePages(props: {
       },
     [props.pages, width, zoom], // SCIENT-FORK
   );
+  // SCIENT-FORK:START — finish pending jumps after measurement and mounting.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the container DOM node to a page once the page it was asked for has mounted
+  useLayoutEffect(() => {
+    const target = pending.current;
+    if (!target || target.index >= mounted || width === 0) return;
+    pending.current = null;
+    scrollRef?.current?.(target.index, target.y);
+  }, [mounted, width, scrollRef]);
+  // SCIENT-FORK:END
   return (
     <div
       ref={scroller}
@@ -221,24 +224,14 @@ function OfficePage(props: {
   scale: number;
   rasterScale: number;
   paint: PaintPage;
-  label: string;
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   onError: (error: unknown) => void;
 }) {
-  const {
-    root,
-    rasterScale,
-    index,
-    onError,
-    page,
-    paint,
-    scale,
-    register,
-    label,
-    overlay,
-    footer,
-  } = props;
+  const { root, rasterScale, index, onError, page, paint, scale, register, kind, overlay, footer } =
+    props;
+  const gt = useGT();
   const row = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
@@ -290,7 +283,11 @@ function OfficePage(props: {
           register(el);
         }}
         role="group"
-        aria-label={`${label} ${index + 1}`}
+        aria-label={
+          kind === "slide"
+            ? gt("Slide {number}", { number: String(index + 1) })
+            : gt("Page {number}", { number: String(index + 1) })
+        }
         className="relative shrink-0 shadow-md"
         style={{
           width: page.width * scale,

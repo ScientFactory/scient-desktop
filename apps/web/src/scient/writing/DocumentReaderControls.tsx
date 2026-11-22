@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { T, useGT, Var } from "gt-react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -96,6 +97,7 @@ export interface ReaderSearch {
  * arrows appear at its end.
  */
 export function ReaderSearchField(props: ReaderSearch & { readonly label: string }) {
+  const gt = useGT();
   const input = useRef<HTMLInputElement>(null);
   const { focusRequest } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when a focus request arrives
@@ -125,8 +127,8 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
         <input
           ref={input}
           value={props.query}
-          placeholder="Search"
-          aria-label={`Search ${props.label}`}
+          placeholder={gt("Search", { $context: "search field placeholder" })}
+          aria-label={gt("Search {document}", { document: props.label })}
           spellCheck={false}
           onFocus={props.onFocus}
           onBlur={() => setExplained(false)}
@@ -158,7 +160,7 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
             </span>
             <button
               type="button"
-              aria-label="Previous result"
+              aria-label={gt("Previous result")}
               disabled={props.total === 0}
               onClick={() => props.onNavigate(true)}
             >
@@ -166,7 +168,7 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
             </button>
             <button
               type="button"
-              aria-label="Next result"
+              aria-label={gt("Next result")}
               disabled={props.total === 0}
               onClick={() => props.onNavigate(false)}
             >
@@ -208,7 +210,7 @@ export function DocumentReaderControls(props: {
   /** False when the document has no known pages (Visual before a PDF build). */
   pages?: boolean;
   /** What the sidebar holds, for the overflow menu. */
-  sidebarContents?: string;
+  sidebarContents?: "outline" | "pages" | "slides";
   scale: number;
   sidebarOpen: boolean;
   searchOpen: boolean;
@@ -225,6 +227,7 @@ export function DocumentReaderControls(props: {
   /** When given, search is a field in the row instead of a button. */
   search?: ReaderSearch | undefined;
 }) {
+  const gt = useGT();
   const [pageInput, setPageInput] = useState(String(props.page));
   const [pageInputEdited, setPageInputEdited] = useState(false);
   const pendingSearch = useRef<(() => void) | null>(null);
@@ -261,8 +264,8 @@ export function DocumentReaderControls(props: {
         className="scient-pdf-action-sidebar"
         label={
           props.sidebarOpen
-            ? "Hide " + props.label + " sidebar"
-            : "Show " + props.label + " sidebar"
+            ? gt("Hide {document} sidebar", { document: props.label })
+            : gt("Show {document} sidebar", { document: props.label })
         }
         onClick={props.onToggleSidebar}
       >
@@ -273,7 +276,7 @@ export function DocumentReaderControls(props: {
           <div className="scient-pdf-toolbar-separator" />
           <ReaderButton
             className="scient-pdf-action-page-step"
-            label="Previous page"
+            label={gt("Previous page")}
             disabled={!props.ready || props.page <= 1}
             onClick={() => props.onPage(props.page - 1)}
           >
@@ -283,7 +286,7 @@ export function DocumentReaderControls(props: {
             <input
               value={pageInput}
               inputMode="numeric"
-              aria-label="Page number"
+              aria-label={gt("Page number")}
               // As wide as the longest page number, with two digits as the minimum.
               style={{ width: `calc(${Math.max(2, String(props.pageCount).length)}ch + 12px)` }}
               disabled={!props.ready}
@@ -298,11 +301,17 @@ export function DocumentReaderControls(props: {
                 if (event.key === "Enter") commitPage();
               }}
             />
-            <span aria-label={`${props.pageCount} pages`}>/ {props.pageCount || "–"}</span>
+            <span
+              aria-label={gt("{count, plural, other {{count} pages}}", {
+                count: props.pageCount,
+              })}
+            >
+              / {props.pageCount || "–"}
+            </span>
           </div>
           <ReaderButton
             className="scient-pdf-action-page-step"
-            label="Next page"
+            label={gt("Next page")}
             disabled={!props.ready || props.page >= props.pageCount}
             onClick={() => props.onPage(props.page + 1)}
           >
@@ -317,21 +326,20 @@ export function DocumentReaderControls(props: {
       <ReaderButton
         className="scient-pdf-action-zoom-step"
         label={
-          "Zoom out" +
-          (props.shortcutLabel("pdf.zoomOut")
-            ? " (" + props.shortcutLabel("pdf.zoomOut") + ")"
-            : "")
+          props.shortcutLabel("pdf.zoomOut")
+            ? gt("Zoom out ({shortcut})", { shortcut: props.shortcutLabel("pdf.zoomOut") })
+            : gt("Zoom out")
         }
         disabled={!props.ready}
         onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
       >
         <Minus />
       </ReaderButton>
-      <ScientTooltip content="Fit width">
+      <ScientTooltip content={gt("Fit width")}>
         <button
           type="button"
           className="scient-pdf-zoom-label"
-          aria-label={"Fit width, zoom " + formatPdfZoom(props.scale)}
+          aria-label={gt("Fit width, zoom {zoom}", { zoom: formatPdfZoom(props.scale) })}
           disabled={!props.ready}
           onClick={() => props.onFitWidth()}
         >
@@ -341,8 +349,9 @@ export function DocumentReaderControls(props: {
       <ReaderButton
         className="scient-pdf-action-zoom-step"
         label={
-          "Zoom in" +
-          (props.shortcutLabel("pdf.zoomIn") ? " (" + props.shortcutLabel("pdf.zoomIn") + ")" : "")
+          props.shortcutLabel("pdf.zoomIn")
+            ? gt("Zoom in ({shortcut})", { shortcut: props.shortcutLabel("pdf.zoomIn") })
+            : gt("Zoom in")
         }
         disabled={!props.ready}
         onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
@@ -356,7 +365,7 @@ export function DocumentReaderControls(props: {
       ref={toolbarRef}
       className={cn("scient-pdf-toolbar", host ? "scient-pdf-toolbar-hosted" : null)}
       role="toolbar"
-      aria-label={props.label + " controls"}
+      aria-label={gt("{document} controls", { document: props.label })}
     >
       {host ? (
         // In a surface's header: its status, search and view switch first;
@@ -386,9 +395,12 @@ export function DocumentReaderControls(props: {
         <ReaderButton
           className="scient-pdf-action-search"
           label={
-            "Search " +
-            props.label +
-            (props.shortcutLabel("pdf.find") ? " (" + props.shortcutLabel("pdf.find") + ")" : "")
+            props.shortcutLabel("pdf.find")
+              ? gt("Search {document} ({shortcut})", {
+                  document: props.label,
+                  shortcut: props.shortcutLabel("pdf.find"),
+                })
+              : gt("Search {document}", { document: props.label })
           }
           aria-pressed={props.searchOpen}
           onClick={props.onToggleSearch}
@@ -417,7 +429,7 @@ export function DocumentReaderControls(props: {
           render={
             <ReaderButton
               className="scient-pdf-action-more"
-              label={"More " + props.label + " actions"}
+              label={gt("More {document} actions", { document: props.label })}
             />
           }
         >
@@ -434,26 +446,32 @@ export function DocumentReaderControls(props: {
                 disabled={!props.ready}
                 onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
               >
-                <ZoomOut /> Zoom out
+                <ZoomOut /> <T>Zoom out</T>
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!props.ready}
                 onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
               >
-                <ZoomIn /> Zoom in
+                <ZoomIn /> <T>Zoom in</T>
               </DropdownMenuItem>
             </IfRowHidden>
             <IfRowHidden selector=".scient-pdf-zoom-label">
               <DropdownMenuItem disabled={!props.ready} onClick={() => props.onFitWidth()}>
-                <Maximize2 /> Fit width
+                <Maximize2 /> <T>Fit width</T>
               </DropdownMenuItem>
             </IfRowHidden>
             <IfRowHidden selector=".scient-pdf-action-sidebar">
               <DropdownMenuItem onClick={props.onToggleSidebar}>
                 <ListTree />{" "}
                 {props.sidebarOpen
-                  ? "Hide sidebar"
-                  : `Show ${props.sidebarContents ?? "pages and outline"}`}
+                  ? gt("Hide sidebar")
+                  : props.sidebarContents === "outline"
+                    ? gt("Show outline")
+                    : props.sidebarContents === "pages"
+                      ? gt("Show pages")
+                      : props.sidebarContents === "slides"
+                        ? gt("Show slides")
+                        : gt("Show pages and outline")}
               </DropdownMenuItem>
             </IfRowHidden>
             <IfRowHidden selector=".scient-reader-search, .scient-pdf-action-search">
@@ -463,7 +481,10 @@ export function DocumentReaderControls(props: {
                   pendingSearch.current = props.onShowSearch;
                 }}
               >
-                <Search /> Search {props.label}
+                <Search />{" "}
+                <T>
+                  Search <Var>{props.label}</Var>
+                </T>
               </DropdownMenuItem>
             </IfRowHidden>
             {props.contextControls || host ? (
@@ -472,13 +493,13 @@ export function DocumentReaderControls(props: {
                   disabled={!props.ready || props.page <= 1}
                   onClick={() => props.onPage(props.page - 1)}
                 >
-                  <ChevronLeft /> Previous page
+                  <ChevronLeft /> <T>Previous page</T>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!props.ready || props.page >= props.pageCount}
                   onClick={() => props.onPage(props.page + 1)}
                 >
-                  <ChevronRight /> Next page
+                  <ChevronRight /> <T>Next page</T>
                 </DropdownMenuItem>
               </IfRowHidden>
             ) : null}

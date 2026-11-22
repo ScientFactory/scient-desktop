@@ -1,4 +1,4 @@
-import type { BrowserImportSourceId } from "../browserImport.ts";
+import type { BrowserImportResult, BrowserImportSourceId } from "../browserImport.ts";
 import type { SessionCookie } from "./accounts.ts";
 
 /** A profile found in another browser on this machine; metadata only, never its sign-ins. */
@@ -100,6 +100,11 @@ export interface DesktopFillMainResult {
   }>;
   /** Cookies Scient can't carry exactly, such as opaque partitions; left out. */
   readonly unsupported: number;
+  /**
+   * For an import into Main: the import's cookie rows, before the copy judged them by site.
+   * Cookie counts, never added to the units' site counts.
+   */
+  readonly importSummary?: Pick<BrowserImportResult, "imported" | "skipped" | "skippedByReason">;
 }
 
 /**
@@ -133,6 +138,8 @@ export interface DesktopChromeSignInInput {
   readonly profileId: string;
   /** An https page, or a loopback http one. */
   readonly url: string;
+  /** Names this sign-in for Done and Cancel, so one dialog's Cancel never ends another's. */
+  readonly attemptId?: string;
   /** Required for Main: what the copy may do, as for an import into Main. */
   readonly main?: Pick<
     DesktopFillMainInput,
@@ -140,16 +147,27 @@ export interface DesktopChromeSignInInput {
   >;
 }
 
+/**
+ * Google's answer right after a copy of its cookies: `accepted` means it takes the session now, not
+ * that it will keep doing so; `unknown` means it couldn't be asked.
+ */
+export type DesktopGoogleCopyCheck = "accepted" | "rejected" | "unknown";
+
 export type DesktopChromeSignInResult =
   | { readonly outcome: "no-browser" }
   /** `nothing`: the window held no sign-in when it closed. */
   | { readonly outcome: "busy" | "failed" | "cancelled" | "nothing"; readonly browser?: string }
   | {
-      readonly outcome: "signed-in";
+      /** Cookies copied, not a sign-in proven; into Main, `main` says what each unit did. */
+      readonly outcome: "copied";
       readonly browser: string;
       readonly sites: ReadonlyArray<string>;
       /** Into Main: what the copy did to each site. */
       readonly main?: DesktopFillMainResult;
+      /** Present only when Google's cookies were written. */
+      readonly google?: DesktopGoogleCopyCheck;
+      /** Google already accepted a session in the profile before the copy wrote over it. */
+      readonly googleHeldBefore?: true;
     };
 
 /**
@@ -259,10 +277,20 @@ export interface DesktopAccountsBridge {
     readonly name: string;
     readonly canQuit: boolean;
   } | null>;
+  /**
+   * Whether a browser that imports through itself (`BrowserImportSource.connection`) has remote
+   * debugging turned on; null when refused. Never asks the person anything.
+   */
+  readonly browserConnection?: (
+    sourceId: BrowserImportSourceId,
+  ) => Promise<{ readonly on: boolean } | null>;
   /** Resolves once the window closed and its sign-in was copied, or with why not. */
   readonly chromeSignIn?: (input: DesktopChromeSignInInput) => Promise<DesktopChromeSignInResult>;
-  /** Done (`keep`) quits the open sign-in window, Cancel stops it. False when none is open. */
-  readonly endChromeSignIn?: (keep: boolean) => Promise<boolean>;
+  /**
+   * Done (`keep`) quits the open sign-in window; Cancel stops it, its copy until the first cookie
+   * write, or the attempt before it starts. False when there is nothing left to end.
+   */
+  readonly endChromeSignIn?: (keep: boolean, attemptId?: string) => Promise<boolean>;
   /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
   readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

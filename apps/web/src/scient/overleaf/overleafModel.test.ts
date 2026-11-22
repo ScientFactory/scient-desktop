@@ -28,6 +28,8 @@ import {
   overleafUndoSucceeded,
   parseOverleafProjectInput,
   refusalText,
+  setAsideAction,
+  unreadableRecordLines,
   workspacePathOf,
 } from "./overleafModel";
 
@@ -284,6 +286,44 @@ describe("overleafResultView", () => {
     ).toBe("Overleaf changed again while this sync was sending. Sync again.");
   });
 
+  it("says Overleaf's changes came in only when the apply wrote them all", () => {
+    const incoming = review({
+      incoming: [{ kind: "modified", path: "a.tex" }],
+      outgoing: [{ kind: "modified", path: "d.tex" }],
+      warnings: [{ kind: "rename", from: "x.tex", to: "y.tex" }],
+    });
+    const attention = { _tag: "blocked" as const, reason: "attention" };
+    const replanned = overleafResultView(
+      synced({ review: incoming, outcome: "replan", publication: attention }),
+    );
+    expect(replanned).toMatchObject({ title: "Nothing came in", hasChanges: false });
+    expect(replanned.lines).toEqual([
+      "The folder changed while Overleaf's changes were being written, so nothing was written or sent. Sync again.",
+    ]);
+    const partway = overleafResultView(
+      synced({ review: incoming, outcome: "attention", interrupted: 2, publication: attention }),
+    );
+    expect(partway.title).toBe("Overleaf's changes were applied as far as the folder allowed");
+    expect(partway.lines).toEqual([
+      "Writing stopped partway in 2 files. The next sync shows them as conflicts to settle.",
+      "Nothing was sent. Sync again once the folder is settled.",
+    ]);
+    expect(
+      overleafResultView(synced({ outcome: "attention", publication: attention })).lines[0],
+    ).toBe("A file or a kept copy changed while Overleaf's changes were written. Check it.");
+    // Stopped only at conflict marks in held files: everything else came in and went out.
+    const marksOnly = overleafResultView(
+      synced({ review: incoming, outcome: "attention", markerPaths: ["main.tex"] }),
+    );
+    expect(marksOnly.title).toBe("1 file came in, 1 was sent");
+    // A complete apply held back by a forced conflict sent nothing, renamed nothing.
+    const held = overleafResultView(synced({ review: incoming, publication: attention }));
+    expect(held.title).toBe("1 file came in");
+    expect(held.lines).toEqual([
+      "Nothing was sent: part of the folder needs attention first. Settle it, then sync again.",
+    ]);
+  });
+
   it("adds the lines of design section 4.1", () => {
     const view = overleafResultView(
       synced({
@@ -382,6 +422,27 @@ describe("overleafResultView", () => {
       }).tone,
     ).toBe("error");
   });
+
+  it("never says nothing changed after it settled an interrupted sync", () => {
+    for (const refusal of [{ reason: "editor-unsaved" }, { reason: "records-unreadable" }]) {
+      const { lines } = overleafResultView({
+        _tag: "refused",
+        refusal,
+        retried: false,
+        settled: { outcome: "complete", interrupted: 0, markerPaths: [] },
+      });
+      expect(lines).toHaveLength(2);
+      expect(lines.join(" ")).not.toMatch(/nothing was (linked or )?changed/iu);
+    }
+    expect(refusalText({ reason: "editor-unsaved" })).toMatch(/nothing was changed/u);
+    const chip = overleafChipView(status(), false, {
+      _tag: "refused",
+      refusal: { reason: "records-unreadable" },
+      retried: false,
+      settled: { outcome: "complete", interrupted: 0, markerPaths: [] },
+    });
+    expect(chip.detail).not.toMatch(/nothing was (linked or )?changed/iu);
+  });
 });
 
 describe("refusalText", () => {
@@ -389,20 +450,100 @@ describe("refusalText", () => {
     expect(refusalText({ reason: "file-too-large", path: "data.bin" })).toBe(
       "A file is over Overleaf's 50 MB limit (data.bin).",
     );
+    expect(
+      refusalText({ reason: "path-alias", paths: ["Figure.png", "figure.png"], path: "x" }),
+    ).toBe(
+      "Two names differ only by letter case or accents (Figure.png, figure.png). Rename one and sync again.",
+    );
     expect(refusalText({ reason: "something-new" })).toBe("Sync stopped (something-new).");
-    // Step 5's newer reasons each have their own words.
+    expect(refusalText({ reason: "something-new", message: "The server's words." })).toBe(
+      "The server's words.",
+    );
+    // Every reason the server sends has its own words.
     for (const reason of [
-      "request-incomplete",
-      "records-unreadable",
-      "overleaf-moved",
+      // Refused operations, by error.
+      "workspace-not-authorized",
+      "token-missing",
+      "token-invalid",
       "project-invalid",
-      "authority-changed",
       "access-denied",
       "project-not-found",
       "unreachable",
+      "rate-limited",
       "git-unavailable",
       "git-failed",
-      "token-missing",
+      "editor-unsaved",
+      "operation-active",
+      "missing",
+      "corrupt",
+      "unsupported",
+      "archived",
+      "folder-changed",
+      "recovery-required",
+      "authority-changed",
+      "retained-limit",
+      "checkout-suspended",
+      "checkout-recovery-required",
+      "unreadable-record",
+      "newer-unfinished-record",
+      "state-locked",
+      "connection-stale",
+      "connection-unavailable",
+      "request-reused",
+      "volume-unavailable",
+      "no-volume-identity",
+      "unsupported-filesystem",
+      "network-filesystem",
+      "volatile-filesystem",
+      "sync-managed-folder",
+      "read-only-parent",
+      "shared-parent",
+      "disk-root-checkout",
+      "unsafe-directory",
+      "vault-missing",
+      "vault-replaced",
+      // Refused reviews.
+      "would-empty-overleaf",
+      "remote-file-limit",
+      "remote-too-large",
+      "remote-file-too-large",
+      "remote-forbidden",
+      "path-alias",
+      "unreviewed-path",
+      "alias-rename",
+      "candidate-file-limit",
+      "candidate-too-large",
+      "candidate-file-too-large",
+      "local-only-limit",
+      "held-file-clash",
+      "release-held",
+      "remote-collides-with-excluded",
+      "walk-limit",
+      "managed-limit",
+      "total-too-large",
+      "file-too-large",
+      "unstable",
+      "unreadable",
+      "not-a-file",
+      "lfs-pointer",
+      "managed-excluded",
+      "alias",
+      "not-selectable",
+      "not-local-only",
+      // Links, and syncs that couldn't settle.
+      "folder-invalid",
+      "folder-missing",
+      "folder-not-empty",
+      "folder-outside-checkout",
+      "folder-overlaps",
+      "project-already-linked",
+      "no-branch",
+      "local-work-pending",
+      "request-incomplete",
+      "records-unreadable",
+      "overleaf-moved",
+      "folder-kept-changing",
+      "recovery-repeated",
     ])
       expect(refusalText({ reason })).not.toContain("Sync stopped (");
     expect(
@@ -419,6 +560,21 @@ describe("refusalText", () => {
     expect(operationErrorText({ reason: "token-missing", message: "x" })).toContain(
       "No Overleaf token is saved",
     );
+    // A reason this release doesn't know, or a limit, says what the server said.
+    expect(
+      operationErrorText({
+        _tag: "ScientOverleafOperationError",
+        reason: "brand-new",
+        message: "Something new happened.",
+      }),
+    ).toBe("Something new happened.");
+    expect(
+      operationErrorText({
+        _tag: "ScientOverleafOperationError",
+        reason: "retained-limit",
+        message: "Release kept copies first.",
+      }),
+    ).toBe("Release kept copies first.");
     // Overleaf's rate limit is not a refused project.
     expect(operationErrorText({ reason: "rate-limited" })).toBe(
       "Overleaf is limiting Git requests right now. Nothing was lost. Sync again in a minute.",
@@ -788,5 +944,59 @@ describe("results the folder status can't show", () => {
       { kind: "added", path: "send.txt" },
       { kind: "renamed", from: "a.tex", to: "b.tex" },
     ]);
+  });
+});
+
+describe("unreadable link records", () => {
+  const record = (
+    kind: "damaged" | "newer",
+    unfinished: boolean | null,
+    setAside: "allowed" | "confirm" | "held",
+    holds: "linking" | "checkout" | "every-checkout",
+  ) => ({ recordId: "r1", folder: "/work/paper", kind, unfinished, setAside, holds });
+  const LINKING = "Scient won't link folders.";
+  const BULK = (which: string) =>
+    `Scient won't link folders or change ${which} project's files in bulk, for example when switching branches.`;
+
+  it.each([
+    [
+      record("newer", true, "held", "checkout"),
+      "A newer version of Scient made this link, and its last sync didn't finish. Open that version to finish it; Scient keeps the record until then.",
+      `Until then, ${BULK("this")}`,
+      null,
+    ],
+    [
+      record("newer", null, "held", "every-checkout"),
+      "A newer version of Scient made this link, and this version can't tell whether its last sync finished. Open that version to check; Scient keeps the record until then.",
+      `Until then, ${BULK("any")}`,
+      null,
+    ],
+    [
+      record("newer", false, "allowed", "linking"),
+      "A newer version of Scient made this link. As far as this version can tell, its last sync finished.",
+      `Until it's set aside, ${LINKING}`,
+      { label: "Set aside", acceptUnfinished: false },
+    ],
+    [
+      record("damaged", true, "confirm", "checkout"),
+      "This record is damaged, and its last sync stopped part-way. Setting it aside stops Scient guarding the files that sync left in the folder.",
+      `Until it's set aside, ${BULK("this")}`,
+      { label: "Set aside anyway", acceptUnfinished: true },
+    ],
+    [
+      record("damaged", false, "allowed", "linking"),
+      "This record is damaged. No sync is waiting on it.",
+      `Until it's set aside, ${LINKING}`,
+      { label: "Set aside", acceptUnfinished: false },
+    ],
+    [
+      record("damaged", null, "allowed", "every-checkout"),
+      "This record is damaged, and it doesn't say whether a sync stopped part-way.",
+      `Until it's set aside, ${BULK("any")}`,
+      { label: "Set aside", acceptUnfinished: false },
+    ],
+  ])("says what %o holds back and how it can be set aside", (shown, state, holds, action) => {
+    expect(unreadableRecordLines(shown)).toEqual({ state, holds });
+    expect(setAsideAction(shown)).toEqual(action);
   });
 });

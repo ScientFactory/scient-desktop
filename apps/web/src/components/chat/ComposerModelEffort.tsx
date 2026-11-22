@@ -7,17 +7,28 @@ import {
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  EllipsisIcon,
+  WorkflowIcon,
+} from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import {
   Menu,
+  MenuCheckboxItem,
+  MenuGroupLabel,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuRadioItemIndicator,
   MenuTrigger,
+  MenuSeparator,
 } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -86,22 +97,26 @@ export function describeComposerEffort(
   traits: TraitsSelectionInput | null,
   effortDisplay: EffortDisplay,
   size: ComposerControlSize,
+  resolve: MessageResolver = m,
 ): { suffix: ReactNode; detail: string | null } {
   if (!traits) return { suffix: null, detail: null };
-  const visibility = getTraitsSectionVisibility(traits);
+  const visibility = getTraitsSectionVisibility({ ...traits, resolve });
   if (!visibility.hasAnyControls) return { suffix: null, detail: null };
   const modelSelection =
     traits.instanceId && traits.model
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
   const primary = visibility.primarySelectDescriptor;
-  const display = buildTraitsTriggerDisplay({
-    descriptors: visibility.descriptors,
-    primarySelectDescriptorId: primary?.id ?? null,
-    ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
-    modelSelection,
-    reportedModelSelection: traits.reportedModelSelection,
-  });
+  const display = buildTraitsTriggerDisplay(
+    {
+      descriptors: visibility.descriptors,
+      primarySelectDescriptorId: primary?.id ?? null,
+      ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
+      modelSelection,
+      reportedModelSelection: traits.reportedModelSelection,
+    },
+    resolve,
+  );
   // The same reasoning control the column lists, wherever the agent put it among its options.
   const reasoning =
     columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
@@ -122,7 +137,9 @@ export function describeComposerEffort(
     : !reasoning
       ? null
       : reasoning.type === "boolean"
-        ? `${reasoning.label} ${reasoning.currentValue === true ? "On" : "Off"}`
+        ? reasoning.currentValue === true
+          ? resolve(msg("{option} On", { option: reasoning.label }))
+          : resolve(msg("{option} Off", { option: reasoning.label }))
         : ultrathink
           ? "Ultrathink"
           : (getProviderOptionCurrentLabel(
@@ -145,6 +162,9 @@ export function describeComposerEffort(
     detail: display.label,
     suffix: (
       <span
+        // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+        data-model-trigger-text="true"
+        // SCIENT-FORK:END
         className={cn(
           "flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground",
           // A word space after the model name: the regular trigger's gap is wider than one.
@@ -192,6 +212,7 @@ function ColumnRow(props: {
   disabled?: boolean;
   onPick: () => void;
 }) {
+  const gt = useGT();
   const rowProps = {
     type: "button",
     role: "radio",
@@ -210,11 +231,17 @@ function ColumnRow(props: {
       <span className="min-w-0 flex-1 truncate">{props.label}</span>
       {props.selected ? (
         <>
-          {props.isDefault ? <span className="sr-only">Default</span> : null}
+          {props.isDefault ? (
+            <span className="sr-only">
+              {gt("Default", { $context: "marks the default option" })}
+            </span>
+          ) : null}
           <CheckIcon aria-hidden="true" className="size-3.5" />
         </>
       ) : props.isDefault ? (
-        <span className="text-muted-foreground/70 text-xs">Default</span>
+        <span className="text-muted-foreground/70 text-xs">
+          {gt("Default", { $context: "marks the default option" })}
+        </span>
       ) : null}
     </>
   );
@@ -301,6 +328,8 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
 type TraitsSelection = ReturnType<typeof useTraitsSelection>;
 
 function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; locked: boolean }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { control, traits } = props;
   const { descriptor } = control;
   if (control.kind === "boolean") {
@@ -309,7 +338,11 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
         {([true, false] as const).map((value) => (
           <ColumnRow
             key={String(value)}
-            label={value ? "On" : "Off"}
+            label={
+              value
+                ? gt("On", { $context: "option state" })
+                : gt("Off", { $context: "option state" })
+            }
             selected={(control.descriptor.currentValue === true) === value}
             tabStop={(control.descriptor.currentValue === true) === value}
             onPick={() => traits.changeBoolean(descriptor.id, value)}
@@ -327,7 +360,7 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
     <div role="radiogroup" aria-label={descriptor.label} className="flex flex-col gap-0.5">
       {locked ? (
         <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-          {ULTRATHINK_IN_BODY_NOTE}
+          {messages(ULTRATHINK_IN_BODY_NOTE)}
         </div>
       ) : null}
       {choices.map((option, index) => (
@@ -368,6 +401,7 @@ function OptionMenuRow(props: {
   /** Holds the column's tab stop when the model has no levels. */
   tabStop: boolean;
 }) {
+  const gt = useGT();
   const { descriptor, traits } = props;
   const [open, setOpen] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -449,7 +483,9 @@ function OptionMenuRow(props: {
                   ) : null}
                 </span>
                 {choice.isDefault ? (
-                  <span className="text-muted-foreground/70 text-xs">Default</span>
+                  <span className="text-muted-foreground/70 text-xs">
+                    {gt("Default", { $context: "marks the default option" })}
+                  </span>
                 ) : null}
                 <MenuRadioItemIndicator />
               </span>
@@ -467,11 +503,17 @@ function OptionSwitchRow(props: {
   traits: TraitsSelection;
   tabStop: boolean;
 }) {
+  const gt = useGT();
   const { descriptor, traits } = props;
   const checked = descriptor.currentValue === true;
   return (
     <label className={cn(OPTION_ROW, "has-focus-visible:bg-foreground/[0.09]")}>
-      <OptionRowText label={descriptor.label} value={checked ? "On" : "Off"} />
+      <OptionRowText
+        label={descriptor.label}
+        value={
+          checked ? gt("On", { $context: "option state" }) : gt("Off", { $context: "option state" })
+        }
+      />
       <Switch
         size="sm"
         checked={checked}
@@ -486,14 +528,20 @@ function OptionSwitchRow(props: {
 
 function NoEffortRow() {
   return (
-    <div className="flex h-8 items-center px-2 text-muted-foreground text-sm">No effort levels</div>
+    <div className="flex h-8 items-center px-2 text-muted-foreground text-sm">
+      <T>No effort levels</T>
+    </div>
   );
 }
 
 /** The model picker's effort column: the selected model's levels and its other options. */
 export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
+  const gt = useGT();
+  const messages = useMessages();
   const picker = use(DockedPickerContext);
-  const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
+  const visibility = props.traits
+    ? getTraitsSectionVisibility({ ...props.traits, resolve: messages })
+    : null;
   const controls =
     props.traits && visibility
       ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
@@ -503,9 +551,16 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
       {/* Matches the search row's box, so one rule runs across the top of the popup. */}
       <div className="shrink-0 px-3 pt-2.5">
         <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
-          <span className="text-muted-foreground">
-            {controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort")}
+          {/* SCIENT-FORK:START — the column names the control's role, not each agent's own
+              wording (Antigravity says "Thinking Level"), and never wraps. */}
+          <span className="shrink-0 text-muted-foreground">
+            {controls?.effort
+              ? gt("Reasoning", { $context: "heading for reasoning effort levels" })
+              : controls?.others.length
+                ? gt("Options", { $context: "heading for model options" })
+                : gt("Effort", { $context: "heading for reasoning effort levels" })}
           </span>
+          {/* SCIENT-FORK:END */}
           <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
             {picker.modelLabel}
           </span>
@@ -526,15 +581,29 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
 const FOOTER_SEGMENT =
   "flex h-5 cursor-pointer items-center justify-center gap-1 px-1.5 text-muted-foreground text-2xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
 
-function SpeedSegment(props: { value: string; label: string; description?: string | undefined }) {
-  const content = (
+function SpeedLabel(props: {
+  label: string;
+  /** The untranslated speed name that picks the bolt, when `label` is translated. */
+  speed?: string | undefined;
+}) {
+  const speed = props.speed ?? props.label;
+  return (
     <>
-      {props.label === "Fast" || props.label === "Ultrafast" ? (
-        <FastBolt ultra={props.label === "Ultrafast"} />
+      {speed === "Fast" || speed === "Ultrafast" ? (
+        <FastBolt ultra={speed === "Ultrafast"} />
       ) : null}
       {props.label}
     </>
   );
+}
+
+function SpeedSegment(props: {
+  value: string;
+  label: string;
+  speed?: string | undefined;
+  description?: string | undefined;
+}) {
+  const content = <SpeedLabel label={props.label} speed={props.speed} />;
   if (!props.description) return <Toggle value={props.value}>{content}</Toggle>;
   return (
     <Tooltip>
@@ -544,69 +613,180 @@ function SpeedSegment(props: { value: string; label: string; description?: strin
   );
 }
 
-function SpeedControl(props: { traits: TraitsSelectionInput }) {
+function FooterModelOptions(props: { traits: TraitsSelectionInput }) {
+  const gt = useGT();
   const traits = useTraitsSelection(props.traits);
-  const { speedSelect, fastToggle } = splitSpeed(
+  const { speedSelect, fastToggle, ultracodeToggle } = splitSpeed(
     traits.selectDescriptors,
     traits.booleanDescriptors,
   );
-  if (traits.modelIsUnavailable || (!speedSelect && !fastToggle)) return null;
+  if (traits.modelIsUnavailable) return null;
+  const choices: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly speed?: string;
+    readonly description?: string | undefined;
+  }> = speedSelect
+    ? selectableProviderOptionChoices(speedSelect)
+    : fastToggle
+      ? [
+          {
+            id: "false",
+            label: gt("Standard", { $context: "response speed" }),
+            speed: "Standard",
+          },
+          { id: "true", label: gt("Fast", { $context: "response speed" }), speed: "Fast" },
+        ]
+      : [];
+  const speedLabel =
+    speedSelect?.label ??
+    fastToggle?.label ??
+    gt("Speed", { $context: "heading for response speed options" });
   const selected = speedSelect
     ? traits.selectValue(speedSelect)
     : String(fastToggle?.currentValue === true);
-  return (
-    <ToggleGroup
-      aria-label={speedSelect?.label ?? fastToggle?.label}
-      variant="segmented"
-      size="segmented-compact"
-      value={[selected]}
-      onValueChange={(next) => {
-        const value = next[0];
-        if (value === undefined || value === selected) return;
-        if (speedSelect) traits.changeSelect(speedSelect, value);
-        else if (fastToggle) traits.changeBoolean(fastToggle.id, value === "true");
-      }}
-    >
-      {speedSelect
-        ? selectableProviderOptionChoices(speedSelect).map((option) => (
-            <SpeedSegment
-              key={option.id}
-              value={option.id}
-              label={option.label}
-              description={option.description}
-            />
-          ))
-        : fastToggle
-          ? ([false, true] as const).map((value) => (
-              <SpeedSegment
-                key={String(value)}
-                value={String(value)}
-                label={value ? "Fast" : "Standard"}
-              />
-            ))
-          : null}
-    </ToggleGroup>
+  const current = choices.find((choice) => choice.id === selected);
+  const changeSpeed = (value: string) => {
+    if (value === selected) return;
+    if (speedSelect) traits.changeSelect(speedSelect, value);
+    else if (fastToggle) traits.changeBoolean(fastToggle.id, value === "true");
+  };
+  const ultracodeOn = ultracodeToggle?.currentValue === true;
+  const speedChoices = (
+    <MenuRadioGroup aria-label={speedLabel} value={selected} onValueChange={changeSpeed}>
+      <MenuGroupLabel>{speedLabel}</MenuGroupLabel>
+      {choices.map((choice) => (
+        <MenuRadioItem key={choice.id} value={choice.id} closeOnClick>
+          <span className="flex flex-col">
+            <span className="flex items-center gap-1">
+              <SpeedLabel label={choice.label} speed={choice.speed} />
+            </span>
+            {choice.description ? (
+              <span className="text-muted-foreground text-xs">{choice.description}</span>
+            ) : null}
+          </span>
+        </MenuRadioItem>
+      ))}
+    </MenuRadioGroup>
   );
-}
-
-function UltracodeControl(props: { traits: TraitsSelectionInput }) {
-  const traits = useTraitsSelection(props.traits);
-  const { ultracodeToggle } = splitSpeed(traits.selectDescriptors, traits.booleanDescriptors);
-  if (traits.modelIsUnavailable || !ultracodeToggle) return null;
-  const on = ultracodeToggle.currentValue === true;
+  const segmented = choices.length === 2 && !ultracodeToggle;
   return (
-    <div className="flex rounded-lg bg-input/40 p-0.5">
-      <button
-        type="button"
-        aria-pressed={on}
-        data-checked={on || undefined}
-        className={FOOTER_SEGMENT}
-        onClick={() => traits.changeBoolean(ultracodeToggle.id, !on)}
-      >
-        <WorkflowIcon aria-hidden="true" className="size-3" />
-        {ultracodeToggle.label}
-      </button>
-    </div>
+    <>
+      {choices.length > 0 ? (
+        <>
+          {segmented ? (
+            <div className="hidden shrink-0 @min-[26.5rem]/model-picker-footer:flex">
+              <ToggleGroup
+                aria-label={speedLabel}
+                variant="segmented"
+                size="segmented-compact"
+                value={[selected]}
+                onValueChange={(next) => {
+                  if (next[0] !== undefined) changeSpeed(next[0]);
+                }}
+              >
+                {choices.map((choice) => (
+                  <SpeedSegment
+                    key={choice.id}
+                    value={choice.id}
+                    label={choice.label}
+                    speed={choice.speed}
+                    description={choice.description}
+                  />
+                ))}
+              </ToggleGroup>
+            </div>
+          ) : null}
+          <div
+            className={cn(
+              "shrink-0 @max-[26.5rem]/model-picker-footer:hidden",
+              segmented && "@min-[26.5rem]/model-picker-footer:hidden",
+            )}
+          >
+            <Menu modal={false}>
+              <MenuTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={gt("{setting}: {value}", {
+                      setting: speedLabel,
+                      value: current?.label ?? selected,
+                    })}
+                    className={cn(FOOTER_SEGMENT, "rounded-md bg-input/40")}
+                  />
+                }
+              >
+                <SpeedLabel label={current?.label ?? speedLabel} speed={current?.speed} />
+                <ChevronUpIcon aria-hidden="true" className="size-3" />
+              </MenuTrigger>
+              <MenuPopup
+                side="top"
+                align="end"
+                data-model-picker-option-menu
+                {...composerFloatingLayerProps}
+              >
+                {speedChoices}
+              </MenuPopup>
+            </Menu>
+          </div>
+        </>
+      ) : null}
+      {ultracodeToggle ? (
+        <div className="shrink-0 rounded-lg bg-input/40 p-0.5 @max-[26.5rem]/model-picker-footer:hidden">
+          <button
+            type="button"
+            aria-pressed={ultracodeOn}
+            data-checked={ultracodeOn || undefined}
+            className={FOOTER_SEGMENT}
+            onClick={() => traits.changeBoolean(ultracodeToggle.id, !ultracodeOn)}
+          >
+            <WorkflowIcon aria-hidden="true" className="size-3" />
+            {ultracodeToggle.label}
+          </button>
+        </div>
+      ) : null}
+      {choices.length > 0 || ultracodeToggle ? (
+        <div className="shrink-0 @min-[26.5rem]/model-picker-footer:hidden">
+          <Menu modal={false}>
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={
+                    ultracodeOn ? gt("More model options, Ultracode on") : gt("More model options")
+                  }
+                  className={cn(FOOTER_SEGMENT, "rounded-md bg-input/40")}
+                />
+              }
+            >
+              <EllipsisIcon aria-hidden="true" className="size-3" />
+              <T context="button that shows more model options">More</T>
+              {ultracodeOn ? <WorkflowIcon aria-hidden="true" className="size-3" /> : null}
+            </MenuTrigger>
+            <MenuPopup
+              side="top"
+              align="end"
+              data-model-picker-option-menu
+              {...composerFloatingLayerProps}
+            >
+              {choices.length > 0 ? speedChoices : null}
+              {ultracodeToggle ? (
+                <>
+                  {choices.length > 0 ? <MenuSeparator /> : null}
+                  <MenuCheckboxItem
+                    closeOnClick
+                    checked={ultracodeOn}
+                    onCheckedChange={(checked) => traits.changeBoolean(ultracodeToggle.id, checked)}
+                  >
+                    {ultracodeToggle.label}
+                  </MenuCheckboxItem>
+                </>
+              ) : null}
+            </MenuPopup>
+          </Menu>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -616,6 +796,7 @@ function PermissionsMenu(props: {
   options: ReadonlyArray<RuntimeModeOption>;
   onChange: (mode: RuntimeMode) => void;
 }) {
+  const gt = useGT();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = props.options.find((option) => option.mode === props.runtimeMode);
   if (!current) return null;
@@ -632,8 +813,8 @@ function PermissionsMenu(props: {
             ref={triggerRef}
             type="button"
             data-composer-permissions-trigger
-            aria-label={`Permissions: ${current.label}`}
-            className="ms-auto flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-muted-foreground text-2xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
+            aria-label={gt("Permissions: {mode}", { mode: current.label })}
+            className="ms-auto flex h-6 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-muted-foreground text-2xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
           />
         }
       >
@@ -660,9 +841,8 @@ export function ComposerPickerFooter(props: {
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   return (
-    <div className="ms-auto flex flex-wrap items-center justify-end gap-2">
-      {props.traits ? <SpeedControl traits={props.traits} /> : null}
-      {props.traits ? <UltracodeControl traits={props.traits} /> : null}
+    <div className="ms-auto flex min-w-0 items-center justify-end gap-2 whitespace-nowrap">
+      {props.traits ? <FooterModelOptions traits={props.traits} /> : null}
       <PermissionsMenu
         runtimeMode={props.runtimeMode}
         options={props.runtimeModeOptions}

@@ -15,6 +15,10 @@ const PR_HEAD = "d".repeat(40);
 const MERGE = "e".repeat(40);
 const TREE = "f".repeat(40);
 const OTHER = "9".repeat(40);
+const sha1 = (value) => createHash("sha1").update(value).digest("hex");
+const BASE_TREE = sha1("base tree");
+const PR_TREE = sha1("pull request tree");
+const RECIPES = "apps/server/src/scient/compute/managed-python";
 const REPO = "ScientFactory/scient-desktop";
 const WORKFLOW = ".github/workflows/ci.yml";
 const { ADVISORY, JOBS } = require("./ci-check.cjs");
@@ -41,6 +45,17 @@ const TRANSFER = {
   },
   providers: { codex: { observed, ceiling }, claudeAgent: { observed, ceiling } },
 };
+const SCENARIOS = {
+  schemaVersion: 1,
+  providers: {
+    codex: [{ phase: "startup", metric: "snapshot", unit: "bytes", observed: 1, ceiling: 2 }],
+    claudeAgent: [],
+  },
+};
+const RESULT_FILE = "thread-transfer-result.json";
+const SCENARIOS_FILE = "thread-transfer-scenarios.json";
+// A payload holding several archive members; any other payload is the single requested member.
+const MEMBERS = "archive members";
 const VITEST = {
   success: true,
   numFailedTests: 0,
@@ -106,6 +121,7 @@ function fixture(t, event = "push") {
   commit(PR_HEAD, TREE, [BASE]);
   const runs = [];
   const artifacts = new Map();
+  const jobs = new Map();
   const payloads = new Map();
   let nextArtifact = 1;
   function addRun(run, receipt) {
@@ -118,11 +134,25 @@ function fixture(t, event = "push") {
     };
     const prefix = run.event === "merge_group" ? "queue" : "pr";
     add(`ci-${prefix}-qualification-attempt-${run.run_attempt}`, receipt);
-    add("thread-transfer-results", structuredClone(TRANSFER));
+    add("thread-transfer-results", {
+      [MEMBERS]: {
+        [RESULT_FILE]: structuredClone(TRANSFER),
+        [SCENARIOS_FILE]: structuredClone(SCENARIOS),
+      },
+    });
     for (const suite of ["web", "server"])
       for (let shard = 1; shard <= SHARDS[suite]; shard++)
         add(`vitest-${suite}-${shard}-attempt-${run.run_attempt}`, structuredClone(VITEST));
     artifacts.set(run.id, list);
+    // `origin` is the attempt a job actually ran in; later attempts carry it with its start time.
+    const job = (name) => ({ name, conclusion: "success", origin: run.run_attempt });
+    jobs.set(run.id, [
+      job("Check"),
+      job("Qualification receipt"),
+      job("Reuse exact CI"),
+      ...Array.from({ length: SHARDS.web }, (_, i) => job(`Test Web ${i + 1}`)),
+      ...Array.from({ length: SHARDS.server }, (_, i) => job(`Test Server ${i + 1}`)),
+    ]);
     return run;
   }
   const receiptFor = (run, fields) => ({
@@ -168,9 +198,24 @@ function fixture(t, event = "push") {
       },
     }),
     listWorkflowRunArtifacts: () => {},
+    listJobsForWorkflowRun: () => {},
+    listJobsForWorkflowRunAttempt: () => {},
     downloadArtifact: async ({ artifact_id }) => ({
       data: Buffer.from(JSON.stringify(payloads.get(artifact_id))),
     }),
+  };
+  const trees = new Map();
+  // A root tree whose Compute recipe directory is `recipes`; other entries are irrelevant.
+  const tree = (root, recipes) => {
+    const names = RECIPES.split("/");
+    let sha = recipes;
+    for (let depth = names.length - 1; depth >= 0; depth--) {
+      const id = depth === 0 ? root : sha1(`${root}:${names.slice(0, depth).join("/")}`);
+      const entries = [{ path: "README.md", type: "blob", sha: sha1(id) }];
+      if (sha) entries.push({ path: names[depth], type: "tree", sha });
+      trees.set(id, { sha: id, truncated: false, tree: entries });
+      sha = id;
+    }
   };
   const git = {
     getCommit: async ({ commit_sha }) => {
@@ -178,17 +223,52 @@ function fixture(t, event = "push") {
       if (!data) throw new Error("Not Found");
       return { data: structuredClone(data) };
     },
+    getTree: async ({ tree_sha }) => {
+      const data = trees.get(tree_sha);
+      if (!data) throw new Error("Not Found");
+      return { data: structuredClone(data) };
+    },
   };
   const github = {
     rest: { actions, git },
     paginate: async (method, input) => {
+      const run = runs.find((candidate) => candidate.id === input.run_id);
+      const list = jobs.get(input.run_id) ?? [];
+      // GitHub numbers every job of the latest attempt with that attempt, carried or not.
+      if (method === actions.listJobsForWorkflowRun) {
+        assert.equal(input.filter, "latest");
+        return list.map(({ origin, ...job }) => ({
+          ...job,
+          run_attempt: run.run_attempt,
+          started_at: `ran-in-${origin ?? run.run_attempt}`,
+        }));
+      }
+      if (method === actions.listJobsForWorkflowRunAttempt) {
+        assert.ok(input.attempt_number < run.run_attempt);
+        return list.map(({ origin, ...job }) => ({
+          ...job,
+          run_attempt: input.attempt_number,
+          conclusion: (origin ?? 1) <= input.attempt_number ? job.conclusion : "failure",
+          started_at: `ran-in-${Math.min(origin ?? 1, input.attempt_number)}`,
+        }));
+      }
       assert.equal(method, actions.listWorkflowRunArtifacts);
       return artifacts.get(input.run_id) ?? [];
     },
   };
-  const args = { github, context, core, env, archiveReader: (bytes) => bytes };
+  const archiveReader = (bytes, members) => {
+    const value = JSON.parse(bytes.toString());
+    const entries = value[MEMBERS] ? Object.entries(value[MEMBERS]) : [[members[0], value]];
+    assert.ok(
+      entries.every(([name]) => members.includes(name)),
+      "Unexpected archive members",
+    );
+    return new Map(entries.map(([name, member]) => [name, Buffer.from(JSON.stringify(member))]));
+  };
+  const args = { github, context, core, env, archiveReader };
   const report = (runId, name) =>
     payloads.get(artifacts.get(runId).find((artifact) => artifact.name === name).id);
+  const transfer = (runId) => report(runId, "thread-transfer-results")[MEMBERS];
   return {
     ...args,
     args,
@@ -201,8 +281,11 @@ function fixture(t, event = "push") {
     receipt,
     commits,
     commit,
+    trees,
+    tree,
     runs,
     artifacts,
+    jobs,
     payloads,
     actions,
     git,
@@ -210,6 +293,7 @@ function fixture(t, event = "push") {
     receiptFor,
     queueRun,
     report,
+    transfer,
   };
 }
 
@@ -228,11 +312,22 @@ test("a main push restores every report only after exact queue evidence", async 
   assert.equal(f.outputs.source_run_id, "10");
   assert.equal(f.outputs.source_url, `https://github.com/${REPO}/actions/runs/10`);
   const files = fs.readdirSync(path.join(f.temp, "ci-queue-reuse"));
+  assert.equal(files.length, SHARDS.web + SHARDS.server + 2);
+  const restored = (name) =>
+    JSON.parse(fs.readFileSync(path.join(f.temp, "ci-queue-reuse", name), "utf8"));
+  assert.deepEqual(restored(RESULT_FILE), TRANSFER);
+  assert.deepEqual(restored(SCENARIOS_FILE), SCENARIOS);
+});
+
+test("a source run from before the scenario report restores its result alone", async (t) => {
+  const f = fixture(t);
+  const id = f.artifacts.get(10).find((artifact) => artifact.name === "thread-transfer-results").id;
+  f.payloads.set(id, structuredClone(TRANSFER));
+  await restore(f.args);
+  reused(f);
+  const files = fs.readdirSync(path.join(f.temp, "ci-queue-reuse"));
   assert.equal(files.length, SHARDS.web + SHARDS.server + 1);
-  assert.deepEqual(
-    JSON.parse(fs.readFileSync(path.join(f.temp, "ci-queue-reuse/thread-transfer-result.json"))),
-    TRANSFER,
-  );
+  assert.ok(files.includes(RESULT_FILE) && !files.includes(SCENARIOS_FILE));
 });
 
 test("a push landing two queue entries reuses when each entry qualified from its parent", async (t) => {
@@ -267,6 +362,31 @@ for (const [name, change] of [
   });
 }
 
+// The queue merged MID on HEAD's green group; MID's own group must have qualified as well.
+for (const [name, change, headgreen] of [
+  // Its own group failed, so the lanes only it changed are unproven.
+  [
+    "failed its own run",
+    (f) => (f.jobs.get(11).find((job) => job.name === "Check").conclusion = "failure"),
+    true,
+  ],
+  // Its group passed, but its evidence is damaged: that is not a HEADGREEN merge.
+  ["has a corrupt receipt", (f) => (f.artifacts.get(11)[0].size_in_bytes = 0), false],
+]) {
+  test(`a two-entry push whose earlier entry ${name} runs full CI and says why`, async (t) => {
+    const f = fixture(t);
+    f.commit(HEAD, TREE, [MID, PR_HEAD]);
+    f.receipt.baseSha = MID;
+    f.commit(MID, OTHER, [BASE, OTHER]);
+    const first = f.queueRun(11, MID);
+    f.addRun(first, f.receiptFor(first, { treeSha: OTHER }));
+    change(f);
+    await refused(f);
+    const [message] = f.messages.filter((line) => line.startsWith("Running full CI"));
+    assert.equal(message.includes("HEADGREEN"), headgreen, message);
+  });
+}
+
 // Lands `entries` queue entries in one push: BASE -> ... -> HEAD, each qualified from its parent.
 function chainFixture(t, entries) {
   const f = fixture(t);
@@ -283,13 +403,14 @@ function chainFixture(t, entries) {
 }
 
 test("a push of as many entries as the queue merges at once reuses", async (t) => {
-  const f = chainFixture(t, 4);
+  // The ruleset's max_entries_to_merge.
+  const f = chainFixture(t, 6);
   await restore(f.args);
   reused(f);
 });
 
 test("a push longer than the queue's merge limit runs full CI", async (t) => {
-  await refused(chainFixture(t, 5));
+  await refused(chainFixture(t, 7));
 });
 
 const pushMismatches = [
@@ -303,8 +424,9 @@ const pushMismatches = [
   ["other repository", "source", "repository", { full_name: "someone/fork" }],
   ["other queue", "source", "head_branch", "gh-readonly-queue/release/pr-1"],
   ["PR source", "source", "event", "pull_request"],
-  ["failed queue", "source", "conclusion", "failure"],
-  ["unfinished queue", "source", "status", "in_progress"],
+  ["cancelled queue", "source", "conclusion", "cancelled"],
+  ["timed-out queue", "source", "conclusion", "timed_out"],
+  ["queue run not yet started", "source", "status", "queued"],
   ["old proof schema", "receipt", "schemaVersion", 1],
   ["PR proof", "receipt", "event", "pull_request"],
   ["old workflow source", "receipt", "workflowSha", BASE],
@@ -320,17 +442,49 @@ const pushMismatches = [
 const fail = () => {
   throw new Error("unavailable");
 };
+const gate = (f, name) => f.jobs.get(10).find((job) => job.name === name);
+function cancelDuringDownloads(f) {
+  const download = f.actions.downloadArtifact;
+  f.actions.downloadArtifact = async (input) => {
+    f.source.conclusion = "cancelled";
+    return download(input);
+  };
+}
 const commonFailures = [
   ["missing proof", (f) => f.artifacts.get(10).shift()],
   ["ambiguous proof", (f) => f.artifacts.get(10).push({ ...f.artifacts.get(10)[0] })],
   ["missing shard", (f) => f.artifacts.get(10).pop()],
-  ["invalid transfer", (f) => (f.report(10, "thread-transfer-results").unexpected = "data")],
+  ["invalid transfer", (f) => (f.transfer(10)[RESULT_FILE].unexpected = "data")],
+  ["invalid scenarios", (f) => (f.transfer(10)[SCENARIOS_FILE].providers.codex[0].unit = "lines")],
+  ["scenarios without a result", (f) => delete f.transfer(10)[RESULT_FILE]],
+  ["an unknown transfer member", (f) => (f.transfer(10)["extra.json"] = {})],
   ["failed tests", (f) => (f.report(10, "vitest-web-1-attempt-1").numFailedTests = 1)],
   [
     "failed suite",
     (f) => (f.report(10, "vitest-web-1-attempt-1").testResults = [{ status: "failed" }]),
   ],
   ["false test success", (f) => (f.report(10, "vitest-server-3-attempt-1").success = false)],
+  ["failed Check", (f) => (gate(f, "Check").conclusion = "failure")],
+  [
+    "unfinished Check",
+    (f) => Object.assign(gate(f, "Check"), { status: "in_progress", conclusion: null }),
+  ],
+  [
+    "missing Check",
+    (f) =>
+      f.jobs.set(
+        10,
+        f.jobs.get(10).filter((job) => job.name !== "Check"),
+      ),
+  ],
+  ["duplicate Check", (f) => f.jobs.get(10).push({ ...gate(f, "Check") })],
+  ["failed receipt job", (f) => (gate(f, "Qualification receipt").conclusion = "failure")],
+  [
+    "a newer unqualified run of the same head",
+    // Its evidence would otherwise qualify, so only its state can refuse it.
+    (f) => f.addRun({ ...f.source, id: 15, conclusion: "cancelled" }, { ...f.receipt, runId: 15 }),
+  ],
+  ["source cancelled during downloads", (f) => cancelDuringDownloads(f)],
   ["run list failure", (f) => Object.assign(f.actions, { listWorkflowRuns: fail })],
   ["commit lookup failure", (f) => Object.assign(f.git, { getCommit: fail })],
   ["download failure", (f) => Object.assign(f.actions, { downloadArtifact: fail })],
@@ -375,9 +529,10 @@ test("a queue entry reuses its PR run when that run tested this exact content an
   reused(f);
   assert.equal(f.outputs.source_run_id, "10");
   assert.equal(f.outputs.source_event, "pull_request");
+  assert.equal(f.outputs.overleaf_windows, "true");
   assert.equal(
     fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length,
-    SHARDS.web + SHARDS.server + 1,
+    SHARDS.web + SHARDS.server + 2,
   );
 });
 
@@ -386,7 +541,8 @@ const queueMismatches = [
   ["another group head", "context.payload.merge_group", "head_sha", OTHER],
   ["a current run outside the queue", "current", "head_branch", "feature"],
   ["a fork PR run", "source", "head_repository", { full_name: "someone/fork" }],
-  ["a failed PR run", "source", "conclusion", "failure"],
+  ["a cancelled PR run", "source", "conclusion", "cancelled"],
+  ["a PR run waiting to start", "source", "status", "waiting"],
   ["a PR run of another head", "source", "head_sha", OTHER],
   ["a queue proof", "receipt", "event", "merge_group"],
   ["a PR run against another base", "receipt", "baseSha", OTHER],
@@ -404,8 +560,14 @@ for (const [name, change] of [
   ["a tested merge on another base", (f) => f.commit(MERGE, TREE, [OTHER, PR_HEAD])],
   ["a tested merge of another head", (f) => f.commit(MERGE, TREE, [BASE, OTHER])],
   ["an unknown tested merge", (f) => f.commits.delete(MERGE)],
-  // The merge would combine both sides, so history reads could select the merge commit itself.
-  ["a PR that does not contain its base", (f) => f.commit(PR_HEAD, OTHER, [MID])],
+  // Both changed the recipes: their history read would find each merge commit itself.
+  ["a PR and main that both changed Compute recipes", (f) => behind(f, "base", "pr", "merged")],
+  ["a PR behind main whose base is unknown", (f) => behind(f).commits.delete(BASE)],
+  [
+    "a PR behind main with an unreadable tree",
+    (f) => behind(f).trees.delete(sha1(`${TREE}:apps/server`)),
+  ],
+  ["a PR behind main with a truncated tree", (f) => (behind(f).trees.get(TREE).truncated = true)],
 ]) {
   test(`queue: ${name} selects full CI and leaves no partial reports`, async (t) => {
     const f = fixture(t, "merge_group");
@@ -413,6 +575,37 @@ for (const [name, change] of [
     await refused(f);
   });
 }
+
+/** The PR doesn't contain its base; `merged` combines both sides' recipe directories. */
+function behind(f, base = "same", pr = "same", merged = "same") {
+  const recipes = (name) => (name === "same" ? sha1("recipes") : sha1(`recipes ${name}`));
+  f.commit(PR_HEAD, PR_TREE, [MID]);
+  f.commit(BASE, BASE_TREE, [MID]);
+  f.tree(BASE_TREE, recipes(base));
+  f.tree(PR_TREE, recipes(pr));
+  f.tree(TREE, recipes(merged));
+  return f;
+}
+
+for (const [name, sides] of [
+  ["neither side changed Compute recipes", []],
+  ["only the PR changed Compute recipes", ["same", "pr", "pr"]],
+  ["only main changed Compute recipes", ["base", "same", "base"]],
+]) {
+  test(`a queue entry behind main reuses a PR run of this content and base: ${name}`, async (t) => {
+    const f = behind(fixture(t, "merge_group"), ...sides);
+    await restore(f.args);
+    reused(f);
+    assert.equal(f.outputs.source_run_id, "10");
+  });
+}
+
+test("a queue entry behind main reuses when neither side has Compute recipes", async (t) => {
+  const f = behind(fixture(t, "merge_group"));
+  for (const root of [BASE_TREE, PR_TREE, TREE]) f.tree(root, null);
+  await restore(f.args);
+  reused(f);
+});
 
 function receiptFixture(t, event) {
   const f = fixture(t, event);
@@ -426,8 +619,7 @@ function receiptFixture(t, event) {
     };
   }
   f.needs = Object.fromEntries(JOBS.map((job) => [job, { result: "success" }]));
-  f.needs.release_notes.outputs = {};
-  for (const reporter of ["test_web_reused", "test_server_reused"])
+  for (const reporter of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
     f.needs[reporter].result = "skipped";
   f.needs.queue_ci = { result: event === "merge_group" ? "success" : "skipped", outputs: {} };
   return f;
@@ -480,18 +672,27 @@ test("queue receipt requires every lane, including non-required layout and mobil
 test("a queue run that reused PR qualification records its source", async (t) => {
   const f = receiptFixture(t, "merge_group");
   for (const job of JOBS) f.needs[job].result = "skipped";
-  f.needs.release_notes.result = "success";
-  f.needs.overleaf_windows.result = "success";
   f.needs.queue_ci.result = "success";
-  for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+  for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
+    f.needs[job].result = "success";
   f.needs.queue_ci.outputs = {
     reused: "true",
     source_run_id: "10",
     web_reports: "true",
     server_reports: "true",
+    overleaf_windows: "true",
   };
   assert.equal(await writeReceipt(f), true);
   assert.equal(written(f).reusedFrom, 10);
+  // Overleaf Windows was skipped; the verified source pass is what the receipt carries.
+  assert.equal(written(f).overleafWindows, true);
+  f.needs.queue_ci.outputs.overleaf_windows = "";
+  await assert.rejects(writeReceipt(f), /overleaf_windows: skipped/);
+  f.needs.overleaf_windows.result = "success";
+  assert.equal(await writeReceipt(f), true);
+  assert.equal(written(f).overleafWindows, false);
+  f.needs.overleaf_windows.result = "skipped";
+  f.needs.queue_ci.outputs.overleaf_windows = "true";
   f.needs.queue_ci.outputs.source_run_id = "";
   await assert.rejects(writeReceipt(f), /source is missing/);
   f.needs.queue_ci.outputs.source_run_id = "10";
@@ -531,14 +732,23 @@ test("a PR receipt is never written for a fork, another base branch, or a claime
   await assert.rejects(writeReceipt(f), /Only queue runs/);
 });
 
-test("a PR whose tested merge does not join its base and head records nothing", async (t) => {
+test("a PR receipt records the main its tested merge was made on, even when the event's lags", async (t) => {
   const f = receiptFixture(t, "pull_request");
   f.commit(MERGE, TREE, [OTHER, PR_HEAD]);
-  assert.equal(await writeReceipt(f), false);
-  assert.equal(fs.existsSync(path.join(f.temp, "ci-queue-reuse")), false);
+  assert.equal(await writeReceipt(f), true);
+  assert.equal(written(f).baseSha, OTHER);
 });
 
-test("archive reader accepts one exact JSON member and refuses paths, duplicates and oversized output", (t) => {
+test("a PR whose tested commit is not a merge of its head records nothing", async (t) => {
+  for (const parents of [[BASE, OTHER], [BASE], [BASE, PR_HEAD, OTHER]]) {
+    const f = receiptFixture(t, "pull_request");
+    f.commit(MERGE, TREE, parents);
+    assert.equal(await writeReceipt(f), false);
+    assert.equal(fs.existsSync(path.join(f.temp, "ci-queue-reuse")), false);
+  }
+});
+
+test("archive reader accepts only the listed JSON members and refuses paths, duplicates and oversized output", (t) => {
   const f = fixture(t);
   const zip = (names, value) =>
     execFileSync(
@@ -551,23 +761,28 @@ test("archive reader accepts one exact JSON member and refuses paths, duplicates
       ],
       { maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
     );
-  assert.equal(
-    readArchive(zip(["receipt.json"], "{}"), "receipt.json", 100, f.env).toString(),
-    "{}",
-  );
-  for (const names of [
-    ["../receipt.json"],
-    ["receipt.json", "receipt.json"],
-    ["receipt.json", "extra.json"],
-  ])
-    assert.throws(
-      () => readArchive(zip(names, "{}"), "receipt.json", 100, f.env),
-      /archive members/,
+  const read = (names, members, value = "{}") =>
+    Object.fromEntries(
+      [...readArchive(zip(names, value), members, 100, f.env)].map(([name, raw]) => [
+        name,
+        raw.toString(),
+      ]),
     );
-  assert.throws(() =>
-    readArchive(zip(["receipt.json"], "x".repeat(100_000)), "receipt.json", 100, f.env),
-  );
-  assert.throws(() => readArchive(Buffer.from("not a zip"), "receipt.json", 100, f.env));
+  assert.deepEqual(read(["receipt.json"], ["receipt.json"]), { "receipt.json": "{}" });
+  const transfer = [RESULT_FILE, SCENARIOS_FILE];
+  assert.deepEqual(read([RESULT_FILE], transfer), { [RESULT_FILE]: "{}" });
+  assert.deepEqual(read(transfer, transfer), { [RESULT_FILE]: "{}", [SCENARIOS_FILE]: "{}" });
+  for (const [names, members] of [
+    [["../receipt.json"], ["receipt.json"]],
+    [["receipt.json", "receipt.json"], ["receipt.json"]],
+    [["receipt.json", "extra.json"], ["receipt.json"]],
+    [[SCENARIOS_FILE], transfer],
+    [[RESULT_FILE, SCENARIOS_FILE, SCENARIOS_FILE], transfer],
+    [[RESULT_FILE, "extra.json"], transfer],
+  ])
+    assert.throws(() => read(names, members), /archive members/);
+  assert.throws(() => read(["receipt.json"], ["receipt.json"], "x".repeat(100_000)));
+  assert.throws(() => readArchive(Buffer.from("not a zip"), ["receipt.json"], 100, f.env));
   assert.equal(fs.readdirSync(f.temp).length, 0);
 });
 
@@ -592,8 +807,8 @@ test("workflow preserves complete evidence before reuse and a single always-runn
   for (const job of ADVISORY)
     assert.doesNotMatch(check, new RegExp(`needs:.*(?:\\[|, )${job}(?:,|\\])`));
   const probe = sections.get("queue_ci");
-  assert.ok(!probe.includes("github.event_name == 'push'"), "main always runs fresh suites");
   assert.match(probe, /github.event_name == 'merge_group'/);
+  assert.match(probe, /github.event_name == 'push' && github.ref == 'refs\/heads\/main'/);
   assert.match(probe, /source_run_id: \$\{\{ steps.restore.outputs.source_run_id \}\}/);
   assert.ok(
     probe.indexOf("uses: ./.github/actions/ci-queue-reporting") < probe.indexOf("id: complete"),
@@ -614,6 +829,10 @@ test("workflow preserves complete evidence before reuse and a single always-runn
   for (const [suite, count] of Object.entries(SHARDS))
     for (let shard = 1; shard <= count; shard++)
       assert.match(reporting, new RegExp(`name: vitest-${suite}-${shard}-attempt-`));
+  // The transfer upload republishes every member the PR comment's main baseline reads.
+  for (const file of [RESULT_FILE, SCENARIOS_FILE])
+    assert.ok(reporting.includes(`/ci-queue-reuse/${file}`), file);
+  assert.match(sections.get("test_server"), new RegExp(`/${SCENARIOS_FILE}`));
   for (const [job, suite] of [
     ["test_web", "web"],
     ["test_server", "server"],
@@ -630,7 +849,7 @@ test("workflow preserves complete evidence before reuse and a single always-runn
     assert.ok(!/matrix:/.test(stand), "one reporting job per suite");
     assert.match(
       stand,
-      /needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group'/,
+      /if: \$\{\{ !cancelled\(\) && needs.queue_ci.outputs.reused == 'true' \}\}/,
     );
   }
   assert.match(
@@ -692,14 +911,14 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
   const root = path.resolve(__dirname, "../..");
   const scripts = path.join(temp, ".github/scripts");
   fs.mkdirSync(scripts, { recursive: true });
-  fs.copyFileSync(
-    path.join(root, ".github/scripts/ci-changes.cjs"),
-    path.join(scripts, "ci-changes.cjs"),
-  );
+  for (const name of ["ci-changes.cjs", "ci-comparison-base.cjs"])
+    fs.copyFileSync(path.join(root, ".github/scripts", name), path.join(scripts, name));
   fs.writeFileSync(path.join(temp, "pnpm-workspace.yaml"), "packages:\n");
   const gate = (base, head) => {
     const output = path.join(temp, "output");
+    const event = path.join(temp, "event.json");
     fs.writeFileSync(output, "");
+    fs.writeFileSync(event, JSON.stringify({ merge_group: { base_sha: base } }));
     // Hosted runners use a UTF-8 locale; the gate must still match raw bytes.
     execFileSync("bash", ["-c", script], {
       cwd: temp,
@@ -708,7 +927,7 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
         LC_ALL: "C.UTF-8",
         EVENT_NAME: "merge_group",
         RUNNER_TEMP: temp,
-        BASE_SHA: base,
+        GITHUB_EVENT_PATH: event,
         GITHUB_SHA: head,
         GITHUB_OUTPUT: output,
       },
@@ -854,4 +1073,142 @@ test("pre-Windows receipts and receipts without successful Windows evidence cann
     assert.notEqual(f.outputs.reused, "true");
     assert.ok(f.messages.some((message) => message.includes("Qualification receipt differs")));
   }
+});
+
+test("a rerun source restores each report from the attempt whose job passed", async (t) => {
+  for (const event of ["push", "merge_group"]) {
+    const f = fixture(t, event);
+    f.source.run_attempt = 2;
+    // Attempt 2 reran only the failed web shard 3; every other job kept its attempt-1 pass.
+    const failed = f.report(10, "vitest-web-3-attempt-1");
+    failed.success = false;
+    failed.numFailedTests = 1;
+    const id = 1000;
+    f.artifacts
+      .get(10)
+      .push({ id, name: "vitest-web-3-attempt-2", expired: false, size_in_bytes: 100 });
+    f.payloads.set(id, structuredClone(f.report(10, "vitest-web-1-attempt-1")));
+    f.jobs.get(10).find((job) => job.name === "Test Web 3").origin = 2;
+    await restore(f.args);
+    reused(f);
+    const restored = JSON.parse(
+      fs.readFileSync(path.join(f.temp, "ci-queue-reuse/vitest-web-3.json"), "utf8"),
+    );
+    assert.equal(restored.success, true);
+  }
+});
+
+for (const [name, mutate] of [
+  [
+    "a passing job whose attempt left no report",
+    (f) => {
+      f.jobs.get(10).find((job) => job.name === "Test Server 4").origin = 2;
+    },
+  ],
+  [
+    "a shard job missing from the run",
+    (f) => {
+      f.jobs.set(
+        10,
+        f.jobs.get(10).filter((job) => job.name !== "Test Web 6"),
+      );
+    },
+  ],
+  [
+    "a shard job that did not pass",
+    (f) => {
+      f.jobs.get(10).find((job) => job.name === "Test Web 2").conclusion = "skipped";
+    },
+  ],
+  [
+    "two jobs of one name",
+    (f) => {
+      f.jobs.get(10).push({ name: "Test Server 1", conclusion: "success", origin: 1 });
+    },
+  ],
+  [
+    "a receipt job whose attempt left no receipt",
+    (f) => {
+      f.jobs.get(10).find((job) => job.name === "Qualification receipt").origin = 2;
+    },
+  ],
+  [
+    "an attempt history that cannot be read",
+    (f) => {
+      const paginate = f.github.paginate;
+      f.github.paginate = async (method, input) => {
+        if (method === f.actions.listJobsForWorkflowRunAttempt) throw new Error("502");
+        return paginate(method, input);
+      };
+    },
+  ],
+])
+  test(`${name} selects full CI`, async (t) => {
+    const f = fixture(t, "merge_group");
+    f.source.run_attempt = 2;
+    mutate(f);
+    await refused(f);
+  });
+
+test("a receipt from an earlier attempt still qualifies a run that later reran other jobs", async (t) => {
+  const f = fixture(t, "merge_group");
+  // Attempt 2 reran an advisory job only; the receipt and reports stay attempt 1.
+  f.source.run_attempt = 2;
+  await restore(f.args);
+  reused(f);
+});
+
+test("a push whose queue run reused PR CI restores the reports its probe republished", async (t) => {
+  for (const probe of ["success", "failure"]) {
+    const f = fixture(t);
+    f.receipt.reusedFrom = 5;
+    // The reused queue run skipped its shards; only its probe job published the reports.
+    for (const job of f.jobs.get(10)) if (job.name.startsWith("Test ")) job.conclusion = "skipped";
+    f.jobs.get(10).find((job) => job.name === "Reuse exact CI").conclusion = probe;
+    if (probe === "success") {
+      await restore(f.args);
+      reused(f);
+    } else await refused(f);
+  }
+});
+
+// Advisory jobs (ci-check.cjs ADVISORY) can still run, or fail, after the gates passed.
+for (const event of ["push", "merge_group"]) {
+  for (const [name, state] of [
+    ["is still finishing advisory work", { status: "in_progress", conclusion: null }],
+    ["failed only in advisory work", { status: "completed", conclusion: "failure" }],
+  ]) {
+    test(`${event}: a source whose gates passed and that ${name} reuses`, async (t) => {
+      const f = fixture(t, event);
+      Object.assign(f.source, state);
+      await restore(f.args);
+      reused(f);
+    });
+  }
+}
+
+test("a source rerun with every job waits for its new gates", async (t) => {
+  const f = fixture(t, "merge_group");
+  Object.assign(f.source, { run_attempt: 2, status: "in_progress", conclusion: null });
+  // Re-run all jobs: the new attempt's gates have not finished yet.
+  for (const job of f.jobs.get(10)) job.origin = 2;
+  Object.assign(gate(f, "Check"), { status: "queued", conclusion: null });
+  await refused(f);
+  assert.match(f.messages.join("\n"), /No single successful Check job/);
+});
+
+test("a cancelled source names its state as the reason for full CI", async (t) => {
+  const f = fixture(t, "merge_group");
+  f.source.conclusion = "cancelled";
+  await refused(f);
+  assert.match(f.messages.join("\n"), /No qualified exact-content pull_request run/);
+});
+
+test("an advisory-only rerun keeps the gates and reports of the first attempt", async (t) => {
+  const f = fixture(t, "merge_group");
+  Object.assign(f.source, { run_attempt: 2, status: "in_progress", conclusion: null });
+  // Re-run failed jobs carries every passed job, with its start time, into attempt 2.
+  for (const job of f.jobs.get(10)) job.origin = 1;
+  await restore(f.args);
+  reused(f);
 });

@@ -11,12 +11,14 @@ import {
   isProviderAccountPresentedAsConnected,
   isProviderRuntimePresentedAsInstalled,
   isSafeProviderAuthorizationUrl,
+  isUserFacingRuntimeFailure,
   needsManagedRuntimeRecovery,
   preferredProviderConnectionMethod,
   providerAccountIdentity,
   providerConnectionPresentation,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
+  runtimeDownloadPercent,
   shouldShowProviderLifecycleSetupInComposer,
 } from "./providerConnectionPresentation";
 
@@ -238,6 +240,39 @@ describe("providerConnectionPresentation", () => {
     };
     expect(activeProviderRuntimeUpdateOperation(installing.connection.runtime)).toBeNull();
     expect(shouldShowProviderLifecycleSetupInComposer(installing)).toBe(true);
+  });
+
+  it("keeps changes Scient starts on its own out of updates and failures, but shows progress", () => {
+    const operation = {
+      operationId: "runtime-1",
+      action: "update" as const,
+      status: "downloading" as const,
+      startedAt: "2026-11-13T00:00:00.000Z",
+      finishedAt: null,
+      message: "Downloading.",
+      downloadedBytes: 64,
+      totalBytes: 100,
+    };
+    const runtime = {
+      source: "scient_managed" as const,
+      supportTier: "fully_assisted" as const,
+      target: "darwin-arm64",
+      actions: [],
+      managedVersion: "0.1.5",
+      previousManagedVersion: null,
+      message: "Ready.",
+    };
+    expect(activeProviderRuntimeUpdateOperation({ ...runtime, operation })).toBe(operation);
+    expect(
+      activeProviderRuntimeUpdateOperation({
+        ...runtime,
+        operation: { ...operation, background: true },
+      }),
+    ).toBeNull();
+    expect(runtimeDownloadPercent({ ...operation, background: true })).toBe(64);
+    const failed = { ...operation, status: "failed" as const, finishedAt: operation.startedAt };
+    expect(isUserFacingRuntimeFailure(failed)).toBe(true);
+    expect(isUserFacingRuntimeFailure({ ...failed, background: true })).toBe(false);
   });
 
   it("classifies lifecycle operations from their terminal states", () => {

@@ -8,7 +8,8 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
-import { makeRuntimeFilesystem } from "./runtimeFilesystem.ts";
+import { managedRuntimeFailedCheck, markManagedRuntimeCheck } from "./runtimeFiles.ts";
+import { makeRuntimeFilesystem, runtimeFilesystem } from "./runtimeFilesystem.ts";
 import { tryAcquireManagedRuntimeMutationLock } from "./runtimeMutationLock.ts";
 import {
   ManagedProviderRuntime,
@@ -59,6 +60,7 @@ async function makeRuntime(
     readonly onStateCommitted?: (statePath: string) => Promise<void>;
     readonly filesystem?: ManagedProviderRuntimeDependencies["filesystem"];
     readonly acquireMutationLock?: ManagedProviderRuntimeDependencies["acquireMutationLock"];
+    readonly download?: ManagedProviderRuntimeDependencies["download"];
   } = {},
 ) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
@@ -73,11 +75,13 @@ async function makeRuntime(
     ...(input.filesystem ? { filesystem: input.filesystem } : {}),
     ...(input.acquireMutationLock ? { acquireMutationLock: input.acquireMutationLock } : {}),
     now: () => now++,
-    download: async ({ destination }) => {
-      events.push("download");
-      await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
-      await NodeFSP.writeFile(destination, "asset", { flag: "wx" });
-    },
+    download:
+      input.download ??
+      (async ({ destination }) => {
+        events.push("download");
+        await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+        await NodeFSP.writeFile(destination, "asset", { flag: "wx" });
+      }),
     verify: async () => {
       verifyCalls += 1;
       events.push("verify");
@@ -257,7 +261,9 @@ describe("ManagedProviderRuntime contract", () => {
     await install(runtime, recipe);
     const originalState = await NodeFSP.readFile(statePath(root), "utf8");
     shouldLock = true;
-    await expect(install(runtime, recipe)).rejects.toThrow("could not be restored");
+    const rollback = await install(runtime, recipe).catch((cause: unknown) => cause);
+    expect(rollback).toMatchObject({ message: expect.stringContaining("could not be restored") });
+    expect(managedRuntimeFailedCheck(rollback)).toBe("rollback");
     expect(await NodeFSP.readFile(statePath(root), "utf8")).toBe(originalState);
     const journal = JSON.parse(await NodeFSP.readFile(activationPath(root), "utf8"));
     expect(
@@ -424,6 +430,36 @@ describe("ManagedProviderRuntime contract", () => {
     });
   });
 
+  it("keeps a failed download's bytes outside staging and drops those of other releases", async () => {
+    const partials: string[] = [];
+    let failNext = true;
+    const download: ManagedProviderRuntimeDependencies["download"] = async ({
+      destination,
+      partialPath,
+    }) => {
+      partials.push(partialPath!);
+      if (failNext) {
+        await NodeFSP.mkdir(NodePath.dirname(partialPath!), { recursive: true });
+        await NodeFSP.writeFile(partialPath!, "ass");
+        throw new Error("connection dropped");
+      }
+      expect(await NodeFSP.readFile(partialPath!, "utf8")).toBe("ass");
+      await NodeFSP.rename(partialPath!, destination);
+    };
+    const { root, runtime } = await makeRuntime({ download });
+    const downloads = NodePath.join(privateRoot(root), "downloads");
+    await NodeFSP.mkdir(downloads, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(downloads, `${"f".repeat(64)}.part`), "old release");
+    await expect(install(runtime, artifact("1.0.0"))).rejects.toThrow("connection dropped");
+    failNext = false;
+    await install(runtime, artifact("1.0.0"));
+    expect(partials).toEqual([
+      NodePath.join(downloads, `${"0".repeat(64)}.part`),
+      NodePath.join(downloads, `${"0".repeat(64)}.part`),
+    ]);
+    expect(await NodeFSP.readdir(downloads)).toEqual([]);
+  });
+
   it("activates an update while recording and preserving the previous version", async () => {
     const { root, runtime } = await makeRuntime();
     const first = await install(runtime, artifact("1.0.0"));
@@ -570,6 +606,43 @@ describe("ManagedProviderRuntime contract", () => {
     expect(await runtime.readState()).toMatchObject({ activeVersion: "1.0.0" });
     expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
     await expect(NodeFSP.access(runtime.launchPath(replacement))).rejects.toThrow();
+  });
+
+  it("records the step each failed install stopped in, nearest the root cause", async () => {
+    const failure = (promise: Promise<unknown>) =>
+      promise.then(
+        () => undefined,
+        (cause: unknown) => managedRuntimeFailedCheck(cause),
+      );
+    const smoke = await makeRuntime({ smokeFailsAtCall: 1 });
+    expect(await failure(install(smoke.runtime, artifact("1.0.0")))).toBe("smoke");
+
+    const { runtime } = await makeRuntime({ stateCommitFailsAtCall: 1 });
+    expect(await failure(install(runtime, artifact("1.0.0")))).toBe("activation");
+    const qualifying = (qualify: () => Promise<void>) =>
+      failure(
+        runtime.install({
+          artifact: artifact("1.0.0"),
+          signal: new AbortController().signal,
+          qualify,
+        }),
+      );
+    expect(
+      await qualifying(async () => {
+        throw new Error("runtime incompatible");
+      }),
+    ).toBe("qualification");
+    expect(
+      await qualifying(async () => {
+        throw new Error("wrapped", {
+          cause: markManagedRuntimeCheck("version", new Error("reported 1.0.1")),
+        });
+      }),
+    ).toBe("version");
+    // A plain Effect failure object carries its step too.
+    expect(managedRuntimeFailedCheck(markManagedRuntimeCheck("refresh", { message: "x" }))).toBe(
+      "refresh",
+    );
   });
 
   it("keeps launching the active release while a newer artifact is only reviewed", async () => {
@@ -767,6 +840,71 @@ describe("ManagedProviderRuntime contract", () => {
     expect(await runtime.readState()).toBeUndefined();
     expect(await NodeFSP.readFile(sibling, "utf8")).toBe("keep");
     expect(await NodeFSP.readFile(external, "utf8")).toBe("external");
+  });
+
+  it("gives the removal rename a longer Windows sharing-violation budget", async () => {
+    const renames: Array<{ readonly to: string; readonly budget: number | undefined }> = [];
+    const { runtime } = await makeRuntime({
+      filesystem: {
+        rename: async (from, to, options) => {
+          renames.push({ to, budget: options?.windowsRetryBudgetMs });
+          await runtimeFilesystem.rename(from, to, options);
+        },
+        remove: (path, options) => runtimeFilesystem.remove(path, options),
+      },
+    });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+    renames.length = 0;
+
+    await runtime.remove();
+
+    expect(renames).toEqual([{ to: expect.stringMatching(/\.removing-/u), budget: 60_000 }]);
+    expect((await runtime.status(recipe)).installed).toBe(false);
+  });
+
+  it("leaves the runtime installed when removal is cancelled during its Windows wait", async () => {
+    const cancellation = new AbortController();
+    let removalRenames = 0;
+    let backingOff: (() => void) | undefined;
+    const backedOff = new Promise<void>((resolve) => {
+      backingOff = resolve;
+    });
+    const sharingViolation = Object.assign(new Error("EPERM"), { code: "EPERM" });
+    const { runtime } = await makeRuntime({
+      // The real Windows retry loop: the removal rename hits a sharing violation, and its
+      // backoff sleep lasts until cancelled.
+      filesystem: makeRuntimeFilesystem({
+        platform: "win32",
+        rename: async (from, to) => {
+          if (to.includes(".removing-") && cancellation.signal.aborted === false) {
+            removalRenames += 1;
+            throw sharingViolation;
+          }
+          await NodeFSP.rename(from, to);
+        },
+        sleep: (_delay, signal) =>
+          new Promise<void>((_, reject) => {
+            backingOff?.();
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      }),
+    });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+
+    const removal = runtime.remove({ signal: cancellation.signal });
+    await backedOff;
+    cancellation.abort(new Error("cancelled by the user"));
+
+    await expect(removal).rejects.toThrow("cancelled by the user");
+    expect(removalRenames).toBe(1);
+    const status = await runtime.status(recipe);
+    expect(status.installed).toBe(true);
+    expect(status.activeVersion).toBe("1.0.0");
+    // The lock was released: a later removal runs and completes.
+    await runtime.remove();
+    expect((await runtime.status(recipe)).installed).toBe(false);
   });
 
   it("rejects unsupported artifacts before creating managed state", async () => {
@@ -1000,6 +1138,29 @@ describe("ManagedProviderRuntime mutation lock ownership", () => {
       if (lockedRoot) await NodeFSP.chmod(lockedRoot, 0o700);
       warn.mockRestore();
     }
+  });
+});
+
+describe("ManagedProviderRuntime download limit", () => {
+  it("downloads within the family's reviewed limit", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
+    temporaryRoots.push(root);
+    const limits: Array<number | undefined> = [];
+    const runtime = new ManagedProviderRuntime(
+      root,
+      { providerDirectory: "test-provider", displayName: "Test Provider" },
+      {
+        download: async ({ destination, maxBytes }) => {
+          limits.push(maxBytes);
+          await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+          await NodeFSP.writeFile(destination, "working-runtime", { flag: "wx" });
+        },
+        verify: async () => undefined,
+        smoke: async () => undefined,
+      },
+    );
+    await install(runtime, artifact("1.0.0", { maxDownloadBytes: 1024 * 1024 * 1024 }));
+    expect(limits).toEqual([1024 * 1024 * 1024]);
   });
 });
 

@@ -5,6 +5,9 @@ import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
+// SCIENT-FORK:START — analytics keeps each refusal's own reason, which the codes below fold.
+import { noteToolFailureClass } from "../../../telemetry/ScientMcpAnalytics.ts";
+// SCIENT-FORK:END
 import { HtmlPreviewToolkit, HtmlRenderToolkit, type HtmlToolkit } from "./tools.ts";
 
 const INVALID_PAGE_ERRORS = new Set([
@@ -32,6 +35,9 @@ const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
     return { html: input.html } satisfies HtmlRender.HtmlRenderSource;
   }
   if (input.path === undefined || input.html !== undefined) {
+    // SCIENT-FORK:START — analytics keeps each refusal's own reason.
+    yield* noteToolFailureClass("html_source_invalid");
+    // SCIENT-FORK:END
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
       message: "Pass exactly one of html or path.",
@@ -39,6 +45,9 @@ const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
   }
   const { limits } = yield* loadCaller();
   if (limits.runtimeMode !== "full-access") {
+    // SCIENT-FORK:START — analytics keeps each refusal's own reason.
+    yield* noteToolFailureClass("html_path_denied");
+    // SCIENT-FORK:END
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message: "Pass html instead of path: only full-access threads may pass a path.",
@@ -55,7 +64,19 @@ const handlers = {
       const source = yield* pageSource(input);
       const { png, ...preview } = yield* htmlRender
         .preview({ ...source, width: input.width, appearance: input.appearance })
-        .pipe(Effect.mapError(toFailure));
+        // SCIENT-FORK:START — analytics keeps each refusal's own reason; a browser still unpacking
+        // after the wait is told apart from one still downloading.
+        .pipe(
+          Effect.tapError((error) =>
+            noteToolFailureClass(
+              error._tag === "PreviewBrowserInstallingError" && error.unpacking
+                ? "preview_browser_unpacking"
+                : error._tag,
+            ),
+          ),
+          Effect.mapError(toFailure),
+        );
+      // SCIENT-FORK:END
       return {
         ...preview,
         screenshot: {
@@ -75,7 +96,12 @@ const handlers = {
       const source = yield* pageSource(input);
       const reference = yield* htmlRender
         .publish({ ...source, threadId: thread.threadId, title: input.title, height: input.height })
-        .pipe(Effect.mapError(toFailure));
+        // SCIENT-FORK:START — analytics keeps each refusal's own reason.
+        .pipe(
+          Effect.tapError((error) => noteToolFailureClass(error._tag)),
+          Effect.mapError(toFailure),
+        );
+      // SCIENT-FORK:END
       return {
         htmlRender: reference,
         message:

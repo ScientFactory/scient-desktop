@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { FileUpIcon, ImportIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { type RefObject, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -30,6 +31,7 @@ import {
 import { Spinner } from "../../components/ui/spinner";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { toastManager } from "../../components/ui/toast";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { mergeEnvironmentSettings, useClientSettings } from "../../hooks/useSettings";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
@@ -103,8 +105,8 @@ export function ConversationImportDialogHost({
         () =>
           toastManager.add({
             type: "error",
-            title: "Couldn't open the conversation file",
-            description: "Open it again from Scient's File menu.",
+            title: m(msg("Couldn't open the conversation file")),
+            description: m(msg("Open it again from Scient's File menu.")),
           }),
       );
     };
@@ -124,8 +126,8 @@ export function ConversationImportDialogHost({
     if (suspended && queued > announced.current) {
       toastManager.add({
         type: "info",
-        title: "Conversation file received",
-        description: "It opens for import when setup is finished.",
+        title: m(msg("Conversation file received")),
+        description: m(msg("It opens for import when setup is finished.")),
       });
     }
     announced.current = queued;
@@ -152,11 +154,11 @@ function ConversationImportDropOverlay({ drag }: { readonly drag: ConversationFi
       >
         <span className="flex items-center gap-2">
           <ImportIcon className="size-4 text-primary" aria-hidden="true" />
-          Drop to import conversation
+          <T>Drop to import conversation</T>
         </span>
         {drag === "possible-conversation" ? (
           <span className="text-muted-foreground text-xs font-normal">
-            Other files attach as usual.
+            <T>Other files attach as usual.</T>
           </span>
         ) : null}
       </div>
@@ -194,14 +196,19 @@ type Stage =
     };
 
 /** Announced to assistive technology while the Import button spins. */
-function stageStatus(stage: Stage): string | null {
+function stageStatus(stage: Stage, resolve: MessageResolver): string | null {
   switch (stage._tag) {
     case "sending":
       return stage.sentBytes === null || stage.totalBytes < 2 * 1024 * 1024
-        ? "Sending the file…"
-        : `Sending the file… ${formatMegabytes(stage.sentBytes)} of ${formatMegabytes(stage.totalBytes)}`;
+        ? resolve(msg("Sending the file…"))
+        : resolve(
+            msg("Sending the file… {sent} of {total}", {
+              sent: formatMegabytes(stage.sentBytes),
+              total: formatMegabytes(stage.totalBytes),
+            }),
+          );
     case "checking":
-      return "Checking the file…";
+      return resolve(msg("Checking the file…"));
     default:
       return null;
   }
@@ -253,6 +260,8 @@ function projectKey(project: { readonly environmentId: EnvironmentId; readonly i
  * after import, on the thread.
  */
 function ConversationImportDialog({ source }: { readonly source: ConversationImportSource }) {
+  const gt = useGT();
+  const messages = useMessages();
   const id = useId();
   const navigate = useNavigate();
   const projects = useProjects();
@@ -383,7 +392,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         });
 
   const file = sourceFile(source);
-  const fileProblem = file === null ? null : importFileProblem(file.name, file.sizeBytes);
+  const fileProblem = file === null ? null : importFileProblem(file.name, file.sizeBytes, messages);
   // "Start with the whole file" re-stages this same Markdown file as a document.
   const [documentModeFor, setDocumentModeFor] = useState<ConversationImportSource | null>(null);
   const markdownMode: "document" | undefined = documentModeFor === source ? "document" : undefined;
@@ -462,8 +471,8 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           if (staged.confirmed && answer._tag === "already-imported") {
             toastManager.add({
               type: "success",
-              title: "Conversation imported",
-              description: "The import finished after all. It's in your conversations.",
+              title: m(msg("Conversation imported")),
+              description: m(msg("The import finished after all. It's in your conversations.")),
             });
           }
         })
@@ -528,7 +537,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           isRecordLimitRefusal(cause);
         setStage({
           _tag: "failed",
-          message: importFailureMessage(cause, "This file couldn't be read."),
+          message: importFailureMessage(cause, m(msg("This file couldn't be read."))),
           retryable: !wholeFile && !isTerminalFailure(cause),
           ...(wholeFile ? { wholeFile: true as const } : {}),
         });
@@ -583,7 +592,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     next.staged.importId = null;
     next.staged.confirming = false;
     dismissConversationImportRequest();
-    toastManager.add({ type: "success", title: "Conversation imported" });
+    toastManager.add({ type: "success", title: m(msg("Conversation imported")) });
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams({
@@ -606,7 +615,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       attempt,
       stage: {
         _tag: "failed",
-        message: "The import didn't finish. Send the file again to import it.",
+        message: m(msg("The import didn't finish. Send the file again to import it.")),
         retryable: true,
       },
     });
@@ -648,7 +657,10 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     setConversationImportReplaceable(true);
     setImportError({
       attempt,
-      message: importFailureMessage(cause, "The conversation couldn't be imported. Try again."),
+      message: importFailureMessage(
+        cause,
+        m(msg("The conversation couldn't be imported. Try again.")),
+      ),
     });
   };
   const askServer = (next: Confirmation) => {
@@ -697,7 +709,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   };
 
   const busy = stage._tag === "sending" || stage._tag === "checking" || importing;
-  const status = fileProblem === null ? stageStatus(stage) : null;
+  const status = fileProblem === null ? stageStatus(stage, messages) : null;
   const unreadable =
     fileProblem ??
     (confirmation === null && stage._tag === "failed" && !stage.retryable && !stage.wholeFile
@@ -707,17 +719,21 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     unreadable !== null || confirmation !== null
       ? null
       : destinationGone
-        ? "That project's environment is no longer available. Choose another project."
+        ? gt("That project's environment is no longer available. Choose another project.")
         : connectionLost
-          ? `Lost the connection to ${environmentLabel(destination) ?? "that environment"}. Choose another project or try again.`
+          ? environmentLabel(destination)
+            ? gt("Lost the connection to {environment}. Choose another project or try again.", {
+                environment: environmentLabel(destination),
+              })
+            : gt("Lost the connection to that environment. Choose another project or try again.")
           : file !== null && environmentId === null && destination === null
-            ? "Nothing to import into is connected. Reconnect to import this file."
+            ? gt("Nothing to import into is connected. Reconnect to import this file.")
             : stage._tag === "failed"
               ? stage.message
               : preview !== null && environmentProjects.length === 0
-                ? "Add a project to import this conversation."
+                ? gt("Add a project to import this conversation.")
                 : preview !== null && project !== null && modelSelection === null
-                  ? "No model is available. Connect a provider to import."
+                  ? gt("No model is available. Connect a provider to import.")
                   : null;
   const offersWholeFile = stage._tag === "failed" && stage.wholeFile === true;
   // "Try again" resends to the same destination, only once it is connected.
@@ -740,11 +756,11 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   const title =
     preview === null
       ? file === null
-        ? "Import conversation"
-        : `Import “${file.name}”`
+        ? gt("Import conversation")
+        : gt("Import “{name}”", { name: file.name })
       : isDocument
-        ? `Start a conversation from ${file?.name ?? preview.fileName}`
-        : `Import “${preview.conversation.title}”`;
+        ? gt("Start a conversation from {name}", { name: file?.name ?? preview.fileName })
+        : gt("Import “{name}”", { name: preview.conversation.title });
 
   return (
     <Dialog
@@ -780,7 +796,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                 {projectGroups.length > 0 ? (
                   <div className="flex items-center gap-3">
                     <span id={`${id}-project`} className="shrink-0 text-sm font-medium">
-                      Project
+                      <T context="the project to import into">Project</T>
                     </span>
                     <Select
                       value={project === null ? "" : projectKey(project)}
@@ -808,7 +824,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                       }}
                     >
                       <SelectTrigger aria-labelledby={`${id}-project`} className="min-w-0 flex-1">
-                        <SelectValue placeholder="Choose a project" />
+                        <SelectValue placeholder={gt("Choose a project")} />
                       </SelectTrigger>
                       <SelectPopup>
                         {projectGroups.map((group) =>
@@ -848,7 +864,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                         variant="outline"
                         onClick={() => setRetries((count) => count + 1)}
                       >
-                        Try again
+                        <T>Try again</T>
                       </Button>
                     ) : null}
                     {offersWholeFile && canWholeFile ? (
@@ -858,14 +874,16 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                         variant="outline"
                         onClick={() => setDocumentModeFor(source)}
                       >
-                        Start with the whole file
+                        <T>Start with the whole file</T>
                       </Button>
                     ) : null}
                   </div>
                 ) : null}
                 {damagedMarkers && !importing ? (
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm">Some messages couldn't be read.</p>
+                    <p className="text-sm">
+                      <T>Some messages couldn't be read.</T>
+                    </p>
                     <Button
                       type="button"
                       size="xs"
@@ -873,7 +891,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                       disabled={!canImport}
                       onClick={runImport}
                     >
-                      Import readable messages
+                      <T>Import readable messages</T>
                     </Button>
                     {canWholeFile ? (
                       <Button
@@ -882,7 +900,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                         variant="outline"
                         onClick={() => setDocumentModeFor(source)}
                       >
-                        Start with the whole file
+                        <T>Start with the whole file</T>
                       </Button>
                     ) : null}
                   </div>
@@ -891,13 +909,15 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
             )}
             {confirmation !== null && (confirmation.interrupted || !confirmingConnected) ? (
               <p role="alert" className="text-sm">
-                Lost the connection while importing. Scient will check whether the import finished
-                when the connection returns.
+                <T>
+                  Lost the connection while importing. Scient will check whether the import finished
+                  when the connection returns.
+                </T>
               </p>
             ) : confirmation?.phase === "unknown" ? (
               <div className="flex flex-wrap items-center gap-2">
                 <p role="alert" className="text-sm">
-                  Scient couldn't tell whether the import finished.
+                  <T>Scient couldn't tell whether the import finished.</T>
                 </p>
                 <Button
                   type="button"
@@ -911,7 +931,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                     })
                   }
                 >
-                  Check again
+                  <T>Check again</T>
                 </Button>
               </div>
             ) : null}
@@ -924,12 +944,12 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button type="button" variant="outline" disabled={!closable} onClick={close}>
-            {confirmation === null ? "Cancel" : "Close"}
+            {confirmation === null ? gt("Cancel") : gt("Close")}
           </Button>
           {file === null ? (
             <Button type="button" onClick={() => fileInputRef.current?.click()}>
               <FileUpIcon />
-              Choose file…
+              <T>Choose file…</T>
             </Button>
           ) : null}
           {file !== null && unreadable === null && (!damagedMarkers || importing) ? (
@@ -941,7 +961,11 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
               onClick={runImport}
             >
               {busy ? <Spinner aria-hidden="true" /> : null}
-              {importError?.attempt === attempt ? "Try again" : isDocument ? "Start" : "Import"}
+              {importError?.attempt === attempt
+                ? gt("Try again")
+                : isDocument
+                  ? gt("Start", { $context: "starts a conversation from the file" })
+                  : gt("Import", { $context: "verb, imports the conversation" })}
             </Button>
           ) : null}
         </DialogFooter>
@@ -961,7 +985,9 @@ function ConversationFileChoice({
 }) {
   return (
     <div data-conversation-file-choice>
-      <p className="text-muted-foreground text-sm">Choose a .scic or .md file, or drop it here.</p>
+      <p className="text-muted-foreground text-sm">
+        <T>Choose a .scic or .md file, or drop it here.</T>
+      </p>
       <input
         ref={inputRef}
         type="file"

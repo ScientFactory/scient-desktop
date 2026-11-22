@@ -1,5 +1,6 @@
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
+import { analyticsFailureCode } from "./failureCodes.ts";
 import {
   ANALYTICS_CONTRACT_REVISION,
   EVENT_NAME_PATTERN,
@@ -21,6 +22,8 @@ export const ANALYTICS_EVENT_NAMES = [
   "app.session.ended",
   "app.health",
   "app.diagnostics",
+  "app.update.outcome",
+  "app.update.summary",
   "server.boot.heartbeat",
   "install.owner_observed",
   "install.account_observed",
@@ -52,6 +55,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "provider.lifecycle.completed",
   "provider.lifecycle.failed",
   "provider.lifecycle.cancelled",
+  "provider.runtime.first_pick",
   "project.added",
   "project.add.failed",
   "project.opened",
@@ -82,11 +86,158 @@ export const ANALYTICS_EVENT_NAMES = [
   "scient.operation.failed",
   "scient.operation.cancelled",
   "scient.operation.skipped",
+  "provider.commands.observed",
 ] as const;
 
-export const AnalyticsConsent = ["off", "essential", "product", "diagnostic"] as const;
-export type AnalyticsConsent = (typeof AnalyticsConsent)[number];
-export type EventPrivacyLevel = Exclude<AnalyticsConsent, "off">;
+/**
+ * Who a failure belongs to: Scient itself, the code or document being run, a request's input,
+ * the computer's environment, an outside service, or a cancellation. `unknown` keeps doubt.
+ */
+const FAILURE_OWNERS = [
+  "scient",
+  "code",
+  "input",
+  "environment",
+  "external",
+  "cancelled",
+  "unknown",
+] as const;
+export type FailureOwner = (typeof FAILURE_OWNERS)[number];
+
+/** The closed reasons a failure is filed under; an error's own name is never one of them. */
+const FAILURE_CATEGORIES = [
+  // Compute runs
+  "code-error",
+  "syntax",
+  "assertion",
+  "data",
+  "filesystem",
+  "permission",
+  "network",
+  "missing-dependency",
+  "out-of-memory",
+  "interrupted",
+  "exited",
+  "runtime-reported",
+  "dispatch",
+  "runtime-start",
+  "app-restart",
+  "runtime-connection",
+  "runtime-exited",
+  "kernel-exited",
+  "kernel-connection",
+  "protocol-error",
+  "missing-capability",
+  "admission-timeout",
+  "source-conflict",
+  // Run file
+  "nonzero-exit",
+  "not-started",
+  "failed-after-exit",
+  "runtime-missing",
+  "source-changed",
+  // PDF export
+  "project-required",
+  "project-changed",
+  "invalid-source-path",
+  "invalid-output-path",
+  "source-not-found",
+  "renderer-unavailable",
+  "render-failed",
+  "publication-failed",
+  "output-write-failed",
+  "partial-publication",
+  "unsupported-format",
+  "too-large",
+  "unsaved-changes",
+  "prepare-failed",
+  "delivery-failed",
+  // LaTeX builds
+  "compile_error",
+  "missing_package",
+  "missing_engine",
+  "no_output",
+  "timeout",
+  "sources_changed",
+  "publish",
+  "workspace",
+  "internal",
+  // Figure and table capture
+  "scan-timeout",
+  "scan-entry-limit",
+  "scan-depth-limit",
+  "scan-unreadable",
+  "watch-unavailable",
+  "watch-overflow",
+  "watch-unverifiable",
+  "observation-unavailable",
+  "output-limit",
+  "image-limit",
+  "unsafe-image",
+  "invalid-image",
+  "image-changed",
+  "missing-resource",
+  "resource-mismatch",
+  "persistence-failed",
+  "artifact-collection-failed",
+  "unknown",
+] as const;
+export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
+
+/** The kinds of program an agent runs in its own terminal, read locally from the command. */
+const COMMAND_CATEGORIES = [
+  "python",
+  "python-package-install",
+  "jupyter",
+  "r",
+  "julia",
+  "matlab",
+  "octave",
+  "stata",
+  "sas",
+  "sql",
+  "latex",
+  "document-convert",
+  "quarto",
+  "workflow",
+  "hpc",
+  "remote",
+  "container",
+  "compile",
+  "javascript",
+  "system-package-install",
+  "version-control",
+  "download",
+  "file-inspection",
+  "file-management",
+  "shell-other",
+] as const;
+export type CommandCategory = (typeof COMMAND_CATEGORIES)[number];
+
+const COMPUTE_ACTORS = new Set(["user", "agent"]);
+const COMPUTE_ENTRIES = new Set(["console", "file", "selection", "cell", "run-file"]);
+const COMPUTE_RUNTIME_SOURCES = new Set([
+  "managed",
+  "configured",
+  "project",
+  "path",
+  "conventional",
+]);
+
+function attributionProperties(input: Readonly<Record<string, unknown>>) {
+  return {
+    ...(property(input, "failureOwner") === undefined
+      ? {}
+      : { failureOwner: closedCategory(property(input, "failureOwner"), FAILURE_OWNERS) }),
+    ...(property(input, "failureCategory") === undefined
+      ? {}
+      : {
+          failureCategory: closedCategory(property(input, "failureCategory"), FAILURE_CATEGORIES),
+        }),
+  };
+}
+
+export type EventPrivacyLevel = "essential" | "product" | "diagnostic";
 export const AnalyticsPriority = ["critical", "core", "summary"] as const;
 export type AnalyticsPriority = (typeof AnalyticsPriority)[number];
 
@@ -129,6 +280,79 @@ const LIFECYCLE_ACTIONS = new Set([
   "sign-out",
   "source-switch",
 ]);
+const LIFECYCLE_TRIGGERS = new Set(["user", "background"]);
+const DOWNLOAD_SOURCES = new Set(["primary", "fallback"]);
+const DOWNLOAD_SOURCE_KINDS = new Set(["scient_mirror", "github", "vendor"]);
+const DOWNLOAD_VARIANTS = new Set(["compressed", "raw"]);
+const DOWNLOAD_NETWORK_KINDS = new Set([
+  "dns",
+  "refused",
+  "reset",
+  "unreachable",
+  "connect_timeout",
+  "stalled",
+  "cut_off",
+  "other",
+]);
+const LIFECYCLE_FAILED_CHECKS = new Set([
+  "smoke",
+  "reserve",
+  "stop_sessions",
+  "rpc_start",
+  "protocol",
+  "version",
+  "get_state",
+  "qualification",
+  "activation",
+  "rollback",
+  "refresh",
+]);
+const SIGN_IN_FAILURE_REASONS = new Set([
+  "start_failed",
+  "no_signin_page",
+  "invalid_response",
+  "timeout",
+  "provider_failed",
+  "provider_exited",
+  "verification",
+  "post_signin_setup",
+  "flow_stopped",
+  "unknown",
+]);
+const SIGN_IN_PAGES = new Set(["primary", "manual_fallback", "none"]);
+const TOOL_SERVER_OWNERS = new Set(["scient", "connector", "user", "unknown"]);
+const ENDPOINT_SCHEMES = new Set(["http", "https"]);
+const ENDPOINT_SOURCES = new Set(["claude-settings", "environment"]);
+// A DNS name, IPv4 address or bracketed IPv6 address: never a path, link or credential.
+const ENDPOINT_HOST_PATTERN =
+  /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$|^\[[0-9A-Fa-f:.]{2,45}\]$/;
+
+/** The custom API endpoint an account sends its requests to, split so no field is a link. */
+function accountEndpointProperties(
+  input: Readonly<Record<string, unknown>>,
+): Record<string, string | number> {
+  // Read every field first: an unread key would pass through unvalidated.
+  const rawHost = property(input, "endpointHost");
+  // A fully qualified name's root dot names the same host.
+  const host = typeof rawHost === "string" ? rawHost.replace(/\.$/u, "") : rawHost;
+  const scheme = property(input, "endpointScheme");
+  const source = property(input, "endpointSource");
+  const port = property(input, "endpointPort");
+  if (typeof host !== "string" || !ENDPOINT_HOST_PATTERN.test(host)) return {};
+  return {
+    endpointHost: host.toLowerCase(),
+    ...(typeof scheme === "string" && ENDPOINT_SCHEMES.has(scheme)
+      ? { endpointScheme: scheme }
+      : {}),
+    ...(typeof source === "string" && ENDPOINT_SOURCES.has(source)
+      ? { endpointSource: source }
+      : {}),
+    ...(typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65_535
+      ? { endpointPort: port }
+      : {}),
+  };
+}
+const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
   "downloading",
@@ -172,6 +396,7 @@ const FAILURE_CLASSES = new Set([
   "extract",
   "cancelled",
   "busy",
+  "stalled",
   "other",
   // LaTeX builds
   "compile_error",
@@ -182,6 +407,7 @@ const FAILURE_CLASSES = new Set([
   "publish",
   "workspace",
 ]);
+const PROCESS_EXIT_REASONS = new Set(["crashed", "oom", "killed", "abnormal-exit"]);
 const HEALTH_COMPONENTS = new Set(["desktop", "server", "renderer", "browser", "analytics"]);
 const HEALTH_OPERATIONS = new Set([
   "startup",
@@ -192,6 +418,50 @@ const HEALTH_OPERATIONS = new Set([
   "update",
 ]);
 const HEALTH_OUTCOMES = new Set(["started", "completed", "failed", "abnormal"]);
+// Desktop app updates: each step's outcomes, and why a step failed.
+const UPDATE_STEP_OUTCOMES: Readonly<Record<string, ReadonlyArray<string>>> = {
+  check: ["started", "completed", "failed"],
+  download: ["started", "completed", "failed"],
+  install: ["handoff-attempted", "failed"],
+  apply: ["completed", "not-applied", "superseded"],
+};
+const UPDATE_FAILURE_CLASSES = [
+  "network",
+  "timeout",
+  "certificate",
+  "http_4xx",
+  "http_5xx",
+  "feed",
+  "checksum",
+  "signature",
+  "disk_full",
+  "permission",
+  "configuration",
+  "cancelled",
+  "internal",
+  "unknown",
+];
+const UPDATE_STATUSES = [
+  "disabled",
+  "idle",
+  "checking",
+  "up-to-date",
+  "available",
+  "downloading",
+  "downloaded",
+  "error",
+];
+const UPDATE_DISABLED_CLASSES = [
+  "policy",
+  "channel-policy",
+  "safety",
+  "no-feed",
+  "development",
+  "environment",
+  "linux-package",
+  "other",
+];
+const UPDATE_ATTEMPT_REF_PATTERN = /^[0-9a-f]{16}$/u;
 const OPERATION_KINDS = new Set([
   "file-preview",
   "pdf-open",
@@ -221,6 +491,17 @@ const OPERATION_KINDS = new Set([
 ]);
 const TRIGGERS = new Set(["user", "agent", "automation", "other"]);
 const PROVIDER_STATES = new Set(["ready", "warning", "error", "disabled"]);
+const STATUS_CHECK_FAILURES = new Set([
+  "version_timeout",
+  "version_failed",
+  "start_failed",
+  "busy",
+  "command_timeout",
+  "command_failed",
+  "exit",
+  "parse",
+  "other",
+]);
 const DELIVERY_CLASSES = new Set([
   "idle",
   "delivered",
@@ -234,6 +515,7 @@ const PLATFORM_VALUES = new Set(["macos", "windows", "linux", "other"]);
 const ARCHITECTURE_VALUES = new Set(["arm64", "x64", "other"]);
 const SHUTDOWN_CLASSES = new Set(["graceful", "forced", "crash", "unknown"]);
 const TURN_FAILURE_CLASSES = new Set([
+  "usage_limit",
   "provider_error",
   "transport_error",
   "permission_error",
@@ -288,7 +570,7 @@ const REVERT_FAILURE_CLASSES = new Set([
   "validation",
   "unknown",
 ]);
-const VOICE_ENGINE_CLASSES = new Set(["local-whisper", "system", "other"]);
+const VOICE_ENGINE_CLASSES = new Set(["local-whisper", "chatgpt", "system", "other"]);
 const VOICE_LANGUAGE_MODES = new Set(["automatic", "explicit", "unknown"]);
 const VOICE_FAILURE_CLASSES = new Set([
   "permission",
@@ -306,6 +588,12 @@ const VOICE_CANCELLATION_STAGES = new Set([
   "correcting",
   "unknown",
 ]);
+
+function countOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, 1_000_000)
+    : 0;
+}
 
 function closedCategory(value: unknown, allowed: ReadonlyArray<string>): string {
   return typeof value === "string" && allowed.includes(value) ? value : "unknown";
@@ -337,6 +625,9 @@ function captureProperties(input: Readonly<Record<string, unknown>>, terminal: b
       "scan-entry-limit",
       "scan-depth-limit",
       "scan-unreadable",
+      "watch-unavailable",
+      "watch-overflow",
+      "watch-unverifiable",
       "observation-unavailable",
       "output-limit",
       "image-limit",
@@ -405,6 +696,7 @@ const TOOL_MODES = new Set(["async", "wait"]);
 const TOOL_WORKSPACES = new Set(["scratch", "root", "worktree", "existing_worktree"]);
 const DELEGATED_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const DELEGATED_TASK_WAKES = new Set(["always", "settled_only"]);
+const DELEGATED_TASK_FAILURE_PHASES = ["before_provider", "provider", "unknown"];
 const SURFACES = new Set([
   "files",
   "preview",
@@ -559,6 +851,38 @@ function optionalProperties(
   return properties;
 }
 
+/** Which run a turn outcome belongs to (a one-way hash), and the agent build that ran it. */
+function turnRunProperties(input: Readonly<Record<string, unknown>>): {
+  runRef?: string;
+  providerVersion?: string;
+} {
+  const runRef = property(input, "runRef");
+  const version = property(input, "providerVersion");
+  return {
+    ...(typeof runRef === "string" && /^[0-9a-f]{16}$/u.test(runRef) ? { runRef } : {}),
+    ...(typeof version === "string" && analyticsAppVersion(version) !== "unknown"
+      ? { providerVersion: version }
+      : {}),
+  };
+}
+
+/** A failure code, kept only when it is one of `provider`'s known categories. */
+function failureCodeProperty(
+  provider: string,
+  input: Readonly<Record<string, unknown>>,
+): { failureCode?: string } {
+  const code = analyticsFailureCode(provider, property(input, "failureCode"));
+  return code === undefined ? {} : { failureCode: code };
+}
+
+/** A provider's HTTP status, kept only as a real status code. */
+function httpStatusProperty(input: Readonly<Record<string, unknown>>): { httpStatus?: number } {
+  const value = property(input, "httpStatus");
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
+    ? { httpStatus: value }
+    : {};
+}
+
 function clientProperties(input: Readonly<Record<string, unknown>>) {
   return {
     surface: normalizedEnum(property(input, "surface"), CLIENT_SURFACES),
@@ -578,6 +902,17 @@ function optionalModelKeys(
       return value === undefined ? [] : [[key, modelKey(value)]];
     }),
   );
+}
+
+/** How long an event waited on this computer before it was sent. */
+function ageBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 60_000) return "under-1m";
+  if (value < 600_000) return "1-10m";
+  if (value < 3_600_000) return "10-60m";
+  if (value < 21_600_000) return "1-6h";
+  if (value < 86_400_000) return "6-24h";
+  return "over-1d";
 }
 
 function countBucket(value: unknown): string {
@@ -639,6 +974,34 @@ export function modelKey(model: unknown): string {
   return canonical === "" ? normalized : canonical;
 }
 
+function byteBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value === 0) return "0";
+  if (value < 10 * 1024 ** 2) return "under-10mb";
+  if (value < 50 * 1024 ** 2) return "10-50mb";
+  if (value < 100 * 1024 ** 2) return "50-100mb";
+  return "over-100mb";
+}
+
+/** Bytes per second, bucketed in megabits per second as connections are quoted. */
+function throughputBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  const megabits = (value * 8) / 1_000_000;
+  if (megabits < 1) return "under-1mbps";
+  if (megabits < 5) return "1-5mbps";
+  if (megabits < 20) return "5-20mbps";
+  if (megabits < 100) return "20-100mbps";
+  return "over-100mbps";
+}
+
+function percentBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 25) return "0-24";
+  if (value < 50) return "25-49";
+  if (value < 75) return "50-74";
+  return "75-100";
+}
+
 export function durationBucket(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
   if (value < 1_000) return "under-1s";
@@ -648,6 +1011,98 @@ export function durationBucket(value: unknown): string {
   if (value < 180_000) return "1-3m";
   if (value < 600_000) return "3-10m";
   return "over-10m";
+}
+
+/** How long an update stage or offer has lasted: minutes while transferring, days while waiting. */
+function updateAgeBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 60_000) return "under-1m";
+  if (value < 600_000) return "1-10m";
+  if (value < 3_600_000) return "10-60m";
+  if (value < 21_600_000) return "1-6h";
+  if (value < 86_400_000) return "6-24h";
+  if (value < 3 * 86_400_000) return "1-3d";
+  if (value < 7 * 86_400_000) return "3-7d";
+  return "over-7d";
+}
+
+/** Copies a field only when it is one of `allowed`; any other value stays absent. */
+function optionalClosed(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+  allowed: ReadonlyArray<string>,
+): Record<string, string> {
+  const value = property(input, key);
+  return typeof value === "string" && allowed.includes(value) ? { [key]: value } : {};
+}
+
+/** Marks every field read, so an event sends only what its normalizer sets. */
+function closedEvent(input: Readonly<Record<string, unknown>>): void {
+  for (const key of Object.keys(input)) property(input, key);
+}
+
+function updateOutcomeProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const step = closedCategory(property(input, "step"), Object.keys(UPDATE_STEP_OUTCOMES));
+  const outcome = closedCategory(property(input, "outcome"), UPDATE_STEP_OUTCOMES[step] ?? []);
+  const failureClass = closedCategory(property(input, "failureClass"), UPDATE_FAILURE_CLASSES);
+  const trigger = property(input, "trigger");
+  const targetVersion = property(input, "targetVersion");
+  const attemptRef = property(input, "attemptRef");
+  const durationMs = property(input, "durationMs");
+  return {
+    step,
+    outcome,
+    ...(outcome === "failed" ? { failureClass } : {}),
+    ...(step !== "apply" && (trigger === "user" || trigger === "background") ? { trigger } : {}),
+    ...(typeof targetVersion === "string" && analyticsAppVersion(targetVersion) !== "unknown"
+      ? { targetVersion }
+      : {}),
+    ...optionalClosed(input, "sourceKind", ["github", "scient_mirror", "administrator"]),
+    ...optionalClosed(input, "packageKind", ["zip", "nsis", "appimage", "deb"]),
+    ...(typeof attemptRef === "string" && UPDATE_ATTEMPT_REF_PATTERN.test(attemptRef)
+      ? { attemptRef }
+      : {}),
+    ...(durationMs === undefined ? {} : { durationBucket: updateAgeBucket(durationMs) }),
+  };
+}
+
+function updateSummaryProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const status = closedCategory(property(input, "status"), UPDATE_STATUSES);
+  const lastCheckAgeMs = property(input, "lastCheckAgeMs");
+  return {
+    reason: closedCategory(property(input, "reason"), ["launch", "change", "daily"]),
+    status,
+    channel: closedCategory(property(input, "channel"), ["latest", "beta", "nightly"]),
+    behind: closedCategory(property(input, "behind"), ["yes", "no", "unknown"]),
+    stageAgeBucket: updateAgeBucket(property(input, "stageAgeMs")),
+    lastCheckAgeBucket: lastCheckAgeMs === undefined ? "never" : updateAgeBucket(lastCheckAgeMs),
+    droppedFactsBucket: countBucket(property(input, "droppedFactCount") ?? 0),
+    ...(status === "error"
+      ? {
+          errorContext: closedCategory(property(input, "errorContext"), [
+            "check",
+            "download",
+            "install",
+          ]),
+        }
+      : {}),
+    ...(status === "downloading"
+      ? {
+          progressBucket: percentBucket(property(input, "downloadPercent")),
+          sinceProgressBucket: updateAgeBucket(property(input, "sinceProgressMs")),
+        }
+      : {}),
+    ...(status === "downloaded"
+      ? { readyAgeBucket: updateAgeBucket(property(input, "readyAgeMs")) }
+      : {}),
+    ...(status === "disabled"
+      ? {
+          disabledClass: closedCategory(property(input, "disabledClass"), UPDATE_DISABLED_CLASSES),
+        }
+      : {}),
+  };
 }
 
 function turnTerminalStatus(value: unknown): string {
@@ -683,6 +1138,36 @@ const VIEW_PROPERTIES = {
   "feature.viewed": ["feature"],
 } as const;
 
+// The extensions a file tab reports. Any other extension is "other" and a name without one is
+// "none", so an unusual extension can never identify a file or a person.
+const FILE_TYPES: ReadonlySet<string> = new Set(
+  [
+    // Documents and writing
+    "pdf md mdx markdown txt rtf doc docx odt pages epub html htm tex bib sty cls bbl typ rst org",
+    // Slides and spreadsheets
+    "ppt pptx odp key xls xlsx xlsm ods numbers csv tsv",
+    // Structured text and configuration
+    "json jsonl ndjson yaml yml toml xml ini cfg conf log lock diff patch",
+    // Scientific and statistical data
+    "parquet feather arrow h5 hdf5 nc mat npy npz pkl rds rdata rda dta sav sas7bdat sqlite sqlite3 db duckdb",
+    "fits fit edf bdf nii dcm mzml fasta fa fastq fq bam sam vcf bed gff gtf pdb cif mol mol2 sdf xyz",
+    "geojson shp kml gpx",
+    // Code and notebooks
+    "py ipynb r rmd qmd jl m mlx stan do sas sql js mjs cjs ts tsx jsx java c h cpp cc hpp cs go rs swift kt rb php",
+    "sh bash zsh ps1 lua scala f f90 cu css scss vue svelte dart hs ex pl",
+    // Images, video and audio
+    "png jpg jpeg gif webp svg bmp tif tiff heic avif ico mp4 mov webm mkv avi mp3 wav m4a ogg flac",
+    // Diagrams, archives and fonts
+    "mmd mermaid drawio excalidraw zip tar gz tgz 7z rar bz2 xz ttf otf woff woff2",
+  ].flatMap((group) => group.split(" ")),
+);
+
+function normalizedFileType(value: unknown): string {
+  if (typeof value !== "string") return "other";
+  const type = value.toLowerCase();
+  return type === "none" || FILE_TYPES.has(type) ? type : "other";
+}
+
 /**
  * Converts inherited T3 analytics calls into Scient's bounded wire contract.
  * Unknown events are deliberately ignored until they receive a registered
@@ -711,6 +1196,11 @@ function normalizeEvent(
           outcome: normalizedEnum(property(input, "outcome"), HEALTH_OUTCOMES),
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
+          // How a process ended: macOS exit code 5 (SIGTRAP) is a Chromium CHECK, not memory.
+          ...optionalProperties(input, { exitReason: PROCESS_EXIT_REASONS }),
+          ...(Number.isSafeInteger(property(input, "exitCode"))
+            ? { exitCode: property(input, "exitCode") as number }
+            : {}),
         },
       };
     case "app.diagnostics":
@@ -722,6 +1212,7 @@ function normalizeEvent(
           queuedCountBucket: countBucket(property(input, "queuedCount")),
           droppedCountBucket: countBucket(property(input, "droppedCount")),
           retryCountBucket: countBucket(property(input, "retryCount")),
+          oldestEventAgeBucket: ageBucket(property(input, "oldestEventAgeMs")),
           deliveryClass: normalizedEnum(property(input, "deliveryClass"), DELIVERY_CLASSES),
         },
       };
@@ -766,6 +1257,14 @@ function normalizeEvent(
           provider,
           from: normalizedEnum(property(input, "from"), PROVIDER_STATES),
           to: normalizedEnum(property(input, "to"), PROVIDER_STATES),
+          ...(property(input, "checkFailure") === undefined
+            ? {}
+            : {
+                checkFailure: normalizedEnum(
+                  property(input, "checkFailure"),
+                  STATUS_CHECK_FAILURES,
+                ),
+              }),
         },
       };
     case "provider.runtime.source.changed":
@@ -782,18 +1281,62 @@ function normalizeEvent(
     case "provider.lifecycle.started":
     case "provider.lifecycle.completed":
     case "provider.lifecycle.failed":
-    case "provider.lifecycle.cancelled":
+    case "provider.lifecycle.cancelled": {
+      const failed = name === "provider.lifecycle.failed";
+      // Read on every lifecycle event so a stray value never passes through on the others.
+      const failureClass = normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES);
+      const failureDetails = optionalProperties(input, {
+        failedCheck: LIFECYCLE_FAILED_CHECKS,
+        failureReason: SIGN_IN_FAILURE_REASONS,
+      });
+      const signInPage = optionalProperties(input, { signInPage: SIGN_IN_PAGES });
       return {
         name,
-        privacyLevel: name === "provider.lifecycle.failed" ? "essential" : "product",
-        priority: name === "provider.lifecycle.failed" ? "critical" : "core",
+        privacyLevel: failed ? "essential" : "product",
+        priority: failed ? "critical" : "core",
         properties: {
           provider,
           action: normalizedEnum(property(input, "action"), LIFECYCLE_ACTIONS),
           runtimeSource: normalizedEnum(property(input, "source"), RUNTIME_SOURCES),
           stage: normalizedEnum(property(input, "stage"), LIFECYCLE_STAGES),
-          failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
+          ...(failed ? { failureClass } : {}),
           durationBucket: durationBucket(property(input, "durationMs")),
+          trigger: normalizedEnum(property(input, "trigger"), LIFECYCLE_TRIGGERS, "user"),
+          ...optionalProperties(input, {
+            attempt: "count",
+            downloadSource: DOWNLOAD_SOURCES,
+            sourceKind: DOWNLOAD_SOURCE_KINDS,
+            downloadVariant: DOWNLOAD_VARIANTS,
+            downloadAttempts: "count",
+            networkKind: DOWNLOAD_NETWORK_KINDS,
+            compressedFailure: FAILURE_CLASSES,
+          }),
+          ...(failed ? failureDetails : {}),
+          // Every sign-in end says which page it waited on, so outcomes compare by page.
+          ...(name === "provider.lifecycle.started" ? {} : signInPage),
+          ...(property(input, "resumedBytes") === undefined
+            ? {}
+            : { resumedBucket: byteBucket(property(input, "resumedBytes")) }),
+          ...(property(input, "progressPercent") === undefined
+            ? {}
+            : { progressBucket: percentBucket(property(input, "progressPercent")) }),
+          ...(property(input, "bytesPerSecond") === undefined
+            ? {}
+            : { throughputBucket: throughputBucket(property(input, "bytesPerSecond")) }),
+        },
+      };
+    }
+    case "provider.runtime.first_pick":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          state: normalizedEnum(property(input, "state"), FIRST_PICK_STATES),
+          ...(property(input, "percent") === undefined
+            ? {}
+            : { percentBucket: percentBucket(property(input, "percent")) }),
         },
       };
     case "scient.operation.started":
@@ -812,7 +1355,45 @@ function normalizeEvent(
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           reviewRequired: normalizedBoolean(property(input, "reviewRequired")),
           ...captureProperties(input, name !== "scient.operation.started"),
+          ...(name === "scient.operation.started" ? {} : attributionProperties(input)),
+          ...optionalProperties(input, {
+            language: "identifier",
+            actor: COMPUTE_ACTORS,
+            entry: COMPUTE_ENTRIES,
+            runtimeSource: COMPUTE_RUNTIME_SOURCES,
+          }),
         },
+      };
+    case "provider.commands.observed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          provider,
+          modelKey: modelKey(property(input, "model")),
+          commandCategory: closedCategory(property(input, "commandCategory"), COMMAND_CATEGORIES),
+          commandCount: countOrZero(property(input, "commandCount")),
+          failedCount: countOrZero(property(input, "failedCount")),
+          ...optionalProperties(input, { stoppedCount: "count" }),
+        },
+      };
+    case "app.update.outcome": {
+      const properties = updateOutcomeProperties(input);
+      return {
+        name,
+        privacyLevel: "essential",
+        priority:
+          properties.step === "install" || properties.step === "apply" ? "critical" : "core",
+        properties,
+      };
+    }
+    case "app.update.summary":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "summary",
+        properties: updateSummaryProperties(input),
       };
     case "app.session.started":
       return {
@@ -878,6 +1459,7 @@ function normalizeEvent(
       const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : undefined;
       const plan = shortLabel(property(input, "plan"));
       const accountType = shortLabel(property(input, "accountType"));
+      const endpoint = accountEndpointProperties(input);
       const accountEmail =
         email !== undefined && isAllowedAccountEmail(name, "email", email) ? email : undefined;
       if (accountEmail === undefined && plan === undefined && accountType === undefined)
@@ -891,6 +1473,7 @@ function normalizeEvent(
           ...(accountEmail === undefined ? {} : { email: accountEmail }),
           ...(plan === undefined ? {} : { plan }),
           ...(accountType === undefined ? {} : { accountType }),
+          ...endpoint,
         },
       };
     }
@@ -981,6 +1564,7 @@ function normalizeEvent(
             delivery: "identifier",
             bindToCurrentThread: "boolean",
           }),
+          ...attributionProperties(input),
         },
       };
     case "mcp.delegated_task.finished":
@@ -997,7 +1581,18 @@ function normalizeEvent(
             crossProvider: "boolean",
             completionWake: DELEGATED_TASK_WAKES,
             durationSeconds: "count",
+            failureClass: TURN_FAILURE_CLASSES,
           }),
+          ...failureCodeProperty(normalizedProvider(property(input, "targetProvider")), input),
+          ...(property(input, "failurePhase") === undefined
+            ? {}
+            : {
+                failurePhase: closedCategory(
+                  property(input, "failurePhase"),
+                  DELEGATED_TASK_FAILURE_PHASES,
+                ),
+              }),
+          ...httpStatusProperty(input),
         },
       };
     case "provider.session.started":
@@ -1082,6 +1677,8 @@ function normalizeEvent(
       for (const key of VIEW_PROPERTIES[name]) {
         properties[key] = normalizedIdentifier(property(input, key), "other");
       }
+      if (name === "panel.viewed" && Object.hasOwn(input, "fileType"))
+        properties.fileType = normalizedFileType(property(input, "fileType"));
       return { name, privacyLevel: "product", priority: "core", properties };
     }
     case "provider.turn.usage": {
@@ -1164,7 +1761,9 @@ function normalizeEvent(
           ...optionalProperties(input, {
             browserToolCalls: "count",
             browserToolFailures: "count",
+            retryAttempts: "count",
           }),
+          ...turnRunProperties(input),
         },
       };
     case "provider.turn.failed":
@@ -1175,7 +1774,20 @@ function normalizeEvent(
         properties: {
           provider,
           modelKey: modelKey(property(input, "model")),
-          ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
+          ...optionalProperties(input, {
+            browserToolCalls: "count",
+            browserToolFailures: "count",
+            retryAttempts: "count",
+            // False when the run failed before its provider session started.
+            started: "boolean",
+            // Whose tool server failed to start, for a failure caused by one.
+            toolServerOwner: TOOL_SERVER_OWNERS,
+            // The request went to a custom API endpoint the user configured.
+            customEndpoint: "boolean",
+          }),
+          ...turnRunProperties(input),
+          ...failureCodeProperty(provider, input),
+          ...httpStatusProperty(input),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
         },
@@ -1189,6 +1801,7 @@ function normalizeEvent(
           provider,
           modelKey: modelKey(property(input, "model")),
           ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
+          ...turnRunProperties(input),
           durationBucket: durationBucket(property(input, "durationMs")),
           stopClass: normalizedEnum(property(input, "stopClass"), TURN_STOP_CLASSES),
         },
@@ -1527,15 +2140,4 @@ export function normalizeInheritedEvent(
     }
   }
   return { ...normalized, properties: { ...properties, ...envelope } };
-}
-
-const CONSENT_RANK: Readonly<Record<AnalyticsConsent, number>> = {
-  off: 0,
-  essential: 1,
-  product: 2,
-  diagnostic: 3,
-};
-
-export function consentAllows(consent: AnalyticsConsent, privacyLevel: EventPrivacyLevel): boolean {
-  return CONSENT_RANK[consent] >= CONSENT_RANK[privacyLevel];
 }

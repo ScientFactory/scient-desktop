@@ -74,7 +74,10 @@ function setup(snapshot = readText()) {
   const writeReceipt = Promise.withResolvers<void>();
   transport.command.mockReset().mockImplementation(async (_registry, command, payload) => {
     if (command === sourceControlEnvironment.startProjectClone)
-      return AsyncResult.success({ cwd: "/target/actual-clone" });
+      return AsyncResult.success({
+        projectId: payload.input.projectId,
+        cwd: "/target/actual-clone",
+      });
     if (command !== projectEnvironment.writeFile) throw new Error("Unexpected command");
     writes.push(payload);
     writeReceipt.resolve();

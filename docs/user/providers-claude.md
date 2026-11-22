@@ -97,6 +97,10 @@ When you set this field, Scient points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+File paths in the `--settings` and `--append-system-prompt-file` launch arguments
+can start with `~` for the home directory of the machine running Scient. Any
+other relative path is read from the thread's project folder, or its worktree.
+
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 Scient uses the Claude configuration on the connected server.
@@ -151,6 +155,31 @@ remaining wait when Claude reports a reset time. Claude may keep the turn open u
 reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
 when its displayed wait began.
 
+## Claude shows "Custom API endpoint"
+
+Claude sends its requests to Anthropic unless `ANTHROPIC_BASE_URL` points it somewhere else, such
+as OpenRouter or a local router. When it does, Settings → Providers shows **Custom API endpoint**
+and the line under it names that server and where the setting comes from:
+
+- **Claude's settings**: the `env` section of `~/.claude/settings.json` (or the file in this
+  provider's `CLAUDE_CONFIG_DIR`), a project's `.claude/settings.json`, or a `--settings` launch
+  argument. Another tool may have written it, or it may remain from an earlier Claude Code setup.
+- **Environment variable**: this provider's Environment variables in Scient, or a variable set on
+  your computer.
+
+Signing in to a Claude account does not change where requests go. If you did not mean to use
+another server, remove `ANTHROPIC_BASE_URL` from that place and restart Scient. A failed turn on a
+custom endpoint names the server it went to under the error.
+
+## Steering
+
+A steer waits until Claude finishes the tool calls it is running, then Claude reads it
+in the same turn. The message shows as unread until then. If Claude drops it before
+reading it, the message is sent as the next turn, after any messages queued before it.
+If Claude exits or the server restarts first, the message waits in the queue in that
+same place until you resume it. If you press Stop, Scient shows a notice with the text
+of any steer Claude had not read.
+
 ## Where Claude Skills Are Loaded
 
 Scient looks for local Claude skills in the Claude config directory's `skills` folder and
@@ -160,8 +189,9 @@ If the same skill name exists in more than one folder, the one in the Claude con
 wins, the same way Claude Code resolves it.
 
 Use `$` in the composer to select a skill. A skill set to `off` in Claude Code's
-`skillOverrides` is left out of both composer menus. Enabled installed Claude plugins also
-contribute skills under names such as `plugin:review`. Skills marked `disable-model-invocation`
+`skillOverrides` is left out of both composer menus. Enabled installed Claude plugins,
+and plugins synced from your claude.ai account, also contribute skills under names
+such as `plugin:review`. Skills marked `disable-model-invocation`
 can still be started by you. Invoke those one per message: Claude directly runs
 only the last named skill and may try to start earlier ones through its Skill
 tool, which refuses skills reserved for manual invocation.
@@ -173,6 +203,28 @@ To show Claude task lists in the web and desktop apps, add
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step. Unfinished tasks also stay in a bar
 above the composer until they are done, the session changes, or you dismiss them.
+
+## Sign in to an MCP server
+
+When an MCP server you added to Claude needs you to sign in, the thread shows a notice with
+**Sign in**, once per session; on mobile, tap the notice. Approve access on the page it opens. Your
+browser then goes to a page that may not load, especially when Claude runs on another machine:
+copy that page's address, paste it into Scient, and choose **Finish sign-in**. Claude keeps the
+sign-in and reconnects the server, and **Extensions** shows it signed in. Connectors you added on claude.ai are signed in on claude.ai,
+so Scient doesn't ask about them. Signing in needs permission to manage providers.
+
+## Claude in Chrome
+
+Claude threads can use the Claude in Chrome extension, which works in your own
+Chrome with its sign-ins. Scient sessions load it only when asked: add `--chrome`
+to **Launch arguments** in the Claude instance's settings in **Settings > Providers**.
+It applies to sessions that start after you save. Set up the extension as you would
+for Claude Code first; see Claude Code's [Chrome guide](https://code.claude.com/docs/en/chrome).
+
+The instance must be signed in with `/login` on a direct Anthropic plan. Instances
+that use an API key or a `claude setup-token` token don't get it, even with
+`--chrome`, and neither do third-party providers such as Amazon Bedrock. Claude Code
+doesn't support it in WSL.
 
 ## I Want Work And Personal Claude Accounts
 

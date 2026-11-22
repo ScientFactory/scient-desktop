@@ -38,6 +38,7 @@ const options = () => ({
   profilesDir: "/test/profiles",
   executable: vi.fn(async () => "/test/chromium"),
   env: {},
+  chrome: { version: "157.0.8103.78", platform: "linux" as NodeJS.Platform },
 });
 
 beforeEach(() => {

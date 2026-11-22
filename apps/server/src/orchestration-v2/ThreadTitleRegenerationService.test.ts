@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { placeholderThreadTitle } from "./placeholderThreadTitle.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const projectId = ProjectId.make("project:title-regeneration");
@@ -75,10 +77,12 @@ function makeHarness(
               workspaceRoot: "/repo",
               defaultModelSelection: modelSelection,
               defaultThreadEnvMode: null,
+              hasCustomTitle: false,
               autoPull: false,
               faviconPath: null,
               projectIcon: null,
               scripts: [],
+              trackedFolders: [],
               pinnedAt: null,
               archivedAt: null,
               createdAt: "2026-06-20T00:00:00.000Z",
@@ -188,6 +192,88 @@ describe("formatThreadTitleContext", () => {
 });
 
 describe("ThreadTitleRegenerationService", () => {
+  it.effect("keeps a title set before the first message unless it is a placeholder", () =>
+    Effect.gen(function* () {
+      const seed = "work on this and pr to dev";
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        // An MCP launch names the thread, or leaves a placeholder, and sends no message.
+        for (const [key, title, titleRenamed, compactFirst, expectedTitle, generates] of [
+          [
+            "preset",
+            "[API] #4821 - retry webhook deliveries after a timeout",
+            false,
+            false,
+            undefined,
+            false,
+          ],
+          ["placeholder", placeholderThreadTitle("Parent", 0), false, false, seed, true],
+          ["named like a placeholder", "Release thread 2", true, false, undefined, false],
+          ["named, then compacted", "Release notes", true, true, undefined, false],
+          ["draft titled by its /compact", "/compact", false, true, seed, true],
+        ] as const) {
+          const threadId = ThreadId.make(`thread:title:${key}`);
+          yield* threads.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`command:title:${key}:create`),
+            threadId,
+            projectId,
+            title,
+            ...(titleRenamed ? { titleRenamed } : {}),
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          if (compactFirst) {
+            yield* threads.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:title:${key}:compact`),
+              threadId,
+              messageId: MessageId.make(`command:title:${key}:compact:message`),
+              text: "/compact",
+              titleSeed: "/compact",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          }
+          const requestId = CommandId.make(`command:title:${key}:message`);
+          yield* threads.dispatch({
+            type: "message.dispatch",
+            commandId: requestId,
+            threadId,
+            messageId: MessageId.make(`command:title:${key}:message:message`),
+            text: seed,
+            titleSeed: seed,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "defer_start" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+
+          const settled = yield* threads.getThreadProjection(threadId);
+          assert.equal(settled.thread.title, expectedTitle ?? title, key);
+          assert.equal(
+            (yield* outbox.listByCommandId(requestId)).some(
+              (effect) => effect.request.type === "thread-title.generate",
+            ),
+            generates,
+            key,
+          );
+        }
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect(
     "titles an image-only first message without sending bootstrap text to the title model",
     () =>
@@ -337,6 +423,10 @@ describe("ThreadTitleRegenerationService", () => {
           const projection = yield* threads.getThreadProjection(threadId);
           assert.equal(projection.thread.title, "Fresh title");
           assert.isNotOk(projection.thread.titleRegeneration);
+          assert.deepInclude(projection.thread.lastTitleRegeneration, {
+            requestId,
+            status: "renamed",
+          });
         }
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -345,7 +435,14 @@ describe("ThreadTitleRegenerationService", () => {
   it.effect("clears the marker and keeps the title when generation fails", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        generateTitle: () => Effect.die(new Error("model unavailable")),
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail:
+                "Codex CLI command failed: OpenAI Codex\nuser\nConversation text\nmodel unavailable\n",
+            }),
+          ),
       });
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
@@ -367,6 +464,44 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        assert.deepInclude(projection.thread.lastTitleRegeneration, {
+          requestId,
+          status: "failed",
+          message: "model unavailable",
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("records an unchanged outcome when the model keeps the current title", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () => Effect.succeed({ title: "Seed title" }),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:unchanged:create",
+          thread: "thread:title:unchanged",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:unchanged:message",
+          threadId,
+          text: "Some conversation",
+        });
+        const requestId = yield* armRegeneration({
+          command: "command:title:unchanged:1",
+          threadId,
+        });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        const projection = yield* threads.getThreadProjection(threadId);
+        assert.deepInclude(projection.thread.lastTitleRegeneration, {
+          requestId,
+          status: "unchanged",
+        });
       }).pipe(Effect.provide(harness.layer));
     }),
   );

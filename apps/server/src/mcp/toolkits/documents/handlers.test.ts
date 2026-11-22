@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -93,6 +94,7 @@ const assetLayer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
+  WorkspacePreviewRevisions.layer,
   AssetSigner.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(configLayer))),
   ),
@@ -653,6 +655,47 @@ describe("Scient PDF build handler", () => {
       }
       expect(broker.invoke).not.toHaveBeenCalled();
       expect(store.beginProduction).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("accepts absolute paths inside the project and names a missing source's root", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-pdf-absolute-"));
+      yield* Effect.promise(() => writeHtml(root));
+      // macOS temp folders are /var/… or /tmp/… as agents see them, /private/… once resolved.
+      const spelled = root.replace(/^\/private(?=\/(?:var|tmp)\/)/u, "");
+      const projectId = ProjectId.make("project-pdf-absolute");
+      const threadId = ThreadId.make("thread-pdf-absolute");
+      const query = makeQuery({
+        project: makeProject(projectId, root),
+        thread: makeThread({ threadId, projectId }),
+      });
+      const store = makeStore();
+      const broker = makeBroker();
+      const context = {
+        invocation: makeInvocation(threadId),
+        query,
+        store: store.store,
+        broker: broker.broker,
+      };
+
+      const built = yield* runBuild(
+        buildScientPdfForInvocation({
+          sourcePath: NodePath.join(spelled, defaultBuildInput.sourcePath),
+          outputPath: NodePath.join(spelled, defaultBuildInput.outputPath),
+        }),
+        context,
+      );
+      expect(built).toMatchObject(defaultBuildInput);
+
+      const missing = yield* runBuild(
+        buildScientPdfForInvocation({ ...defaultBuildInput, sourcePath: "documents/missing.html" }),
+        context,
+      ).pipe(Effect.flip);
+      expect(missing).toMatchObject({ _tag: "ScientPdfBuildToolError", code: "source-not-found" });
+      expect(missing.message).toContain(
+        `No file at documents/missing.html in this project (${root})`,
+      );
     }),
   );
 

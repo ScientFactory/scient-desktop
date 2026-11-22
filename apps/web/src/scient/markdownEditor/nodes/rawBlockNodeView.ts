@@ -2,8 +2,10 @@ import { undo, redo } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
+import { msg } from "gt-react";
 
 import { getClientSettings } from "~/hooks/useSettings";
+import { m } from "~/i18n/messages";
 import { mountCodeBlockActions } from "./codeBlockActions";
 
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
@@ -18,15 +20,15 @@ export type ScientMarkdownRawSourceEditorRegistrar = (editor: HTMLTextAreaElemen
 function sourceKindLabel(kind: string): string {
   switch (kind) {
     case "definition":
-      return "Reference definition";
+      return m(msg("Reference definition"));
     case "html":
-      return "HTML source";
+      return m(msg("HTML source"));
     case "toml":
-      return "TOML source";
+      return m(msg("TOML source"));
     case "yaml":
-      return "YAML source";
+      return m(msg("YAML source"));
     default:
-      return kind.trim().length > 0 ? `${kind} source` : "Raw source";
+      return kind.trim().length > 0 ? m(msg("{kind} source", { kind })) : m(msg("Raw source"));
   }
 }
 

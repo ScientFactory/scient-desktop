@@ -36,6 +36,24 @@ it("compares old macOS records with tagged identities without conflating platfor
   expect(platformFileIdentity.equal(linux, { ...linux, subvolumeId: "2" })).toBe(false);
 });
 
+it("tells a Linux folder that reused an inode from the one it replaced, by generation", () => {
+  const linux = {
+    version: 1,
+    platform: "linux",
+    volume: "volume",
+    fileId: "42",
+    generation: "7",
+    subvolumeId: null,
+  } as const;
+  const { generation: _, ...legacy } = linux;
+  expect(decode(legacy)).toEqual(legacy);
+  expect(platformFileIdentity.equal(linux, { ...linux, generation: "8" })).toBe(false);
+  expect(platformFileIdentity.equal(linux, linux)).toBe(true);
+  expect(platformFileIdentity.equal(legacy, linux)).toBe(true);
+  expect(platformFileIdentity.lacksGeneration(legacy)).toBe(true);
+  expect(platformFileIdentity.lacksGeneration(linux)).toBe(false);
+});
+
 describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("macOS physical identity", () => {
   it("retains decimal file IDs and keys aliases by the same object", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-identity-"));

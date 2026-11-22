@@ -52,6 +52,7 @@ const thread = (now: DateTime.Utc, worktreePath: string | null): OrchestrationV2
 const project = (workspaceRoot: string) => ({
   projectId,
   title: "Project",
+  hasCustomTitle: false,
   workspaceRoot,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,
@@ -61,6 +62,7 @@ const project = (workspaceRoot: string) => ({
   faviconPath: null,
   projectIcon: null,
   scripts: [],
+  trackedFolders: [],
   createdAt: "2026-10-19T00:00:00.000Z",
   updatedAt: "2026-10-19T00:00:00.000Z",
   deletedAt: null,

@@ -11,19 +11,21 @@ import {
   HTML_RENDER_TOOL_NAME,
 } from "@t3tools/shared/htmlRender";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
+// SCIENT-FORK:START — the source rules the handler enforces, stated before a call is refused.
 const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_000)).annotate({
-  description: "Inline HTML.",
+  description: "Inline HTML. Pass this or path, not both.",
 });
 
 const HtmlPath = Schema.String.annotate({
-  description: "Absolute .html file path.",
+  description: "Absolute .html file path. Full-access threads only; others pass html.",
 });
+// SCIENT-FORK:END
 
 const PAGE_RULES =
   "Self-contained: inline <style> and <script>. Local images as absolute paths are inlined. Remote URLs load as-is.";
@@ -74,7 +76,8 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 // This affects only the caller's thread, not its workspace, so read-only sandboxes and plan mode may use it.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
@@ -112,7 +115,8 @@ const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const HtmlPreviewToolkit = Toolkit.make(HtmlPreviewTool);
 

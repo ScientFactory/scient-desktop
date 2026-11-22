@@ -127,8 +127,8 @@ cannot enforce, so upgrade Scient before you deploy a policy that uses them.
 ## Settings
 
 Each key under `settings` is a setting's path in the server's `settings.json`, such as
-`storageCleanup.logsAfterDays`. To find a path, change the setting in Scient and look in
-`settings.json` under `~/.scient-next/userdata`.
+`storageCleanup.logsAfterDays`. Run `scient policy settings` to list every path a policy can manage,
+with its default.
 
 - `"locked": false` sets a default. It applies wherever the user has not chosen a value of their
   own, and users can change it.
@@ -169,6 +169,7 @@ A few settings need care:
     "connect": false,
     "webhookTasks": false,
     "browserCookieImport": false,
+    "previewTunnel": false,
     "telemetry": false,
     "providers": {
       "allowedDrivers": ["claudeAgent", "codex"],
@@ -251,6 +252,10 @@ so restart Scient after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into Scient's
   browser.
+- `previewTunnel: false`: other devices cannot load this machine's `localhost` pages themselves.
+  Browser tabs stream from it instead, and port forwarding and **Open on this device** are
+  unavailable. This wins over the user's
+  [Preview tunnel setting](./remote-access.md#browser-on-a-remote-environment).
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
   relay connection traces. A policy cannot turn them on.
 
@@ -276,7 +281,7 @@ starts the binary you set.
 
 - `mode`: `auto` keeps the normal update flow. `off` stops Scient from checking for updates, for
   machines that get Scient through device management.
-- `feedUrl`: Scient updates from your own mirror instead of GitHub: the desktop app,
+- `feedUrl`: Scient updates from your own mirror instead of Scient's own sources: the desktop app,
   `scient update`, and updates started from another device. Publish only the versions you have
   approved, laid out as on a GitHub release. The release's update files (`latest.yml`,
   `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, and their `beta` or `nightly`

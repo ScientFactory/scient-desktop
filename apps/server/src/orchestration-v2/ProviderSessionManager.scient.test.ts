@@ -94,7 +94,7 @@ import { AgentInvocationContext } from "../scient/operations/AgentInvocationCont
 import { dispatchScientOperation } from "../scient/operations/AgentOperationDispatcher.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
-import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
+import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { codexThreadRuntimeParams } from "./Adapters/CodexAdapterV2.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -141,6 +141,7 @@ it.effect.each(
                 "orchestration",
                 "worktree",
                 "pull-requests",
+                "issues",
                 "documents:build",
                 "compute",
                 "sources:read",
@@ -2670,6 +2671,116 @@ for (const status of ["error", "stopped"] as const) {
 }
 
 it.effect.each(
+  (["success", "pending", "failure"] as const).map((close) => ({
+    caseTitle: `ProviderSessionManagerV2 retires the exact superseded error owner of a new session id after ${close} close`,
+    close,
+  })),
+)("$caseTitle", ({ close }) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const closeEntered = yield* Deferred.make<void>();
+    const closeRelease = yield* Deferred.make<void>();
+    let unhealthy = false;
+    const supersededId = ProviderSessionId.make(`superseded-owner-${close}`);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const events = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`superseded-owner-${close}`);
+      const peerThreadId = ThreadId.make(`superseded-peer-${close}`);
+      yield* events.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerThreadId, now }),
+        ],
+      });
+      const original = yield* manager.open({
+        threadId,
+        providerSessionId: supersededId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const peerId = ProviderSessionId.make(`superseded-peer-${close}`);
+      const peer = yield* manager.open({
+        threadId: peerThreadId,
+        providerSessionId: peerId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* Effect.sync(() => {
+        unhealthy = true;
+      });
+      assert.equal(original.providerSession.status, "error");
+      const input = {
+        threadId,
+        providerSessionId: ProviderSessionId.make(`superseding-owner-${close}`),
+        modelSelection,
+        runtimePolicy,
+        supersededProviderSessionId: supersededId,
+      };
+      const opening = yield* manager.open(input).pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(closeEntered);
+      assert.isTrue(Option.isNone(yield* manager.get(supersededId)));
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+      if (close === "pending") {
+        yield* TestClock.adjust("31 seconds");
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(opening)));
+        assert.equal(
+          Option.getOrUndefined(yield* manager.getCloseState!(supersededId))?.state,
+          "pending",
+        );
+        // A retried start cannot open beside the pending close.
+        assert.isTrue(Exit.isFailure(yield* manager.open(input).pipe(Effect.exit)));
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }
+      yield* Deferred.succeed(closeRelease, undefined);
+      const result = yield* Fiber.join(opening);
+      if (close === "failure") {
+        assert.isTrue(Exit.isFailure(result));
+        assert.equal(
+          Option.getOrUndefined(yield* manager.getCloseState!(supersededId))?.state,
+          "failed",
+        );
+        assert.isTrue(Exit.isFailure(yield* manager.open(input).pipe(Effect.exit)));
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      } else {
+        if (close === "pending") yield* manager.close(supersededId);
+        const replacement =
+          close === "pending"
+            ? yield* manager.open(input)
+            : Exit.isSuccess(result)
+              ? result.value
+              : undefined;
+        assert.ok(replacement);
+        assert.equal(replacement.providerSessionId, input.providerSessionId);
+        assert.equal((yield* Ref.get(state)).openCount, 3);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }
+      assert.strictEqual(Option.getOrUndefined(yield* manager.get(peerId)), peer);
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(closeRelease, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
+          liveStatus: (ordinal) => (ordinal === 1 && unhealthy ? "error" : "ready"),
+          closeSession: (sessionId) =>
+            sessionId !== supersededId
+              ? Effect.void
+              : Effect.gen(function* () {
+                  yield* Deferred.succeed(closeEntered, undefined);
+                  yield* Deferred.await(closeRelease);
+                  if (close === "failure")
+                    return yield* Effect.die("Controlled superseded-owner close failure");
+                }),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect.each(
   (["success", "failure", "interrupted-waiter"] as const).map((close) => ({
     caseTitle: `ProviderSessionManagerV2 joins exact sealed-prefix retirement with ${close} without losing peers or same-ID fencing`,
     close,
@@ -2924,6 +3035,7 @@ it.effect(
             "orchestration",
             "worktree",
             "pull-requests",
+            "issues",
             "documents:build",
             "compute",
             "sources:read",
@@ -3007,14 +3119,17 @@ it.effect(
               diagnostics: [],
             }),
         };
-        yield* prepareScientV2SkillTurn({
+        yield* prepareScientV2SkillScope({
           threadId,
           driver: CODEX_DRIVER,
           mcpSessionInjection: true,
           projectRoot: undefined,
           text: "Prepare selected skill",
           selectedScientSkillNames: [release.name],
-        }).pipe(Effect.provideService(ScientSkillSessionPlanner, planner));
+        }).pipe(
+          Effect.provideService(ScientSkillSessionPlanner, planner),
+          Effect.flatMap((prepared) => prepared.publish),
+        );
         const selectedScope = yield* registry.resolve(token!);
         if (selectedScope === undefined)
           return yield* Effect.die("Stable native credential was lost");
@@ -3026,14 +3141,17 @@ it.effect(
         );
         assert.equal(loaded.instructions, release.instructions);
         assert.equal(loaded.skill.releaseKey, releaseKey);
-        yield* prepareScientV2SkillTurn({
+        yield* prepareScientV2SkillScope({
           threadId,
           driver: CODEX_DRIVER,
           mcpSessionInjection: true,
           projectRoot: undefined,
           text: "Clear selection",
           selectedScientSkillNames: [],
-        }).pipe(Effect.provideService(ScientSkillSessionPlanner, planner));
+        }).pipe(
+          Effect.provideService(ScientSkillSessionPlanner, planner),
+          Effect.flatMap((prepared) => prepared.publish),
+        );
         const clearedScope = yield* registry.resolve(token!);
         if (clearedScope === undefined)
           return yield* Effect.die("Stable native credential was lost");
@@ -3081,6 +3199,8 @@ function runIdleThreadUnloadScenario(
     /** Ends run `ordinal` on a thread and waits for the session to process it. */
     readonly endTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     readonly resume: (threadId: ThreadId) => Effect.Effect<void>;
+    /** Repoints the thread's durable provider row to another session, as a handoff does. */
+    readonly reassign: (threadId: ThreadId, owner: ProviderSessionId) => Effect.Effect<void>;
   }) => Effect.Effect<void, ProviderSessionManager.ProviderSessionManagerV2Error>,
   options: {
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
@@ -3202,6 +3322,21 @@ function runIdleThreadUnloadScenario(
             yield* Fiber.join(received);
           }),
         ).pipe(Effect.orDie);
+      const reassign = (threadId: ThreadId, owner: ProviderSessionId) =>
+        Effect.gen(function* () {
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-thread.updated",
+                threadId,
+                driver: CODEX_DRIVER,
+                occurredAt: now,
+                payload: { ...providerThreadOf(threadId), providerSessionId: owner },
+              },
+            ],
+          });
+        }).pipe(Effect.orDie);
 
       // B's running turn keeps the shared runtime itself busy throughout.
       yield* startTurn(threadB, 1);
@@ -3216,6 +3351,7 @@ function runIdleThreadUnloadScenario(
         startTurnOnly,
         endTurn,
         resume,
+        reassign,
       });
     }).pipe(
       Effect.provide(
@@ -3306,6 +3442,45 @@ it.effect.each(["resume", "start"] as const)(
             yield* Deferred.await(releaseUnload);
             startsBeforeUnloadFinished = yield* Ref.get(nativeStarts);
           }),
+        },
+      );
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 handoff detach waits for an in-flight idle unload and re-joins its release",
+  () =>
+    Effect.gen(function* () {
+      const unloadStarted = yield* Deferred.make<void>();
+      const releaseUnload = yield* Deferred.make<void>();
+      yield* runIdleThreadUnloadScenario(
+        "idle-unload-handoff",
+        ({ state, manager, providerSessionId, threadA, startTurn, endTurn, reassign }) =>
+          Effect.gen(function* () {
+            yield* startTurn(threadA, 1);
+            yield* endTurn(threadA, 1);
+            yield* TestClock.adjust("1 second");
+            // The idle unsubscribe is in flight and its tracking row is gone.
+            yield* Deferred.await(unloadStarted);
+            yield* reassign(threadA, ProviderSessionId.make("replacement-owner"));
+            const detach = yield* manager
+              .detach({ providerSessionId, threadId: threadA })
+              .pipe(Effect.forkScoped);
+            yield* Effect.yieldNow;
+            yield* Effect.yieldNow;
+            // The replacement may resume once detach returns; the old writer is still held.
+            assert.isUndefined(detach.pollUnsafe());
+            yield* Deferred.succeed(releaseUnload, undefined);
+            yield* Fiber.join(detach);
+            assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+              `native-${threadA}`,
+              `native-${threadA}`,
+            ]);
+          }).pipe(Effect.scoped),
+        {
+          beforeUnload: Deferred.succeed(unloadStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseUnload)),
+          ),
         },
       );
     }).pipe(Effect.scoped),
@@ -4474,4 +4649,60 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
 
     assert.equal((yield* Ref.get(state)).closeCount, 1);
   }),
+);
+
+// Scient Agent's warming stops up to half an hour after the run's subscribers have left.
+it.effect(
+  "ProviderSessionManagerV2 keeps an idle thread's warming stop with no run subscribed",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:warming-stopped");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const afterSequence = yield* eventSink.latestSequence({ threadId });
+        const persisted = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter((stored) => stored.event.type === "provider-thread.updated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const promptCacheWarmingStopped = {
+          stoppedAt: "2026-11-16T12:29:00.000Z",
+          expiresAt: "2026-11-16T12:31:00.000Z",
+        };
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.ok(queue);
+        yield* Queue.offer(queue, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: { ...providerThread, promptCacheWarmingStopped },
+          sessionScoped: true,
+        });
+        assert.isTrue(Option.isSome(yield* Fiber.join(persisted)));
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.deepEqual(
+          projection.providerThreads.find((thread) => thread.id === providerThread.id)
+            ?.promptCacheWarmingStopped,
+          promptCacheWarmingStopped,
+        );
+      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })), Effect.scoped);
+    }),
 );

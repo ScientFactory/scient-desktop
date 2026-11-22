@@ -45,7 +45,10 @@ it("adds exact declared full-access confirmation without modifying captured prom
       type: "session.update",
       input: {
         sessionID: "recorded-session",
-        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        permission: [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "external_directory", pattern: "*", action: "allow" },
+        ],
       },
     },
   });
@@ -55,7 +58,10 @@ it("adds exact declared full-access confirmation without modifying captured prom
       operation: "session.get",
       data: {
         id: "recorded-session",
-        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        permission: [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "external_directory", pattern: "*", action: "allow" },
+        ],
       },
     },
   });

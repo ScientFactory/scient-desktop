@@ -60,7 +60,7 @@ describe("AnalyticsOutbox", () => {
     const first = new AnalyticsOutbox(path);
     expect(first.enqueue(usage)).toBe(true);
     expect(first.enqueue(usage)).toBe(false);
-    first.markFailed([usage.id], "network", 0);
+    first.markAttempted([usage.id], "network");
     first.close();
     const reopened = new AnalyticsOutbox(path);
     const pending = reopened.pending(50, Date.parse("2026-10-20T00:00:00.000Z"));
@@ -108,11 +108,12 @@ describe("AnalyticsOutbox", () => {
     );
     outbox.enqueueBatch([event("app.health")], ["critical"]);
     expect(outbox.size()).toBe(10_000);
+    expect(outbox.takeDroppedCount()).toBe(2);
     expect(outbox.pending(1, Date.parse("2026-10-20T00:00:00.000Z"))[0]?.name).toBe("app.health");
     outbox.close();
   });
 
-  it("quarantines forbidden persisted properties and retires expired or exhausted rows", () => {
+  it("quarantines forbidden persisted properties and retires expired or repeatedly rejected rows", () => {
     const outbox = new AnalyticsOutbox(fixturePath());
     const now = Date.parse("2026-10-20T00:00:00.000Z");
     const safe = event("app.health");
@@ -128,14 +129,43 @@ describe("AnalyticsOutbox", () => {
       ...event("app.diagnostics"),
       occurred_at: new Date(now - 31 * 86400000).toISOString(),
     };
-    const exhausted = event("app.health");
+    const rejected = event("app.health");
+    const unreachable = event("app.health");
     outbox.enqueueBatch(
-      [safe, injected, old, diagnostic, exhausted],
-      Array.from({ length: 5 }, () => "core"),
+      [safe, injected, old, diagnostic, rejected, unreachable],
+      Array.from({ length: 6 }, () => "core"),
     );
-    for (let i = 0; i < 20; i += 1) outbox.markFailed([exhausted.id], "network", 0);
-    expect(outbox.pending(50, now).map((entry) => entry.id)).toEqual([safe.id]);
-    expect(outbox.size()).toBe(1);
+    for (let i = 0; i < 20; i += 1) outbox.markRejected([rejected.id], "http-400", 0);
+    for (let i = 0; i < 25; i += 1) outbox.markAttempted([unreachable.id], "timeout");
+    expect(
+      outbox
+        .pending(50, now)
+        .map((entry) => entry.id)
+        .toSorted(),
+    ).toEqual([safe.id, unreachable.id].toSorted());
+    expect(outbox.size()).toBe(2);
+    expect(outbox.takeDroppedCount()).toBe(4);
+    expect(outbox.takeDroppedCount()).toBe(0);
+    outbox.close();
+  });
+
+  it("holds a rejected event until its retry time but leaves a transport failure due", () => {
+    const outbox = new AnalyticsOutbox(fixturePath());
+    const now = Date.parse("2026-10-20T00:00:00.000Z");
+    const rejected = event("app.health");
+    const timedOut = event("project.opened");
+    outbox.enqueueBatch([rejected, timedOut], ["core", "core"]);
+    outbox.markRejected([rejected.id], "http-400", now + 5_000);
+    outbox.markAttempted([timedOut.id], "timeout");
+    expect(outbox.pending(50, now)).toMatchObject([
+      { id: timedOut.id, attemptCount: 1, rejectionCount: 0 },
+    ]);
+    expect(
+      outbox
+        .pending(50, now + 5_000)
+        .map((entry) => entry.id)
+        .toSorted(),
+    ).toEqual([rejected.id, timedOut.id].toSorted());
     outbox.close();
   });
 });

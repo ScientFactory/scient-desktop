@@ -1,6 +1,7 @@
 /* A single decorative outline keeps the standard card radius and a smaller raised cue. */
 .settings-source-group {
   position: relative;
+  min-width: 0;
   isolation: isolate;
 }
 

@@ -1,4 +1,5 @@
 // Thin composer presentation for Scient-owned local voice dictation.
+import { T, useGT, Var } from "gt-react";
 // Async lifecycle and stale-operation protection live in the controller hook;
 // this component only renders the current state into one explicit footer slot.
 
@@ -27,10 +28,11 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip.tsx";
 import { cn } from "../../lib/utils.ts";
-import { useClientSettings } from "../../hooks/useSettings.ts";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { buildVoiceWaveformLevels, VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
+import { useChatGptDictation } from "./chatGptDictation.ts";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
 import {
   makeVoiceTranscriptCorrectionClient,
@@ -56,6 +58,7 @@ export interface ScientVoiceComposerControlProps {
 }
 
 function formatModelSize(byteSize: number): string {
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- a size with its unit symbol
   return `~${Math.round(byteSize / 1024 / 1024)} MiB`;
 }
 
@@ -113,7 +116,7 @@ function VoiceErrorText({
         </Tooltip>
         {onOpenSettings ? (
           <InlineButton tone="destructive" onClick={onOpenSettings} type="button">
-            Open Settings
+            <T>Open Settings</T>
           </InlineButton>
         ) : null}
       </div>
@@ -125,21 +128,35 @@ interface VoiceModelSetupPickerProps {
   readonly disabled: boolean;
   readonly snapshot: VoiceModelsSnapshot | null;
   readonly onSelect: (modelId: VoiceModelId) => void;
+  /** Offers ChatGPT first, through a provider's ChatGPT sign-in. */
+  readonly onChooseChatGpt?: (() => void) | undefined;
 }
+
+const SETUP_OPTION_CLASS_NAME =
+  "group flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+const SETUP_OPTION_ICON_CLASS_NAME =
+  "mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground";
 
 function VoiceModelSetupPicker({
   disabled,
   snapshot,
   onSelect,
+  onChooseChatGpt,
 }: VoiceModelSetupPickerProps): ReactNode {
-  const models = snapshot?.models ?? [];
+  // Models this computer cannot run are not offered; ChatGPT may still be.
+  const models = snapshot?.runtimeAvailable ? snapshot.models : [];
   const recommendedModelId = snapshot?.recommendation?.modelId ?? null;
 
   return (
-    <Popover>
-      <PopoverTrigger render={<ComposerControl disabled={disabled || models.length === 0} />}>
+    // The microphone was just pressed: the choices open at once.
+    <Popover defaultOpen>
+      <PopoverTrigger
+        render={
+          <ComposerControl disabled={disabled || (models.length === 0 && !onChooseChatGpt)} />
+        }
+      >
         <ComposerControlIcon icon={MicIcon} />
-        Choose voice model
+        <T>Choose voice model</T>
       </PopoverTrigger>
       <PopoverPopup
         align="end"
@@ -149,12 +166,42 @@ function VoiceModelSetupPicker({
         sideOffset={8}
       >
         <div className="space-y-1 p-2">
+          {onChooseChatGpt ? (
+            <button
+              className={SETUP_OPTION_CLASS_NAME}
+              disabled={disabled}
+              onClick={onChooseChatGpt}
+              type="button"
+            >
+              <span className="min-w-0 flex-1 space-y-0.5">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium text-sm">ChatGPT</span>
+                  <Badge size="sm" variant="info">
+                    <T>Nothing to download</T>
+                  </Badge>
+                </span>
+                <span className="block text-muted-foreground text-xs leading-4">
+                  <T>
+                    Uses your ChatGPT sign-in. Recordings go to OpenAI, which keeps them for 30
+                    days.
+                  </T>
+                </span>
+              </span>
+              <MicIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+            </button>
+          ) : null}
+          {onChooseChatGpt && models.length > 0 ? (
+            <p className="px-2.5 pt-1.5 text-muted-foreground text-xs">
+              <T>Or keep recordings on this computer</T>
+            </p>
+          ) : null}
           {models.map((model) => {
             const recommended = model.id === recommendedModelId;
+            const downloaded = model.state.state === "ready";
             return (
               <button
                 key={model.id}
-                className="group flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                className={SETUP_OPTION_CLASS_NAME}
                 disabled={disabled}
                 onClick={() => onSelect(model.id)}
                 type="button"
@@ -164,28 +211,36 @@ function VoiceModelSetupPicker({
                     <span className="font-medium text-sm">{model.displayName}</span>
                     {recommended ? (
                       <Badge size="sm" variant="info">
-                        Best for this computer
+                        <T>Best for this computer</T>
                       </Badge>
                     ) : null}
                   </span>
                   <span className="block text-muted-foreground text-xs leading-4">
-                    {model.description} · {formatModelSize(model.byteSize)}
+                    {model.description} ·{" "}
+                    {downloaded ? <T>On this computer</T> : formatModelSize(model.byteSize)}
                   </span>
                 </span>
-                <DownloadIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground" />
+                {downloaded ? (
+                  <MicIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+                ) : (
+                  <DownloadIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+                )}
               </button>
             );
           })}
         </div>
-        <Button
-          className="justify-start"
-          render={<Link to="/settings/voice" />}
-          size="compact"
-          variant="ghost-muted"
-        >
-          <SlidersHorizontalIcon className="text-current" />
-          Manage
-        </Button>
+        {/* Inset like the options above, so its hover never touches the popup's corner. */}
+        <div className="px-2 pb-2">
+          <Button
+            className="justify-start"
+            render={<Link to="/settings/voice" />}
+            size="compact"
+            variant="ghost-muted"
+          >
+            <SlidersHorizontalIcon className="text-current" />
+            <T context="verb, manage voice models">Manage</T>
+          </Button>
+        </div>
       </PopoverPopup>
     </Popover>
   );
@@ -200,15 +255,18 @@ export function ScientVoiceComposerControl({
   onBusyChange,
   onRequestSubmit,
   className,
-  ariaLabel = "Dictate a voice message",
+  ariaLabel,
   presentation = "composer",
   readyModelOnly = false,
 }: ScientVoiceComposerControlProps): ReactNode {
+  const gt = useGT();
   const client = getVoiceBridge();
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const engine = useClientSettings((settings) => settings.voiceDictationEngine);
+  const chatGpt = useChatGptDictation(environmentId);
   const runVoiceTranscriptCorrection = useAtomCommand(voiceTranscriptCorrectionCommand, {
     reportFailure: false,
   });
@@ -218,6 +276,10 @@ export function ScientVoiceComposerControl({
     correctionClient,
     correctionEnabled,
     languagePreference,
+    engine,
+    chatGpt: chatGpt.transcriber,
+    chatGptUnavailableMessage: chatGpt.unavailableMessage,
+    onEngineChosen: (chosen) => void updateClientSettings({ voiceDictationEngine: chosen }),
     ...(environmentId === undefined ? {} : { environmentId }),
     draftOrigin,
     localFieldKey,
@@ -242,8 +304,10 @@ export function ScientVoiceComposerControl({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports busy=false to the parent callback on unmount
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
+  // A surface that offers dictation only when it is ready hides it while its engine is not.
   const readyModelBecameUnavailable =
     readyModelOnly &&
+    engine !== "chatgpt" &&
     (controller.phase === "setup-prompt" ||
       (controller.modelSnapshot !== null &&
         !hasReadySelectedVoiceModel(controller.modelSnapshot)) ||
@@ -274,7 +338,7 @@ export function ScientVoiceComposerControl({
                 {formatVoiceTimer(controller.elapsedMs)}
               </span>
               <span className="sr-only" role="status">
-                Recording
+                <T context="voice recording in progress">Recording</T>
               </span>
             </>
           ) : (
@@ -288,10 +352,10 @@ export function ScientVoiceComposerControl({
                 role="status"
               >
                 {controller.phase === "requesting-permission"
-                  ? "Waiting for microphone access…"
+                  ? gt("Waiting for microphone access…")
                   : controller.phase === "transcribing"
-                    ? "Transcribing…"
-                    : "Correcting transcript…"}
+                    ? gt("Transcribing…")
+                    : gt("Correcting transcript…")}
               </span>
               <span aria-hidden="true" className="w-9 shrink-0" />
             </>
@@ -305,7 +369,7 @@ export function ScientVoiceComposerControl({
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Cancel recording (Esc)"
+                    aria-label={gt("Cancel recording (Esc)")}
                     onClick={() => void controller.cancel()}
                     size="icon-sm"
                     variant="ghost"
@@ -314,13 +378,15 @@ export function ScientVoiceComposerControl({
               >
                 <XIcon />
               </TooltipTrigger>
-              <TooltipPopup>Cancel recording (Esc)</TooltipPopup>
+              <TooltipPopup>
+                <T>Cancel recording (Esc)</T>
+              </TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Transcribe and insert (Enter)"
+                    aria-label={gt("Transcribe and insert (Enter)")}
                     onClick={() => void controller.stop(false)}
                     size="icon-sm"
                     variant="ghost"
@@ -329,14 +395,16 @@ export function ScientVoiceComposerControl({
               >
                 <CornerDownLeftIcon />
               </TooltipTrigger>
-              <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
+              <TooltipPopup>
+                <T>Transcribe and insert (Enter)</T>
+              </TooltipPopup>
             </Tooltip>
             {onRequestSubmit ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <Button
-                      aria-label="Transcribe and send"
+                      aria-label={gt("Transcribe and send")}
                       onClick={() => void controller.stop(true)}
                       size="icon-sm"
                       variant="round-primary"
@@ -345,7 +413,9 @@ export function ScientVoiceComposerControl({
                 >
                   <ArrowUpIcon />
                 </TooltipTrigger>
-                <TooltipPopup>Transcribe and send</TooltipPopup>
+                <TooltipPopup>
+                  <T>Transcribe and send</T>
+                </TooltipPopup>
               </Tooltip>
             ) : null}
           </div>
@@ -354,14 +424,14 @@ export function ScientVoiceComposerControl({
         <div data-scient-voice-actions="true" className={actionsClassName}>
           {controller.phase === "correcting" ? (
             <Button onClick={controller.useOriginal} size="xs" variant="ghost-muted">
-              Use original
+              <T>Use original</T>
             </Button>
           ) : (
             <Button
               aria-label={
                 controller.phase === "requesting-permission"
-                  ? "Cancel microphone request"
-                  : "Cancel transcription"
+                  ? gt("Cancel microphone request")
+                  : gt("Cancel transcription")
               }
               onClick={() => void controller.cancel()}
               size="icon-sm"
@@ -388,9 +458,12 @@ export function ScientVoiceComposerControl({
             disabled={disabled}
             onSelect={(modelId) => void controller.setupModel(modelId)}
             snapshot={controller.modelSnapshot}
+            onChooseChatGpt={
+              controller.chatGptOffered ? () => void controller.chooseChatGpt() : undefined
+            }
           />
           <Button
-            aria-label="Dismiss voice setup"
+            aria-label={gt("Dismiss voice setup")}
             onClick={controller.dismissSetup}
             size="icon-sm"
             variant="ghost"
@@ -403,7 +476,9 @@ export function ScientVoiceComposerControl({
           <div aria-live="polite" className="flex items-center gap-2" role="status">
             <Loader2Icon aria-hidden="true" className="size-4 shrink-0 animate-spin" />
             <span className="text-muted-foreground text-xs">
-              Downloading voice model… {controller.downloadPercent}%
+              <T>
+                Downloading voice model… <Var>{controller.downloadPercent}</Var>%
+              </T>
             </span>
           </div>
           <TooltipProvider delay={40} closeDelay={0} timeout={300}>
@@ -411,7 +486,7 @@ export function ScientVoiceComposerControl({
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Cancel voice setup"
+                    aria-label={gt("Cancel voice setup")}
                     onClick={() => void controller.cancel()}
                     size="icon-sm"
                     variant="ghost"
@@ -420,14 +495,16 @@ export function ScientVoiceComposerControl({
               >
                 <XIcon />
               </TooltipTrigger>
-              <TooltipPopup>Cancel voice setup</TooltipPopup>
+              <TooltipPopup>
+                <T>Cancel voice setup</T>
+              </TooltipPopup>
             </Tooltip>
           </TooltipProvider>
         </div>
       ) : (
         <>
           <ComposerControl
-            aria-label={ariaLabel}
+            aria-label={ariaLabel ?? gt("Dictate a voice message")}
             disabled={disabled || controller.phase !== "idle"}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => void controller.activate()}

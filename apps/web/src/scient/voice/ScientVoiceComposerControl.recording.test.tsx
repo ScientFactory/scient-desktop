@@ -2,6 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { VoicePhase } from "./useScientVoiceController.ts";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const controllerState = vi.hoisted(() => ({
   phase: "recording" as VoicePhase,
   levels: [] as number[],
@@ -36,7 +40,9 @@ vi.mock("./useScientVoiceController.ts", async (importOriginal) => {
       microphonePermissionDenied: controllerState.microphonePermissionDenied,
       downloadPercent: 0,
       modelSnapshot: controllerState.modelSnapshot,
+      chatGptOffered: false,
       activate: async () => undefined,
+      chooseChatGpt: async () => undefined,
       setupModel: async () => undefined,
       dismissSetup: () => undefined,
       stop: async () => undefined,

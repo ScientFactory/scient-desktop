@@ -4,10 +4,28 @@ import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { TrimmedNonEmptyString } from "../baseSchemas.ts";
 
 export const ExtensionAudience = Schema.Union([
-  Schema.Struct({ layer: Schema.Literal("scient") }),
+  /** Scient's own connectors and plugins: every agent, or only the agents the person chose. */
+  Schema.Struct({
+    layer: Schema.Literal("scient"),
+    agents: Schema.optional(Schema.Array(ProviderInstanceId)),
+  }),
+  /**
+   * A Claude Code plugin: the Claude instances and Scient Agents that read the Claude home it is
+   * in (`pluginHome`, when known), and the agent that listed it.
+   */
   Schema.Struct({
     layer: Schema.Literal("shared"),
     ownerInstanceId: Schema.optional(ProviderInstanceId),
+    pluginHome: Schema.optional(TrimmedNonEmptyString),
+  }),
+  /**
+   * A Codex plugin: its Codex instance, and Scient Agents that load Codex's installed plugins
+   * from the same Codex home (`pluginHome`, when known).
+   */
+  Schema.Struct({
+    layer: Schema.Literal("codex"),
+    ownerInstanceId: Schema.optional(ProviderInstanceId),
+    pluginHome: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     layer: Schema.Literal("agent"),
@@ -16,11 +34,27 @@ export const ExtensionAudience = Schema.Union([
     label: TrimmedNonEmptyString,
     reason: TrimmedNonEmptyString,
   }),
+  /** A service each agent reaches through its own account: a ChatGPT app or claude.ai connector. */
+  Schema.Struct({
+    layer: Schema.Literal("account"),
+    /** Agents whose own account has the service connected. */
+    connected: Schema.Array(
+      Schema.Struct({ instanceId: ProviderInstanceId, label: TrimmedNonEmptyString }),
+    ),
+    /** Agents that can have it after a step, and the step. */
+    pending: Schema.Array(
+      Schema.Struct({ instanceId: ProviderInstanceId, reason: TrimmedNonEmptyString }),
+    ),
+  }),
 ]);
 export type ExtensionAudience = typeof ExtensionAudience.Type;
 
 export const ExtensionAgentStores = Schema.Struct({
+  /** Claude Code's official store entry, `<plugin>@claude-plugins-official`. */
+  claude: Schema.optional(TrimmedNonEmptyString),
   codex: Schema.optional(TrimmedNonEmptyString),
+  /** The Antigravity Marketplace entry id, `<plugin>@<catalog>`. */
+  antigravity: Schema.optional(TrimmedNonEmptyString),
 });
 
 export function supportsScientClaudePlugins(version: string | null | undefined): boolean {

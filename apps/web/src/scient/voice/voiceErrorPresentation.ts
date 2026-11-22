@@ -1,4 +1,8 @@
-const VOICE_OPERATION_FAILED_MESSAGE = "Voice operation failed. Try again.";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
+
+const voiceOperationFailedMessage = () => m(msg("Voice operation failed. Try again."));
 
 function sanitizeVoiceErrorMessage(message: string): string {
   const sanitized = message
@@ -10,7 +14,7 @@ function sanitizeVoiceErrorMessage(message: string): string {
     )
     .trim();
   return sanitized === "Voice messages must be between 1 ms and 180 seconds."
-    ? "Record speech, up to 3 minutes."
+    ? m(msg("Record speech, up to 3 minutes."))
     : sanitized;
 }
 
@@ -18,11 +22,11 @@ export function describeVoiceError(error: unknown): string {
   if (error !== null && typeof error === "object" && "safeMessage" in error) {
     const safe = (error as { readonly safeMessage?: unknown }).safeMessage;
     if (typeof safe === "string" && safe.trim().length > 0)
-      return sanitizeVoiceErrorMessage(safe) || VOICE_OPERATION_FAILED_MESSAGE;
+      return sanitizeVoiceErrorMessage(safe) || voiceOperationFailedMessage();
   }
   if (error instanceof Error) {
     const sanitized = sanitizeVoiceErrorMessage(error.message);
     if (sanitized.length > 0) return sanitized;
   }
-  return VOICE_OPERATION_FAILED_MESSAGE;
+  return voiceOperationFailedMessage();
 }

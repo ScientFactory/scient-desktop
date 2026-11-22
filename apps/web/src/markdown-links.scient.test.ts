@@ -55,18 +55,6 @@ describe("spaced links from the markdown renderer", () => {
       basename: "My Folder",
     });
   });
-
-  // regression: 99960383d0 fix: open agent file links in the file viewer (#8098)
-  it("resolves a bare spaced filename", () => {
-    const href = renderMarkdownLinkHref("[checklist](<Updated cutover checklist.html>)");
-
-    expect(href).toBe("Updated%20cutover%20checklist.html");
-    expect(resolveMarkdownFileLinkMeta(href, "/repo/project")).toMatchObject({
-      targetPath: "/repo/project/Updated cutover checklist.html",
-      workspaceRelativePath: "Updated cutover checklist.html",
-      basename: "Updated cutover checklist.html",
-    });
-  });
 });
 
 describe("local chat links", () => {

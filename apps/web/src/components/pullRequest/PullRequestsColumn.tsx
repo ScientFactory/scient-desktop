@@ -1,4 +1,7 @@
 import type { PullRequestInvolvement, PullRequestListState } from "@t3tools/contracts";
+// SCIENT-FORK:START — the title moved to CodeReviewTitle, which owns its own <T>.
+import { useGT, useMessages } from "gt-react";
+// SCIENT-FORK:END
 import { Plug2Icon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
@@ -16,7 +19,10 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import type { PullRequestFilterOption } from "./PullRequestListFilters";
-import { INVOLVEMENT_TABS, STATE_TABS } from "./pullRequestListOptions";
+import { INVOLVEMENT_TABS, resolveFilterOptions, STATE_TABS } from "./pullRequestListOptions";
+// SCIENT-FORK:START — the title switches between pull requests and issues.
+import { CodeReviewTitle } from "~/scient/codeReview/CodeReviewTitle";
+// SCIENT-FORK:END
 
 function ExpandableSearch({
   searchInput,
@@ -35,6 +41,7 @@ function ExpandableSearch({
    */
   onFocusWithin?: (focused: boolean) => void;
 }) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node when the topbar search opens
   useEffect(() => {
@@ -60,7 +67,7 @@ function ExpandableSearch({
     <Button
       size="icon-sm"
       variant="ghost"
-      aria-label="Search pull requests"
+      aria-label={gt("Search pull requests")}
       onClick={() => onOpenChange(true)}
     >
       <SearchIcon className="size-4" />
@@ -82,6 +89,7 @@ export function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
+  savedViewsMenu,
   rightPanelControl,
   titlebarControls,
   rightPanelOpen,
@@ -102,6 +110,7 @@ export function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  savedViewsMenu: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
   rightPanelOpen: boolean;
@@ -109,7 +118,9 @@ export function PullRequestsColumn({
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
-  const contentArea = workspaceAreaProps("pull-requests", 1, "Pull requests");
+  const gt = useGT();
+  const resolve = useMessages();
+  const contentArea = workspaceAreaProps("pull-requests", 1, gt("Pull requests"));
   const markerRef = useRef<HTMLDivElement | null>(null);
   const [condensed, setCondensed] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver on the scroll marker condenses the topbar
@@ -174,28 +185,31 @@ export function PullRequestsColumn({
       >
         {titlebarControls}
         {condensed ? (
-          <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
+          <WorkspaceBreadcrumb ariaLabel={gt("Pull request scope")} className="overflow-hidden">
             <WorkspaceBreadcrumbItem current className={cn(searchExpanded && "sr-only")}>
-              <h1 className="truncate">Pull requests</h1>
+              {/* SCIENT-FORK:START — the title switches between pull requests and issues; an open
+              search leaves only its heading. */}
+              <CodeReviewTitle current="pull-requests" headingOnly={searchExpanded} />
+              {/* SCIENT-FORK:END */}
             </WorkspaceBreadcrumbItem>
             {searchExpanded ? null : <WorkspaceBreadcrumbSeparator />}
             <WorkspaceBreadcrumbItem className="shrink gap-1.5">
               <PullRequestCompactFilterMenu
-                label="Filter by state"
+                label={gt("Filter by state")}
                 value={state}
-                options={STATE_TABS}
+                options={resolveFilterOptions(STATE_TABS, resolve)}
                 onChange={onState}
                 className="shrink-0"
               />
               <PullRequestCompactFilterMenu
-                label="Filter by involvement"
+                label={gt("Filter by involvement")}
                 value={involvement}
-                options={INVOLVEMENT_TABS}
+                options={resolveFilterOptions(INVOLVEMENT_TABS, resolve)}
                 onChange={onInvolvement}
               />
               {hostMenuOptions.length > 2 ? (
                 <PullRequestCompactFilterMenu
-                  label="Filter by host"
+                  label={gt("Filter by host")}
                   value={host ?? ""}
                   options={hostMenuOptions}
                   onChange={(next) => onHost(next === "" ? undefined : next)}
@@ -204,9 +218,11 @@ export function PullRequestsColumn({
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         ) : (
-          <WorkspaceBreadcrumb ariaLabel="Pull requests breadcrumb">
+          <WorkspaceBreadcrumb ariaLabel={gt("Pull requests breadcrumb")}>
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Pull requests</h1>
+              {/* SCIENT-FORK:START — the title switches between pull requests and issues. */}
+              <CodeReviewTitle current="pull-requests" />
+              {/* SCIENT-FORK:END */}
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}
@@ -240,12 +256,13 @@ export function PullRequestsColumn({
               </div>
               {sortMenu}
               {filtersMenu}
+              {savedViewsMenu}
               <PullRequestCompactFilterMenu
-                label="Filter by provider"
+                label={gt("Filter by provider")}
                 outlined
                 iconOnly={host !== undefined}
                 triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
-                triggerLabel="All"
+                triggerLabel={gt("All", { $context: "all providers" })}
                 value={host ?? ""}
                 options={hostMenuOptions}
                 onChange={(next) => onHost(next === "" ? undefined : next)}
@@ -273,11 +290,12 @@ function PullRequestRefreshControl({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const gt = useGT();
   return (
     <Button
       size={compact ? "icon-sm" : "icon"}
       variant={compact ? "ghost" : "outline"}
-      aria-label="Refresh pull requests"
+      aria-label={gt("Refresh pull requests")}
       onClick={onRefresh}
       disabled={refreshing}
     >

@@ -7,6 +7,7 @@ import {
   isRecoveryUnstored,
   type LatexVisualRecovery,
 } from "./visualRecovery";
+import { T, useGT, Var } from "gt-react";
 
 const displayLines = (lines: readonly string[]) =>
   lines.map((line) => line.replace(/\r$/u, "") || " ").join("\n");
@@ -36,6 +37,7 @@ export function LatexVisualRecoveryBar({
   onApply,
   onDiscard,
 }: Props) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [notApplied, setNotApplied] = useState(false);
   const differences =
@@ -44,19 +46,33 @@ export function LatexVisualRecoveryBar({
   // Said on the line itself, for as long as the offer lasts: closing loses it.
   const unstored = isRecoveryUnstored(recovery);
   // The footer has no other place that says why typing does nothing.
-  const message = `${convertible ? "Unsaved changes" : "Unsaved text"}${
-    unstored ? " · keep this document open" : recovery.parked ? "" : " · editing paused"
-  }`;
+  const message = convertible
+    ? unstored
+      ? gt("Unsaved changes · keep this document open")
+      : recovery.parked
+        ? gt("Unsaved changes")
+        : gt("Unsaved changes · editing paused")
+    : unstored
+      ? gt("Unsaved text · keep this document open")
+      : recovery.parked
+        ? gt("Unsaved text")
+        : gt("Unsaved text · editing paused");
   const detail = unstored
-    ? "This copy could not be stored on this device. It is lost if the document is closed before you use or discard it."
+    ? gt(
+        "This copy could not be stored on this device. It is lost if the document is closed before you use or discard it.",
+      )
     : !convertible
-      ? "This writing can't be placed in the file automatically. View it and copy what you need."
+      ? gt(
+          "This writing can't be placed in the file automatically. View it and copy what you need.",
+        )
       : !applicable
-        ? "This document has several files. Compare and copy what you need."
+        ? gt("This document has several files. Compare and copy what you need.")
         : recovery.parked
-          ? "Found from an earlier session. Compare to use or discard them."
-          : "Found from an earlier session. Editing resumes once you use or discard them.";
-  const shown = notApplied ? `${message} · not applied, compare again` : message;
+          ? gt("Found from an earlier session. Compare to use or discard them.")
+          : gt("Found from an earlier session. Editing resumes once you use or discard them.");
+  const shown = notApplied
+    ? gt("{status} · not applied, compare again", { status: message })
+    : message;
   const toggle = () => setOpen((value) => !value);
   return (
     <div className="scient-latex-visual-recovery" role="status">
@@ -67,14 +83,14 @@ export function LatexVisualRecoveryBar({
         type="button"
         data-wide=""
         // The button keeps the width of its longer label, so Discard never moves.
-        data-closed-label={convertible ? "Compare" : "View"}
+        data-closed-label={convertible ? gt("Compare") : gt("View", { $context: "verb" })}
         aria-expanded={open}
         onClick={toggle}
       >
-        {open ? "Hide" : convertible ? "Compare" : "View"}
+        {open ? gt("Hide") : convertible ? gt("Compare") : gt("View", { $context: "verb" })}
       </button>
       <button type="button" data-wide="" onClick={onDiscard}>
-        Discard
+        <T>Discard</T>
       </button>
       {/* In a narrow footer the line is one action, and Discard moves into the comparison. */}
       <ScientTooltip content={detail}>
@@ -89,23 +105,33 @@ export function LatexVisualRecoveryBar({
       {open ? (
         <div className="scient-latex-visual-recovery-panel">
           {!convertible ? (
-            <pre aria-label="Recovered writing">{recovery.text}</pre>
+            <pre aria-label={gt("Recovered writing")}>{recovery.text}</pre>
           ) : differences.length === 0 ? (
-            <p>No differences from the file.</p>
+            <p>
+              <T>No differences from the file.</T>
+            </p>
           ) : (
-            <ol aria-label="Differences between the file and the recovered changes">
+            <ol aria-label={gt("Differences between the file and the recovered changes")}>
               {differences.map((difference) => (
                 <li key={difference.line}>
-                  <span className="scient-latex-visual-recovery-line">Line {difference.line}</span>
+                  <span className="scient-latex-visual-recovery-line">
+                    <T>
+                      Line <Var>{difference.line}</Var>
+                    </T>
+                  </span>
                   {difference.current.length > 0 ? (
                     <pre data-side="current">
-                      <span className="sr-only">File: </span>
+                      <span className="sr-only">
+                        <T>File:</T>{" "}
+                      </span>
                       {displayLines(difference.current)}
                     </pre>
                   ) : null}
                   {difference.recovered.length > 0 ? (
                     <pre data-side="recovered">
-                      <span className="sr-only">Recovered: </span>
+                      <span className="sr-only">
+                        <T>Recovered:</T>{" "}
+                      </span>
                       {displayLines(difference.recovered)}
                     </pre>
                   ) : null}
@@ -116,8 +142,12 @@ export function LatexVisualRecoveryBar({
           <div className="scient-latex-visual-recovery-actions">
             {differences.length > 0 ? (
               <span className="scient-latex-visual-recovery-legend" aria-hidden="true">
-                <span data-side="current">File</span>
-                <span data-side="recovered">Recovered</span>
+                <span data-side="current">
+                  <T context="file version in a comparison">File</T>
+                </span>
+                <span data-side="recovered">
+                  <T context="recovered version in a comparison">Recovered</T>
+                </span>
               </span>
             ) : null}
             <button
@@ -126,10 +156,10 @@ export function LatexVisualRecoveryBar({
                 void navigator.clipboard?.writeText(recovery.text).catch(() => {});
               }}
             >
-              Copy
+              <T>Copy</T>
             </button>
             <button type="button" data-compact="" onClick={onDiscard}>
-              Discard
+              <T>Discard</T>
             </button>
             {applicable && differences.length > 0 ? (
               <button
@@ -138,7 +168,7 @@ export function LatexVisualRecoveryBar({
                 disabled={disabled}
                 onClick={() => setNotApplied(!onApply(currentSource))}
               >
-                Use recovered
+                <T>Use recovered</T>
               </button>
             ) : null}
           </div>

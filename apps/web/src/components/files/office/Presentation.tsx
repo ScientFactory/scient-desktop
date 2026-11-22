@@ -1,4 +1,5 @@
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
+import { msg, T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import { FileSurfaceLoading } from "../fileSurfaceChrome";
 import type { PaintPage } from "./OfficePages";
@@ -13,12 +14,9 @@ import {
 } from "~/scient/office/officeSession";
 // SCIENT-FORK:END
 import { createWorkerClient } from "./worker-rpc";
-import {
-  maxImageSide,
-  type SlideMethods,
-  type SlideSummary,
-  type VectorRequest,
-} from "./slide-protocol";
+import type { SlideMethods, SlideSummary } from "./slide-protocol";
+import { rasterize } from "./vector-pictures";
+import { m } from "~/i18n/messages";
 
 // SCIENT-FORK: the reader's sidebar, find and text layer.
 type Opened = {
@@ -68,7 +66,7 @@ function openPresentationSession(source: ArrayBuffer): OfficeSession<SlideState>
     const context = canvas.getContext("bitmaprenderer");
     if (!context) {
       result.bitmap.close();
-      throw new Error("This browser cannot draw slides.");
+      throw new Error(m(msg("This browser cannot draw slides.")));
     }
     canvas.width = result.bitmap.width;
     canvas.height = result.bitmap.height;
@@ -90,7 +88,7 @@ function openPresentationSession(source: ArrayBuffer): OfficeSession<SlideState>
     .call("open", { bytes }, { transfer: [bytes], signal: controller.signal })
     .then((slides) => {
       if (slides.length === 0 || slides.length > 500)
-        throw new Error("Preview limited to presentations with 1 to 500 slides.");
+        throw new Error(m(msg("Preview limited to presentations with 1 to 500 slides.")));
       store.set({
         ...store.get(),
         opened: {
@@ -128,6 +126,7 @@ export default function Presentation(props: {
   session?: OfficeSessionSlot | undefined;
 }) {
   const { onError, bytes: source, onDetails, session: slot } = props;
+  const gt = useGT();
   // SCIENT-FORK:START
   const [state, setState] = useState<SlideState>({ failed: {} });
   const { opened, failed } = state;
@@ -138,7 +137,10 @@ export default function Presentation(props: {
     const show = (next: SlideState) => {
       if (next.error !== undefined) onError(next.error);
       setState(next);
-      if (next.opened) onDetails(`${next.opened.slides.length} slides`);
+      if (next.opened) {
+        const count = next.opened.slides.length;
+        onDetails(m(msg("{count, plural, one {{count} slide} other {{count} slides}}", { count })));
+      }
     };
     show(session.state());
     const unsubscribe = session.subscribe(show);
@@ -173,7 +175,7 @@ export default function Presentation(props: {
               role="status"
               className="absolute inset-0 flex items-center justify-center bg-background/80 p-4 text-xs text-foreground"
             >
-              This slide could not be drawn.
+              <T>This slide could not be drawn.</T>
             </p>
           ) : null}
         </>
@@ -182,11 +184,15 @@ export default function Presentation(props: {
         const slide = opened.slides[index];
         return slide?.notes || slide?.hidden ? (
           <div className="space-y-1 text-xs text-muted-foreground">
-            {slide.hidden ? <p>Hidden slide</p> : null}
+            {slide.hidden ? (
+              <p>
+                <T>Hidden slide</T>
+              </p>
+            ) : null}
             {slide.notes ? (
               <p
                 role="note"
-                aria-label="Speaker notes"
+                aria-label={gt("Speaker notes")}
                 className="select-text whitespace-pre-wrap break-words"
               >
                 {slide.notes}
@@ -197,29 +203,4 @@ export default function Presentation(props: {
       }}
     />
   );
-}
-async function rasterize(request: VectorRequest) {
-  const url = URL.createObjectURL(request.blob);
-  const image = new Image();
-  image.src = url;
-  try {
-    await image.decode();
-    const shrink = Math.min(1, maxImageSide / Math.max(image.naturalWidth, image.naturalHeight));
-    const size = request.size ?? {
-      width: Math.max(1, Math.round(image.naturalWidth * shrink)),
-      height: Math.max(1, Math.round(image.naturalHeight * shrink)),
-    };
-    return {
-      asset: request.asset,
-      bitmap: await createImageBitmap(image, {
-        resizeWidth: size.width,
-        resizeHeight: size.height,
-        resizeQuality: "high",
-      }),
-    };
-  } catch {
-    return { asset: request.asset, bitmap: undefined };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }

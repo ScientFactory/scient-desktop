@@ -1,6 +1,7 @@
 import { useAuth } from "@clerk/react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { T } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -9,6 +10,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "../env";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useRelayEnvironmentDiscovery } from "../state/environments";
+import { retryClerkLoad, useClerkLoadFailed } from "./clerk/clerkLoadFailure";
 import { useT3ConnectAuthPrompt } from "./clerk/useT3ConnectAuthPrompt";
 import { CloudEnvironmentConnectRows } from "./cloud/CloudEnvironmentConnectList";
 import { Button } from "./ui/button";
@@ -35,20 +37,22 @@ export function HostedEmptyState() {
         <Empty className="flex-1">
           <EmptyHeader>
             <EmptyTitle>
-              {localEnvironmentOff ? "This computer is off" : "No computer connected"}
+              {localEnvironmentOff ? <T>This computer is off</T> : <T>No computer connected</T>}
             </EmptyTitle>
             <EmptyDescription>
-              {localEnvironmentOff
-                ? "Turn it back on, or connect a different computer."
-                : cloudEnabled
-                  ? "Your agents run on your computer."
-                  : "Your agents run on your computer. Start Scient there first."}
+              {localEnvironmentOff ? (
+                <T>Turn it back on, or connect a different computer.</T>
+              ) : cloudEnabled ? (
+                <T>Your agents run on your computer.</T>
+              ) : (
+                <T>Your agents run on your computer. Start Scient there first.</T>
+              )}
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             {localEnvironmentOff ? (
               <Button render={<Link to="/settings/connections" />} size="sm">
-                Open Environments
+                <T>Open Environments</T>
               </Button>
             ) : (
               <ol className="w-full space-y-4 text-left">
@@ -64,6 +68,7 @@ export function HostedEmptyState() {
 
 function T3ConnectSteps() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const loadFailed = useClerkLoadFailed();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // Adding the first computer unmounts this screen. Wait for all health checks
   // so every compatible registration is queued before that happens.
@@ -75,14 +80,18 @@ function T3ConnectSteps() {
   return (
     <>
       <SetupStep number={1}>
-        {isSignedIn ? (
+        {loadFailed ? (
+          <Button size="sm" onClick={retryClerkLoad}>
+            <T>Retry sign-in</T>
+          </Button>
+        ) : isSignedIn ? (
           <p className="flex items-center gap-1.5 text-muted-foreground">
             <CheckIcon className="size-4" />
-            Signed in
+            <T>Signed in</T>
           </p>
         ) : (
           <Button size="sm" disabled={!isLoaded} onClick={openAuthPrompt}>
-            Sign in
+            <T>Sign in</T>
           </Button>
         )}
       </SetupStep>
@@ -105,7 +114,11 @@ function T3ConnectSteps() {
                     return next;
                   }),
               }}
-              empty={<p className="text-xs text-muted-foreground">Waiting for your computer…</p>}
+              empty={
+                <p className="text-xs text-muted-foreground">
+                  <T>Waiting for your computer…</T>
+                </p>
+              }
             />
           </div>
         ) : null}
@@ -122,7 +135,7 @@ function PairingSteps() {
       </SetupStep>
       <SetupStep number={2}>
         <Button render={<Link to="/settings/connections" />} size="sm">
-          Add pairing link
+          <T>Add pairing link</T>
         </Button>
       </SetupStep>
     </>
@@ -147,23 +160,35 @@ function SetupStep({
 function StartOnComputer({ cloud = false }: { readonly cloud?: boolean }) {
   return (
     <>
-      <p>Start Scient on the computer with your code.</p>
-      <p className="mt-2 text-xs text-muted-foreground">
-        {cloud
-          ? "In Scient there, open Settings → Sharing & access, sign in with this account, and turn on Scient Connect."
-          : "Create a pairing link in Settings → Connections in that Scient installation, then add it here."}
+      <p>
+        <T>Start Scient on the computer with your code.</T>
       </p>
       <p className="mt-2 text-xs text-muted-foreground">
-        Don’t have Scient there yet? Download it from{" "}
-        <a
-          className="underline underline-offset-2 hover:text-foreground"
-          href="https://scientfactory.com"
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          scientfactory.com
-        </a>
-        .
+        {cloud ? (
+          <T>
+            In Scient there, open Settings → Sharing & access, sign in with this account, and turn
+            on Scient Connect.
+          </T>
+        ) : (
+          <T>
+            Create a pairing link in Settings → Connections in that Scient installation, then add it
+            here.
+          </T>
+        )}
+      </p>
+      <p className="mt-2 text-xs text-muted-foreground">
+        <T>
+          Don’t have Scient there yet? Download it from{" "}
+          <a
+            className="underline underline-offset-2 hover:text-foreground"
+            href="https://scientfactory.com"
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            scientfactory.com
+          </a>
+          .
+        </T>
       </p>
     </>
   );

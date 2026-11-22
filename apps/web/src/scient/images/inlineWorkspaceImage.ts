@@ -1,6 +1,8 @@
 import type { AssetResource, ScopedThreadRef } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { msg } from "gt-react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { resolveMarkdownFileLinkMeta } from "~/markdown-links";
 
 export interface InlineWorkspaceImageDescriptor {
@@ -101,23 +103,9 @@ export function inlineWorkspaceImageResource(
   };
 }
 
-export function inlineImageFormatLabel(fileName: string): string {
+export function inlineImageFormatLabel(fileName: string, resolve: MessageResolver = m): string {
   const extension = fileName.split(/[?#]/u, 1)[0]?.split(".").at(-1)?.toLowerCase();
-  if (!extension || extension === fileName.toLowerCase()) return "Image";
+  if (!extension || extension === fileName.toLowerCase()) return resolve(msg("Image"));
   if (extension === "jpg" || extension === "jpeg") return "JPEG";
   return extension.toUpperCase();
-}
-
-export function inlineWorkspaceImageMarkdownSource(
-  alt: string,
-  src: string,
-  title?: string | undefined,
-): string {
-  const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
-  const destination = /\s/u.test(src) ? `<${src.replaceAll(">", "%3E")}>` : src;
-  const normalizedTitle = title?.replace(/\s+/gu, " ").trim();
-  const serializedTitle = normalizedTitle
-    ? ` "${normalizedTitle.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
-    : "";
-  return `![${escapedAlt}](${destination}${serializedTitle})`;
 }

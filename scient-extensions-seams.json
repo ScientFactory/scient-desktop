@@ -3,6 +3,7 @@
   "owner": "ScientFactory",
   "ownedRoots": ["apps/server/src/scient/extensions", "apps/web/src/scient/extensions"],
   "ownedFiles": [
+    "apps/web/src/scient/skills/skillCategoryCopy.ts",
     "apps/web/src/scient/releaseNotes/catalog.ts",
     "apps/server/src/mcp/McpSessionRegistry.scient.test.ts",
     "apps/server/src/orchestration-v2/Adapters/PluginKeyOverrides.scient.test.ts",
@@ -15,6 +16,7 @@
     "apps/web/src/routes/_chat.settings.extensions_.all.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.category.$category.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.installed.tsx",
+    "apps/web/src/routes/_chat.settings.extensions_.item.account.$serviceId.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.connector.$connectorId.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.plugin.$pluginId.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.provider.$instanceId.plugin.$pluginId.tsx",
@@ -34,13 +36,17 @@
     "packages/contracts/src/scient/extensionsPermissions.ts",
     "packages/contracts/src/scient/extensionsPermissions.test.ts",
     "scripts/generate-extension-brand-icons.mjs",
+    "scripts/generate-claude-connectors.mjs",
     "scripts/scient-extension-brands.json",
     "packages/contracts/src/scient/pluginContents.ts",
     "packages/contracts/src/scient/pluginKeys.ts",
     "apps/server/src/scient/extensions/brandIcons/NOTICE",
     "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts",
     "apps/web/src/scient/compute/ScientificComputingSettings.tsx",
-    "apps/web/src/scient/compute/ComputeLanguagePanel.tsx"
+    "apps/web/src/scient/compute/ComputeLanguagePanel.tsx",
+    "apps/server/src/telemetry/ExtensionAnalytics.ts",
+    "apps/server/src/telemetry/ExtensionAnalytics.test.ts",
+    "scripts/dev-identity.mjs"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -132,6 +138,11 @@
       "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance; resolve account capabilities before the cached Extensions account probe."
     },
     {
+      "path": "apps/server/src/provider/Drivers/AntigravityDriver.ts",
+      "anchor": "makeAntigravityInstancePlugins",
+      "purpose": "Attach the Antigravity Marketplace store and native plugin actions to the exact instance, run through the agy CLI it resolves."
+    },
+    {
       "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
       "anchor": "makeCodexNativeInventory",
       "purpose": "Attach verified Codex plugin uninstall and MCP sign-in actions to the exact provider instance; its store retains one scoped lease and caches plugin details across page, icon and skill reads."
@@ -159,17 +170,17 @@
     {
       "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
       "anchor": "/settings/extensions",
-      "purpose": "Link Settings → Extensions from the maintained Settings shell."
+      "purpose": "Link Settings \u2192 Extensions from the maintained Settings shell."
     },
     {
       "path": "apps/web/src/components/settings/settingsSearch.ts",
       "anchor": "/settings/extensions",
-      "purpose": "Make Settings → Extensions discoverable through Settings search."
+      "purpose": "Make Settings \u2192 Extensions discoverable through Settings search."
     },
     {
       "path": "apps/web/src/routeTree.gen.ts",
       "anchor": "SettingsExtensionsRouteImport",
-      "purpose": "Generated registration for the fork-owned Settings → Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
+      "purpose": "Generated registration for the fork-owned Settings \u2192 Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",
@@ -267,6 +278,11 @@
       "purpose": "T3's \"use in another app (MCP)\" palette action lists \"connector\" as a search word; Scient only hides the action without cloud public config. Not part of Scient Extensions."
     },
     {
+      "path": "patches/@cursor__sdk@1.4.2.patch",
+      "anchor": "createLocalExecutor",
+      "purpose": "T3's patch to Cursor's bundled SDK (attribution follows cli-config.json); Cursor's minified code names its own connectors. Not part of Scient Extensions."
+    },
+    {
       "path": "apps/web/src/components/mcp/mcpApps.ts",
       "anchor": "connectorName=",
       "purpose": "T3's MCP wizard fills claude.ai's add-connector link; Scient only renames the connector to Scient. Not part of Scient Extensions."
@@ -285,6 +301,36 @@
       "path": "apps/web/src/components/chat/ChatComposer.tsx",
       "anchor": "composerSkillPrompt",
       "purpose": "Reuse the same invocation token for composer selection and the shared skill card."
+    },
+    {
+      "path": "knip.jsonc",
+      "anchor": "generate-claude-connectors.mjs",
+      "purpose": "Register the manual refresh script for the claude.ai connectors Scient links to."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "SCIENT_MCP_INSTRUCTIONS",
+      "purpose": "Describe Scient's tool server, connectors included, to MCP clients in one instructions line."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts",
+      "anchor": "watchAntigravityPromptOutcome(profileDirectory, sessionId, delivery)",
+      "purpose": "Hand the session's delivered connector names to the Antigravity outcome watcher, so a tool server that stopped a turn is attributed to Scient, a connector or the user."
+    },
+    {
+      "path": "packages/contracts/src/orchestrationV2.ts",
+      "anchor": "toolServerOwner: Schema.optional(",
+      "purpose": "Carry whose tool server (Scient's, a delivered connector or the user's) stopped a turn on the provider failure."
+    },
+    {
+      "path": "apps/server/src/provider/codexLaunchArgs.ts",
+      "anchor": "MCP_LIST_DISABLED_FEATURES",
+      "purpose": "T3 keeps Codex's own apps, connectors and plugins features off for exec and its MCP listing. Scient's delivered connectors reach Codex as MCP servers and are unaffected."
+    },
+    {
+      "path": "apps/server/src/textGeneration/CodexTextGeneration.ts",
+      "anchor": "features.connectors=false",
+      "purpose": "T3 turns Codex's own connectors (apps) feature off during text generation, which uses no Scient connectors."
     }
   ],
   "scientMounts": [
@@ -331,7 +377,7 @@
     {
       "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
       "anchor": "\"/settings/extensions\"",
-      "purpose": "Scope Settings → Extensions to one environment, like the other per-server settings pages."
+      "purpose": "Scope Settings \u2192 Extensions to one environment, like the other per-server settings pages."
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.wake.testkit.ts",
@@ -447,6 +493,91 @@
       "path": "apps/server/src/scient/skills/PersonalSkillSources.ts",
       "anchor": "scient.plugin.json",
       "purpose": "Leave connector and plugin folders to the connector path when adding skills."
+    },
+    {
+      "path": "apps/server/src/provider/ScientAwareness.ts",
+      "anchor": "buildScientConnectorsAwareness",
+      "purpose": "Offer agents to build a connector when none reaches a service, or to fix one that fails."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/connectorAuthoring.ts",
+      "anchor": "export const copyConnector",
+      "purpose": "Serve scient_connector_copy, check and save from the Accounts toolkit, in the chat's own folder."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/guardedSignIn.ts",
+      "anchor": "kind: \"connector\"",
+      "purpose": "Let a local connector's linked sign-in be renewed unattended, stopping where the person is needed."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/connectorSessions.ts",
+      "anchor": "export const makeConnectorSessions",
+      "purpose": "Hand a signed-in local connector its site's cookies and sign the account in again when the site ends the session."
+    },
+    {
+      "path": "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+      "anchor": "directoryName: \"connector-authoring\"",
+      "purpose": "Embed the connector-authoring skill that agents follow to make and fix connectors."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/scient.skill.json",
+      "anchor": "scient.connector-authoring",
+      "purpose": "Release manifest of the built-in connector-authoring skill."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/http.mjs",
+      "anchor": "export function createHttp",
+      "purpose": "Template connector's polite HTTP helper, written by scient_connector_copy."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/manifest.json",
+      "anchor": "{{NAME}}",
+      "purpose": "Template connector's manifest; scient_connector_copy fills its names."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/mcp.mjs",
+      "anchor": "SIGN_IN_EXPIRED",
+      "purpose": "Template connector's MCP stdio helper, including the session-ended marker Scient reacts to."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/server.mjs",
+      "anchor": "serve({",
+      "purpose": "Template connector's tools (an OpenAlex example), written by scient_connector_copy."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/session.mjs",
+      "anchor": "SCIENT_SIGN_IN_COOKIES",
+      "purpose": "Template connector's reader of the session Scient hands a signed-in connector."
+    },
+    {
+      "path": "apps/server/src/server.testkit.ts",
+      "anchor": "SCIENT-FORK:START \u2014 the real extensions owners, as the server composes them.",
+      "purpose": "Compose the real extensions owners into the shared server router test harness."
+    },
+    {
+      "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
+      "anchor": "connectorTarget",
+      "purpose": "Name the connector or plugin an Extensions action acts on in its feature.used event."
+    },
+    {
+      "path": "apps/server/src/scient/providerLifecycle/AntigravityHarnessFailure.ts",
+      "anchor": "connectorServerNames",
+      "purpose": "Attribute an Antigravity tool server that failed to start to Scient, a delivered connector or the user's own configuration."
+    },
+    {
+      "path": "packages/scient-analytics/src/contract.ts",
+      "anchor": "TOOL_SERVER_OWNERS",
+      "purpose": "Allow the closed tool-server owner, including connector, on failed turns."
+    },
+    {
+      "path": "packages/scient-analytics/src/conformance.ts",
+      "anchor": "toolServerOwner: \"connector\"",
+      "purpose": "Conformance input for the tool-server owner on failed turns."
+    },
+    {
+      "path": "packages/scient-analytics/fixtures/contract-v11.json",
+      "anchor": "toolServerOwner",
+      "purpose": "Generated conformance fixture for the tool-server owner on failed turns."
     }
   ]
 }

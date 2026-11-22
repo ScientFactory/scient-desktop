@@ -66,3 +66,11 @@ export function extendConnectionAttemptTimeout(): void {
     Math.max(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout(), 1_000),
   );
 }
+
+// SCIENT-FORK:START — one outbound setup for every thread entry (CLI main thread, analytics worker).
+/** Node keeps both settings per thread, so each worker entry that fetches calls this too. */
+export function prepareOutboundNetworking(): void {
+  extendConnectionAttemptTimeout();
+  keepOutboundFetchOnHttp1();
+}
+// SCIENT-FORK:END

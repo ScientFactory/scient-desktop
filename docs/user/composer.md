@@ -13,6 +13,11 @@ keeps it in the composer and shows how many characters need to be removed.
 Shorten the draft or split it into multiple messages, then send again in the
 same thread.
 
+Sending clears the composer as soon as your message appears in the conversation. If the message
+can't be sent, Scient removes it from the conversation and puts it back in the composer. If you have
+already started a new draft, Scient keeps it and shows **Restore message**, which brings back the failed
+message with its attachments once your new draft is sent or cleared.
+
 On web and desktop, attachments upload as soon as you add them. The send button becomes available
 after every upload finishes. Failed uploads can be retried or removed.
 
@@ -112,6 +117,10 @@ sends each message after the preceding answer finishes successfully.
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.
+A slash command such as `/compact` or `/context` waits for the current turn to
+finish, because a command steered into a turn would replace the agent's task.
+Sending a queued command now moves it to the front of the queue. [Goal](#goals)
+commands are the exception: some can stop the current turn.
 If your **Send shortcut** requires `Cmd+Enter` or `Ctrl+Enter`, that shortcut uses
 your default follow-up behavior; add **Shift** to use the opposite action. This
 applies only to multiline messages when you choose the multiline send option.
@@ -120,7 +129,17 @@ Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to sen
 the oldest queued message as a steer. This leaves the current draft intact and
 requires an active turn that supports steering. If that shortcut sends the opposite
 action for your draft, move focus outside the composer to steer the queued message. Change
-`thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
+`thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut. To make
+`Cmd+Enter` or `Ctrl+Enter` steer the oldest queued message when the composer is empty, add
+this rule to your [keybindings file](keybindings.md#edit-the-configuration-file):
+
+```json
+{
+  "key": "mod+enter",
+  "command": "thread.steerQueuedMessage",
+  "when": "composerFocus && turnRunning && composerEmpty"
+}
+```
 
 Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the
 start of the composer to edit the most recently queued message. Change
@@ -195,12 +214,15 @@ instance:
 
 Fresh Scient Agent, Pi, and Oh My Pi model preferences include GPT-6.1 Terra among the visible
 OpenAI account models when the agent discovers it. Saved visibility choices take precedence.
-The reasoning column shows the model’s supported levels directly; other agent options appear
-below them when available.
+The reasoning column, headed **Reasoning** for every agent, shows the model’s supported levels
+directly; other agent options appear below them when available.
 
 On desktop and web, model choices show the company below the model name. Long names wrap
-so their distinguishing suffix stays readable. The picker has one bottom footer: **Fork to
-continue in a new chat** on the left when available, and speed and permission controls on the right.
+so their distinguishing suffix stays readable. The picker keeps one bottom toolbar: **Fork to
+switch** on the left when available, with speed and permission controls on the right. Speed
+uses a compact menu when there are more than two tiers or an extra option such as Ultracode.
+Narrow windows put model options under **More** while keeping permissions visible. Fork's
+tooltip explains that it continues in a new chat.
 
 For providers that support custom models, **Settings → Providers → Models** lets you give an
 unlisted model a display name and define its options. Only options supported by the integration
@@ -212,8 +234,10 @@ selection for new threads. A model configured in a project's settings overrides 
 selection for that project; resetting the project setting returns it to the remembered selection.
 
 Model options shown as provider defaults remain display values until you choose them in Scient.
-Scient only sends options you selected explicitly, so an unset reasoning level or service tier can
-still come from the provider's own configuration.
+Scient only sends options you selected explicitly, so an unset reasoning level can still come from
+the provider's own configuration. Codex speed is the exception: a new thread runs at the speed the
+picker shows, usually Standard, even when Fast is turned on in the Codex app or CLI. Choose Fast in
+Scient to use it here.
 
 ## Quote a Markdown file
 
@@ -292,8 +316,12 @@ highlight pulses, holds for a moment, then fades on its own; press `Escape` to s
 or clear it early. If the source is unavailable or its text has changed, the saved quote stays
 readable and Scient shows a warning.
 
-Mobile shows the full saved quote and its comment in sent messages. It does not offer
-**Ask in chat** or navigation to a quote's source.
+On mobile, long-press an assistant response, adjust the text selection, and choose
+**Cite** to insert a quote at the composer cursor. If the passage appears more than
+once in that section, choose its source occurrence. Select more surrounding text
+if a short passage appears too often. Tap a quote in a draft to add
+or edit its comment, or to remove it. To open the source message, tap a quote in
+a draft or sent message, then choose **Go to message**.
 
 ## Recall a sent prompt
 
@@ -327,12 +355,20 @@ to its checkpoint from before that message. That also undoes edits you made your
 File restore is only offered for threads running in a worktree, and it is
 refused when another thread or agent session also uses that directory, a folder
 inside it, or a folder that contains it, since
-restoring would erase their changes. A thread that works in the project directory
-rewinds the conversation only. When Scient could not save a snapshot of the files
+restoring would erase their changes. Completed subagents belonging to the reverting
+thread do not block restoring that same worktree, provided they have no queued or
+active work, pending requests, or background tasks. A thread that works in the project
+directory rewinds the conversation only. When Scient could not save a snapshot of the files
 before that message, such as in a folder that is not a Git repository or whose
 changed files are too large, the dialog offers only **Rewind chat**, which leaves
 the files as they are. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
+
+In a thread that works in the project directory alone, with no tracked folders, repositories or
+submodules, the dialog offers only **Rewind chat**. There, **Edit from here** rewinds right away,
+without the dialog, when no reply from that message on changed any files. If a reply changed files,
+or Scient cannot tell, the dialog asks first. A thread in a worktree, or one that reaches other
+folders or repositories, always asks. If the rewind fails, the dialog opens to show why.
 
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
@@ -352,8 +388,9 @@ and use **Attach again** or remove the missing file before sending.
 ## Voice input on web and desktop
 
 Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio
-is transcribed on an environment you choose in **Settings → Voice**; nothing is
-sent until you choose one. See [Voice input](./voice-input.md).
+is transcribed on an environment you choose in **Settings → Voice**, or on the Mac
+with Apple Speech in the macOS desktop app; nothing is sent until you choose one.
+See [Voice input](./voice-input.md).
 
 ## Voice input on mobile
 
@@ -405,21 +442,28 @@ shortcut described above.
 On web and desktop, queued messages appear at the end of the thread as dashed messages that have
 not been sent yet. On mobile they appear above the composer. Each shows its text and any attached
 images. **Send now** sends a message right away, into the running turn if there is one. While a
-compaction runs, **Send now** skips the compaction and sends the message instead. You can also
-edit or remove it.
+turn runs, a slash command moves to the front of the queue instead. While a compaction runs,
+**Send now** skips the compaction and sends the message instead. You can also edit or remove it.
 
 After Stop, a failed turn, or a server restart, queued messages keep their order and are held.
 While the agent is idle, every held message shows **Send now**, on mobile too. Send now starts
 that message, and the rest of the queue continues after it in order. Sending a new message
-directly also continues the held queue after that message. On web or desktop, **Resume** in an
-empty composer continues the queue too, as does **Resume queue** on mobile. You can edit or remove held messages without starting
-them. If the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an
-empty composer on web or desktop to continue the thread, and the queue follows.
+directly also continues the held queue after that message, unless it steers a turn that is
+already running. On web or desktop, **Resume** in an empty composer continues the queue too, as
+does **Resume queue** on mobile. You can edit or remove held messages without starting them. If
+the thread stopped at a usage limit, Send now says to continue the thread first: use **Resume
+thread** in an empty composer on web or desktop to continue the thread, and the queue follows.
+
+Resume and Resume thread continue a stopped run through the agent's own continuation, without
+sending a new prompt. If the agent does not support it, send a message to continue instead. If
+the original request never reached the agent, Resume sends that request again.
 
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
-The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
+The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. While a
+turn is running, the opposite-action shortcut or a `Cmd`-click (`Ctrl`-click on Windows and Linux)
+saves the message and then steers it into that turn. Whatever
 you had typed in the composer before starting the edit is restored afterwards. If the queued
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.
@@ -453,20 +497,22 @@ On web and desktop, turn on **Context window** in **Settings → Appearance →
 Thread details** to see context usage in the thread details card. It appears
 once the provider reports usage.
 
-Claude instances can also compact idle threads for you. See
+Claude and Scient Agent instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
 ## Goals
 
-With Codex and Claude, send `/goal` followed by what "done" means, for example
+With Codex, Claude, Scient Agent, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
 line at the end of the thread (above the composer on mobile) shows the goal and
 its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
-- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
-  pauses it, and so does Codex ending its work without meeting the goal.
+- Codex, Scient Agent and OpenCode also support `/goal pause` and `/goal resume`.
+  Stopping their goal pauses it. Codex also pauses when its work ends without meeting the goal.
+- Scient Agent works on the goal in turns it starts by itself, and stops on its own
+  when a turn makes no progress. A new goal replaces the current one.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 - Sending a new goal, or `/goal resume`, while the agent works stops the current
@@ -812,8 +858,8 @@ your draft automatically. **Stash** saves it for later through the usual menu.
 Sending another ordinary message releases the queue to follow it automatically,
 one message at a time after each successful answer. Restarting work or the server
 does not release a held queue. You can also click **Send** on any waiting message:
-that message starts first and the remaining queue is released in its retained
-order, with automatic completions first. Reorder while idle to choose the order.
+that message starts first, even before a finished background task's result, and the remaining
+queue is released in its retained order. Reorder while idle to choose the order.
 
 **Retry** is for a queued message whose provider failed to start; the message stays
 queued. It cannot bypass a running answer or silently release the held tail.

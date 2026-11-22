@@ -16,6 +16,7 @@ import {
   PaperAsked,
   PaperItem,
   PaperItemState,
+  PaperVersion,
   PreviewTabId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -27,6 +28,7 @@ import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationDefinition } from "../../../mcp/ScientOperationTool.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
+import { AGENT_CONNECTOR_STATUSES } from "../../extensions/connectors/agentStatus.ts";
 import { ProfileResult } from "./profileClassification.ts";
 
 const ResultFiles = Schema.Struct({ paths: Schema.Array(Schema.String), usage: Schema.String });
@@ -104,8 +106,11 @@ const credentials = metadata(
 const signIn = metadata(
   Tool.make("scient_account_sign_in", {
     ...common,
+    // A sign-in that works releases the papers waiting for it.
     dependencies: [
       ...common.dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
       McpInvocationContext,
       OrchestratorMcpService,
       SecretRequests,
@@ -208,6 +213,8 @@ const add = metadata(
     failure: AccountsError,
     dependencies: [
       ...common.dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
       McpInvocationContext,
       OrchestratorMcpService,
       SecretRequests,
@@ -262,7 +269,10 @@ const add = metadata(
         accountId: AccountId,
         name: Schema.String,
       }),
-      Schema.Struct({ status: Schema.Literals(["declined", "cancelled", "timed_out"]) }),
+      Schema.Struct({
+        status: Schema.Literals(["declined", "cancelled", "timed_out"]),
+        note: Schema.String,
+      }),
       Schema.Struct({ status: Schema.Literal("unavailable"), message: Schema.String }),
       Schema.Struct({
         status: Schema.Literal("choose").annotate({
@@ -285,7 +295,7 @@ const connectorSetup = metadata(
       SecretRequests,
     ],
     description:
-      "When a local connector says it needs setup: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key). Then call its tool again. replaceKeys asks again for a key the program rejected.",
+      "When a connector says it needs setup. A local one: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key); then call its tool again. replaceKeys asks again for a key the program rejected. A hosted one: says what it needs and who gives it.",
     parameters: Schema.Struct({
       connector: TrimmedNonEmptyString.annotate({ description: "Its MCP server name." }),
       settings: Schema.optional(
@@ -299,6 +309,9 @@ const connectorSetup = metadata(
         ),
       ).annotate({ description: "Plain answers by setting key." }),
       replaceKeys: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+      signIn: Schema.optional(TrimmedNonEmptyString).annotate({
+        description: "Which Accounts sign-in to use for its site.",
+      }),
     }),
     success: Schema.Struct({
       status: Schema.Literals(["ready", "needs"]),
@@ -307,7 +320,200 @@ const connectorSetup = metadata(
     }),
   }),
   "connector-setup",
-  "Set up a local connector",
+  "Set up a connector",
+);
+const connectorDependencies = [
+  ...common.dependencies,
+  McpInvocationContext,
+  WorkspaceBindingResolver,
+];
+const ConnectorName = TrimmedNonEmptyString.check(Schema.isMaxLength(120));
+const FolderPath = TrimmedNonEmptyString.check(Schema.isMaxLength(4096)).annotate({
+  description: "Full path, or relative to this chat's folder.",
+});
+const ConnectorStatus = Schema.Literals(AGENT_CONNECTOR_STATUSES);
+const connectorList = metadata(
+  Tool.make("scient_connector_list", {
+    failure: AccountsError,
+    dependencies: common.dependencies,
+    description:
+      "The user's connectors, hosted and local: on or off, status, last error, what is missing; host sees what passes through. query: also ones Scient can add; prefer hosting Official. Gmail, Outlook etc. come through each agent's own account. Add with scient_connector_add before making one.",
+    parameters: Schema.Struct({
+      query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
+        description: "e.g. slack.",
+      }),
+    }),
+    success: Schema.Struct({
+      connectors: Schema.Array(
+        Schema.Struct({
+          connector: Schema.String,
+          name: Schema.String,
+          kind: Schema.Literals(["hosted", "local"]),
+          host: Schema.optional(Schema.String),
+          on: Schema.Boolean,
+          status: ConnectorStatus,
+          lastError: Schema.optional(Schema.String),
+          missing: Schema.optional(Schema.Array(Schema.String)),
+        }),
+      ),
+      found: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            title: Schema.optional(Schema.String),
+            description: Schema.optional(Schema.String),
+            host: Schema.optional(Schema.String),
+            hosting: Schema.String,
+            addable: Schema.Boolean,
+            reason: Schema.optional(Schema.String),
+            added: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
+      message: Schema.optional(Schema.String),
+    }),
+  }),
+  "connector-list",
+  "List connectors",
+  true,
+);
+const connectorAdd = metadata(
+  Tool.make("scient_connector_add", {
+    failure: AccountsError,
+    dependencies: [...connectorDependencies, OrchestratorMcpService, SecretRequests],
+    description:
+      "Add a connector as the Extensions page does, on for every project: from = a name from scient_connector_list, an https MCP address, or a .mcpb/.zip file. A key or the user's own sign-in app is asked in a private card; never ask for one in chat. needs-setup: scient_connector_setup. needs-sign-in: scient_connector_control sign-in.",
+    parameters: Schema.Struct({
+      from: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+    }),
+    success: Schema.Struct({
+      connector: Schema.String,
+      status: ConnectorStatus,
+      tools: Schema.Array(Schema.String),
+      missing: Schema.Array(Schema.String),
+      message: Schema.String,
+    }),
+  }),
+  "connector-add",
+  "Add a connector",
+);
+const connectorControl = metadata(
+  Tool.make("scient_connector_control", {
+    failure: AccountsError,
+    // A restart starts the connector once, with only what the chat's project may use.
+    dependencies: connectorDependencies,
+    description:
+      "Turn a connector on or off, restart a local one, or sign in: a hosted connector's sign-in opens in this chat's browser as the user's own tab, which your preview tools don't see, for them to finish. Removing stays the user's.",
+    parameters: Schema.Struct({
+      connector: TrimmedNonEmptyString.check(Schema.isMaxLength(120)).annotate({
+        description: "Its MCP server name.",
+      }),
+      action: Schema.Literals(["on", "off", "restart", "sign-in"]),
+    }),
+    success: Schema.Struct({
+      connector: Schema.String,
+      status: ConnectorStatus,
+      message: Schema.String,
+      signInUrl: Schema.optional(Schema.String),
+    }),
+  }),
+  "connector-control",
+  "Control a connector",
+);
+const connectorCopy = metadata(
+  Tool.make("scient_connector_copy", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Make or fix a local connector (load the connector-authoring skill first). name: writes the template to connectors/<name>/ in this chat's folder. connector: copies that installed connector there, with its status, last error and error output; an npm or PyPI package's code comes too (source says where). Then scient_connector_check, then scient_connector_save.",
+    parameters: Schema.Struct({
+      connector: Schema.optional(ConnectorName).annotate({
+        description: "Its MCP server name.",
+      }),
+      name: Schema.optional(ConnectorName).annotate({
+        description: "e.g. HUJI Moodle.",
+      }),
+    }),
+    success: Schema.Struct({
+      folder: Schema.String,
+      connector: Schema.optional(Schema.String),
+      status: Schema.optional(ConnectorStatus),
+      lastError: Schema.optional(Schema.String),
+      problem: Schema.optional(Schema.String),
+      missing: Schema.optional(Schema.Array(Schema.String)),
+      log: Schema.optional(Schema.String),
+      source: Schema.optional(Schema.String),
+      manifest: Schema.optional(
+        Schema.Struct({
+          name: Schema.String,
+          version: Schema.String,
+          runtime: Schema.String,
+          entryPoint: Schema.String,
+          settings: Schema.Array(Schema.String),
+          signInSite: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  }),
+  "connector-copy",
+  "Copy a connector to change",
+);
+const connectorCheck = metadata(
+  Tool.make("scient_connector_check", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Start a connector folder as Scient would, list its tools, make each call, stop it; installs nothing. connector: use its settings, keys and sign-in. signIn: an Accounts sign-in for the manifest's site. Missing keys are listed in missing; a failure returns the error and error output. connector without folder: tests the installed one, hosted too, and makes calls; that is how to use one added in this chat.",
+    parameters: Schema.Struct({
+      folder: Schema.optional(FolderPath),
+      connector: Schema.optional(ConnectorName),
+      signIn: Schema.optional(ConnectorName),
+      calls: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            tool: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+            arguments: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
+        ).check(Schema.isMaxLength(10)),
+      ),
+    }),
+    success: Schema.Struct({
+      ok: Schema.Boolean,
+      tools: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          description: Schema.optional(Schema.String),
+          parameters: Schema.optional(Schema.Unknown),
+        }),
+      ),
+      calls: Schema.Array(
+        Schema.Struct({ tool: Schema.String, isError: Schema.Boolean, text: Schema.String }),
+      ),
+      missing: Schema.Array(Schema.String),
+      error: Schema.optional(Schema.String),
+      log: Schema.optional(Schema.String),
+    }),
+  }),
+  "connector-check",
+  "Check a connector folder",
+);
+const connectorSave = metadata(
+  Tool.make("scient_connector_save", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Install a checked connector folder as the user's own, on for every project. connector: replace that one, keeping its settings, keys and sign-in (a vendor's bundle becomes their copy). The user can undo on its page. needs-setup: call scient_connector_setup.",
+    parameters: Schema.Struct({ folder: FolderPath, connector: Schema.optional(ConnectorName) }),
+    success: Schema.Struct({
+      connector: Schema.String,
+      status: ConnectorStatus,
+      tools: Schema.Array(Schema.String),
+      missing: Schema.Array(Schema.String),
+      message: Schema.String,
+    }),
+  }),
+  "connector-save",
+  "Save a connector",
 );
 const paperDependencies = [
   ...common.dependencies,
@@ -315,15 +521,24 @@ const paperDependencies = [
   Path.Path,
   WorkspaceBindingResolver,
 ];
+const AddToLibrary = Schema.Boolean.annotate({
+  description:
+    "For the user's Library: file the PDF on the Source with its DOI, adding a missing Source from its registry record, credited to you.",
+});
+const LibrarySourceId = TrimmedNonEmptyString.annotate({
+  description: "Attach the PDF to this Library source instead of finding one by DOI.",
+});
 const paperGet = metadata(
   Tool.make("scient_paper_get", {
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "The first step to fetch any paper's PDF: give its DOI or link (for a title, find one first), and Scient saves it in the project from a free legal copy or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
+      "The first step to fetch any paper's PDF: give its DOI or link (for a title, find one first), and Scient saves it in the project from a free legal copy or the user's university access in the browser, preferring the published version. Returns its path, or why it can't arrive yet. For the user's Library set addToLibrary. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+      addToLibrary: Schema.optional(AddToLibrary),
+      sourceId: Schema.optional(LibrarySourceId),
     }),
     success: Schema.Union([
       Schema.Struct({
@@ -339,8 +554,13 @@ const paperGet = metadata(
         published: Schema.Boolean.annotate({
           description: "False for an accepted manuscript or preprint.",
         }),
+        version: Schema.optional(PaperVersion),
         title: Schema.optional(Schema.String),
         doi: Schema.optional(Schema.String),
+        sourceId: Schema.optional(
+          Schema.String.annotate({ description: "The Library source the PDF is on." }),
+        ),
+        message: Schema.optional(Schema.String),
       }),
       Schema.Struct({
         status: Schema.Literals(["not-found", "no-access", "needs-you", "waiting"]),
@@ -359,10 +579,15 @@ const paperQueue = metadata(
       "Queue any number of papers, each by DOI or link, and keep working. Scient fetches them in the background into the project's papers folder, one at a time per publisher, and they continue after this turn. If a sign-in is needed Scient asks the user once and every paper waiting continues. Read results with scient_papers_status.",
     parameters: Schema.Struct({
       papers: Schema.Array(
-        Schema.Struct({ doi: PaperAsked.fields.doi, url: PaperAsked.fields.url }),
+        Schema.Struct({
+          doi: PaperAsked.fields.doi,
+          url: PaperAsked.fields.url,
+          addToLibrary: Schema.optional(AddToLibrary),
+          sourceId: Schema.optional(LibrarySourceId),
+        }),
       ).check(Schema.isMinLength(1), Schema.isMaxLength(5000)),
     }),
-    success: Schema.Struct({ queued: Schema.Number }),
+    success: Schema.Struct({ queued: Schema.Number, message: Schema.optional(Schema.String) }),
   }),
   "paper-queue",
   "Queue papers to fetch",
@@ -391,7 +616,9 @@ const paperStatus = metadata(
           title: PaperItem.fields.title,
           route: PaperItem.fields.route,
           published: PaperItem.fields.published,
+          version: PaperItem.fields.version,
           path: PaperItem.fields.path,
+          sourceId: PaperItem.fields.sourceId,
           message: PaperItem.fields.message,
         }),
       ),
@@ -412,6 +639,12 @@ export const ScientAccountsToolkit = Toolkit.make(
   findProfile,
   add,
   connectorSetup,
+  connectorList,
+  connectorAdd,
+  connectorControl,
+  connectorCopy,
+  connectorCheck,
+  connectorSave,
   paperGet,
   paperQueue,
   paperStatus,

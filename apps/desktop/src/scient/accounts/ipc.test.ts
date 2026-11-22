@@ -275,7 +275,18 @@ function fillFixture(
         Effect.sync(() => {
           imports.push({ scope, persistent });
           sessionFor(scope, persistent).put(jarCookie({ domain: ".github.com", value: "import" }));
-          return { imported: 1, skipped: 0, skippedDomains: [] };
+          // A mixed Windows jar: one cookie written, three app-bound rows and one corrupt left out.
+          return {
+            imported: 1,
+            skipped: 4,
+            skippedDomains: ["google.com"],
+            skippedByReason: {
+              appBoundEncryption: 3,
+              decryptFailed: 1,
+              partitionUnsupported: 0,
+              writeFailed: 0,
+            },
+          };
         }),
     }),
     Layer.mock(ElectronWindow)({
@@ -634,6 +645,17 @@ describe("fillMain", () => {
         from: { importSourceId: "chrome", sourceProfileDirectory: "Default" },
       });
       expect(result?.units).toEqual([{ sites: ["github.com"], outcome: "copied" }]);
+      // The import's cookie rows come back beside the copy's units, never merged into them.
+      expect(result?.importSummary).toEqual({
+        imported: 1,
+        skipped: 4,
+        skippedByReason: {
+          appBoundEncryption: 3,
+          decryptFailed: 1,
+          partitionUnsupported: 0,
+          writeFailed: 0,
+        },
+      });
       expect(f.imports).toHaveLength(1);
       expect(f.imports[0]).toMatchObject({ persistent: false });
       expect(f.imports[0]?.scope.startsWith("scient-import-staging:")).toBe(true);

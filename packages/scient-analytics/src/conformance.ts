@@ -69,6 +69,22 @@ const representativeProperties = {
   action: "repair",
   stage: "downloading",
   failureClass: "permission",
+  attempt: 2,
+  downloadSource: "fallback",
+  sourceKind: "github",
+  downloadVariant: "raw",
+  downloadAttempts: 5,
+  networkKind: "stalled",
+  compressedFailure: "checksum",
+  failedCheck: "rpc_start",
+  failureReason: "no_signin_page",
+  signInPage: "manual_fallback",
+  toolServerOwner: "connector",
+  customEndpoint: true,
+  progressPercent: 37,
+  bytesPerSecond: 410_000,
+  resumedBytes: 41_000_000,
+  percent: 64,
   component: "server",
   operation: "startup",
   queuedCount: 8,
@@ -112,6 +128,20 @@ const representativeProperties = {
   createdBy: "user",
   scheduled: false,
   subagent: false,
+  failureOwner: "code",
+  failureCategory: "code-error",
+  language: "python",
+  actor: "agent",
+  entry: "cell",
+  runtimeSource: "managed",
+  commandCategory: "python",
+  commandCount: 3,
+  failedCount: 1,
+  stoppedCount: 1,
+  failureCode: "retry_stalled",
+  httpStatus: 400,
+  retryAttempts: 2,
+  failurePhase: "provider",
 };
 // Content sentinels must not reach the wire; account email is the explicit exception.
 const privateProperties = {
@@ -263,6 +293,120 @@ export function buildAnalyticsConformanceFixture() {
       retainedOutputCount: 1,
     }),
   );
+  // Who a failure belongs to and what an agent ran are closed: free text becomes `unknown`.
+  cases.push(
+    fixtureCase("attribution-hostile", "scient.operation.failed", {
+      operationKind: "compute-run",
+      failureOwner: "PRIVATE-CONTENT",
+      failureCategory: "PrivatePatientStudyError",
+      actor: "someone@example.invalid",
+      entry: "/private/fixture.py",
+    }),
+    // A failure code is an identifier and a status is a real HTTP status, or neither is sent.
+    fixtureCase("failure-cause-hostile", "provider.turn.failed", {
+      provider: "scient",
+      model: "gpt-5.6-sol",
+      failureClass: "provider_error",
+      failureCode: "PRIVATE CONTENT /private/fixture",
+      httpStatus: 4040,
+      retryAttempts: -1,
+    }),
+    fixtureCase("delegated-failure-hostile", "mcp.delegated_task.finished", {
+      status: "failed",
+      callerProvider: "claudeAgent",
+      targetProvider: "scient",
+      failurePhase: "PRIVATE-CONTENT",
+      failureCode: "someone@example.invalid",
+      httpStatus: 99.5,
+    }),
+    // Identifier-shaped codes that are not the provider's known categories are dropped too.
+    fixtureCase("failure-code-unknown-identifier", "provider.turn.failed", {
+      provider: "scient",
+      model: "gpt-5.6-sol",
+      failureClass: "provider_error",
+      failureCode: "private_prompt_fragment",
+    }),
+    fixtureCase("delegated-failure-unknown-identifier", "mcp.delegated_task.finished", {
+      status: "failed",
+      callerProvider: "claudeAgent",
+      targetProvider: "codex",
+      failurePhase: "provider",
+      failureCode: "chatpass_private_prompt_fragment",
+    }),
+    fixtureCase("command-hostile", "provider.commands.observed", {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      commandCategory: "python /private/fixture.py",
+      commandCount: -4,
+      failedCount: "2",
+    }),
+  );
+  // Desktop app updates: closed steps and outcomes, validated release versions, buckets only.
+  cases.push(
+    fixtureCase("download-failed", "app.update.outcome", {
+      step: "download",
+      outcome: "failed",
+      failureClass: "signature",
+      trigger: "background",
+      targetVersion: "0.6.30",
+      sourceKind: "github",
+      packageKind: "nsis",
+      attemptRef: "3f9a0c1d2e4b5a67",
+      durationMs: 95_000,
+      ...privateProperties,
+    }),
+    fixtureCase("apply-not-applied", "app.update.outcome", {
+      step: "apply",
+      outcome: "not-applied",
+      trigger: "user",
+      targetVersion: "0.6.30",
+      packageKind: "zip",
+      attemptRef: "3f9a0c1d2e4b5a67",
+      durationMs: 2 * 86_400_000,
+    }),
+    fixtureCase("outcome-hostile", "app.update.outcome", {
+      step: "install",
+      outcome: "completed",
+      failureClass: "PRIVATE-CONTENT",
+      trigger: "agent",
+      targetVersion: "0.6.30-private.build",
+      sourceKind: "https://example.invalid/feed",
+      packageKind: "dmg",
+      attemptRef: "PRIVATE",
+      message: "PRIVATE-CONTENT",
+    }),
+    fixtureCase("summary-downloading", "app.update.summary", {
+      reason: "change",
+      status: "downloading",
+      channel: "latest",
+      behind: "yes",
+      stageAgeMs: 25 * 60_000,
+      downloadPercent: 40,
+      sinceProgressMs: 12 * 60_000,
+      lastCheckAgeMs: 26 * 60_000,
+      droppedFactCount: 0,
+      ...privateProperties,
+    }),
+    fixtureCase("summary-ready", "app.update.summary", {
+      reason: "daily",
+      status: "downloaded",
+      channel: "beta",
+      behind: "yes",
+      stageAgeMs: 4 * 86_400_000,
+      readyAgeMs: 4 * 86_400_000,
+      lastCheckAgeMs: 3 * 3_600_000,
+      droppedFactCount: 12,
+    }),
+    fixtureCase("summary-disabled", "app.update.summary", {
+      reason: "launch",
+      status: "disabled",
+      channel: "latest",
+      behind: "unknown",
+      stageAgeMs: 0,
+      disabledClass: "policy",
+      message: "Updates are turned off by PRIVATE-CONTENT.",
+    }),
+  );
   for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {
     const rejected = captureOutcome === "partial" || captureOutcome === "failed";
     const retained = captureOutcome === "partial" || captureOutcome === "retained";
@@ -328,6 +472,14 @@ export function buildAnalyticsConformanceFixture() {
           trigger: "user",
         }),
       ),
+    );
+  }
+  for (const fileType of ["csv", "none", "PRIVATE"]) {
+    cases.push(
+      fixtureCase(`file-${fileType.toLowerCase()}`, "panel.viewed", {
+        category: "file-preview",
+        fileType,
+      }),
     );
   }
   for (const provider of ["scient", "omp", "muse", "acpRegistry"]) {

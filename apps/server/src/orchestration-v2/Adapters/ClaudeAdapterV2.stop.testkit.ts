@@ -108,6 +108,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
               options: input.options,
             });
             return {
+              renameSession: () => Effect.void,
               messages: Stream.fromQueue(sdkMessages).pipe(
                 Stream.flatMap((message) =>
                   Stream.make(message).pipe(
@@ -139,6 +140,9 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
               backgroundTasks: () => Effect.succeed(false),
               mcpServerStatus: Effect.succeed([]),
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
+              mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+              mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+              reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
               setPermissionMode: () =>
@@ -178,6 +182,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
           }),
         forkSession: () => Effect.die("No fork in captured Stop race"),
         subagentLaunchToolUseId: () => Effect.succeed(null),
+        subagentModel: () => Effect.succeed(null),
         assertComplete: Effect.void,
       },
     });

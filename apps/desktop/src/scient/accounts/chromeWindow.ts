@@ -271,6 +271,7 @@ interface Run {
   reader?: NodeChildProcess.ChildProcess;
   keep: boolean;
   ended: boolean;
+  quitRequested: boolean;
 }
 
 /** The one sign-in in progress, held from the first step until its folder is removed. */
@@ -287,7 +288,7 @@ export async function signInInWindow(input: {
   readonly platform: NodeJS.Platform;
 }): Promise<ChromeWindowOutcome> {
   if (running) return { outcome: "busy" };
-  const run: Run = { keep: true, ended: false };
+  const run: Run = { keep: true, ended: false, quitRequested: false };
   running = run;
   const { browser, folder, url, platform } = input;
   try {
@@ -320,16 +321,17 @@ export async function signInInWindow(input: {
 
 /**
  * Done (`keep`): the browser quits as if the person quit it, where Scient can do that. Cancel: it
- * is stopped and nothing is read. False when no window is open.
+ * is stopped and nothing is read. False when no sign-in is active.
  */
 export function endSignInWindow(keep: boolean, platform: NodeJS.Platform) {
   const run = running;
-  if (!run || run.ended || (keep && !canQuitWindow(platform))) return false;
-  run.ended = true;
+  if (!run || run.ended || (keep && (run.quitRequested || !canQuitWindow(platform)))) return false;
   run.keep = keep;
   if (keep) {
+    run.quitRequested = true;
     if (run.window) quit(run.window, platform);
   } else {
+    run.ended = true;
     run.window?.kill("SIGKILL");
     run.reader?.kill("SIGKILL");
   }

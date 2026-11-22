@@ -1,4 +1,5 @@
 import type { EnvironmentId, ScientLatexToolchainReport } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { readLatexToolchain, requestLatexToolchainInstall } from "../latex/client";
@@ -47,6 +48,7 @@ export interface LatexInstallationController {
  * once per environment (key the caller by environment id).
  */
 export function useLatexInstallation(environmentId: EnvironmentId): LatexInstallationController {
+  const messages = useMessages();
   const [report, setReport] = useState<ScientLatexToolchainReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -149,7 +151,7 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
   };
 
   return {
-    view: latexInstallationView({ report, requesting, error, installError }),
+    view: latexInstallationView({ report, requesting, error, installError }, messages),
     report,
     act,
     refresh,

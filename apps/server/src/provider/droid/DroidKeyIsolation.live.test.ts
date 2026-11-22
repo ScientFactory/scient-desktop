@@ -18,6 +18,7 @@ import { beforeAll } from "vite-plus/test";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { droidRequestFailureDetail } from "../acp/DroidAcpSupport.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
+import { awaitDroidHomeIdleOnClose } from "./DroidLiveHome.testkit.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
@@ -162,6 +163,8 @@ it.effect.skipIf(!binary)(
       yield* Effect.promise(
         () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
       );
+      // Droid's exit courier outlives it; the stub stays up until HOME is idle.
+      yield* awaitDroidHomeIdleOnClose(home);
       const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
       const instanceId = ProviderInstanceId.make("droid_isolation");
       const connections: ReadonlyArray<ResolvedModelConnection> = [
@@ -339,6 +342,8 @@ for (const protocol of Object.keys(MODEL_PATHS) as Array<keyof typeof MODEL_PATH
         yield* Effect.promise(
           () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
         );
+        // Droid's exit courier outlives it; the stub stays up until HOME is idle.
+        yield* awaitDroidHomeIdleOnClose(home);
         const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
         const instanceId = ProviderInstanceId.make("droid_withheld");
         const connections: ReadonlyArray<ResolvedModelConnection> = [

@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
-import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { findErrorTraceId, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { AuthRelayReadScope, AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import {
@@ -10,23 +10,40 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
+import { msg } from "gt-react";
 
 import { toastManager } from "../components/ui/toast";
+import { m } from "../i18n/messages";
 import { stackedThreadToast } from "../components/ui/toastHelpers";
 import { relayFailureReason } from "./relayFailureReason";
 import { relayEnvironmentDiscovery } from "../state/relay";
-import { readEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentCanConfigureRelay,
+  readEnvironmentScope,
+  useEnvironmentCanConfigureRelay,
+} from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { isCloudEnvironmentLinkError } from "./linkEnvironment";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
   linkEnvironment as linkEnvironmentAtom,
+  // SCIENT-FORK:START
+  switchEnvironmentAccount as switchEnvironmentAccountAtom,
+  // SCIENT-FORK:END
   unlinkEnvironment as unlinkEnvironmentAtom,
   updateEnvironmentPreferences as updateEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
 import { readCachedCloudLinkState, useCloudLinkState } from "./cloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
-import { isManagedTunnelActive } from "./t3ConnectState";
+import { cloudChangeReplacesLink, isManagedTunnelActive } from "./t3ConnectState";
+// SCIENT-FORK:START — scient/connect: the desktop's own computer is set up by its server.
+import {
+  authorizeScientConnect,
+  describeScientConnectHost,
+  turnOffScientConnect,
+  useScientConnectHost,
+} from "../scient/connect/connectHost";
+// SCIENT-FORK:END
 
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
@@ -48,13 +65,20 @@ function tunnelLimitFromLinkFailure(cause: unknown): number | null {
 }
 
 export function useCloudLinkController(environmentId: EnvironmentId | null) {
-  const { getToken, isSignedIn } = useAuth();
+  // SCIENT-FORK:START — userId: the signed-in account a link must belong to.
+  const { getToken, isSignedIn, userId } = useAuth();
+  // SCIENT-FORK:END
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
   const linkEnvironment = useAtomCommand(linkEnvironmentAtom, {
     reportFailure: false,
   });
+  // SCIENT-FORK:START
+  const switchEnvironmentAccount = useAtomCommand(switchEnvironmentAccountAtom, {
+    reportFailure: false,
+  });
+  // SCIENT-FORK:END
   const unlinkEnvironment = useAtomCommand(unlinkEnvironmentAtom, {
     reportFailure: false,
   });
@@ -68,22 +92,29 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
     : undefined;
   const [operationError, setOperationError] = useState<string | null>(null);
   const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
+  // SCIENT-FORK:START — scient/connect: the desktop's own computer is set up by its server.
+  const connectHost = useScientConnectHost(environmentId);
+  const authorizeHost = useAtomCommand(authorizeScientConnect, { reportFailure: false });
+  const turnOffHost = useAtomCommand(turnOffScientConnect, { reportFailure: false });
+  // SCIENT-FORK:END
 
   const reportUpdateFailure = (cause: unknown, reason?: string) => {
     const message =
-      cause instanceof Error ? cause.message : "Could not update Scient Connect access.";
+      thrownErrorMessage(cause, m) ?? m(msg("Could not update Scient Connect access."));
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not update Scient Connect", { message, traceId, cause });
-    setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
+    setOperationError(
+      traceId ? m(msg("{message} Trace ID: {traceId}", { message, traceId })) : message,
+    );
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not update Scient Connect",
+        title: m(msg("Could not update Scient Connect")),
         description: reason ?? relayFailureReason(cause) ?? message,
         ...(traceId
           ? {
               actionProps: {
-                children: "Copy trace ID",
+                children: m(msg("Copy trace ID")),
                 onClick: () => void navigator.clipboard?.writeText(traceId),
               },
               actionVariant: "outline",
@@ -102,13 +133,18 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
   const publishAgentActivity = cloudLinkState.data?.publishAgentActivity ?? false;
   const holdWebhooksWhileOffline = cloudLinkState.data?.holdWebhooksWhileOffline ?? false;
   const linked = !linkRevoked && (cloudLinkState.data?.linked ?? false);
+  const canConfigureRelay = useEnvironmentCanConfigureRelay(environmentId);
+  const needsRelayConfiguration = (desired: CloudLinkDesiredState) =>
+    !canConfigureRelay &&
+    linkData !== null &&
+    cloudChangeReplacesLink(linkData, relayProviderKind, desired);
 
   const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
     setOperationError(null);
     setTunnelLimit(null);
     const target = cloudLinkState.target;
     if (!target) {
-      reportUpdateFailure(new Error("Choose an environment first."));
+      reportUpdateFailure(new Error(m(msg("Choose an environment first."))));
       return false;
     }
     const environmentId = target.environmentId;
@@ -118,7 +154,9 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         !readEnvironmentScope(environmentId, AuthRelayWriteScope)
       ) {
         reportUpdateFailure(
-          new Error("This connection needs permission to view and manage Scient Connect settings."),
+          new Error(
+            m(msg("This connection needs permission to view and manage Scient Connect settings.")),
+          ),
         );
         return false;
       }
@@ -128,12 +166,95 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       const state = readCachedCloudLinkState(target);
       if (state === null) {
         reportUpdateFailure(
-          new Error("Wait until the current Scient Connect settings can be read."),
+          new Error(m(msg("Wait until the current Scient Connect settings can be read."))),
         );
       }
       return state;
     };
     if (!canManageLink()) return false;
+    // SCIENT-FORK:START — scient/connect: on the desktop's own computer its server turns Scient
+    // Connect on and off, so Off holds and no window links around it. Preferences stay below.
+    if (connectHost !== null) {
+      const hostOn = !connectHost.off && connectHost.block?.reason !== "revoked";
+      if (!desired.managedTunnel) {
+        // The server unlinks here and, with a token, removes the computer from the account, all
+        // under the same lock as Turn on, so a newer On from another window is never undone.
+        const token = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+        const result = await turnOffHost({
+          environmentId,
+          input: token._tag === "Success" && token.value ? { token: token.value } : {},
+        });
+        refreshManagedTunnelUsage();
+        cloudLinkState.refresh();
+        await refreshRelayEnvironments();
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            reportUpdateFailure(squashAtomCommandFailure(result));
+          }
+          return false;
+        }
+        return true;
+      }
+      if (!hostOn || connectHost.phase !== "connected" || connectHost.linkedAccountId !== userId) {
+        const token = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+        if (token._tag === "Failure" || !token.value || typeof userId !== "string") {
+          reportUpdateFailure(
+            token._tag === "Failure"
+              ? squashAtomCommandFailure(token)
+              : new Error("Sign in to Scient Connect before enabling this."),
+          );
+          return false;
+        }
+        const result = await authorizeHost({
+          environmentId,
+          input: { accountId: userId, token: token.value, turnOn: true },
+        });
+        refreshManagedTunnelUsage();
+        cloudLinkState.refresh();
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result))
+            reportUpdateFailure(squashAtomCommandFailure(result));
+          return false;
+        }
+        const status = result.value;
+        if (status.phase === "blocked" && status.block?.reason === "limit") {
+          setTunnelLimit(status.block.maxTunnels);
+          return false;
+        }
+        // Retrying in the background; Settings shows why and the switch stays usable.
+        if (status.phase === "waiting-to-retry") return false;
+        if (status.phase !== "connected") {
+          reportUpdateFailure(
+            new Error(
+              describeScientConnectHost(status, true) ?? m(msg("Scient Connect is not on yet.")),
+            ),
+          );
+          return false;
+        }
+      }
+      const prefResult = await updateEnvironmentPreferences({
+        target,
+        publishAgentActivity: desired.publish,
+        ...(desired.holdWebhooksWhileOffline === undefined
+          ? {}
+          : { holdWebhooksWhileOffline: desired.holdWebhooksWhileOffline }),
+      });
+      if (prefResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(prefResult)) {
+          reportUpdateFailure(squashAtomCommandFailure(prefResult));
+        }
+        cloudLinkState.refresh();
+        return false;
+      }
+      cloudLinkState.refresh();
+      const refreshResult = await refreshRelayEnvironments();
+      if (refreshResult._tag === "Failure" && !isAtomCommandInterrupted(refreshResult)) {
+        reportUpdateFailure(squashAtomCommandFailure(refreshResult));
+        return false;
+      }
+      return true;
+    }
+    // SCIENT-FORK:END
     const wantsLink = desired.managedTunnel || desired.publish;
     if (wantsLink && readLinkState() === null) return false;
     const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
@@ -156,7 +277,11 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
           reportUpdateFailure(
             cause,
             relayKeptLink
-              ? "Disconnected here, but Scient Connect still lists it. Remove it in Account."
+              ? m(
+                  msg(
+                    "Disconnected here, but Scient Connect still lists it. Remove it in Account.",
+                  ),
+                )
               : undefined,
           );
         }
@@ -173,16 +298,42 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       }
       const clerkToken = tokenResult.value;
       if (!clerkToken) {
-        reportUpdateFailure(new Error("Sign in to Scient Connect before enabling this."));
+        reportUpdateFailure(new Error(m(msg("Sign in to Scient Connect before enabling this."))));
         return false;
       }
-      const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
+      // SCIENT-FORK:START — account switch
+      // Turning Scient Connect on while this environment is linked to another account (another
+      // sign-in, or the development account older builds used) moves it to the signed-in account;
+      // the server refuses a link over another account's. Edits that turn nothing on keep it.
+      const switchAccount =
+        currentLinkState.linked &&
+        typeof userId === "string" &&
+        currentLinkState.cloudUserId !== null &&
+        currentLinkState.cloudUserId !== userId &&
+        ((desired.managedTunnel && !isManagedTunnelActive(currentLinkState, relayProviderKind)) ||
+          (desired.publish && !currentLinkState.publishAgentActivity));
+      // SCIENT-FORK:END
       if (
-        !currentLinkState.linked ||
-        currentLinkState.linkRevoked === true ||
-        currentManagedTunnel !== desired.managedTunnel
+        // SCIENT-FORK:START
+        switchAccount ||
+        // SCIENT-FORK:END
+        cloudChangeReplacesLink(currentLinkState, relayProviderKind, desired)
       ) {
-        const linkResult = await linkEnvironment({
+        if (!readEnvironmentCanConfigureRelay(environmentId)) {
+          reportUpdateFailure(
+            new Error(
+              m(
+                msg(
+                  "This connection needs the relay configuration permission to configure Scient Connect.",
+                ),
+              ),
+            ),
+          );
+          return false;
+        }
+        // SCIENT-FORK:START
+        const linkResult = await (switchAccount ? switchEnvironmentAccount : linkEnvironment)({
+          // SCIENT-FORK:END
           target,
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
@@ -241,6 +392,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
     holdWebhooksWhileOffline,
     operationError,
     tunnelLimit,
+    needsRelayConfiguration,
     reconcileCloudState,
   };
 }

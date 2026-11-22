@@ -6,9 +6,11 @@ import type {
   SourceControlCredentials,
 } from "@t3tools/source-control-core/server/driver";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -290,6 +292,8 @@ function realStack(options: {
     Layer.provideMerge(SourceControlRateLimit.layer),
     Layer.provideMerge(host),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(FeatureFlags.layerTest({ githubAppClientId: Option.some("Iv-test-client") })),
+    Layer.provide(FileSystem.layerNoop({})),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
   );
   return {
@@ -309,7 +313,6 @@ const lentAs = (credential: Option.Option<SourceControlCredential>) =>
 describe("Source Control's credential over the real request stack", () => {
   beforeEach(() => {
     for (const name of ["GH_TOKEN", "GITHUB_TOKEN"]) vi.stubEnv(name, "");
-    vi.stubEnv(GitHubAppSignIn.CLIENT_ID_VARIABLE, "Iv-test-client");
   });
   afterEach(() => {
     vi.unstubAllEnvs();

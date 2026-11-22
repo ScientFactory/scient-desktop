@@ -14,6 +14,9 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 import { crossProvider, providerDimensions } from "./ProviderDimensions.ts";
+// SCIENT-FORK:START — why a failed task failed, from its child run.
+import { delegatedTaskFailure } from "./DelegatedTaskFailure.ts";
+// SCIENT-FORK:END
 
 type SubagentEvent = Extract<OrchestrationV2DomainEvent, { readonly type: "subagent.updated" }>;
 
@@ -59,6 +62,10 @@ const make = Effect.gen(function* () {
               ),
             )
           : undefined;
+      // SCIENT-FORK:START — why a failed task failed, from its child run.
+      const failure =
+        task.status === "failed" ? yield* delegatedTaskFailure(orchestrator, task) : undefined;
+      // SCIENT-FORK:END
       yield* analytics.record("mcp.delegated_task.finished", {
         status: task.status,
         callerProvider: parentDimensions.provider,
@@ -68,6 +75,8 @@ const make = Effect.gen(function* () {
         ...(cross === undefined ? {} : { crossProvider: cross }),
         ...(task.completionWake === undefined ? {} : { completionWake: task.completionWake }),
         ...(durationSeconds === undefined ? {} : { durationSeconds }),
+        // SCIENT-FORK: failure phase, class, code and status of a failed task.
+        ...failure,
       });
       // Only after recording: a failed lookup leaves the next final update to report it.
       reported.add(task.id);

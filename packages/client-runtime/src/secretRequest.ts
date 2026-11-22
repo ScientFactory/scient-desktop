@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "./errors/translatable.ts";
 import {
   SecretReference,
   secretRequestPageUrl,
@@ -11,12 +12,19 @@ import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-defin
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 // SCIENT-FORK:START — Scient Accounts: cards from scient_account_add save into Accounts.
-import {
-  ACCOUNT_SECRET_REQUEST_NOTE,
-  ACCOUNT_SECRET_REQUEST_SAVED,
-  ONE_TIME_SECRET_REQUEST_SAVED,
-  isAccountSecretRequest,
-} from "@t3tools/shared/scientAccountSecretRequest";
+import { isAccountSecretRequest } from "@t3tools/shared/scientAccountSecretRequest";
+// SCIENT-FORK:END
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+// SCIENT-FORK:START — Scient Accounts: the Accounts cards' copy.
+/** Accounts cards' privacy note: new keys are readable by default, so the card says so. */
+const ACCOUNT_SECRET_REQUEST_NOTE = msg(
+  "Saved to Settings ▸ Accounts & secrets. Agents can use it, and read it in their commands, as you allow there",
+);
+const ACCOUNT_SECRET_REQUEST_SAVED = msg("Saved to Accounts");
+/** Any other card's answer: `request_secret` is for codes used once, so it is not kept. */
+const ONE_TIME_SECRET_REQUEST_SAVED = msg("Sent to this agent only, not kept in Accounts");
 // SCIENT-FORK:END
 
 export type SecretRequestItem = Extract<
@@ -26,16 +34,54 @@ export type SecretRequestItem = Extract<
 
 /** A `file` request lets the agent's commands read the value, so its card must not promise more. */
 export const secretRequestPrivacyNote = (
-  item: Pick<SecretRequestItem, "delivery"> & { readonly id?: string },
+  item: Pick<SecretRequestItem, "delivery" | "fields"> & { readonly id?: string },
+  resolve: MFunctionType = mFallback,
 ) => {
   // SCIENT-FORK:START — Scient Accounts: an Accounts card keeps the key in Accounts.
-  if (isAccountSecretRequest(item.id)) return ACCOUNT_SECRET_REQUEST_NOTE;
+  if (isAccountSecretRequest(item.id)) return resolve(ACCOUNT_SECRET_REQUEST_NOTE);
   // SCIENT-FORK:END
-  return item.delivery === "file"
-    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
-    : "Stored securely, never shown to the agent";
+  return item.delivery !== "file"
+    ? resolve(msg("Stored securely, never shown to the agent"))
+    : item.fields === undefined
+      ? resolve(
+          msg("Kept out of chat, in a private file this agent's commands can read for 24 hours"),
+        )
+      : resolve(
+          msg("Kept out of chat, in private files this agent's commands can read for 24 hours"),
+        );
 };
-export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+const SECRET_REQUEST_DEFAULT_PLACEHOLDER = msg("Paste the secret");
+
+export interface SecretRequestInput {
+  /** Key in the card's values: the field name, or "" for a request without fields. */
+  readonly key: string;
+  readonly label: string;
+  readonly placeholder: string;
+  /** Masked, with a toggle to show it. */
+  readonly secret: boolean;
+}
+
+export function secretRequestInputs(
+  item: Pick<SecretRequestItem, "label" | "placeholder" | "fields">,
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<SecretRequestInput> {
+  if (item.fields === undefined) {
+    return [
+      {
+        key: "",
+        label: item.label,
+        placeholder: item.placeholder ?? resolve(SECRET_REQUEST_DEFAULT_PLACEHOLDER),
+        secret: true,
+      },
+    ];
+  }
+  return item.fields.map((field) => ({
+    key: field.name,
+    label: field.label,
+    placeholder: field.placeholder ?? "",
+    secret: field.secret !== false,
+  }));
+}
 
 // Backticks, <angle brackets> and markdown link targets (balanced parentheses allowed) keep their
 // exact text; a bare link drops trailing sentence punctuation.
@@ -99,28 +145,7 @@ export type SecretRequestDisplay =
       readonly label: string;
     };
 
-const SAVED_DISPLAY: SecretRequestDisplay = {
-  kind: "answered",
-  outcome: "saved",
-  // SCIENT-FORK:START — Scient Accounts: a one-time card's answer is not kept in Accounts.
-  label: ONE_TIME_SECRET_REQUEST_SAVED,
-  // SCIENT-FORK:END
-};
-const DECLINED_DISPLAY: SecretRequestDisplay = {
-  kind: "answered",
-  outcome: "declined",
-  label: "Declined",
-};
-const ENDED_DISPLAY: SecretRequestDisplay = {
-  kind: "answered",
-  outcome: "ended",
-  label: "Request ended",
-};
 const PENDING_DISPLAY: SecretRequestDisplay = { kind: "pending" };
-const PENDING_ELSEWHERE_DISPLAY: SecretRequestDisplay = {
-  kind: "pending-elsewhere",
-  label: "Waiting for an answer in the original thread",
-};
 
 /**
  * `visibility` is the projected row's: a request inherited from another
@@ -129,20 +154,33 @@ const PENDING_ELSEWHERE_DISPLAY: SecretRequestDisplay = {
 export function secretRequestDisplay(
   item: Pick<SecretRequestItem, "secretStatus"> & { readonly id?: string },
   visibility: "local" | "inherited" | "synthetic",
+  resolve: MFunctionType = mFallback,
 ): SecretRequestDisplay {
   switch (item.secretStatus) {
     case "pending":
-      return visibility === "local" ? PENDING_DISPLAY : PENDING_ELSEWHERE_DISPLAY;
+      return visibility === "local"
+        ? PENDING_DISPLAY
+        : {
+            kind: "pending-elsewhere",
+            label: resolve(msg("Waiting for an answer in the original thread")),
+          };
     case "saved":
-      // SCIENT-FORK:START — Scient Accounts: an Accounts card says where the key went.
-      if (isAccountSecretRequest(item.id))
-        return { kind: "answered", outcome: "saved", label: ACCOUNT_SECRET_REQUEST_SAVED };
-      // SCIENT-FORK:END
-      return SAVED_DISPLAY;
+      // SCIENT-FORK:START — Scient Accounts: an Accounts card says where the key went; a one-time
+      // card's answer is not kept in Accounts.
+      return {
+        kind: "answered",
+        outcome: "saved",
+        label: resolve(
+          isAccountSecretRequest(item.id)
+            ? ACCOUNT_SECRET_REQUEST_SAVED
+            : ONE_TIME_SECRET_REQUEST_SAVED,
+        ),
+      };
+    // SCIENT-FORK:END
     case "declined":
-      return DECLINED_DISPLAY;
+      return { kind: "answered", outcome: "declined", label: resolve(msg("Declined")) };
     case "cancelled":
-      return ENDED_DISPLAY;
+      return { kind: "answered", outcome: "ended", label: resolve(msg("Request ended")) };
   }
 }
 
@@ -156,6 +194,23 @@ export interface SecretRequestSource {
 }
 
 const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
+
+// Secret provider packages author this text in English; the same English, translatable here.
+const INVALID_REFERENCE_MESSAGES: ReadonlyMap<string, string> = new Map([
+  [
+    "Use a 1Password reference like op://vault/item/field.",
+    msg("Use a 1Password reference like {example}.", { example: "op://vault/item/field" }),
+  ],
+]);
+
+/** A secret provider's `invalidReferenceMessage` in the UI language when it is a known one. */
+export function invalidSecretReferenceText(
+  message: string,
+  resolve: MFunctionType = mFallback,
+): string {
+  const translated = INVALID_REFERENCE_MESSAGES.get(message);
+  return translated === undefined ? message : resolve(translated);
+}
 const decodeConfigByKind = new Map(
   builtInSecretProviderDefinitions.definitions.map((definition) => [
     definition.kind,
@@ -167,13 +222,15 @@ const decodeConfigByKind = new Map(
 export function secretRequestSources(
   config: Pick<ServerConfig, "secretRequestReferences"> | null | undefined,
   providers: ServerSettings["secretProviders"],
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<SecretRequestSource> {
   if (config?.secretRequestReferences !== true) return NO_SOURCES;
-  return configuredSecretSources(providers);
+  return configuredSecretSources(providers, resolve);
 }
 
 export function configuredSecretSources(
   providers: ServerSettings["secretProviders"],
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<SecretRequestSource> {
   return (Object.keys(providers) as Array<SecretProviderId>).flatMap((id) => {
     const provider = providers[id];
@@ -192,7 +249,10 @@ export function configuredSecretSources(
         label: provider.label,
         isReference: definition.isReference,
         referencePlaceholder: definition.referencePlaceholder,
-        invalidReferenceMessage: definition.invalidReferenceMessage,
+        invalidReferenceMessage: invalidSecretReferenceText(
+          definition.invalidReferenceMessage,
+          resolve,
+        ),
       },
     ];
   });
@@ -211,27 +271,40 @@ export function secretRequestReference(
     : undefined;
 }
 
+/** A card value by input key. Own keys only: a field may be named `constructor`. */
+export const secretRequestValue = (values: Readonly<Record<string, string>>, key: string) =>
+  Object.hasOwn(values, key) ? (values[key] ?? "") : "";
+
 export type SecretRequestReply =
-  | { readonly type: "save"; readonly secret: string }
+  /** Keyed by `SecretRequestInput.key`. */
+  | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
+  /** Single-value cards only: the server reads it through `source`. */
   | { readonly type: "reference"; readonly source: SecretRequestSource; readonly reference: string }
   | { readonly type: "decline" };
 
+/** Null until every input has a value, or while a reference is not `source`'s syntax. */
 export function secretRequestAnswerInput(
-  item: Pick<SecretRequestItem, "id" | "threadId">,
+  item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
   answer: SecretRequestReply,
 ): SecretRequestAnswerInput | null {
-  if (answer.type === "decline") {
-    return { threadId: item.threadId, turnItemId: item.id, answer: { type: "decline" } };
-  }
+  const base = { threadId: item.threadId, turnItemId: item.id };
+  if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
   if (answer.type === "reference") {
-    const reference = secretRequestReference(answer.source, answer.reference);
-    return reference === undefined
-      ? null
-      : { threadId: item.threadId, turnItemId: item.id, answer: { type: "reference", reference } };
+    const reference =
+      item.fields === undefined
+        ? secretRequestReference(answer.source, answer.reference)
+        : undefined;
+    return reference === undefined ? null : { ...base, answer: { type: "reference", reference } };
   }
-  const secret = answer.secret.trim();
-  if (secret.length === 0) return null;
-  return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
+  const entries = secretRequestInputs(item).map(
+    (input) => [input.key, secretRequestValue(answer.values, input.key).trim()] as const,
+  );
+  if (entries.some(([, value]) => value.length === 0)) return null;
+  if (item.fields === undefined) {
+    return { ...base, answer: { type: "save", secret: entries[0]?.[1] ?? "" } };
+  }
+
+  return { ...base, answer: { type: "save", values: Object.fromEntries(entries) } };
 }
 
 const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);
@@ -240,7 +313,10 @@ const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuth
  * Only known server errors pass their message through: anything else (transport or encoding
  * failures) gets the generic copy, so the typed value can never surface in the UI.
  */
-export function secretRequestFailureMessage(failure: unknown): string {
+export function secretRequestFailureMessage(
+  failure: unknown,
+  resolve: MFunctionType = mFallback,
+): string {
   if (
     typeof failure === "object" &&
     failure !== null &&
@@ -251,7 +327,7 @@ export function secretRequestFailureMessage(failure: unknown): string {
     typeof failure.message === "string" &&
     failure.message.trim().length > 0
   ) {
-    return failure.message;
+    return errorDisplayMessage(failure, resolve) ?? failure.message;
   }
-  return "Could not answer the request. Try again.";
+  return resolve(msg("Could not answer the request. Try again."));
 }

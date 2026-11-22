@@ -4,10 +4,18 @@ import {
   capturedNativeOwnerValidator,
   completeDestructiveNativeInterrupt,
 } from "../scient-provider/NativeProducerLifecycle.ts";
+// SCIENT-FORK:START — native question identity and publication order.
+import {
+  nativeQuestionFrames,
+  nativeQuestionRequest,
+  nativeQuestionSettled,
+} from "../scient-provider/NativeQuestionPublication.ts";
+// SCIENT-FORK:END
 import {
   type ModelSelection,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderTurnTokenUsage,
+  OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRetry,
   type ThreadTokenUsageSnapshot,
@@ -27,6 +35,7 @@ import {
   type ToolActivitySource,
   type ToolActivitySurface,
   type ToolHostPermission,
+  isDelegatedAppThread,
 } from "@t3tools/contracts";
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
@@ -76,12 +85,49 @@ type NativeSessionPresentation =
       readonly beforeTokenCount?: number;
       readonly afterTokenCount?: number;
     }
-  | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> };
+  | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> }
+  // SCIENT-FORK: a plan the agent proposed, shown as the shared plan card.
+  | { readonly type: "proposed_plan"; readonly markdown: string };
+
+/** SCIENT-FORK: one step of a native subagent's conversation; `id` is stable across reads. */
+export type NativeSubagentStep =
+  | {
+      readonly kind: "text";
+      readonly id: string;
+      readonly role: "user" | "assistant";
+      readonly text: string;
+      readonly reasoning?: boolean;
+    }
+  | {
+      readonly kind: "tool";
+      readonly id: string;
+      readonly name: string;
+      readonly status: "running" | "completed" | "failed";
+      readonly input?: unknown;
+      readonly output?: string;
+    }
+  | { readonly kind: "notice"; readonly id: string; readonly message: string };
+
+/** SCIENT-FORK: a tool call shown as the typed row Codex and Claude produce, not a generic one. */
+type NativeToolRowItem = Extract<
+  OrchestrationV2TurnItem,
+  { readonly type: "command_execution" | "file_change" | "web_search" }
+>;
+export type NativeToolRow = NativeToolRowItem extends infer Item
+  ? Item extends NativeToolRowItem
+    ? Omit<Item, Exclude<keyof Item, "type"> & keyof OrchestrationV2TurnItem>
+    : never
+  : never;
+
+const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
   | {
       readonly type: "usage";
+      // SCIENT-FORK:START — the five-minute cache entry warming stopped on, or null for none.
+      readonly promptCacheWarmingStopped?: OrchestrationV2ProviderThread["promptCacheWarmingStopped"];
+      // SCIENT-FORK:END
       readonly tokenUsage?: Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
       readonly contextUsage?: ThreadTokenUsageSnapshot;
       // SCIENT-FORK: one model request's counts, added up into the turn's usage.
@@ -96,6 +142,8 @@ export type NativeSessionUpdate =
   | { readonly type: "accepted"; readonly nativeTurnId: string }
   | { readonly type: "offered"; readonly nativeTurnId: string }
   | { readonly type: "rejected"; readonly nativeTurnId: string }
+  /** SCIENT-FORK: the native conversation entry the running turn's message became. */
+  | { readonly type: "turn-entry"; readonly entryId: string }
   | {
       readonly type: "text";
       readonly id: string;
@@ -128,6 +176,7 @@ export type NativeSessionUpdate =
       readonly toolSource?: ToolActivitySource;
       readonly toolIcon?: ToolActivityIcon;
       readonly permissionsNeeded?: ReadonlyArray<ToolHostPermission>;
+      readonly row?: NativeToolRow;
     }
   | {
       readonly type: "subagent";
@@ -143,6 +192,17 @@ export type NativeSessionUpdate =
       readonly presentation?: OrchestrationV2Subagent["presentation"];
       /** Only an authoritative new activation may reopen a settled native task. */
       readonly reopen?: boolean;
+      /** SCIENT-FORK: saved steps follow, so the result waits for them and shows after. */
+      readonly stepsFollow?: boolean;
+    }
+  | {
+      /** SCIENT-FORK: a native subagent's own steps, shown in its child thread. */
+      readonly type: "subagent-steps";
+      /** The subagent's native id, as in its `subagent` update. */
+      readonly id: string;
+      readonly steps: ReadonlyArray<NativeSubagentStep>;
+      /** The subagent has ended and this is its last read: unanswered calls stop running. */
+      readonly final?: boolean;
     }
   | {
       readonly type: "question";
@@ -172,6 +232,10 @@ export type NativeSessionUpdate =
   | { readonly type: "native-thread"; readonly id: string; readonly resumeCursor?: unknown }
   | { readonly type: "model"; readonly model: string }
   | { readonly type: "background"; readonly pending: boolean }
+  /** SCIENT-FORK: the native goal changed; null when none is set. */
+  | { readonly type: "goal"; readonly goal: OrchestrationV2ProviderGoal | null }
+  /** SCIENT-FORK: the native agent turned plan mode on or off. */
+  | { readonly type: "plan-mode"; readonly enabled: boolean }
   | { readonly type: "continuation-started" }
   | {
       readonly type: "terminal";
@@ -180,6 +244,10 @@ export type NativeSessionUpdate =
       readonly broken?: boolean;
       readonly stopReason?: string;
       readonly failureClass?: OrchestrationV2ProviderFailureClass;
+      readonly resetAt?: string;
+      /** A bounded machine reason for a failed terminal, never provider text. */
+      readonly failureCode?: string;
+      readonly httpStatus?: number;
     };
 
 export class NativeSessionOperationError extends Schema.TaggedError<NativeSessionOperationError>()(
@@ -218,16 +286,32 @@ export interface NativeSession {
     input: ProviderAdapter.ProviderAdapterV2TurnInput,
     nativeTurnId: string,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /** Sent as the prompt of a manual continuation by a protocol that cannot continue without one. */
+  readonly continuationPrompt?: string;
   readonly steer?: (
     input: ProviderAdapter.ProviderAdapterV2SteerInput,
     validateOwner?: () => Effect.Effect<void, NativeSessionOperationError>,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /**
+   * SCIENT-FORK: moves the conversation to just before the message `entryId` recorded
+   * (a `turn-entry`), and returns where the conversation now lives.
+   */
+  readonly rewindBefore?: (
+    entryId: string,
+  ) => Effect.Effect<
+    { readonly nativeId: string; readonly resumeCursor?: unknown },
+    NativeSessionOperationError
+  >;
   // SCIENT-FORK: compaction uses the same turn ownership and receipt path as send.
   readonly compact?: NativeSession["send"];
   // SCIENT-FORK: child cancellation never uses the parent interrupt path.
   readonly stopSubagent?: (
     nativeTaskId: string,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /** The user's likely next message after a completed turn; null when the agent has no guess. */
+  readonly predictNextMessage?: Effect.Effect<string | null, NativeSessionOperationError>;
+  // SCIENT-FORK: a spoken conversation with this session; see ScientLiveVoiceRuntime.
+  readonly liveVoice?: ProviderAdapter.ScientLiveVoiceRuntime;
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
   // SCIENT-FORK:START — bounded graceful Stop can still require destructive fallback.
@@ -325,6 +409,8 @@ export function makeNativeSessionAdapterV2(
           readonly afterWake: number;
         }[] = [];
         let backgroundPending = false;
+        // SCIENT-FORK: a native turn has started and not yet ended (OMP reports both).
+        let nativeTurnOpen = false;
         let wakeOffered = false;
         const wake: {
           readonly update: NativeSessionUpdate;
@@ -334,6 +420,107 @@ export function makeNativeSessionAdapterV2(
         const presentationOwners = new Map<string, NonNullable<typeof active>>();
         const subagentOwners = new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>();
         const subagents = new Map<string, OrchestrationV2Subagent>();
+        // SCIENT-FORK: native subagents' own steps in their child threads, per subagent.
+        // Once its steps are final, a subagent keeps only their places, not their content.
+        interface SubagentChildSteps {
+          readonly items: Map<string, OrchestrationV2TurnItem>;
+          readonly ordinals: Map<string, number>;
+          /** Answers its steps showed, so the ending frame's result is not shown again. */
+          readonly answers: Set<string>;
+          nextOrdinal: number;
+          pendingResult?: string;
+          shownResult?: string;
+          final: boolean;
+        }
+        const subagentChildren = new Map<string, SubagentChildSteps>();
+        const subagentChild = (key: string) => {
+          let child = subagentChildren.get(key);
+          if (!child) {
+            // The assignment is ordinal 0; steps and the result follow in arrival order.
+            child = {
+              items: new Map(),
+              ordinals: new Map(),
+              answers: new Set(),
+              nextOrdinal: 1,
+              final: false,
+            };
+            subagentChildren.set(key, child);
+          }
+          return child;
+        };
+        const subagentOrdinal = (child: SubagentChildSteps, stepKey: string) => {
+          let ordinal = child.ordinals.get(stepKey);
+          if (ordinal === undefined) {
+            ordinal = child.nextOrdinal++;
+            child.ordinals.set(stepKey, ordinal);
+          }
+          return ordinal;
+        };
+        const emitSubagentStep = Effect.fnUntraced(function* (
+          child: SubagentChildSteps,
+          stepKey: string,
+          next: OrchestrationV2TurnItem,
+        ) {
+          const previous = child.items.get(stepKey);
+          const content = (item: OrchestrationV2TurnItem) =>
+            encodeNativeJson({ ...item, startedAt: null, updatedAt: null, completedAt: null });
+          // Re-reads repeat settled steps; only a changed step is written.
+          if (previous && content(previous) === content(next)) return;
+          if (!child.final) child.items.set(stepKey, next);
+          yield* emit({ type: "turn_item.updated", driver, turnItem: next });
+        });
+        const showSubagentResult = Effect.fnUntraced(function* (
+          key: string,
+          owner: Extract<OrchestrationV2TurnItem, { type: "subagent" }>,
+          text: string,
+          now: DateTime.Utc,
+        ) {
+          const child = subagentChild(key);
+          if (!owner.childThreadId || child.shownResult === text || child.answers.has(text.trim()))
+            return;
+          child.shownResult = text;
+          const artifacts = makeSubagentConversationArtifacts({
+            messageId: idAllocator.derive.messageFromProviderItem({
+              driver,
+              nativeItemId: `${key}:result`,
+            }),
+            turnItemId: idAllocator.derive.turnItemFromProviderItem({
+              driver,
+              nativeItemId: `${key}:result`,
+            }),
+            threadId: owner.childThreadId,
+            rootNodeId: owner.subagentId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: subagents.get(key)?.nativeTaskRef ?? null,
+            role: "assistant",
+            text,
+            ordinal: subagentOrdinal(child, `${key}:result`),
+            now,
+          });
+          yield* emit({ type: "message.updated", driver, message: artifacts.message });
+          yield* emit({ type: "turn_item.updated", driver, turnItem: artifacts.turnItem });
+        });
+        /** Its steps are complete: unanswered calls stop running and a waiting result shows. */
+        const finishSubagentSteps = Effect.fnUntraced(function* (key: string, now: DateTime.Utc) {
+          const child = subagentChildren.get(key);
+          if (!child || child.final) return;
+          for (const [stepKey, step] of child.items) {
+            if (step.type === "dynamic_tool" && step.status === "running")
+              yield* emitSubagentStep(child, stepKey, {
+                ...step,
+                status: "interrupted",
+                completedAt: now,
+                updatedAt: now,
+              });
+          }
+          const owner = items.get(key);
+          if (child.pendingResult !== undefined && owner?.type === "subagent")
+            yield* showSubagentResult(key, owner, child.pendingResult, now);
+          child.final = true;
+          child.items.clear();
+          delete child.pendingResult;
+        });
         const nodes = new Map<string, OrchestrationV2ExecutionNode>();
         const messages = new Map<string, OrchestrationV2ConversationMessage>();
         const turns = new Map<string, OrchestrationV2ProviderTurn>();
@@ -393,6 +580,29 @@ export function makeNativeSessionAdapterV2(
           );
         });
         const emit = (event: ProviderAdapter.ProviderAdapterV2Event) => emitBatch([event], true);
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        // Best effort, beside the event stream: a prediction never holds up the next turn, and a
+        // stale one is dropped because the composer shows it only for the latest completed run.
+        // Delegated threads have no one typing, so they never ask.
+        const offerPromptSuggestion = Effect.fn("NativeSessionAdapterV2.offerPromptSuggestion")(
+          function* (turn: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            if (isDelegatedAppThread(turn.appThread) || !(yield* promptSuggestionsEnabled)) return;
+            const native = yield* Deferred.await(nativeReady);
+            if (!native.predictNextMessage) return;
+            const text = (yield* native.predictNextMessage)?.trim() ?? "";
+            if (text.length === 0) return;
+            yield* emit({
+              type: "prompt_suggestion.updated",
+              driver,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              text,
+            });
+          },
+          Effect.catchCause((cause) =>
+            Effect.logDebug("orchestration-v2.native-prompt-suggestion-failed", { cause }),
+          ),
+        );
         const updateSession = Effect.fn("NativeSessionAdapterV2.updateSession")(function* (
           status: typeof providerSession.status,
           publish: typeof emit = emit,
@@ -476,6 +686,9 @@ export function makeNativeSessionAdapterV2(
             status: "failed" | "cancelled" | "interrupted",
             now: DateTime.Utc,
             clearWake: boolean = true,
+            // SCIENT-FORK: whose saved steps settle now. "all" when their reads end with the
+            // session; "stopped" on Stop, whose reads go on; "none" when work settled normally.
+            settleSubagentSteps: "all" | "stopped" | "none" = "all",
           ) {
             backgroundPending = false;
             if (clearWake) {
@@ -483,8 +696,10 @@ export function makeNativeSessionAdapterV2(
               wake.length = 0;
               wakeOffered = false;
             }
+            const stopped: string[] = [];
             for (const [key, task] of subagents) {
               if (task.status !== "running") continue;
+              stopped.push(key);
               const settled = { ...task, status, completedAt: now, updatedAt: now };
               subagents.set(key, settled);
               yield* emit({ type: "subagent.updated", driver, subagent: settled });
@@ -501,6 +716,14 @@ export function makeNativeSessionAdapterV2(
                 }
               }
             }
+            // SCIENT-FORK: steps whose last read will not come stop running.
+            const settled =
+              settleSubagentSteps === "all"
+                ? [...subagentChildren.keys()]
+                : settleSubagentSteps === "stopped"
+                  ? stopped
+                  : [];
+            for (const key of settled) yield* finishSubagentSteps(key, now);
             yield* publishBackgroundRoster(now);
           },
         );
@@ -639,10 +862,15 @@ export function makeNativeSessionAdapterV2(
                   failure: makeProviderFailure({
                     message: update.detail ?? "The native provider turn failed.",
                     class: update.failureClass ?? "provider_error",
+                    resetAt: update.resetAt ?? null,
+                    code: update.failureCode ?? null,
+                    httpStatus: update.httpStatus ?? null,
                   }),
                 }
               : { ...terminal, type: "turn.terminal", status, failure: null },
           );
+          if (status === "completed" && !update.broken)
+            yield* offerPromptSuggestion(running.input).pipe(Effect.forkIn(ownerScope));
           if (options.eventQueueLimits && !update.broken && backgroundPending)
             yield* emitBatch(
               [{ type: "provider_thread.updated", driver, providerThread: thread }],
@@ -663,6 +891,9 @@ export function makeNativeSessionAdapterV2(
           eventPermit.withPermit(
             Effect.gen(function* () {
               if (budget.closed) return;
+              // SCIENT-FORK: a native turn has started and not yet ended (OMP reports both).
+              if (update.type === "continuation-started") nativeTurnOpen = true;
+              else if (update.type === "terminal") nativeTurnOpen = false;
               if (update.type === "native-thread" && !thread) return;
               if (
                 options.eventQueueLimits &&
@@ -696,8 +927,11 @@ export function makeNativeSessionAdapterV2(
                 update.type === "accepted" ||
                 update.type === "offered" ||
                 update.type === "rejected" ||
+                update.type === "turn-entry" ||
                 update.type === "question-resolved" ||
                 update.type === "native-thread" ||
+                update.type === "goal" ||
+                update.type === "plan-mode" ||
                 (update.type === "model" &&
                   active !== undefined &&
                   active.turn.acceptedAt === undefined) ||
@@ -744,6 +978,21 @@ export function makeNativeSessionAdapterV2(
                   });
                   return;
                 }
+                if (update.type === "turn-entry") {
+                  if (active === undefined) return;
+                  active.turn = {
+                    ...active.turn,
+                    nativeTurnRef: ref(update.entryId),
+                  };
+                  turns.set(active.turn.id, active.turn);
+                  yield* emit({
+                    type: "provider_turn.updated",
+                    driver,
+                    threadId: active.input.threadId,
+                    providerTurn: active.turn,
+                  });
+                  return;
+                }
                 if (update.type === "model") {
                   providerSession = { ...providerSession, model: update.model };
                   yield* updateSession(providerSession.status, emit);
@@ -772,6 +1021,20 @@ export function makeNativeSessionAdapterV2(
                   }
                   return;
                 }
+                // SCIENT-FORK: the thread's goal row follows the native goal.
+                if (update.type === "goal") {
+                  if (!thread || providerGoalsEqual(thread.goal ?? null, update.goal)) return;
+                  thread = { ...thread, goal: update.goal, updatedAt: yield* DateTime.now };
+                  yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+                  return;
+                }
+                // SCIENT-FORK: the thread shows whether the agent is planning.
+                if (update.type === "plan-mode") {
+                  if (!thread || (thread.planMode ?? false) === update.enabled) return;
+                  thread = { ...thread, planMode: update.enabled, updatedAt: yield* DateTime.now };
+                  yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+                  return;
+                }
                 if (update.type === "background") {
                   if (update.pending) {
                     backgroundPending = true;
@@ -781,7 +1044,101 @@ export function makeNativeSessionAdapterV2(
                       yield* DateTime.now,
                       options.eventQueueLimits && active ? () => Effect.void : emit,
                     );
-                  } else yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false);
+                  } else
+                    yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false, "none");
+                  return;
+                }
+                // SCIENT-FORK: a subagent's own steps fill its child thread and never wake the agent.
+                if (update.type === "subagent-steps") {
+                  const key = thread ? `${thread.id}:subagent:${update.id}` : undefined;
+                  const owner = key === undefined ? undefined : items.get(key);
+                  if (key === undefined || owner?.type !== "subagent" || !owner.childThreadId)
+                    return;
+                  const childThreadId = owner.childThreadId;
+                  const child = subagentChild(key);
+                  // Its steps were settled at shutdown or by an earlier final read.
+                  if (child.final) return;
+                  const now = yield* DateTime.now;
+                  for (const step of update.steps) {
+                    const stepKey = `${key}:step:${step.id}`;
+                    const previous = child.items.get(stepKey);
+                    const ordinal = subagentOrdinal(child, stepKey);
+                    const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+                      driver,
+                      nativeItemId: stepKey,
+                    });
+                    const common = {
+                      id: turnItemId,
+                      threadId: childThreadId,
+                      runId: null,
+                      nodeId: owner.subagentId,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: ref(stepKey),
+                      parentItemId: null,
+                      ordinal,
+                      startedAt: previous?.startedAt ?? now,
+                      updatedAt: now,
+                    };
+                    if (step.kind === "text" && step.reasoning !== true) {
+                      if (step.role === "assistant") child.answers.add(step.text.trim());
+                      const artifacts = makeSubagentConversationArtifacts({
+                        messageId: idAllocator.derive.messageFromProviderItem({
+                          driver,
+                          nativeItemId: stepKey,
+                        }),
+                        turnItemId,
+                        threadId: childThreadId,
+                        rootNodeId: owner.subagentId,
+                        providerThreadId: null,
+                        providerTurnId: null,
+                        nativeItemRef: ref(stepKey),
+                        role: step.role,
+                        text: step.text,
+                        ordinal,
+                        now,
+                      });
+                      if (!previous)
+                        yield* emit({
+                          type: "message.updated",
+                          driver,
+                          message: artifacts.message,
+                        });
+                      yield* emitSubagentStep(child, stepKey, artifacts.turnItem);
+                    } else if (step.kind === "text") {
+                      yield* emitSubagentStep(child, stepKey, {
+                        ...common,
+                        type: "reasoning",
+                        title: null,
+                        status: "completed",
+                        completedAt: now,
+                        text: step.text,
+                        streaming: false,
+                      });
+                    } else if (step.kind === "tool") {
+                      const prior = previous?.type === "dynamic_tool" ? previous : undefined;
+                      yield* emitSubagentStep(child, stepKey, {
+                        ...common,
+                        type: "dynamic_tool",
+                        title: step.name,
+                        toolName: step.name,
+                        status: step.status,
+                        input: step.input ?? prior?.input ?? {},
+                        ...(step.output === undefined ? {} : { output: step.output }),
+                        completedAt: step.status === "running" ? null : (prior?.completedAt ?? now),
+                      });
+                    } else {
+                      yield* emitSubagentStep(child, stepKey, {
+                        ...common,
+                        type: "system_notice",
+                        title: null,
+                        status: "completed",
+                        completedAt: now,
+                        message: step.message,
+                      });
+                    }
+                  }
+                  if (update.final) yield* finishSubagentSteps(key, now);
                   return;
                 }
                 if (update.type === "question-resolved") {
@@ -832,6 +1189,22 @@ export function makeNativeSessionAdapterV2(
                       providerTurn: active.turn,
                     });
                   }
+                  // SCIENT-FORK:START — warming stopped, often long after the run's subscribers left:
+                  // session-scoped, so the thread keeps the entry that times its idle compaction.
+                  if (thread && update.promptCacheWarmingStopped !== undefined) {
+                    thread = {
+                      ...thread,
+                      promptCacheWarmingStopped: update.promptCacheWarmingStopped,
+                      updatedAt: now,
+                    };
+                    yield* emit({
+                      type: "provider_thread.updated",
+                      driver,
+                      providerThread: thread,
+                      sessionScoped: true,
+                    });
+                  }
+                  // SCIENT-FORK:END
                   return;
                 }
                 let running = active;
@@ -939,6 +1312,9 @@ export function makeNativeSessionAdapterV2(
                 )
                   presentationOwners.set(update.id, running);
                 const previous = items.get(nativeId);
+                // SCIENT-FORK:START — a repeated notification cannot reopen an answered question.
+                if (update.type === "question" && nativeQuestionSettled(previous)) return;
+                // SCIENT-FORK:END
                 // Content completion settles an existing block; it cannot create
                 // a reply, allocate an ordinal, or reopen settled content.
                 if (
@@ -1100,9 +1476,52 @@ export function makeNativeSessionAdapterV2(
                         steps,
                       },
                     });
+                    // SCIENT-FORK:START - a proposed plan is a plan artifact, as for Claude.
+                  } else if (content.type === "proposed_plan") {
+                    const planId =
+                      previous?.type === "proposed_plan"
+                        ? previous.planId
+                        : yield* idAllocator.allocate.plan({
+                            threadId: owner.threadId,
+                            runId: owner.runId,
+                            driver,
+                          });
+                    item = {
+                      ...common,
+                      type: "proposed_plan",
+                      planId,
+                      markdown: content.markdown,
+                      streaming: false,
+                    };
+                    yield* emit({
+                      type: "plan.updated",
+                      driver,
+                      plan: {
+                        id: planId,
+                        threadId: owner.threadId,
+                        runId: owner.runId,
+                        nodeId: base.nodeId,
+                        kind: "proposed_plan",
+                        status: "active",
+                        markdown: content.markdown,
+                      },
+                    });
+                    // SCIENT-FORK:END
                   } else if (content.type === "compaction")
                     item = { ...common, ...content, driver };
                   else item = { ...common, ...content };
+                } else if (update.type === "tool" && update.row !== undefined) {
+                  // SCIENT-FORK: typed tool rows.
+                  item = {
+                    ...base,
+                    ...update.row,
+                    title: update.title ?? null,
+                    status:
+                      running.interrupted && update.status === "failed"
+                        ? "interrupted"
+                        : update.status,
+                    completedAt: update.status === "running" ? null : now,
+                  };
                 } else if (update.type === "tool") {
                   const images = update.images ?? [];
                   item = {
@@ -1224,34 +1643,17 @@ export function makeNativeSessionAdapterV2(
                       turnItem: artifacts.turnItem,
                     });
                   }
-                  const observedResult = scient ? update.result : update.detail;
-                  if (observedResult && update.status !== "running") {
-                    const artifacts = makeSubagentConversationArtifacts({
-                      messageId: idAllocator.derive.messageFromProviderItem({
-                        driver,
-                        nativeItemId: `${nativeId}:result`,
-                      }),
-                      turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                        driver,
-                        nativeItemId: `${nativeId}:result`,
-                      }),
-                      threadId: childThreadId,
-                      rootNodeId: subagentId,
-                      providerThreadId: null,
-                      providerTurnId: null,
-                      nativeItemRef: ref(update.id),
-                      role: "assistant",
-                      text: observedResult,
-                      ordinal: 1,
-                      now,
-                    });
-                    yield* emit({ type: "message.updated", driver, message: artifacts.message });
-                    yield* emit({
-                      type: "turn_item.updated",
-                      driver,
-                      turnItem: artifacts.turnItem,
-                    });
+                  if (reopened) {
+                    const child = subagentChildren.get(nativeId);
+                    if (child) child.final = false;
                   }
+                  const observedResult = scient ? update.result : update.detail;
+                  const resultPending =
+                    observedResult !== undefined &&
+                    update.status !== "running" &&
+                    update.stepsFollow === true &&
+                    subagentChildren.get(nativeId)?.final !== true;
+                  if (resultPending) subagentChild(nativeId).pendingResult = observedResult;
                   const completedAt =
                     update.status === "running" ? null : (previousSubagent?.completedAt ?? now);
                   const subagent: OrchestrationV2Subagent = {
@@ -1285,7 +1687,7 @@ export function makeNativeSessionAdapterV2(
                   subagents.set(nativeId, subagent);
                   yield* emit({ type: "subagent.updated", driver, subagent });
                   yield* publishBackgroundRoster(now, emit);
-                  item = {
+                  const subagentItem: Extract<OrchestrationV2TurnItem, { type: "subagent" }> = {
                     ...base,
                     type: "subagent",
                     subagentId,
@@ -1300,26 +1702,34 @@ export function makeNativeSessionAdapterV2(
                     result: scient ? result : (update.detail ?? null),
                     completedAt,
                   };
+                  item = subagentItem;
+                  // Without saved steps to wait for, the ending frame's result shows now.
+                  if (observedResult && update.status !== "running" && !resultPending)
+                    yield* showSubagentResult(nativeId, subagentItem, observedResult, now);
                 } else {
-                  const requestId = yield* idAllocator.allocate.runtimeRequest({
-                    driver,
-                    providerTurnId: running.turn.id,
-                    nativeRequestId: nativeId,
-                  });
-                  const request: OrchestrationV2RuntimeRequest = {
-                    id: requestId,
-                    nodeId: base.nodeId,
-                    providerTurnId: running.turn.id,
-                    nativeRequestRef: ref(update.id),
-                    kind: update.method === "confirm" ? "command" : "user_input",
-                    status: "pending",
-                    responseCapability: {
-                      type: "live",
-                      providerSessionId: input.providerSessionId,
+                  // SCIENT-FORK:START — repeated questions keep their live response authority.
+                  const request = yield* nativeQuestionRequest(
+                    previous,
+                    requests,
+                    idAllocator.allocate.runtimeRequest({
+                      driver,
+                      providerTurnId: running.turn.id,
+                      nativeRequestId: nativeId,
+                    }),
+                    {
+                      nodeId: base.nodeId,
+                      providerTurnId: running.turn.id,
+                      nativeRequestRef: ref(update.id),
+                      kind: update.method === "confirm" ? "command" : "user_input",
+                      responseCapability: {
+                        type: "live",
+                        providerSessionId: input.providerSessionId,
+                      },
+                      createdAt: now,
                     },
-                    createdAt: now,
-                    resolvedAt: null,
-                  };
+                  );
+                  const requestId = request.id;
+                  // SCIENT-FORK:END
                   item =
                     update.method === "confirm"
                       ? {
@@ -1401,21 +1811,27 @@ export function makeNativeSessionAdapterV2(
                   kind:
                     item.type === "todo_list"
                       ? "todo_list"
-                      : item.type === "compaction" ||
-                          item.type === "error" ||
-                          item.type === "system_notice"
-                        ? "system"
-                        : item.type === "approval_request"
-                          ? "approval_request"
-                          : item.type === "user_input_request"
-                            ? "user_input_request"
-                            : item.type === "dynamic_tool"
-                              ? "tool_call"
-                              : item.type === "subagent"
-                                ? "subagent"
-                                : item.type === "reasoning"
-                                  ? "reasoning"
-                                  : "assistant_message",
+                      : // SCIENT-FORK: a proposed plan is a plan node.
+                        item.type === "proposed_plan"
+                        ? "plan"
+                        : item.type === "compaction" ||
+                            item.type === "error" ||
+                            item.type === "system_notice"
+                          ? "system"
+                          : item.type === "approval_request"
+                            ? "approval_request"
+                            : item.type === "user_input_request"
+                              ? "user_input_request"
+                              : item.type === "dynamic_tool" ||
+                                  item.type === "command_execution" ||
+                                  item.type === "file_change" ||
+                                  item.type === "web_search"
+                                ? "tool_call"
+                                : item.type === "subagent"
+                                  ? "subagent"
+                                  : item.type === "reasoning"
+                                    ? "reasoning"
+                                    : "assistant_message",
                   status: item.status,
                   countsForRun: false,
                   providerThreadId: base.providerThreadId,
@@ -1435,7 +1851,9 @@ export function makeNativeSessionAdapterV2(
                 if (update.type === "item" && update.status !== "running")
                   presentationOwners.delete(update.id);
               });
-              yield* emitBatch(frames, control);
+              // SCIENT-FORK:START — publish question items before their listable requests.
+              yield* emitBatch(nativeQuestionFrames(frames), control);
+              // SCIENT-FORK:END
             }).pipe(
               Effect.catch((cause) =>
                 finish({ type: "terminal", status: "failed", detail: cause.message, broken: true }),
@@ -1515,8 +1933,57 @@ export function makeNativeSessionAdapterV2(
           yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
           return thread;
         });
+        // SCIENT-FORK:START — the first later turn's message is where the kept conversation ends.
+        const rewind = Effect.fn("NativeSessionAdapterV2.rewind")(function* (
+          rewindBefore: NonNullable<NativeSession["rewindBefore"]>,
+          request: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
+        ) {
+          if (active) return yield* protocolError("A running turn cannot be rewound.");
+          // A rewind whose file restore failed left this process on its new file; a retry
+          // starts again from the conversation Scient still has on record.
+          if (
+            thread?.id !== request.providerThread.id ||
+            thread.nativeThreadRef?.nativeId !== request.providerThread.nativeThreadRef?.nativeId
+          ) {
+            const nativeId = request.providerThread.nativeThreadRef?.nativeId;
+            if (!nativeId) return yield* protocolError("The native thread reference is missing.");
+            yield* native.resume(nativeId, request.providerThread.nativeMetadata?.resumeCursor);
+            yield* register(
+              request.providerThread.appThreadId ?? input.threadId,
+              request.providerThread,
+            );
+          }
+          const kept =
+            request.target.type === "thread_start" ? 0 : request.target.providerTurn.ordinal;
+          const boundary = request.providerThreadTurns
+            .filter((turn) => turn.ordinal > kept)
+            .sort((a, b) => a.ordinal - b.ordinal)[0];
+          if (boundary !== undefined) {
+            const entry = boundary.nativeTurnRef;
+            if (entry?.strength !== "strong" || !entry.nativeId)
+              return yield* protocolError(
+                "This conversation was recorded before Scient could rewind it here. Fork it instead.",
+              );
+            const moved = yield* rewindBefore(entry.nativeId);
+            // Unpublished: the rollback service records it once the files are restored too.
+            thread = {
+              ...thread!,
+              nativeThreadRef: ref(moved.nativeId),
+              nativeMetadata: { ...thread!.nativeMetadata, resumeCursor: moved.resumeCursor },
+              updatedAt: yield* DateTime.now,
+            };
+          }
+          return {
+            providerThread: thread!,
+            providerTurns: [...turns.values()],
+            messages: [...messages.values()],
+            runtimeRequests: [...requests.values()].map((entry) => entry.request),
+          };
+        });
+        // SCIENT-FORK:END
         const steer = native.steer;
         const compact = native.compact;
+        const continuationPrompt = native.continuationPrompt;
         const startTurn = Effect.fn("NativeSessionAdapterV2.startTurn")(
           function* (
             request: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -1593,7 +2060,8 @@ export function makeNativeSessionAdapterV2(
                 yield* onUpdate(event.update);
               }
               for (const pending of presentation) yield* onUpdate(pending.update);
-              if (active && !backgroundPending)
+              // SCIENT-FORK: a turn the agent is still running ends with its own terminal.
+              if (active && !backgroundPending && !nativeTurnOpen)
                 yield* finish({ type: "terminal", status: "completed" });
             } else {
               for (const pending of presentation) yield* onUpdate(pending.update);
@@ -1641,6 +2109,8 @@ export function makeNativeSessionAdapterV2(
           ...(native.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: native.getModelContextWindow }),
+          // SCIENT-FORK: live voice passes straight through to the session owner.
+          ...(native.liveVoice === undefined ? {} : { liveVoice: native.liveVoice }),
           ...(options.eventQueueStorage ? { eventConsumer: events.consumer } : {}),
           events: events.events.pipe(
             Stream.mapError(
@@ -1762,6 +2232,17 @@ export function makeNativeSessionAdapterV2(
               ),
           ),
           startTurn: (request) => startTurn(request, native.send),
+          ...(continuationPrompt === undefined
+            ? {}
+            : {
+                resumeTurn: (request: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) => {
+                  const turn = ProviderAdapter.resumeTurnInput(request);
+                  return startTurn(
+                    { ...turn, message: { ...turn.message, text: continuationPrompt } },
+                    native.send,
+                  );
+                },
+              }),
           ...(compact === undefined
             ? {}
             : {
@@ -1834,7 +2315,7 @@ export function makeNativeSessionAdapterV2(
                 yield* native.interrupt;
                 yield* eventPermit.withPermit(
                   Effect.gen(function* () {
-                    yield* stopBackgroundTasks("interrupted", yield* DateTime.now);
+                    yield* stopBackgroundTasks("interrupted", yield* DateTime.now, true, "stopped");
                     if (native.interruptBreaksSession === true) {
                       thread = { ...thread!, status: "closed", updatedAt: yield* DateTime.now };
                       yield* emit({
@@ -1976,14 +2457,28 @@ export function makeNativeSessionAdapterV2(
                     cause: "The native protocol does not expose conversation history.",
                   }),
                 ),
+          // SCIENT-FORK:START — rewind through the native conversation tree.
           rollbackThread: (request) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                driver,
-                providerThreadId: request.providerThread.id,
-                cause: "The native protocol does not expose conversation rollback.",
-              }),
-            ),
+            native.rewindBefore === undefined
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                    driver,
+                    providerThreadId: request.providerThread.id,
+                    cause: "The native protocol does not expose conversation rollback.",
+                  }),
+                )
+              : rewind(native.rewindBefore, request).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                        driver,
+                        providerThreadId: request.providerThread.id,
+                        checkpointId: request.target.checkpointId,
+                        cause,
+                      }),
+                  ),
+                ),
+          // SCIENT-FORK:END
           forkThread: (request) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterForkThreadError({

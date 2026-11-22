@@ -5,10 +5,12 @@ the project and environment a change applies to. Pages that only hold device pre
 Appearance, don't show it. They start at **All projects** and **All environments**
 and stay selected as you move between categories or search for a setting.
 
-Preferences saved on this device, such as appearance, confirmations and browser profiles, always
-show and ignore the selection. Everything else is stored on a server. Choose one environment to
-edit its settings, or leave **All environments** to edit every connected environment at once.
-Offline environments keep their current values; this is a bulk edit, not a synced global default.
+Preferences saved on this device, such as appearance, confirmations and browser profiles, ignore
+the environment selection. On the Browser page they are read-only while a project is selected,
+though profiles can still be added, renamed and removed. Everything else is stored on a server.
+Choose one environment to edit its settings, or leave **All environments** to edit every connected
+environment at once. Offline environments keep their current values; this is a bulk edit, not a
+synced global default.
 
 Choose a project to override settings for it on the selected environments. A layers icon beside
 each server row's title shows where the value comes from: the built-in default, the environment,
@@ -37,7 +39,7 @@ machine's setting. Every other provider setting stays per machine.
 
 On mobile, open **Settings** and use the filter in its header to choose connected environments
 and a project. The filter stays available in server-setting pages. With **All projects** selected,
-the server-setting pages, such as Threads, Source control and Worktrees, edit the selected
+the server-setting pages, such as Threads, Source Control & Issues and Worktrees, edit the selected
 environments' defaults. Choosing a project edits its overrides on the selected
 environments. Use **Use defaults** in a page to remove that page's project overrides.
 Open **Settings → Projects** to rename the project across its selected
@@ -47,6 +49,11 @@ targets disagree, a control shows **Mixed** until you choose one value. Appearan
 and other phone-only settings ignore the filter.
 
 Choosing another provider or scheduled task within the same scope keeps the page in place.
+
+## Projects with several repositories
+
+A project covers every repository inside its folder, and any folder you add under **Settings →
+Projects → Repositories**; see [Projects with several repositories](multi-repo-projects.md).
 
 ## Pin and archive projects
 
@@ -174,14 +181,15 @@ than** on the task.
 ## Defaults and inheritance
 
 Threads contains the model and workspace for new threads. Browser controls agent browser
-access. Source control contains automatic pull, the default pull request merge method and text
+access. Source Control & Issues contains automatic pull, the default pull request merge method and text
 generation. The same rows edit environment defaults or project overrides depending on the
 project crumb.
 
 The Projects category, under Code, holds the project's name, icon, actions,
 checkouts and removal. Actions belong to a project: editing them creates the project's own list
 on each selected environment, and reset returns to the environment's shared list. A project's
-`t3.json` actions can be imported there.
+`t3.json` actions can be imported there. When a project has several checkouts on one environment,
+choose one in the scope line at the top to see or change only that checkout's settings.
 
 Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `t3.json`, then the
@@ -194,6 +202,15 @@ selected to override it there) to **Top level only** to stop at the ones the rep
 itself, or **Skip** to leave them for a setup script. It resolves in the same order as the
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
+
+New worktrees check out every file. For a large repository, set `"worktreeSparsePatternsPath"` in
+`t3.json` to a repository-relative file of git sparse-checkout patterns in non-cone syntax. New
+worktrees then check out only the matching files, before any other file is written. Both files are
+read from the branch being checked out, so the patterns can leave out `t3.json` and `.gitmodules`.
+If the pattern file is missing, creating the worktree fails instead of checking out everything.
+Submodules still follow **Submodules** above, also under excluded paths; set it to **Skip** to leave
+them empty. The first sparse worktree turns on Git's `extensions.worktreeConfig` for the repository.
+This needs Git 2.35 or newer.
 
 ## Worktree location
 
@@ -227,8 +244,9 @@ manually. Custom applies separate worktree rules to the selected project or chec
 captures and log retention remain machine-wide.
 
 Worktrees can be removed after a chosen number of inactive days, after a thread settles, after
-merging, or when they have no commits beyond the default branch. Set settled retention to 0 days
-to remove a worktree at the next cleanup after settlement. In repositories without remotes,
+merging, or when they have no commits beyond the default branch and their thread is settled or
+archived. Set settled retention to 0 days to remove a worktree at the next cleanup after
+settlement. In repositories without remotes,
 unchanged-worktree cleanup compares against the branch checked out in the project workspace;
 if that checkout has a detached HEAD, the worktree is kept. Only Scient-managed worktrees are
 eligible. Active sessions, shared worktrees, uncommitted changes, and ignored files other than
@@ -246,6 +264,13 @@ Existing prompts for deleting a worktree manually remain available when this pol
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
 Results also list folders in the worktree folder that no thread uses, with their sizes; cleanup never removes them, so remove them manually if you want.
+
+The inactive and settled retention periods also apply to the folders of
+[threads without a project](./thread-sidebar.md#threads-without-a-project). Those folders are not
+Git repositories, so their files could not be recovered: a folder is removed only when it holds
+nothing but `node_modules`. The thread stays, and its next turn starts in a new, empty folder. A
+folder is also kept when it has a Git repository anywhere inside it or when its thread has an enabled
+scheduled task. Folders that no thread uses are listed here too.
 
 Browser captures and rotated logs have separate retention periods in **Settings → Maintenance**. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
@@ -325,12 +350,12 @@ from the icon palette, derived from the saved project name. For example, `Nebula
 
 ## Keep the default branch current
 
-In **Source Control**, turn on **Automatically pull** to keep the default-branch checkout current.
+In **Settings → Source Control & Issues**, turn on **Automatically pull** to keep the default-branch checkout current.
 Choose an environment to set the default or a project to override it.
 Scient checks in the background and when the server starts. It uses the branch's configured
 upstream and only performs a fast-forward pull when the checkout has no working-tree changes,
 untracked files, or local commits.
-On mobile, use **Settings → Source control** to change selected environment defaults or project overrides.
+On mobile, use **Settings → Source Control & Issues** to change selected environment defaults or project overrides.
 
 The pull is skipped if the checkout is on another branch, has no upstream, or contains local work.
 Pull failures do not prevent the server from starting.

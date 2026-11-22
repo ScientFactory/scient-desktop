@@ -2,7 +2,6 @@ export {
   applyMarkdownSourcePatches,
   createMarkdownSourceLedger,
   type MarkdownSourceBlock,
-  type MarkdownSourceBlockReplacement,
   type MarkdownSourceLedger,
   type MarkdownSourcePatch,
   type MarkdownSourceTextSpan,

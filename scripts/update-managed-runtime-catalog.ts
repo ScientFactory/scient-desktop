@@ -9,6 +9,7 @@ import {
   refreshManagedRuntimeCatalog,
   refreshManagedRuntimeProvider,
   readManagedRuntimeCatalog,
+  withGitHubToken,
 } from "./lib/managed-runtime-catalog.ts";
 
 function argument(name: string): string | undefined {
@@ -33,9 +34,10 @@ const current = readManagedRuntimeCatalog(
 const report = (message: string) => {
   process.stderr.write(`${message}\n`);
 };
+const fetchMetadata = withGitHubToken(fetch, process.env.GITHUB_TOKEN?.trim());
 const result = requestedProvider
-  ? await refreshManagedRuntimeProvider(current, requestedProvider, fetch, report)
-  : await refreshManagedRuntimeCatalog(current, fetch, report);
+  ? await refreshManagedRuntimeProvider(current, requestedProvider, fetchMetadata, report)
+  : await refreshManagedRuntimeCatalog(current, fetchMetadata, report);
 await NodeFSP.writeFile(outputPath, `${JSON.stringify(result.catalog, null, 2)}\n`, {
   mode: 0o600,
 });

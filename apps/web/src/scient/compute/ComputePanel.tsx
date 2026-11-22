@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { Link } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { CircleAlert, FileCode, History, LoaderCircle, Play, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -43,18 +44,19 @@ function ComputePanelTabs(props: {
   readonly value: ComputePanelView;
   readonly onChange: (view: ComputePanelView) => void;
 }) {
+  const gt = useGT();
   const resultsRef = useRef<HTMLButtonElement>(null);
   const variablesRef = useRef<HTMLButtonElement>(null);
   const tabs: ReadonlyArray<{ value: ComputePanelView; label: string }> = [
-    { value: "results", label: "Results" },
-    { value: "variables", label: "Variables" },
+    { value: "results", label: gt("Results", { $context: "tab: run results" }) },
+    { value: "variables", label: gt("Variables") },
   ];
   const focus = (view: ComputePanelView) => {
     props.onChange(view);
     (view === "results" ? resultsRef : variablesRef).current?.focus();
   };
   return (
-    <div className="flex items-center gap-1" role="tablist" aria-label="Compute view">
+    <div className="flex items-center gap-1" role="tablist" aria-label={gt("Compute view")}>
       {tabs.map((tab) => (
         <button
           key={tab.value}
@@ -88,11 +90,12 @@ function ComputePanelTabs(props: {
   );
 }
 
+/** `msg()` strings. */
 const PENDING_LABELS = {
   "loading-history": null,
-  "starting-session": "Starting…",
-  "stopping-session": "Stopping…",
-  running: "Running…",
+  "starting-session": msg("Starting…"),
+  "stopping-session": msg("Stopping…"),
+  running: msg("Running…"),
 } as const;
 
 function EmptyComputeResults(props: {
@@ -100,14 +103,16 @@ function EmptyComputeResults(props: {
   readonly onRun?: () => void;
   readonly runUnavailableReason?: string | null;
 }) {
+  const messages = useMessages();
   if (props.state in PENDING_LABELS) {
+    const pending = PENDING_LABELS[props.state as keyof typeof PENDING_LABELS];
     return (
       <div
         className="flex min-h-40 items-center justify-center gap-2 text-xs text-muted-foreground"
         role="status"
       >
         <LoaderCircle className="size-3.5 animate-spin" />
-        {PENDING_LABELS[props.state as keyof typeof PENDING_LABELS]}
+        {pending === null ? null : messages(pending)}
       </div>
     );
   }
@@ -122,10 +127,10 @@ function EmptyComputeResults(props: {
     <div className="flex min-h-40 items-center justify-center text-xs text-muted-foreground">
       {props.state === "idle-file" ? (
         <Button size="xs" variant="outline" onClick={props.onRun}>
-          <Play /> Run file
+          <Play /> <T>Run file</T>
         </Button>
       ) : (
-        "No runs yet"
+        <T>No runs yet</T>
       )}
     </div>
   );
@@ -148,6 +153,7 @@ export function ComputePanel(props: {
   readonly embedded?: boolean;
   readonly resultPicker?: ReactNode;
 }) {
+  const gt = useGT();
   const [localPanelView, setLocalPanelView] = useState<ComputePanelView>("results");
   const panelView = props.panelView ?? localPanelView;
   const setPanelView = props.onPanelViewChange ?? setLocalPanelView;
@@ -234,7 +240,7 @@ export function ComputePanel(props: {
     if (saved._tag === "Success") {
       useRightPanelStore.getState().openFile(props.threadRef, saved.value.relativePath);
     } else if (!isAtomCommandInterrupted(saved)) {
-      reportComputeFailure("Unable to save as notebook", saved);
+      reportComputeFailure(gt("Unable to save as notebook"), saved);
     }
   };
   const emptyResults = (
@@ -284,7 +290,7 @@ export function ComputePanel(props: {
   return (
     <section
       className="@container flex min-h-0 flex-1 flex-col bg-background"
-      aria-label="Scientific results"
+      aria-label={gt("Scientific results")}
     >
       {selectedSession?.closedAt != null && selectedSession.lostReason !== null ? (
         <p className="shrink-0 border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
@@ -307,19 +313,26 @@ export function ComputePanel(props: {
                   aria-pressed={panelView === "variables"}
                   onClick={() => setPanelView(panelView === "variables" ? "results" : "variables")}
                 >
-                  Variables {variables.snapshot?.variables.length}
-                  {variables.snapshot?.truncated ? "+" : ""}
+                  {variables.snapshot?.truncated
+                    ? gt("Variables {count}+", {
+                        count: variables.snapshot.variables.length,
+                      })
+                    : gt("Variables {count}", {
+                        count: variables.snapshot?.variables.length ?? 0,
+                      })}
                 </Button>
               ) : null}
               {consoleHistory.length > 0 ? (
                 <Button
                   size="xs"
                   variant="ghost-muted"
-                  aria-label="Save as notebook"
+                  aria-label={gt("Save as notebook")}
                   onClick={() => void saveAsNotebook()}
                 >
                   <span>
-                    Save<span className="@max-[24rem]:hidden"> as notebook</span>
+                    <T>
+                      Save<span className="@max-[24rem]:hidden"> as notebook</span>
+                    </T>
                   </span>
                 </Button>
               ) : null}
@@ -345,8 +358,8 @@ export function ComputePanel(props: {
             <Button
               size="icon-xs"
               variant="ghost-muted"
-              aria-label="All sessions"
-              title="All sessions"
+              aria-label={gt("All sessions")}
+              title={gt("All sessions")}
               onClick={() =>
                 useRightPanelStore
                   .getState()
@@ -393,7 +406,7 @@ export function ComputePanel(props: {
                           onClick={() => setRunFileOpen(true)}
                         >
                           <FileCode />
-                          Run file…
+                          <T>Run file…</T>
                         </MenuItem>
                       ),
                     })}
@@ -407,11 +420,11 @@ export function ComputePanel(props: {
         <div className="flex items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           <CircleAlert className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate">
-            {contextBinding.closeError ?? "Couldn't stop this session"}
+            {contextBinding.closeError ?? gt("Couldn't stop this session")}
           </span>
           {props.onRetryClose ? (
             <Button size="xs" variant="outline" onClick={props.onRetryClose}>
-              Retry
+              <T>Retry</T>
             </Button>
           ) : null}
         </div>
@@ -469,7 +482,9 @@ export function ComputePanel(props: {
       ) : props.embedded ? (
         emptyResults
       ) : props.contextId === undefined ? (
-        <p className="p-6 text-center text-xs text-muted-foreground">No runs yet</p>
+        <p className="p-6 text-center text-xs text-muted-foreground">
+          <T>No runs yet</T>
+        </p>
       ) : null}
       {consoleContext !== undefined ? (
         runtimes.isPending && start.readyRuntimes.length === 0 ? (
@@ -488,7 +503,7 @@ export function ComputePanel(props: {
                 />
               }
             >
-              <Settings2 /> Scientific Computing
+              <Settings2 /> {gt("Scientific Computing")}
             </Button>
           </div>
         ) : (

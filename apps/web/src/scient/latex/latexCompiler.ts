@@ -1,14 +1,17 @@
 import type { ScientLatexCompiler, ScientLatexToolchainReport } from "@t3tools/contracts";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export type LatexCompiler = ScientLatexCompiler;
 export type LatexDocumentCompiler = LatexCompiler | "tectonic";
 export type LatexCompilerChoice = "automatic" | LatexDocumentCompiler;
 
+/** `name` is a `msg()` string: resolve it with `useMessages()` where it is shown. */
 export const LATEX_COMPILER_CHOICES: readonly { id: LatexCompilerChoice; name: string }[] = [
-  { id: "automatic", name: "Automatic" },
+  { id: "automatic", name: msg("Automatic") },
   { id: "tectonic", name: "Tectonic" },
   { id: "pdflatex", name: "pdfLaTeX" },
-  { id: "xelatex", name: "XeLaTeX (recommended for Hebrew)" },
+  { id: "xelatex", name: msg("XeLaTeX (recommended for Hebrew)") },
   { id: "lualatex", name: "LuaLaTeX" },
 ];
 
@@ -52,24 +55,25 @@ export function latexCompilerAvailabilityLabel(
   report: ScientLatexToolchainReport | null,
   compiler: LatexDocumentCompiler,
   offline = false,
+  resolve: MessageResolver = m,
 ): string | null {
-  if (offline) return "Offline";
-  if (report === null) return "Not checked";
+  if (offline) return resolve(msg("Offline"));
+  if (report === null) return resolve(msg("Not checked"));
   // A latexmk report describes the default, not whether another driver exists.
   if (compiler === "tectonic")
     return report.kind === "tectonic"
       ? null
       : report.kind === null
-        ? "Not installed"
-        : "Not checked";
+        ? resolve(msg("Not installed"))
+        : resolve(msg("Not checked"));
   const availability = report.compilers.find((item) => item.compiler === compiler);
-  if (availability === undefined) return "Not checked";
+  if (availability === undefined) return resolve(msg("Not checked"));
   if (availability.available) return null;
   if (report.kind === "tectonic")
     return compiler === "xelatex"
-      ? "Not installed; Tectonic is XeTeX-compatible"
-      : "Not available through Tectonic";
-  return "Not installed";
+      ? resolve(msg("Not installed; Tectonic is XeTeX-compatible"))
+      : resolve(msg("Not available through Tectonic"));
+  return resolve(msg("Not installed"));
 }
 
 /** Tectonic satisfies XeTeX declarations without claiming a standalone XeLaTeX install. */

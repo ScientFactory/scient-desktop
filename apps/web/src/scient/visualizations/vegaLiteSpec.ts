@@ -1,4 +1,7 @@
+import { msg } from "gt-react";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { TopLevelSpec } from "vega-lite";
 
 export const MAX_VEGA_LITE_SOURCE_LENGTH = 1_000_000;
@@ -34,10 +37,16 @@ function sourceLocation(source: string, offset: number): { line: number; column:
   return { line, column: offset - lineStart + 1 };
 }
 
-function parseErrorMessage(source: string, error: ParseError): string {
+function parseErrorMessage(source: string, error: ParseError, resolve: MessageResolver): string {
   const location = sourceLocation(source, error.offset);
   const reason = printParseErrorCode(error.error).replace(/([a-z])([A-Z])/g, "$1 $2");
-  return `Invalid JSON at line ${location.line}, column ${location.column}: ${reason}.`;
+  return resolve(
+    msg("Invalid JSON at line {line}, column {column}: {reason}.", {
+      line: location.line,
+      column: location.column,
+      reason,
+    }),
+  );
 }
 
 function inspectSpec(spec: Record<string, unknown>): {
@@ -85,7 +94,10 @@ function inspectSpec(spec: Record<string, unknown>): {
   return { externalResources: [...externalResources], inlineRows };
 }
 
-export function parseVegaLiteSource(source: string): ParsedVegaLiteSource {
+export function parseVegaLiteSource(
+  source: string,
+  resolve: MessageResolver = m,
+): ParsedVegaLiteSource {
   if (source.trim().length === 0) {
     throw new Error("The Vega-Lite source is empty.");
   }
@@ -101,7 +113,7 @@ export function parseVegaLiteSource(source: string): ParsedVegaLiteSource {
     disallowComments: false,
   });
   const firstError = errors[0];
-  if (firstError != null) throw new Error(parseErrorMessage(source, firstError));
+  if (firstError != null) throw new Error(parseErrorMessage(source, firstError, resolve));
   if (!isRecord(parsed)) {
     throw new Error("A Vega-Lite chart must be a JSON object.");
   }

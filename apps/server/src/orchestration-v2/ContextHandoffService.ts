@@ -98,6 +98,8 @@ export interface ContextHandoffServiceV2Shape {
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareProviderHandoff: (input: {
     readonly threadId: ThreadId;
+    /** Thread the items came from, when it is not `threadId` (a fork's source). */
+    readonly sourceThreadId?: ThreadId;
     readonly targetRunId: RunId;
     readonly transferId: OrchestrationV2ContextHandoff["transferId"];
     readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -213,7 +215,8 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
 );
 
 /** Rows of the run-fork ancestors named by `forkedFrom`, oldest first. */
-const readRunForkAncestorItems = Effect.fn(
+// SCIENT-FORK: exported for the Orchestrator, which reads a Scient fork's rows on its own.
+export const readRunForkAncestorItems = Effect.fn(
   "orchestrationV2.contextHandoff.readRunForkAncestorItems",
 )(function* (
   projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
@@ -303,7 +306,7 @@ function summarizeDeltaItem(item: ContextHandoffItem): string | null {
     case "command_execution":
       return `- Command: ${compactText(item.input)}`;
     case "file_change":
-      return `- File change: ${compactText(item.changes?.map((change) => change.path).join(", ") ?? item.fileName)}`;
+      return `- File change: ${compactText(item.changes?.length ? item.changes.map((change) => change.path).join(", ") : item.fileName)}`;
     case "checkpoint":
       return `- Checkpoint: ${item.files.length} files`;
     case "handoff":
@@ -622,6 +625,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       "orchestrationV2.contextHandoff.prepareProviderHandoff",
     )(function* (input: {
       readonly threadId: ThreadId;
+      readonly sourceThreadId?: ThreadId;
       readonly targetRunId: RunId;
       readonly transferId: OrchestrationV2ContextHandoff["transferId"];
       readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -657,7 +661,10 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const coverage = handoffCoverage({
+        ...input,
+        threadId: input.sourceThreadId ?? input.threadId,
+      });
       if (input.purpose === undefined || forceBytePolicy)
         yield* requireHistoryBodies(input.items, input);
       // SCIENT-FORK:START — defer Scient history bodies; retain finite generic preparation.

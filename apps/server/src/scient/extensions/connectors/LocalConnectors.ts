@@ -28,28 +28,37 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import type { AccountsService } from "../../accounts/AccountsService.ts";
+import { type ConnectorSessionsShape, needsYouMessage } from "../../accounts/connectorSessions.ts";
+import { latestHistory } from "../../storage/FolderHistory.ts";
+import { downloadBundle } from "./LocalBundleDownload.ts";
+import type { ConnectorFetch } from "./ConnectorOutbound.ts";
 import type { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
   parseScientPluginManifest,
   SCIENT_PLUGIN_MANIFEST_FILE,
 } from "../plugins/ScientPluginManifest.ts";
+import { credentialSet, programCredentials } from "./ConnectorRedaction.ts";
 import type { ConnectorRecord, LocalLaunchRecord } from "./ConnectorStateStore.ts";
 import {
+  type BundleDirectories,
   type BundleManifest,
   bundleFields,
   bundleLaunch,
   type GeneratedVariable,
   generatedManifest,
   inspectionOf,
+  manifestSignIn,
   manifestWorkingDirectory,
   platformUnavailable,
   readBundleManifest,
   readFolderManifest,
   resolveSettings,
   unpackBundle,
+  withDirectories,
   writeFolderManifest,
 } from "./LocalConnectorBundle.ts";
 import {
@@ -71,6 +80,8 @@ import {
 import type { LocalStart } from "./LocalConnectorProcesses.ts";
 
 const CONNECTORS_FOLDER = "connectors";
+const CONNECTOR_HISTORY_FOLDER = "connector-history";
+const ACCOUNT_PREFIX = "account:";
 const SETUP_STUB = ".scient-setup.mjs";
 
 /** Answers a connector that is not set up yet: its tools say what is missing and how to fix it. */
@@ -117,7 +128,14 @@ const encodeSetup = Schema.encodeSync(SetupJson);
 type SettingValue = string | number | boolean | ReadonlyArray<string>;
 type LocalTarget = Extract<
   ConnectorAddInput["target"],
-  { readonly type: "local-bundle" | "local-command" | "local-package" | "local-import" }
+  {
+    readonly type:
+      | "local-bundle"
+      | "local-command"
+      | "local-package"
+      | "local-import"
+      | "registry-bundle";
+  }
 >;
 
 const invalid = (message: string) => new ExtensionsError({ reason: "invalid-input", message });
@@ -130,14 +148,18 @@ const slug = (name: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || "connector";
 
-/** Command and arguments as written in the manifest, for display and a runtime check. */
+/** The manifest's command and arguments on this computer, for display and a runtime check. */
 const programOf = (
   manifest: BundleManifest,
   directory: string,
+  directories: BundleDirectories,
+  platform: NodeJS.Platform,
 ): Pick<LocalLaunchTemplate, "runtime" | "command" | "args"> => {
   const config = manifest.server.mcp_config;
-  const fill = (text: string) => text.replaceAll("${__dirname}", directory);
+  const override = config?.platform_overrides?.[platform];
+  const fill = (text: string) => withDirectories(text, directories, directory);
   const command =
+    override?.command ??
     config?.command ??
     (manifest.server.type === "uv"
       ? "uv"
@@ -147,7 +169,7 @@ const programOf = (
   return {
     runtime: manifest.server.type === "node" && command === "node" ? "scient-node" : "system",
     command: fill(command),
-    args: (config?.args ?? []).map(fill),
+    args: (override?.args ?? config?.args ?? []).map(fill),
   };
 };
 
@@ -169,10 +191,26 @@ const variablesOf = (entries: ReadonlyArray<LocalEnvironmentInput>) => {
   return { fixed, variables, keys };
 };
 
+const hostOf = (site: string) => (URL.canParse(site) ? new URL(site).host : site);
+
+/** The account id a record's `signIn` names. */
+const signInAccountOf = (local: Pick<LocalLaunchRecord, "signIn">) =>
+  local.signIn?.startsWith(ACCOUNT_PREFIX) ? local.signIn.slice(ACCOUNT_PREFIX.length) : undefined;
+
+const NO_CREDENTIALS = credentialSet([]);
+
+/** How a start went that the check reports: what it ran without. */
+export interface CheckedStart extends LocalStart {
+  readonly missing: ReadonlyArray<string>;
+}
+
 export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (options: {
   readonly stateDir: string;
   readonly accounts: Option.Option<AccountsService["Service"]>;
   readonly projects: ProjectStoreV2["Service"];
+  readonly sessions: Option.Option<ConnectorSessionsShape>;
+  /** Downloads MCP Registry bundles, under the connector egress rules. */
+  readonly bundleFetch: ConnectorFetch;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -184,6 +222,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       Effect.provideService(Path.Path, path),
     );
   const root = path.join(options.stateDir, CONNECTORS_FOLDER);
+  const historyRoot = path.join(options.stateDir, CONNECTOR_HISTORY_FOLDER);
   const stubPath = path.join(root, SETUP_STUB);
   yield* fileSystem.makeDirectory(root, { recursive: true }).pipe(Effect.ignore);
   yield* fileSystem.writeFileString(stubPath, SETUP_STUB_SOURCE).pipe(Effect.ignore);
@@ -202,6 +241,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
 
   /** Every key value a running copy may hold, per connector, for redacting echoes. */
   const started = new Map<string, Set<string>>();
+  /** Every session cookie value a running copy may hold, kept across new sign-ins. */
+  const startedCookies = new Map<string, Set<string>>();
   /** The Accounts revision and key values each connector last started with, per project. */
   const authorized = new Map<
     string,
@@ -253,16 +294,57 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
   const isAnswered = (value: SettingValue | undefined) =>
     value !== undefined && value !== "" && !(Array.isArray(value) && value.length === 0);
 
+  /** The sign-in a connector's manifest asks for, and what it has for it now. */
+  const signInOf = Effect.fn("LocalConnectors.signInOf")(function* (
+    manifest: BundleManifest,
+    local: LocalLaunchRecord,
+  ) {
+    const asked = manifestSignIn(manifest);
+    if (asked === undefined || "problem" in asked) return asked;
+    const accountId = signInAccountOf(local);
+    const account =
+      accountId === undefined || Option.isNone(options.sessions)
+        ? undefined
+        : yield* options.sessions.value.account(accountId);
+    return {
+      site: asked.site,
+      state:
+        account === undefined
+          ? ("missing" as const)
+          : // Until the person signs in again; their sign-in clears it.
+            local.signInNeedsUser && account.signIn?.state !== "signed-in"
+            ? ("needs-user" as const)
+            : ("linked" as const),
+      ...(account === undefined ? {} : { accountId: account.accountId, account: account.name }),
+    };
+  });
+
   const summarize = Effect.fn("LocalConnectors.summarize")(function* (
+    record: Pick<ConnectorRecord, "connectorId">,
     local: LocalLaunchRecord,
     names: ReadonlyMap<VaultSecretRef, string>,
   ): Effect.fn.Return<Omit<LocalConnectorSummary, "running">> {
-    const base = { kind: local.kind, directory: local.directory };
+    // Undoing a brand-new connector's creation would delete it for good; Remove keeps a copy.
+    const latest = yield* Effect.promise(() => latestHistory(historyRoot, record.connectorId));
+    const canUndo =
+      latest !== undefined && !(latest.kind === "created" && latest.meta === undefined);
+    const base = {
+      kind: local.kind,
+      directory: local.directory,
+      owned: local.owned,
+      canUndo,
+      ...(local.changedBy === undefined ? {} : { changedBy: local.changedBy }),
+      ...(local.forkedFrom === undefined ? {} : { forkedFrom: local.forkedFrom }),
+    };
     const read = yield* manifestOf(local.directory).pipe(Effect.result);
     if (read._tag === "Failure") {
       return { ...base, setup: [], missing: [], problem: read.failure.message };
     }
     const manifest = read.success;
+    const signIn = yield* signInOf(manifest, local);
+    if (signIn !== undefined && "problem" in signIn) {
+      return { ...base, setup: [], missing: [], problem: signIn.problem };
+    }
     const fields = bundleFields(manifest, yield* directories);
     const setup: LocalConnectorSetupItem[] = fields.map((field) => {
       if (field.sensitive) {
@@ -278,15 +360,43 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
         ? [field.title]
         : [],
     );
+    if (signIn?.state === "missing") missing.push(`Sign-in to ${hostOf(signIn.site)}`);
     const author = manifest.author?.name?.trim();
     return {
       ...base,
-      commandLine: commandLineOf(programOf(manifest, local.directory)),
+      commandLine: commandLineOf(
+        programOf(manifest, local.directory, yield* directories, yield* HostProcess.Platform),
+      ),
       version: manifest.version.trim(),
       ...(author ? { author } : {}),
       setup,
       missing,
+      ...(signIn === undefined ? {} : { signIn }),
     };
+  });
+
+  /**
+   * The sign-in to link for a manifest that asks for one: the one given, the one already linked,
+   * or the only Accounts sign-in for that site.
+   */
+  const chooseSignIn = Effect.fn("LocalConnectors.chooseSignIn")(function* (
+    manifest: BundleManifest,
+    current: string | undefined,
+    chosen: string | undefined,
+  ) {
+    const asked = manifestSignIn(manifest);
+    if (asked === undefined || "problem" in asked || Option.isNone(options.sessions))
+      return current;
+    const fitting = yield* options.sessions.value.accountsFor(asked.site);
+    if (chosen !== undefined) {
+      if (!fitting.some((account) => account.accountId === chosen)) {
+        return yield* invalid(`That sign-in is not one for ${hostOf(asked.site)}.`);
+      }
+      return `${ACCOUNT_PREFIX}${chosen}`;
+    }
+    if (fitting.some((account) => `${ACCOUNT_PREFIX}${account.accountId}` === current))
+      return current;
+    return fitting.length === 1 ? `${ACCOUNT_PREFIX}${fitting[0]!.accountId}` : undefined;
   });
 
   /** A matching Accounts key for a field nobody answered, linked without asking. */
@@ -432,7 +542,12 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       return { kind: "servers", servers: usable.map(importableSummary) } satisfies LocalInspection;
     }
     const { manifest } = yield* readBundleManifest(input.path);
-    const program = programOf(manifest, input.path);
+    const program = programOf(
+      manifest,
+      input.path,
+      yield* directories,
+      yield* HostProcess.Platform,
+    );
     const unavailable =
       platformUnavailable(manifest, yield* HostProcess.Platform) ??
       (program.command.includes("${") || path.isAbsolute(program.command)
@@ -511,6 +626,33 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       let imported: LocalLaunchRecord["imported"];
       let registry: { readonly name: string; readonly version: string } | undefined;
       switch (target.type) {
+        case "registry-bundle": {
+          const download = path.join(root, `.download-${connectorId}.mcpb`);
+          yield* withFiles(
+            fileSystem
+              .makeDirectory(root, { recursive: true })
+              .pipe(
+                Effect.mapError(() =>
+                  unsupported("Scient could not create its connectors folder."),
+                ),
+              ),
+          );
+          directory = yield* Effect.gen(function* () {
+            yield* downloadBundle(target.bundle, download, options.bundleFetch);
+            const read = yield* readBundleManifest(download);
+            const reason = platformUnavailable(read.manifest, platform);
+            if (reason !== undefined) return yield* unsupported(reason);
+            const unpacked = folderFor(read.manifest.display_name ?? read.manifest.name);
+            yield* unpackBundle(download, unpacked);
+            return unpacked;
+          }).pipe(
+            Effect.ensuring(fileSystem.remove(download, { force: true }).pipe(Effect.ignore)),
+          );
+          owned = directory;
+          kind = "bundle";
+          registry = { name: target.name, version: target.version };
+          break;
+        }
         case "local-bundle": {
           const read = yield* readBundleManifest(target.path);
           const reason = platformUnavailable(read.manifest, platform);
@@ -656,10 +798,10 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
         }
       }
       const manifest = yield* readFolderManifest(directory);
-      const program = programOf(manifest, directory);
+      const found = yield* directories;
+      const program = programOf(manifest, directory, found, platform);
       const unavailable = yield* withFiles(programUnavailable(program));
       if (unavailable !== undefined) return yield* unsupported(unavailable);
-      const found = yield* directories;
       const fields = bundleFields(manifest, found);
       // Refused now rather than at first use: a key on the command line is never passed.
       yield* bundleLaunch({
@@ -671,6 +813,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
         answers: {},
       });
       const name = requestedName ?? manifest.display_name?.trim() ?? manifest.name.trim();
+      const signIn = yield* chooseSignIn(manifest, undefined, undefined);
       const local: LocalLaunchRecord = {
         kind,
         directory,
@@ -678,6 +821,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
         settings: yield* resolveSettings(fields, settings),
         keys: yield* linkKeys({ name, fields, current: {}, keys, created }),
         ...(imported === undefined ? {} : { imported }),
+        changedBy: "you",
+        ...(signIn === undefined ? {} : { signIn }),
       };
       const description = manifest.description?.trim().slice(0, 1_000);
       return {
@@ -693,7 +838,11 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
   /** New settings and keys for an existing connector; answers it leaves out are kept. */
   const setup = Effect.fn("LocalConnectors.setup")(function* (
     record: ConnectorRecord,
-    input: { readonly settings: LocalBundleSettingsInput; readonly keys: LocalKeysInput },
+    input: {
+      readonly settings: LocalBundleSettingsInput;
+      readonly keys: LocalKeysInput;
+      readonly signIn?: string | undefined;
+    },
   ) {
     const local = record.local!;
     const manifest = yield* manifestOf(local.directory);
@@ -706,23 +855,48 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       keys: input.keys,
       created: [],
     });
+    const signIn = yield* chooseSignIn(manifest, local.signIn, input.signIn);
+    const { signIn: _signIn, signInNeedsUser: _needsUser, ...rest } = local;
     return {
-      ...local,
+      ...rest,
       settings: { ...local.settings, ...settings },
       keys,
+      ...(signIn === undefined ? {} : { signIn }),
+      // A sign-in chosen again is a fresh start; the next session finds out whether it works.
+      ...(local.signInNeedsUser && input.signIn === undefined ? { signInNeedsUser: true } : {}),
     } satisfies LocalLaunchRecord;
+  });
+
+  /** A manifest's sign-in linked again after its folder changed (it may name another site). */
+  const relink = Effect.fn("LocalConnectors.relink")(function* (local: LocalLaunchRecord) {
+    const manifest = yield* manifestOf(local.directory);
+    const signIn = yield* chooseSignIn(manifest, local.signIn, undefined).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    const { signIn: _signIn, ...rest } = local;
+    return { ...rest, ...(signIn === undefined ? {} : { signIn }) } satisfies LocalLaunchRecord;
   });
 
   /**
    * How an agent session starts the connector: its manifest with settings and Accounts keys, or,
    * while something required is missing, Scient's setup answerer.
    */
+  /** Bumped by each new sign-in, so a session that started before it knows to start again. */
+  const signInGenerations = new Map<string, number>();
+  const signInLocks = new Map<string, Semaphore.Semaphore>();
+
+  /**
+   * How an agent session starts the connector: its manifest with settings, Accounts keys and the
+   * site's session, or, while something required is missing, Scient's setup answerer. A check
+   * (`checking`) starts the program anyway and says what it ran without.
+   */
   const start = Effect.fn("LocalConnectors.start")(
     function* (
       record: ConnectorRecord,
       serverName: string,
       location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
-    ) {
+      mode: { readonly checking?: boolean } = {},
+    ): Effect.fn.Return<CheckedStart, LocalLaunchError, FileSystem.FileSystem | Path.Path> {
       const local = record.local!;
       const manifest = yield* manifestOf(local.directory).pipe(
         Effect.mapError(
@@ -758,7 +932,70 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
         if (value._tag === "Success") answers[field.key] = Redacted.value(value.success);
         else missing.push(`${field.title} (its key in Accounts is unavailable)`);
       }
-      if (missing.length > 0) {
+      const asked = manifestSignIn(manifest);
+      if (asked !== undefined && "problem" in asked) {
+        return yield* new LocalLaunchError({ message: `${record.displayName}: ${asked.problem}` });
+      }
+      let session: { readonly environment: Record<string, string>; readonly hide: string[] } = {
+        environment: {},
+        hide: [],
+      };
+      let signInProblem: string | undefined;
+      const generation = signInGenerations.get(record.connectorId) ?? 0;
+      if (asked !== undefined) {
+        const accountId = signInAccountOf(local);
+        if (accountId === undefined || Option.isNone(options.sessions)) {
+          missing.push(`Sign-in to ${hostOf(asked.site)}`);
+        } else {
+          const prepared = yield* options.sessions.value
+            .prepare({
+              connectorId: record.connectorId,
+              accountId,
+              site: asked.site,
+              projectId: location?.projectId,
+            })
+            .pipe(Effect.result);
+          if (prepared._tag === "Success") {
+            session = {
+              environment: { ...prepared.success.environment },
+              hide: [...prepared.success.hide],
+            };
+          } else {
+            signInProblem =
+              prepared.failure.reason === "needs-user"
+                ? `${needsYouMessage(asked.site)} (${prepared.failure.message})`
+                : prepared.failure.message;
+          }
+        }
+      }
+      if (mode.checking !== true && signInProblem !== undefined && missing.length === 0) {
+        const message = `${record.displayName} cannot reach its site: ${signInProblem} Tell the user; do not retry until they have.`;
+        const launch = yield* resolveLocalLaunch(
+          {
+            runtime: "scient-node",
+            command: "node",
+            args: [stubPath],
+            environment: {
+              SCIENT_CONNECTOR_SETUP: encodeSetup({
+                name: serverName,
+                message,
+                tools: (manifest.tools ?? []).map((tool) => ({
+                  name: tool.name,
+                  ...(tool.description === undefined ? {} : { description: tool.description }),
+                })),
+              }),
+            },
+          },
+          {},
+          local.directory,
+        );
+        return {
+          launch,
+          credentials: NO_CREDENTIALS,
+          missing: [signInProblem],
+        } satisfies CheckedStart;
+      }
+      if (mode.checking !== true && missing.length > 0) {
         const message = `${record.displayName} is not set up yet: it needs ${missing.join(", ")}. Next step: call mcp__scient__scient_connector_setup with {"connector":"${serverName}"} (load it with your tool search if needed). It asks the user for keys in a private card; never ask for keys in chat. Then call this tool again.`;
         const launch = yield* resolveLocalLaunch(
           {
@@ -779,8 +1016,9 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
           {},
           local.directory,
         );
-        return { launch, hide: [] } satisfies LocalStart;
+        return { launch, credentials: NO_CREDENTIALS, missing } satisfies CheckedStart;
       }
+      if (signInProblem !== undefined) missing.push(signInProblem);
       const built = yield* bundleLaunch({
         manifest,
         bundleDir: local.directory,
@@ -799,11 +1037,22 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
           location.worktreePath ??
           (Option.isSome(project) ? project.value.workspaceRoot : local.directory);
       } else if (where !== undefined && path.isAbsolute(where)) cwd = where;
-      const launch = yield* resolveLocalLaunch(built.launch, built.secrets, cwd);
+      const launch = yield* resolveLocalLaunch(
+        {
+          ...built.launch,
+          environment: { ...built.launch.environment, ...session.environment },
+        },
+        built.secrets,
+        cwd,
+      );
       const values = Object.values(built.secrets);
       const known = started.get(record.connectorId) ?? new Set<string>();
       for (const value of values) known.add(value);
       started.set(record.connectorId, known);
+      // Earlier cookies stay: a program may echo a session it held before.
+      const cookies = startedCookies.get(record.connectorId) ?? new Set<string>();
+      for (const value of session.hide) cookies.add(value);
+      startedCookies.set(record.connectorId, cookies);
       const entry = authorizationKey(record.connectorId, location?.projectId);
       const joined = values.join("\u0000");
       const before = authorized.get(entry);
@@ -812,10 +1061,67 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
         values: joined,
         mixed: before !== undefined && (before.mixed || before.values !== joined),
       });
-      return { launch, hide: Object.values(built.secrets) } satisfies LocalStart;
+      return {
+        launch,
+        credentials: programCredentials(Object.values(built.secrets), session.hide),
+        missing,
+        ...(asked === undefined ? {} : { signInGeneration: generation }),
+      } satisfies CheckedStart;
     },
     (effect) => withFiles(effect),
   );
+
+  /**
+   * The site ended a connector's session: Scient signs in again, once for every session that saw
+   * it end. `seen` is the sign-in the caller's process started with.
+   */
+  const signInAgain = Effect.fn("LocalConnectors.signInAgain")(function* (
+    record: ConnectorRecord,
+    seen: number | undefined,
+  ) {
+    const lock =
+      signInLocks.get(record.connectorId) ??
+      (() => {
+        const created = Semaphore.makeUnsafe(1);
+        signInLocks.set(record.connectorId, created);
+        return created;
+      })();
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const current = signInGenerations.get(record.connectorId) ?? 0;
+        if (seen !== undefined && seen < current) return { type: "signed-in" as const };
+        const local = record.local!;
+        const manifest = yield* manifestOf(local.directory).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        const asked = manifest === undefined ? undefined : manifestSignIn(manifest);
+        const accountId = signInAccountOf(local);
+        if (
+          asked === undefined ||
+          "problem" in asked ||
+          accountId === undefined ||
+          Option.isNone(options.sessions)
+        )
+          return {
+            type: "error" as const,
+            message: `${record.displayName} has no sign-in to renew.`,
+          };
+        const renewed = yield* options.sessions.value
+          .signInAgain({ connectorId: record.connectorId, accountId, site: asked.site })
+          .pipe(Effect.result);
+        if (renewed._tag === "Success") {
+          signInGenerations.set(record.connectorId, current + 1);
+          return { type: "signed-in" as const };
+        }
+        return renewed.failure.reason === "needs-user"
+          ? {
+              type: "needs-user" as const,
+              message: `${needsYouMessage(asked.site)} (${renewed.failure.message})`,
+            }
+          : { type: "error" as const, message: renewed.failure.message };
+      }),
+    );
+  });
 
   /**
    * Whether running copies may keep their keys: checked again whenever Accounts changed since
@@ -826,10 +1132,11 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     location: { readonly projectId: ProjectId } | undefined,
   ) {
     const local = record.local;
+    const signInAccount = local === undefined ? undefined : signInAccountOf(local);
+    const checksKeys = local !== undefined && Object.keys(local.keys).length > 0;
     if (
       local === undefined ||
-      Object.keys(local.keys).length === 0 ||
-      Option.isNone(options.accounts)
+      ((!checksKeys || Option.isNone(options.accounts)) && signInAccount === undefined)
     ) {
       return true;
     }
@@ -843,6 +1150,23 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     }
     const revision = yield* revisionOf;
     if (revision !== undefined && previous.revision === revision) return true;
+    // The linked sign-in is held to Accounts' Off switches, scope and existence, like a key.
+    if (signInAccount !== undefined && Option.isSome(options.sessions)) {
+      const site = yield* signInSiteOf(local);
+      const allowed =
+        site !== undefined &&
+        (yield* options.sessions.value.allowed({
+          connectorId: record.connectorId,
+          accountId: signInAccount,
+          site,
+          projectId: location?.projectId,
+        }));
+      if (!allowed) return false;
+    }
+    if (!checksKeys || Option.isNone(options.accounts)) {
+      authorized.set(key, { revision, values: previous.values, mixed: false });
+      return true;
+    }
     const values: string[] = [];
     for (const [name, ref] of Object.entries(local.keys)) {
       const value = yield* options.accounts.value
@@ -871,17 +1195,75 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       ? fileSystem.remove(local.directory, { recursive: true }).pipe(Effect.ignore)
       : Effect.void;
 
+  /**
+   * A local connector record for a folder an agent saved: its settings and keys kept from the
+   * connector it replaces, or defaults, matching Accounts keys and sign-in linked.
+   */
+  const adopt = Effect.fn("LocalConnectors.adopt")(function* (
+    directory: string,
+    keep: LocalLaunchRecord | undefined,
+  ) {
+    const manifest = yield* readFolderManifest(directory);
+    const fields = bundleFields(manifest, yield* directories);
+    const name = manifest.display_name?.trim() || manifest.name.trim();
+    const keys = yield* linkKeys({
+      name,
+      fields,
+      current: keep?.keys ?? {},
+      keys: {},
+      created: [],
+    });
+    const signIn = yield* chooseSignIn(manifest, keep?.signIn, undefined).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    const settings = keep?.settings ?? (yield* resolveSettings(fields, {}));
+    const description = manifest.description?.trim().slice(0, 1_000);
+    return {
+      name,
+      ...(description ? { description } : {}),
+      local: {
+        kind: keep?.kind ?? "bundle",
+        directory,
+        owned: true,
+        settings,
+        keys,
+        ...(keep?.imported === undefined ? {} : { imported: keep.imported }),
+        ...(signIn === undefined ? {} : { signIn }),
+      } satisfies LocalLaunchRecord,
+    };
+  });
+
+  /** The site a manifest signs in to, for messages. */
+  const signInSiteOf = (local: LocalLaunchRecord) =>
+    manifestOf(local.directory).pipe(
+      Effect.map((manifest) => {
+        const asked = manifestSignIn(manifest);
+        return asked !== undefined && "site" in asked ? asked.site : undefined;
+      }),
+      Effect.orElseSucceed(() => undefined),
+    );
+
   return {
+    root,
+    historyRoot,
     inspect,
     importables,
     prepare,
     setup,
+    relink,
+    adopt,
     start,
+    signInAgain,
+    signInSiteOf,
+    manifestOf,
     summarize,
     keyNames,
     discard,
     /** Key values the last start used, so the proxy redacts them if the program echoes one. */
     secretsFor: (connectorId: string) => [...(started.get(connectorId) ?? [])],
+    /** Every key and session cookie its starts handed the program, read live for each answer. */
+    credentialsFor: (connectorId: string) =>
+      programCredentials(started.get(connectorId) ?? [], startedCookies.get(connectorId) ?? []),
     stillAuthorized,
   };
 });

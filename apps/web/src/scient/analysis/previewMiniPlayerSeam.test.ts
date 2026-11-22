@@ -39,7 +39,7 @@ describe("analysis preview mini-player seam", () => {
     );
     expect(componentSource.match(/<BrowserSurfaceSlot/gu)).toHaveLength(1);
     expect(componentSource.match(/<StaticAssetImageSurface/gu)).toHaveLength(1);
-    expect(componentSource.match(/aria-label="Open preview in right panel"/gu)).toHaveLength(1);
+    // ThreadPreviewMiniPlayer.browser.test.tsx clicks the panel handoff button.
     expect(componentSource).toContain("createPortal(player, document.body)");
     expect(componentSource).toContain("resolvePreviewMiniPlayerFrame");
     expect(componentSource).toContain("resizePreviewMiniPlayerRect");

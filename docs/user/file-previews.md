@@ -59,7 +59,7 @@ follow a renamed or moved file. Scient's own records and tool folders, such as
 `.scient` and `.git`, stay as they are.
 
 The same file list can sit beside other side-panel tabs too, such as a browser
-page, Sources, or a Scientific computing session. Use the folder button at the
+page, the Library, or a Scientific computing session. Use the folder button at the
 end of the tab strip, or `mod+alt+e`. One switch covers every tab, project files
 and PDFs included. Clicking a file opens it in its own tab. Diff keeps its own
 file list, and a panel too narrow for both shows the page alone.
@@ -185,9 +185,8 @@ controls: the page number and steps, zoom (buttons, pinch, the PDF reader's zoom
 **Fit width** and actual size), a sidebar of pages, and search (**⌘F**), which marks every
 match. Their text can be
 selected, copied and quoted (see [Message Scient](composer.md#quote-a-word-page-or-slide)).
-A very long document shows its first 1,000 pages, a paragraph or table too long to lay
-out quickly ends the preview there, and a header or footer that long is left out; each
-says **Preview limited**. Open the file in Word or PowerPoint for the rest. An open file
+A very long document shows its first 1,000 pages, and a paragraph or table too long to lay
+out quickly ends the preview there; each says **Preview limited**. Open the file in Word or PowerPoint for the rest. An open file
 reloads only when the file itself changes, not each time the agent runs a command, and a
 file opened again returns to the page and zoom it was left at. The last two PDF, Word or
 PowerPoint files you left in the file panel stay open in the background, so switching back to

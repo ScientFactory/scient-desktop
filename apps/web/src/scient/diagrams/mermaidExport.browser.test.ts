@@ -2,9 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   copyMermaidPng,
-  diagramFileBaseName,
   downloadMermaidPng,
-  mermaidMarkdownCopySource,
   prepareSvgForExport,
   mermaidSvgToPngBlob,
   svgRasterizationRefusal,
@@ -22,31 +20,6 @@ vi.mock("../presentation/presentationExport", async (importOriginal) => ({
 }));
 
 describe("diagram export helpers", () => {
-  it("uses a stable, portable filename without discarding non-Latin titles", async () => {
-    await using _fixture = _createFixture();
-
-    expect(diagramFileBaseName("Research lifecycle.mmd")).toBe("Research-lifecycle");
-    expect(diagramFileBaseName("תרשים ניסוי.svg")).toBe("תרשים-ניסוי");
-    expect(diagramFileBaseName("***")).toBe("diagram");
-    expect(diagramFileBaseName(null)).toBe("diagram");
-  });
-
-  it("preserves fence metadata and settled source in copied Markdown", async () => {
-    await using _fixture = _createFixture();
-
-    expect(
-      mermaidMarkdownCopySource("flowchart LR\n  A --> B\n", "mermaid", 'title="study.mmd"'),
-    ).toBe('```mermaid title="study.mmd"\nflowchart LR\n  A --> B\n```\n\n');
-  });
-
-  it("uses a longer fence when the diagram source contains triple backticks", async () => {
-    await using _fixture = _createFixture();
-
-    expect(mermaidMarkdownCopySource("flowchart LR\n  A[```]", "mermaid", undefined)).toBe(
-      "````mermaid\nflowchart LR\n  A[```]\n````\n\n",
-    );
-  });
-
   it("makes exported SVG standalone and gives it the chosen appearance", async () => {
     await using _fixture = _createFixture();
 

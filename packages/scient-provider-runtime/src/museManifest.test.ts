@@ -5,7 +5,9 @@ import {
 } from "./managedRuntimeArtifact.ts";
 import { compareManagedRuntimeVersions } from "./managedRuntimeVersion.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
-import { MUSE_DOWNLOAD_URL, MUSE_TARGETS, resolveMuseArtifactPolicy } from "./museManifest.ts";
+import { MUSE_DOWNLOAD_URL, resolveMuseArtifactPolicy } from "./museManifest.ts";
+import { MUSE_SUPPORTED_TARGETS as MUSE_TARGETS } from "./testing.ts";
+
 import { parseManagedMuseVersion } from "./museVersion.ts";
 
 const version = "1.4.6-R6000.1";

@@ -2,6 +2,7 @@ import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isElectron } from "../env";
@@ -9,6 +10,9 @@ import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { HostedEmptyState } from "../components/HostedEmptyState";
+// SCIENT-FORK:START hosted-landing
+import { HostedLanding } from "~/scient/hosted/HostedLanding";
+// SCIENT-FORK:END hosted-landing
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
@@ -29,6 +33,11 @@ function ChatIndexRouteView() {
 
   if (authGateState.status === "hosted-static") {
     if (!isReady) return null;
+    // SCIENT-FORK:START hosted-landing — Scient's landing stays until a computer is open.
+    if (!environments.some(({ connection }) => connection.phase === "connected")) {
+      return <HostedLanding />;
+    }
+    // SCIENT-FORK:END hosted-landing
     if (environments.length === 0) return <HostedEmptyState />;
   }
 
@@ -104,7 +113,8 @@ function IndexDraftLanding() {
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
-  const contentArea = workspaceAreaProps("home", 1, "Home");
+  const gt = useGT();
+  const contentArea = workspaceAreaProps("home", 1, gt("Home", { $context: "the home screen" }));
   return (
     <SidebarInset
       {...contentArea}
@@ -114,14 +124,16 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       {isElectron ? <WorkspacePageHeader electron /> : null}
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle>Couldn’t start a new thread</EmptyTitle>
+          <EmptyTitle>
+            <T>Couldn’t start a new thread</T>
+          </EmptyTitle>
           <EmptyDescription>
-            The project is still available. Try opening the draft again.
+            <T>The project is still available. Try opening the draft again.</T>
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
               <RefreshIcon size="md" />
-              Try again
+              <T>Try again</T>
             </Button>
           </div>
         </EmptyHeader>

@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./runtime.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -234,10 +236,14 @@ describe("shared compute runtime transitions", () => {
           expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
         },
       };
-      const restarting = h.atoms.restartSession.run(h.registry, target);
+      const restarting = runAtomCommand(h.registry, h.atoms.restartSession, target, {
+        reportFailure: false,
+      });
       try {
         yield* Deferred.await(h.restartEntered);
-        const stopping = h.atoms.stopSession.run(h.registry, target);
+        const stopping = runAtomCommand(h.registry, h.atoms.stopSession, target, {
+          reportFailure: false,
+        });
         try {
           yield* Deferred.await(h.stopEntered);
         } finally {
@@ -297,12 +303,18 @@ describe("shared compute runtime transitions", () => {
         expect(h.inventoryReads()).toBe(1);
         expect(h.inspected).toEqual([]);
         const before = h.inventoryReads();
-        yield* Effect.promise(() =>
-          Promise.all([
-            h.atoms.refreshRuntimeInventory.run(h.registry, { environmentId: ENV, input: {} }),
-            h.atoms.refreshRuntimeInventory.run(h.registry, { environmentId: ENV, input: {} }),
-          ]),
-        );
+        // The server answers only once both asks are in, as they overlap over the network.
+        const answer = yield* Deferred.make<void>();
+        h.setInventoryWait(Deferred.await(answer));
+        const refresh = h.atoms.refreshRuntimeInventory.run(h.registry, {
+          environmentId: ENV,
+          input: {},
+        });
+        const first = yield* refresh.pipe(Effect.forkChild({ startImmediately: true }));
+        const second = yield* refresh.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(answer, undefined);
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
         // One scan and one read of what it found, however many asked at once.
         expect(h.inventoryReads()).toBe(before + 2);
         unmount();
@@ -360,7 +372,7 @@ describe("shared compute runtime transitions", () => {
           expect(h.inventoryReads()).toBeGreaterThan(count);
           yield* h.read(other);
           count = h.inventoryReads();
-          yield* Effect.promise(() =>
+          yield* Effect.exit(
             h.atoms.manageRuntime.run(h.registry, {
               environmentId: ENV,
               input: { languageId: PYTHON, action: "install" },
@@ -394,7 +406,7 @@ describe("shared compute runtime transitions", () => {
             selection: "managed",
             generationId: "recovered",
           });
-          yield* Effect.promise(() =>
+          yield* Effect.exit(
             h.atoms.refreshRuntimes.run(h.registry, {
               environmentId: ENV,
               input: { cwd: "/project", refresh: true },
@@ -419,7 +431,7 @@ describe("shared compute runtime transitions", () => {
         const leaveSettings = h.registry.mount(h.settingsQuery);
         yield* h.read(h.project);
         yield* h.read(h.settingsQuery);
-        yield* Effect.promise(() =>
+        yield* Effect.exit(
           h.atoms.manageRuntime.run(h.registry, {
             ...h.statusTarget,
             input: { languageId: PYTHON, action: "install" },
@@ -483,7 +495,7 @@ describe("shared compute runtime transitions", () => {
         });
         const unmount = h.registry.mount(other);
         const before = yield* h.read(other);
-        yield* Effect.promise(() =>
+        yield* Effect.exit(
           h.atoms.manageRuntime.run(h.registry, {
             ...h.statusTarget,
             input: { languageId: PYTHON, action: "install" },
@@ -568,14 +580,14 @@ describe("shared compute runtime transitions", () => {
       try {
         const unmount = h.registry.mount(h.project);
         yield* h.read(h.project);
-        yield* Effect.promise(() =>
+        yield* Effect.exit(
           h.atoms.manageRuntime.run(h.registry, {
             ...h.statusTarget,
             input: { languageId: PYTHON, action: "install" },
           }),
         );
         expect((yield* h.read(h.project)).languages[0]?.managedRuntime?.operation).not.toBeNull();
-        yield* Effect.promise(() => h.atoms.cancelManagedRuntime.run(h.registry, h.statusTarget));
+        yield* Effect.exit(h.atoms.cancelManagedRuntime.run(h.registry, h.statusTarget));
         expect((yield* h.read(h.project)).languages[0]?.managedRuntime).toMatchObject({
           installed: false,
           operation: null,

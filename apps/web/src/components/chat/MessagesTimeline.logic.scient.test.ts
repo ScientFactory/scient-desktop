@@ -1249,7 +1249,6 @@ it("treats only the strict list end as the live edge", async () => {
     resolveTimelineMinimapHeightStyle,
     resolveTimelineMinimapHitStripWidth,
     resolveTimelineMinimapIndexFromPointer,
-    resolveTimelineMinimapInteractiveWidth,
     resolveTimelineMinimapNavigationInteractive,
     resolveTimelineMinimapTopPercent,
   } = await import("./MessagesTimeline.logic");
@@ -1294,7 +1293,7 @@ it("treats only the strict list end as the live edge", async () => {
       isAtEnd: false,
     }),
   ).toBe(false);
-  expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+  expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, max(4rem, calc(100% - 14.75rem)))");
   expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
   expect(
     resolveTimelineMinimapIndexFromPointer({
@@ -1366,13 +1365,99 @@ it("treats only the strict list end as the live edge", async () => {
   expect(resolveTimelineMinimapNavigationInteractive(14)).toBe(true);
   expect(resolveTimelineMinimapNavigationInteractive(8)).toBe(false);
   expect(resolveTimelineMinimapNavigationInteractive(0)).toBe(false);
+});
 
-  // The collapsed target stays narrow, but an open preview keeps its full
-  // 20rem width plus the 2rem offset from the minimap rail interactive.
-  expect(resolveTimelineMinimapInteractiveWidth(0, false)).toBe(0);
-  expect(resolveTimelineMinimapInteractiveWidth(14, false)).toBe(14);
-  expect(resolveTimelineMinimapInteractiveWidth(40, false)).toBe(40);
-  expect(resolveTimelineMinimapInteractiveWidth(0, true)).toBe("22rem");
-  expect(resolveTimelineMinimapInteractiveWidth(14, true)).toBe("22rem");
-  expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
+describe("steer refusals", () => {
+  it("shows a refused steer's error right after that steer, outside the folded work", () => {
+    const threadId = ThreadId.make("refused-steer-thread");
+    const runId = RunId.make("refused-steer-run");
+    const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const record = (id: string, second: number, fields: Record<string, unknown>) =>
+      decodeJsonBoundaryItem({
+        id,
+        threadId,
+        runId,
+        nodeId: "root",
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: second,
+        status: "completed",
+        title: null,
+        startedAt: at(second),
+        completedAt: at(second),
+        updatedAt: at(second),
+        ...fields,
+      });
+    const user = (id: string, second: number, inputIntent: "turn_start" | "steer") =>
+      record(`item:${id}`, second, {
+        type: "user_message",
+        messageId: id,
+        text: id,
+        attachments: [],
+        inputIntent,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    const tool = (id: string, second: number) =>
+      record(id, second, {
+        type: "command_execution",
+        input: "pwd",
+        output: "/synthetic",
+        exitCode: 0,
+      });
+    // The refusal is written after a second quick steer and more work have landed.
+    const items = [
+      user("prompt", 0, "turn_start"),
+      tool("work-before-steers", 2),
+      user("refused-steer", 10, "steer"),
+      user("next-steer", 11, "steer"),
+      tool("work-after-steers", 12),
+      record("refusal", 13, {
+        nodeId: null,
+        parentItemId: "item:refused-steer",
+        status: "failed",
+        title: "Message not sent",
+        type: "error",
+        failure: {
+          class: "validation_error",
+          message: "The complete current request exceeds the provider input limit.",
+          code: null,
+          retryable: false,
+        },
+      }),
+      tool("more-work", 14),
+      record("final", 20, {
+        type: "assistant_message",
+        messageId: "final",
+        text: "Done",
+        streaming: false,
+      }),
+    ];
+    const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: items.map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      })),
+      optimisticMessages: [],
+    });
+    const rowIds = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestRun: { runId, status: "completed", startedAt: at(0), completedAt: at(20) },
+      isWorking: false,
+      expandedRunIds: new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    }).map((row) => row.id);
+
+    expect(rowIds.slice(rowIds.indexOf("refused-steer"), rowIds.indexOf("next-steer") + 1)).toEqual(
+      ["refused-steer", "refusal", "next-steer"],
+    );
+    expect(rowIds).not.toContain("work-after-steers");
+    expect(rowIds.at(-1)).toBe("final");
+  });
 });

@@ -10,6 +10,7 @@ import {
   antigravityAcpExecutableNames,
   isAntigravityAcpNativeVersion,
   resolveAntigravityAcpCatalogAsset,
+  fitsManagedRuntimeDownloadLimit,
   hydrateManagedRuntimeArtifact,
   compareManagedRuntimeReleases,
   isSameCursorReleaseDate,
@@ -91,6 +92,17 @@ export interface ManagedRuntimeCatalogRefreshResult {
 }
 
 type Fetch = (input: URL, init?: RequestInit) => Promise<Response>;
+
+/** Hosted runners share an address, so GitHub's anonymous API limit is often already spent. */
+export function withGitHubToken(fetch_: Fetch, token: string | undefined): Fetch {
+  if (!token) return fetch_;
+  return (input, init) => {
+    if (input.origin !== "https://api.github.com") return fetch_(input, init);
+    const headers = new Headers(init?.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    return fetch_(input, { ...init, headers });
+  };
+}
 type PolicyResolver = (target: ManagedRuntimeTarget) => ManagedRuntimeArtifactPolicy | undefined;
 
 const targets: ReadonlyArray<ManagedRuntimeTarget> = [
@@ -215,7 +227,9 @@ async function request(input: {
     headers: { "user-agent": "Scient-managed-runtime-catalog/1" },
   });
   if (!response.ok && !(input.allowNotFound && response.status === 404)) {
-    throw new Error(`Release request failed with HTTP ${response.status}: ${input.url}`);
+    const remaining = response.headers.get("x-ratelimit-remaining");
+    const limit = remaining === null ? "" : ` (API requests left: ${remaining})`;
+    throw new Error(`Release request failed with HTTP ${response.status}${limit}: ${input.url}`);
   }
   return response;
 }
@@ -329,8 +343,18 @@ function candidateProvider(input: {
   if (Object.keys(input.artifacts).length !== policies.length) {
     throw new Error(`${input.provider} discovery did not return every app-approved target.`);
   }
+  // A zstd copy too large to download is left out, so the raw binary is offered on its own.
+  const artifacts = Object.fromEntries(
+    Object.entries(input.artifacts).map(([key, artifact]) => {
+      const policy = policies.find((entry) => entry.key === key)?.policy;
+      const limit = policy?.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES;
+      if (!artifact.compressed || artifact.compressed.size <= limit) return [key, artifact];
+      const { compressed: _oversized, ...raw } = artifact;
+      return [key, raw];
+    }),
+  ) as typeof input.artifacts;
   for (const { key, policy } of policies) {
-    const artifact = input.artifacts[key];
+    const artifact = artifacts[key];
     if (!artifact) throw new Error(`${input.provider} is missing ${key}.`);
     const hydrated = hydrateManagedRuntimeArtifact(
       policy,
@@ -344,6 +368,8 @@ function candidateProvider(input: {
       artifact.compressed,
     );
     if (!hydrated) throw new Error(`${input.provider} ${key} violates app-owned runtime policy.`);
+    if (!fitsManagedRuntimeDownloadLimit(hydrated))
+      throw new Error(`${input.provider} ${key} exceeds the installer's download limit.`);
     if (artifact.compressed && !hydrated.compressed)
       throw new Error(`${input.provider} ${key} has a compressed copy its policy does not name.`);
   }
@@ -352,7 +378,7 @@ function candidateProvider(input: {
     channel: "stable",
     version: input.version,
     ...(input.supersedes ? { supersedes: input.supersedes.toSorted() } : {}),
-    artifacts: input.artifacts,
+    artifacts,
   };
 }
 
@@ -611,6 +637,8 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
         artifact.compressed,
       );
       if (!hydrated) throw new Error(`${provider} ${key} violates app-owned runtime policy.`);
+      if (!fitsManagedRuntimeDownloadLimit(hydrated))
+        throw new Error(`${provider} ${key} exceeds the installer's download limit.`);
       if (artifact.compressed && !hydrated.compressed)
         throw new Error(`${provider} ${key} has a compressed copy its policy does not name.`);
     }
@@ -1039,33 +1067,57 @@ async function discoverPi(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderD
   return candidateProvider({ provider: "pi", version, artifacts: Object.fromEntries(entries) });
 }
 
+const OMP_RELEASES_URL = "https://api.github.com/repos/can1357/oh-my-pi/releases?per_page=20";
+
 /**
- * A release outside the supported major is refused, not published: every
- * client refuses it, and because publication only accepts newer versions a
- * published next major would block every later patch of the supported one.
+ * The newest stable release inside the supported major, not the `latest` pointer: every client
+ * refuses a next major, and once published it would block every later supported patch, so it
+ * waits for qualification while supported patches keep flowing.
  */
-function supportedOmpVersion(release: Record<string, unknown>): string {
-  const version = strictVersion(
-    stringField(release, "tag_name", "Oh My Pi release").replace(/^v/u, ""),
-    "Oh My Pi release",
-  );
-  if (!isSupportedOmpMajor(version)) {
-    throw new Error(
-      `Oh My Pi ${version} is outside the supported major ${OMP_SUPPORTED_MAJOR}; qualify the new major before publishing it.`,
+async function latestSupportedOmpRelease(
+  fetch_: Fetch,
+  report: (message: string) => void = () => undefined,
+): Promise<{ readonly release: Record<string, unknown>; readonly version: string } | undefined> {
+  const releases = await metadataJson(fetch_, OMP_RELEASES_URL);
+  if (!Array.isArray(releases)) throw new Error("Oh My Pi release list is not a JSON array.");
+  let newest: { readonly release: Record<string, unknown>; readonly version: string } | undefined;
+  let unsupported: string | undefined;
+  for (const value of releases) {
+    const release = record(value, "Oh My Pi release");
+    if (release.draft !== false || release.prerelease !== false) continue;
+    const tag = release.tag_name;
+    // Release assets are published under `v<version>`; any other tag is not a candidate.
+    if (typeof tag !== "string" || !/^v[0-9]+\.[0-9]+\.[0-9]+$/u.test(tag)) continue;
+    const version = tag.slice(1);
+    const isNewer = (than: string | undefined) =>
+      than === undefined ||
+      compareManagedRuntimeReleases({
+        provider: "omp",
+        current: { version: than },
+        candidate: { version },
+      }) === "newer";
+    if (isSupportedOmpMajor(version)) {
+      if (isNewer(newest?.version)) newest = { release, version };
+    } else if (Number(version.split(".")[0]) > OMP_SUPPORTED_MAJOR && isNewer(unsupported)) {
+      unsupported = version;
+    }
+  }
+  if (unsupported !== undefined) {
+    report(
+      `Oh My Pi ${unsupported} is outside the supported major ${OMP_SUPPORTED_MAJOR}; it is not published until the new major is qualified.`,
     );
   }
-  return version;
+  return newest;
 }
 
 async function discoverOmp(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
-  const release = record(
-    await metadataJson(fetch_, "https://api.github.com/repos/can1357/oh-my-pi/releases/latest"),
-    "Oh My Pi stable release",
-  );
-  if (release.prerelease !== false || release.draft !== false) {
-    throw new Error("Oh My Pi release is not stable.");
+  const latest = await latestSupportedOmpRelease(fetch_);
+  if (latest === undefined) {
+    throw new Error(
+      `Oh My Pi has no stable release in the supported major ${OMP_SUPPORTED_MAJOR}.`,
+    );
   }
-  const version = supportedOmpVersion(release);
+  const { release, version } = latest;
   if (!Array.isArray(release.assets)) throw new Error("Oh My Pi release assets are missing.");
   const assets = release.assets.map((value) => record(value, "Oh My Pi release asset"));
   const entries = await mapConcurrent(policyEntries("omp"), 2, async ({ key, policy }) => {
@@ -1242,7 +1294,7 @@ async function discoverMuse(fetch_: Fetch): Promise<ManagedRuntimeCatalogProvide
     const asset = record(artifacts[manifestKey], "Muse release artifact");
     // Raw executables download as-is; a larger release could never install.
     const size = strictSize(Number(asset.size), "Muse release artifact");
-    if (size > MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES) {
+    if (size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)) {
       throw new Error("Muse release artifact exceeds the installer's download limit.");
     }
     return [
@@ -1335,7 +1387,7 @@ export async function refreshManagedRuntimeProvider(
   }
   const existing = existingOrBundledRelease(current, provider);
   report(`Checking ${provider} stable channel.`);
-  const latestVersion = await discoverLatestVersion(provider, fetch_);
+  const latestVersion = await discoverLatestVersion(provider, fetch_, report);
   if (latestVersion === undefined) {
     report(
       existing
@@ -1491,6 +1543,7 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
 async function discoverLatestVersion(
   provider: ManagedRuntimeCatalogProvider,
   fetch_: Fetch,
+  report: (message: string) => void = () => undefined,
 ): Promise<string | undefined> {
   switch (provider) {
     case "muse":
@@ -1560,13 +1613,8 @@ async function discoverLatestVersion(
         ? stringField(release, "tag_name", "Scient Agent release").slice(1)
         : undefined;
     }
-    case "omp": {
-      const release = record(
-        await metadataJson(fetch_, "https://api.github.com/repos/can1357/oh-my-pi/releases/latest"),
-        "Oh My Pi stable release",
-      );
-      return supportedOmpVersion(release);
-    }
+    case "omp":
+      return (await latestSupportedOmpRelease(fetch_, report))?.version;
   }
 }
 

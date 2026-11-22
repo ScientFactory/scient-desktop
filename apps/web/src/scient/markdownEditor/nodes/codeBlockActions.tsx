@@ -1,6 +1,7 @@
 import { type ComponentProps, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 
+import { I18nProvider } from "~/i18n/I18nProvider";
 import { CodeBlockActions, useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
 import { CodeBlockTitle } from "~/scient/presentation/CodeBlockTitle";
 
@@ -23,7 +24,11 @@ export function mountCodeBlockActions(
   onWrapChange: (wrapped: boolean) => void,
 ): () => void {
   const root = createRoot(host);
-  root.render(<EditorCodeBlockActions readCode={readCode} onWrapChange={onWrapChange} />);
+  root.render(
+    <I18nProvider>
+      <EditorCodeBlockActions readCode={readCode} onWrapChange={onWrapChange} />
+    </I18nProvider>,
+  );
   return () => root.unmount();
 }
 
@@ -45,12 +50,12 @@ export function mountCodeBlockHeader(
       }
       previousTitle = title;
       root.render(
-        <>
+        <I18nProvider>
           <span className="scient-markdown-code-language inline-flex min-w-0 items-center gap-[0.4rem]">
             <CodeBlockTitle {...title} />
           </span>
           <EditorCodeBlockActions readCode={readCode} onWrapChange={onWrapChange} />
-        </>,
+        </I18nProvider>,
       );
     },
     destroy: () => root.unmount(),

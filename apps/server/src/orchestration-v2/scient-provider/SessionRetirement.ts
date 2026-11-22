@@ -114,15 +114,25 @@ export const makeSessionRetirement = <
   readonly reclaimCredential: (threadId: ThreadId, credentialId: string) => Effect.Effect<void, E>;
   readonly closeScope: (scope: Scope.Closeable) => Effect.Effect<void, E>;
   readonly cancelIdle: (fiber: Fiber.Fiber<void, never> | null) => Effect.Effect<void, E>;
-  readonly endSubscribers: (entry: Entry) => Effect.Effect<void, E>;
+  /** Ended and failed subscribers run the released-work cleanup after they drain. */
+  readonly endSubscribers: (
+    entry: Entry,
+    input: Input,
+    released: Released,
+  ) => Effect.Effect<void, E>;
   readonly closeSubscribers: (entry: Entry) => Effect.Effect<void, E>;
-  readonly failSubscribers: (entry: Entry, detail: string) => Effect.Effect<void, E>;
+  readonly failSubscribers: (
+    entry: Entry,
+    detail: string,
+    input: Input,
+    released: Released,
+  ) => Effect.Effect<void, E>;
   readonly releaseConsumer: (entry: Entry) => Effect.Effect<void, E>;
   readonly writeSession: (entry: Entry, input: Input) => Effect.Effect<void, E>;
   readonly writeRequests: (entry: Entry, input: Input) => Effect.Effect<void, E>;
   /** Background work the released process left on its threads; it cannot fail. */
   readonly readReleasedWork: (entry: Entry, input: Input) => Effect.Effect<Released>;
-  readonly writeReleasedWork: (released: Released) => Effect.Effect<void, E>;
+  readonly writeReleasedWork: (released: Released, input: Input) => Effect.Effect<void, E>;
 }) =>
   Effect.fnUntraced(function* (entry: Entry, input: Input) {
     const retireCredentials = Effect.forEach(
@@ -142,12 +152,15 @@ export const makeSessionRetirement = <
       () =>
         Effect.gen(function* () {
           if (input.cancelIdleFiber !== false) yield* steps.cancelIdle(entry.idleFiber);
-          if (input.gracefulSubscribers === true) yield* steps.endSubscribers(entry);
+          if (input.gracefulSubscribers === true)
+            yield* steps.endSubscribers(entry, input, releasedWork);
           else if (input.reason === "server_shutdown") yield* steps.closeSubscribers(entry);
           else
             yield* steps.failSubscribers(
               entry,
               input.detail ?? `Provider session released: ${input.reason}.`,
+              input,
+              releasedWork,
             );
           const observed = yield* Fiber.join(physicalClose).pipe(
             Effect.timeoutOption(steps.closeTimeoutMs),
@@ -167,7 +180,7 @@ export const makeSessionRetirement = <
               Effect.exit(
                 steps.writeRequests(entry, input).pipe(entry.requestEventPermit.withPermits(1)),
               ),
-              Effect.exit(steps.writeReleasedWork(releasedWork)),
+              Effect.exit(steps.writeReleasedWork(releasedWork, input)),
             ],
             { concurrency: 1 },
           ).pipe(

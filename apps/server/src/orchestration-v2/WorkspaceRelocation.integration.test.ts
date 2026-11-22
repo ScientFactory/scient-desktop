@@ -22,6 +22,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -31,6 +32,12 @@ const modelSelection = { instanceId, model: "test-model" };
 const database = SqlitePersistenceMemory;
 const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
 const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+  // SCIENT-FORK: these threads track no other folders.
+  Layer.provide(
+    Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+      forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+    }),
+  ),
   Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
   Layer.provide(
     Layer.mergeAll(
@@ -132,6 +139,7 @@ for (const detached of [false, true]) {
           appThreadId: threadId,
           ownerNodeId: null,
           nativeThreadRef,
+          nativeMetadata: { cwd: "/tmp/workspace-before" },
           nativeConversationHeadRef: null,
           status: "idle",
           firstRunOrdinal: null,

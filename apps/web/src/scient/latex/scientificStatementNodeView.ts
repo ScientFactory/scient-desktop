@@ -3,6 +3,8 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { Decoration, DecorationSource } from "@tiptap/pm/view";
 import { ReactRenderer, type NodeViewProps } from "@tiptap/react";
 import type { ComponentType } from "react";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 export interface ScientificStatementViewProps extends NodeViewProps {
   statementRoot: HTMLDivElement;
@@ -39,7 +41,7 @@ export function scientificStatementNodeView(
       heading.contentEditable = "false";
       const bodyWrapper = document.createElement("div");
       bodyWrapper.className = "scient-latex-scientific-body";
-      bodyWrapper.setAttribute("aria-label", "Scientific statement body");
+      bodyWrapper.setAttribute("aria-label", m(msg("Scientific statement body")));
       bodyWrapper.setAttribute("data-node-view-content", "");
       bodyWrapper.style.whiteSpace = "pre-wrap";
       this.body = document.createElement("div");

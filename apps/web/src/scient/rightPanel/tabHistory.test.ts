@@ -9,7 +9,6 @@ import {
   goForwardInTab,
   renameInTabHistory,
   type TabDepartureGuard,
-  tabHistoryDepth,
   watchTabHistory,
 } from "./tabHistory";
 
@@ -46,28 +45,34 @@ describe("tab history", () => {
     const ref = watchedThread();
     openReadmeFromFiles(ref);
     expect(tabs(ref)).toEqual(["file:README.md"]);
-    expect(tabHistoryDepth(ref, "file:README.md")).toEqual({ back: 1, forward: 0 });
+    expect(goForwardInTab(ref, "file:README.md")).toBe(false);
 
     expect(goBackInTab(ref, "file:README.md")).toBe(true);
     expect(tabs(ref)).toEqual(["files"]);
-    expect(tabHistoryDepth(ref, "files")).toEqual({ back: 0, forward: 1 });
+    // One step back was all there was.
+    expect(goBackInTab(ref, "files")).toBe(false);
+    expect(tabs(ref)).toEqual(["files"]);
 
     expect(goForwardInTab(ref, "files")).toBe(true);
     expect(tabs(ref)).toEqual(["file:README.md"]);
-    expect(tabHistoryDepth(ref, "file:README.md")).toEqual({ back: 1, forward: 0 });
+    expect(goForwardInTab(ref, "file:README.md")).toBe(false);
+    // Forward recorded the way back again.
+    expect(goBackInTab(ref, "file:README.md")).toBe(true);
+    expect(tabs(ref)).toEqual(["files"]);
   });
 
   it("returns to the file tab a file was opened from, and forward again", () => {
     const ref = watchedThread();
     panel().openFile(ref, "a.md");
     panel().openFile(ref, "b.md");
-    expect(tabHistoryDepth(ref, "file:b.md").back).toBe(1);
 
-    goBackInTab(ref, "file:b.md");
+    expect(goBackInTab(ref, "file:b.md")).toBe(true);
     expect(activeTab(ref)).toBe("file:a.md");
-    expect(tabHistoryDepth(ref, "file:a.md").forward).toBe(1);
+    // Each tab has its own history: a.md was opened from nowhere.
+    expect(goBackInTab(ref, "file:a.md")).toBe(false);
+    expect(activeTab(ref)).toBe("file:a.md");
 
-    goForwardInTab(ref, "file:a.md");
+    expect(goForwardInTab(ref, "file:a.md")).toBe(true);
     expect(activeTab(ref)).toBe("file:b.md");
   });
 
@@ -77,9 +82,8 @@ describe("tab history", () => {
     panel().openFile(ref, ".");
     panel().navigateFolder(ref, "files", "README.md", "README.md");
     expect(tabs(ref)).toEqual(["file:README.md"]);
-    expect(tabHistoryDepth(ref, "file:README.md").back).toBe(1);
 
-    goBackInTab(ref, "file:README.md");
+    expect(goBackInTab(ref, "file:README.md")).toBe(true);
     expect(tabs(ref)).toEqual(["files"]);
   });
 
@@ -89,10 +93,13 @@ describe("tab history", () => {
     const browserId = activeTab(ref)!;
     panel().openFile(ref, "notes.md");
 
-    goBackInTab(ref, "file:notes.md");
+    expect(goBackInTab(ref, "file:notes.md")).toBe(true);
     expect(activeTab(ref)).toBe(browserId);
-    expect(tabHistoryDepth(ref, browserId)).toEqual({ back: 0, forward: 0 });
-    expect(tabHistoryDepth(ref, "file:notes.md").back).toBe(1);
+    expect(goForwardInTab(ref, browserId)).toBe(false);
+    // Back on the file, its way back to the browser is still there.
+    panel().activateSurface(ref, "file:notes.md");
+    expect(goBackInTab(ref, "file:notes.md")).toBe(true);
+    expect(activeTab(ref)).toBe(browserId);
   });
 
   it("does not take picking a tab in the strip for a move", () => {
@@ -100,7 +107,9 @@ describe("tab history", () => {
     panel().openFile(ref, "a.md");
     panel().openFile(ref, "b.md");
     panel().activateSurface(ref, "file:a.md");
-    expect(tabHistoryDepth(ref, "file:a.md")).toEqual({ back: 0, forward: 0 });
+    expect(goBackInTab(ref, "file:a.md")).toBe(false);
+    expect(goForwardInTab(ref, "file:a.md")).toBe(false);
+    expect(activeTab(ref)).toBe("file:a.md");
   });
 
   it("forgets a closed tab and every way back to it", () => {
@@ -108,7 +117,11 @@ describe("tab history", () => {
     panel().openFile(ref, "a.md");
     panel().openFile(ref, "b.md");
     panel().closeSurface(ref, "file:a.md");
-    expect(tabHistoryDepth(ref, "file:b.md").back).toBe(0);
+    // Reopened, a.md is a new tab: b.md's old way back does not lead to it.
+    panel().openFile(ref, "a.md");
+    panel().activateSurface(ref, "file:b.md");
+    expect(goBackInTab(ref, "file:b.md")).toBe(false);
+    expect(activeTab(ref)).toBe("file:b.md");
   });
 
   it("starts a reopened file with no history", () => {
@@ -116,7 +129,9 @@ describe("tab history", () => {
     openReadmeFromFiles(ref);
     panel().closeSurface(ref, "file:README.md");
     panel().openFile(ref, "README.md");
-    expect(tabHistoryDepth(ref, "file:README.md")).toEqual({ back: 0, forward: 0 });
+    expect(goBackInTab(ref, "file:README.md")).toBe(false);
+    expect(goForwardInTab(ref, "file:README.md")).toBe(false);
+    expect(tabs(ref)).toEqual(["file:README.md"]);
   });
 
   it("carries a renamed tab's history to its new path", () => {
@@ -126,11 +141,11 @@ describe("tab history", () => {
       panel().renameFileSurface(ref, "README.md", "GUIDE.md"),
     );
     expect(tabs(ref)).toEqual(["file:GUIDE.md"]);
-    expect(tabHistoryDepth(ref, "file:GUIDE.md")).toEqual({ back: 1, forward: 0 });
+    expect(goForwardInTab(ref, "file:GUIDE.md")).toBe(false);
 
-    goBackInTab(ref, "file:GUIDE.md");
+    expect(goBackInTab(ref, "file:GUIDE.md")).toBe(true);
     expect(tabs(ref)).toEqual(["files"]);
-    goForwardInTab(ref, "files");
+    expect(goForwardInTab(ref, "files")).toBe(true);
     expect(tabs(ref)).toEqual(["file:GUIDE.md"]);
   });
 
@@ -144,9 +159,9 @@ describe("tab history", () => {
       panel().renameFileSurface(ref, "old.ts", "new.ts"),
     );
     expect(tabs(ref)).toEqual(["file:new.ts"]);
-    expect(tabHistoryDepth(ref, "file:new.ts")).toEqual({ back: 1, forward: 0 });
+    expect(goForwardInTab(ref, "file:new.ts")).toBe(false);
 
-    goBackInTab(ref, "file:new.ts");
+    expect(goBackInTab(ref, "file:new.ts")).toBe(true);
     expect(tabs(ref)).toEqual(["files"]);
   });
 

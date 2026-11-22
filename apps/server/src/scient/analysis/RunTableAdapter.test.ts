@@ -13,8 +13,12 @@ import {
   computeRunRoutesForPath,
   isSqliteScript,
 } from "@t3tools/contracts";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import type { ComputeProjectOutputObserverPort } from "../compute/ComputeProjectOutputObserver.ts";
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
 import {
   beside,
@@ -792,5 +796,145 @@ describe("a Stan model", () => {
     );
     model("eight.data.json", '{"J": 8}');
     expect(adapter.validateSource?.(source)).toBeNull();
+  });
+});
+
+describe("file-run project outputs", () => {
+  it("watches the project from before the program starts until the run is released", async () => {
+    const events: string[] = [];
+    const observer: ComputeProjectOutputObserverPort = {
+      watch: (projectRoot) =>
+        Effect.acquireRelease(
+          Effect.sync(() => events.push(`watch ${projectRoot}`)),
+          () => Effect.sync(() => events.push("released")),
+        ).pipe(
+          Effect.as({
+            ready: Effect.sync(() => events.push("ready")),
+            begin: Effect.sync(() => {
+              events.push("begin");
+              return { projectRoot, startedAt: 1, mark: null };
+            }),
+            collect: () =>
+              Effect.succeed({
+                images: [],
+                tables: ["results/table.csv"],
+                warnings: [],
+                capture: {
+                  coverage: "partial" as const,
+                  coverageReason: "watch-overflow" as const,
+                  rejectedCount: 0,
+                },
+              }),
+          }),
+        ),
+    };
+    const adapter = makeRunTableAdapters({
+      tools: async () => new Map(),
+      environment: { PATH: "/usr/bin" },
+      platform: "linux",
+      observer,
+    }).find((candidate) => candidate.kind === "bash")!;
+    const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-run-outputs-"));
+    const context = {
+      runId: ExecutionRunId.make("run"),
+      projectId: "project",
+      runtime: await inspect(adapter),
+      source: { cwd: folder, relativePath: "analysis.sh", revision: "1" as never },
+      absoluteSourcePath: NodePath.join(folder, "analysis.sh"),
+      artifactStagingDirectory: NodePath.join(folder, ".staging"),
+    };
+    await adapter.prepareRun?.(context);
+    expect(events).toEqual([`watch ${folder}`, "ready", "begin"]);
+    const collection = await adapter.collectArtifacts!(context);
+    expect(collection).toMatchObject({
+      writtenFiles: ["results/table.csv"],
+      coverage: { coverage: "partial", coverageReason: "watch-overflow", rejectedCount: 0 },
+    });
+    await adapter.releaseRun?.(context);
+    await adapter.releaseRun?.(context);
+    expect(events.at(-1)).toBe("released");
+    expect(events.filter((event) => event === "released")).toHaveLength(1);
+    NodeFS.rmSync(folder, { recursive: true, force: true });
+  });
+
+  const pendingReadiness = async (ready: Effect.Effect<void>) => {
+    const counts = { acquired: 0, released: 0 };
+    const observer: ComputeProjectOutputObserverPort = {
+      watch: (projectRoot) =>
+        Effect.acquireRelease(
+          Effect.sync(() => (counts.acquired += 1)),
+          () => Effect.sync(() => (counts.released += 1)),
+        ).pipe(
+          Effect.as({
+            ready,
+            begin: Effect.succeed({ projectRoot, startedAt: 1, mark: null }),
+            collect: () => Effect.succeed({ images: [], tables: [], warnings: [] }),
+          }),
+        ),
+    };
+    const adapter = makeRunTableAdapters({
+      tools: async () => new Map(),
+      environment: { PATH: "/usr/bin" },
+      platform: "linux",
+      observer,
+    }).find((candidate) => candidate.kind === "bash")!;
+    const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-run-outputs-"));
+    const context = {
+      runId: ExecutionRunId.make("run"),
+      projectId: "project",
+      runtime: await inspect(adapter),
+      source: { cwd: folder, relativePath: "analysis.sh", revision: "1" as never },
+      absoluteSourcePath: NodePath.join(folder, "analysis.sh"),
+      artifactStagingDirectory: NodePath.join(folder, ".staging"),
+    };
+    return { counts, adapter, context, folder };
+  };
+
+  effectIt.live("releases a run interrupted while its watch gets ready exactly once", () =>
+    Effect.gen(function* () {
+      const reached = Promise.withResolvers<void>();
+      const readiness = Promise.withResolvers<void>();
+      const { counts, adapter, context, folder } = yield* Effect.promise(() =>
+        pendingReadiness(
+          Effect.promise(() => {
+            reached.resolve();
+            return readiness.promise;
+          }),
+        ),
+      );
+      let preparing: Promise<void> | undefined;
+      // The same ownership AnalysisService gives a run: release on scope exit, then prepare.
+      const run = yield* Effect.forkChild(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() => Effect.promise(() => adapter.releaseRun!(context)));
+            yield* Effect.tryPromise({
+              try: () => (preparing = adapter.prepareRun!(context)),
+              catch: () => "prepare failed" as const,
+            });
+          }),
+        ),
+      );
+      yield* Effect.promise(() => reached.promise);
+      yield* Fiber.interrupt(run);
+      expect(counts).toEqual({ acquired: 1, released: 1 });
+      readiness.resolve();
+      yield* Effect.promise(() => preparing!);
+      expect(counts).toEqual({ acquired: 1, released: 1 });
+      expect(yield* Effect.promise(() => adapter.collectArtifacts!(context))).toEqual({
+        candidates: [],
+        failureMessage: null,
+      });
+      NodeFS.rmSync(folder, { recursive: true, force: true });
+    }),
+  );
+
+  it("releases the watch of a preparation that failed", async () => {
+    const { counts, adapter, context, folder } = await pendingReadiness(
+      Effect.die(new Error("watch broke")),
+    );
+    await expect(adapter.prepareRun!(context)).rejects.toThrow();
+    expect(counts).toEqual({ acquired: 1, released: 1 });
+    NodeFS.rmSync(folder, { recursive: true, force: true });
   });
 });

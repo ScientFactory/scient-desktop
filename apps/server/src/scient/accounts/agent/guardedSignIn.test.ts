@@ -20,6 +20,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
+import { authorizationDecision } from "../AccountDecisions.ts";
 import { guardedSignIn, keepTyped, type SignInCaller } from "./guardedSignIn.ts";
 
 const scope = {
@@ -82,10 +83,11 @@ const withFixture = <A, E>(
 
 const check: SignInCaller = { kind: "check" };
 const page: SignInCaller = { kind: "page", scope };
-const paper = (accounts: "all" | ReadonlyArray<AccountId>): SignInCaller => ({
+/** A paper the user asked for, or one an agent's conversation asked for. */
+const paper = (asker: "user" | "agent"): SignInCaller => ({
   kind: "paper",
   scope: { ...scope, unattended: true },
-  requester: { accounts },
+  requester: asker === "user" ? {} : { threadId: scope.threadId },
 });
 
 /**
@@ -108,6 +110,18 @@ const world = (
       Effect.sync(() => void resolved.push(accountId)).pipe(
         Effect.andThen(fake.service.resolveSecrets(accountId, fields)),
       ),
+    // Decided from each row's controls as they are now, as the real service does.
+    authorize: (decided, target, action) =>
+      Effect.sync(() => {
+        fake.calls.push(`authorize:${target.type}:${action}`);
+        const account = rows.find(
+          (candidate) => target.type === "account" && candidate.accountId === target.accountId,
+        );
+        return account &&
+          authorizationDecision(true, account.controls, decided).decision === "allowed"
+          ? ({ decision: "allowed" } as const)
+          : ({ decision: "denied", reason: "declined" } as const);
+      }),
     recordUse: (entry) =>
       Effect.sync(() => {
         const index = rows.findIndex(
@@ -173,7 +187,7 @@ it.effect("duplicate rows are one sign-in: concurrent calls run the engine once"
     const { run, opened } = world(rows, gate);
     const first = yield* run(rows[0]!, check).pipe(Effect.forkChild);
     yield* Deferred.await(gate.reached);
-    const second = yield* run(rows[1]!, paper("all")).pipe(Effect.forkChild);
+    const second = yield* run(rows[1]!, paper("user")).pipe(Effect.forkChild);
     yield* Deferred.succeed(gate.open, undefined);
     expect((yield* Fiber.join(first)).outcome).toBe("password-rejected");
     // Waited for the first, then found its refusal on the shared site and identity.
@@ -192,7 +206,7 @@ it.effect("two universities on one identity provider share one attempt", () =>
       university("b", "https://idp.b.example/entity"),
     ];
     const { run, opened } = world(rows);
-    expect((yield* run(rows[1]!, paper("all"))).outcome).toBe("failed");
+    expect((yield* run(rows[1]!, paper("user"))).outcome).toBe("failed");
     expect(opened).toEqual([]);
   }),
 );
@@ -202,7 +216,7 @@ it.effect("holds until a user action, and no time lifts it", () =>
     const rows = [row("held", at("needs-you"))];
     const { run, opened } = world(rows);
     yield* TestClock.adjust("30 days");
-    for (const caller of [page, paper("all")])
+    for (const caller of [page, paper("user")])
       expect((yield* run(rows[0]!, caller)).outcome).toBe("failed");
     expect(opened).toEqual([]);
     // A changed password is the user's reset; then automatic callers may try once.
@@ -214,8 +228,8 @@ it.effect("holds until a user action, and no time lifts it", () =>
         by: "action",
       },
     });
-    expect((yield* run(rows[0], paper("all"))).outcome).toBe("password-rejected");
-    expect((yield* run(rows[0], paper("all"))).outcome).toBe("failed");
+    expect((yield* run(rows[0], paper("user"))).outcome).toBe("password-rejected");
+    expect((yield* run(rows[0], paper("user"))).outcome).toBe("failed");
     // Check is a press: it tries once more.
     expect((yield* run(rows[0], check)).outcome).toBe("password-rejected");
     expect(opened).toHaveLength(2);
@@ -250,6 +264,27 @@ it.effect("an automatic caller won't sign in again right after a sign-in that wo
   }),
 );
 
+it.effect("a connector signs in again once its session outlived the short pause", () =>
+  Effect.gen(function* () {
+    const rows = [row("worked", at("signed-in"))];
+    const { run, resolved } = world(rows);
+    const connector: SignInCaller = { kind: "connector" };
+    // Ended right after signing in: something keeps ending it.
+    expect(yield* run(rows[0]!, connector)).toMatchObject({
+      message: expect.stringContaining("moments ago"),
+    });
+    expect(resolved).toEqual([]);
+    // A session that lasted a few minutes ended normally; the page caller still waits longer.
+    yield* TestClock.adjust("3 minutes");
+    expect(yield* run(rows[0]!, page)).toMatchObject({
+      message: expect.stringContaining("moments ago"),
+    });
+    const renewed = yield* run(rows[0]!, connector);
+    expect("message" in renewed ? renewed.message : "").not.toContain("moments ago");
+    expect(resolved).not.toEqual([]);
+  }),
+);
+
 it.effect("account controls decide every resolve, read again when the attempt starts", () =>
   Effect.gen(function* () {
     const controls = (access: "allowed" | "ask" | "off") => ({
@@ -264,13 +299,12 @@ it.effect("account controls decide every resolve, read again when the attempt st
     const id = (patch: Partial<AccountSummary>) => [row("controls", patch)];
     // A page signs in only with Allowed; an agent's paper the same.
     expect(yield* typed(id(controls("ask")), page)).toBe(false);
-    expect(yield* typed(id(controls("ask")), paper([AccountId.make("acc_fixture_controls")]))).toBe(
-      false,
-    );
+    expect(yield* typed(id(controls("ask")), paper("agent"))).toBe(false);
+    expect(yield* typed(id(controls("allowed")), paper("agent"))).toBe(true);
     // The user's own paper and Check use anything that isn't Off.
-    expect(yield* typed(id(controls("ask")), paper("all"))).toBe(true);
+    expect(yield* typed(id(controls("ask")), paper("user"))).toBe(true);
     expect(yield* typed(id(controls("ask")), check)).toBe(true);
-    for (const caller of [page, check, paper("all")])
+    for (const caller of [page, check, paper("user")])
       expect(yield* typed(id(controls("off")), caller)).toBe(false);
     // An agent is asked through `authorize`, whose Off refuses.
     const { run, calls } = world(id(controls("allowed")));
@@ -306,8 +340,9 @@ it.effect("find types only a sign-in this profile may use, and asks when several
       row("two", { details: { kind: "website", sites: ["example.com"], username: "c" } }),
     ];
     expect(yield* world(here).run({ find: url }, check)).toMatchObject({ outcome: "choose" });
-    // An agent's paper only sees the sign-ins it was given.
-    expect((yield* world(here).run({ find: url }, paper([here[0]!.accountId]))).outcome).toBe(
+    // An agent's paper never types into a sign-in that is Off.
+    here[1] = { ...here[1]!, controls: { ...here[1]!.controls, access: "off" } };
+    expect((yield* world(here).run({ find: url }, paper("agent"))).outcome).toBe(
       "password-rejected",
     );
   }),
@@ -376,7 +411,7 @@ it.effect("a paper stopped at a code waits there; the press resumes it, one pass
   Effect.gen(function* () {
     const rows = [row("code")];
     const { run, site, attempts } = codeSite(rows);
-    expect(yield* run(rows[0]!, paper("all"))).toMatchObject({
+    expect(yield* run(rows[0]!, paper("user"))).toMatchObject({
       outcome: "needs-user",
       pending: true,
     });
@@ -385,7 +420,7 @@ it.effect("a paper stopped at a code waits there; the press resumes it, one pass
       { tabId: "tab-fixture", state: "pending", profileId: "default" },
     ]);
     // Nothing automatic tries again while it waits.
-    expect((yield* run(rows[0]!, paper("all"))).outcome).toBe("failed");
+    expect((yield* run(rows[0]!, paper("user"))).outcome).toBe("failed");
     // The person answers the code in the kept tab.
     site.phase = "done";
     expect((yield* run(rows[0]!, { kind: "person" })).outcome).toBe("signed-in");
@@ -399,7 +434,7 @@ it.effect("with the kept tab gone, the press is one fresh attempt", () =>
   Effect.gen(function* () {
     const rows = [row("gone")];
     const { run, site } = codeSite(rows);
-    yield* run(rows[0]!, paper("all"));
+    yield* run(rows[0]!, paper("user"));
     site.gone = true;
     site.phase = "login";
     expect(yield* run(rows[0]!, { kind: "person" })).toMatchObject({ outcome: "needs-user" });

@@ -2,6 +2,7 @@
 // linked folder of the current thread's project.
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "~/components/CommandPalette.logic";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
@@ -23,6 +24,7 @@ export function useOverleafPaletteItems(input: {
     readonly workspaceRoot: string;
   }>;
 }): ReadonlyArray<CommandPaletteActionItem> {
+  const gt = useGT();
   const thread = input.thread;
   const project = thread
     ? input.projects.find(
@@ -38,9 +40,9 @@ export function useOverleafPaletteItems(input: {
     kind: "action",
     value: `action:overleaf-sync:${connection.connectionId}`,
     searchTerms: ["overleaf", "sync", "latex", "paper", connection.folder],
-    title: "Sync with Overleaf",
+    title: gt("Sync with Overleaf"),
     ...(several || connection.folder !== ""
-      ? { description: connection.folder === "" ? "This project" : connection.folder }
+      ? { description: connection.folder === "" ? gt("This project") : connection.folder }
       : {}),
     icon: <OverleafMark aria-hidden className={ITEM_ICON_CLASS} />,
     disabled: workspace.syncing.has(connection.connectionId),

@@ -54,7 +54,10 @@ vi.mock("../composerDraftStore", async () => {
     useComposerDraftStore: () => vi.fn(),
   };
 });
-vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
+vi.mock("../terminalUiStateStore", async (original) => ({
+  ...(await original<typeof import("../terminalUiStateStore")>()),
+  useTerminalUiStateStore: () => vi.fn(),
+}));
 vi.mock("../state/entities", () => ({
   useProjects: () => [],
   readThreadShell: () => boundary.shell,
@@ -63,6 +66,7 @@ vi.mock("../state/entities", () => ({
   readEnvironmentThreadRefs: () => [],
   readProject: () => null,
   readThreadShells: () => [],
+  readDelegatedUnderParent: () => new Set(),
 }));
 vi.mock("../state/session", () => ({
   environmentSession: { sessionStateAtom: vi.fn() },

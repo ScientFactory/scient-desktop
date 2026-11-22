@@ -41,6 +41,14 @@ import { userRunInvocation } from "../checkAccounts.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
 import { setUpConnector } from "./connectorSetup.ts";
+import {
+  addConnector,
+  checkConnector,
+  controlConnector,
+  copyConnector,
+  listConnectors,
+  saveConnector,
+} from "./connectorAuthoring.ts";
 import { previewInvoker } from "./broker.ts";
 import { getPaper, paperStatus, queuePapers } from "../../papers/getPaper.ts";
 
@@ -178,11 +186,15 @@ export const accountAgentOperations = {
   }) {
     const scope = yield* accountSessionScope();
     const account = yield* getAccount(scope, accountId);
-    return yield* guardedSignIn({
+    const result = yield* guardedSignIn({
       page: { tabId },
       signIn: account,
       caller: { kind: "agent", scope },
     });
+    // Papers waiting for this sign-in go on, as after the user's own.
+    if (result.outcome === "signed-in")
+      yield* continueWaitingPapers((yield* AgentInvocationContext).environmentId, accountId);
+    return result;
   }),
   scient_account_request: Effect.fn("AccountsAgent.request")(function* (
     input: ToolInput<"scient_account_request">,
@@ -377,6 +389,12 @@ export const accountAgentOperations = {
   }),
   scient_account_add: addAccount,
   scient_connector_setup: setUpConnector,
+  scient_connector_list: listConnectors,
+  scient_connector_add: addConnector,
+  scient_connector_control: controlConnector,
+  scient_connector_copy: copyConnector,
+  scient_connector_check: checkConnector,
+  scient_connector_save: saveConnector,
   scient_paper_get: getPaper,
   scient_papers_queue: queuePapers,
   scient_papers_status: paperStatus,
@@ -411,7 +429,9 @@ const signInAsPerson = Effect.fn("AccountsAgent.signInAsPerson")(function* (
     signIn: account,
     caller: {
       kind: "person",
-      afterSignIn: continueWaitingPapers(environmentId).pipe(Effect.provideContext(services)),
+      afterSignIn: continueWaitingPapers(environmentId, account.accountId).pipe(
+        Effect.provideContext(services),
+      ),
       ...(input.discardIfUnfinished ? { discardIfUnfinished: true } : {}),
     },
     onTab: (tabId) => Deferred.succeed(opened, tabId).pipe(Effect.asVoid),

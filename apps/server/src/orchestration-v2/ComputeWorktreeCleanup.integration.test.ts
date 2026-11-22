@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, EventId, ProviderDriverKind, type ServerSettings } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -15,6 +16,8 @@ import { threadCreated, THREAD_ID } from "../../integration/TransferBudgetV2Fixt
 import { ServerConfig } from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { GitManager } from "../git/GitManager.ts";
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { ThreadManagementService } from "./ThreadManagementService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -23,6 +26,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import * as Settings from "../serverSettings.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 
@@ -134,7 +138,7 @@ const testLayer = Layer.merge(
     ProviderAdapterRegistry.layerFromAdapters([]),
     { databaseLayer: database, runEffectWorker: false },
   ),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("V2 Compute worktree cleanup lifecycle", () => {
   it.live.each(
@@ -279,6 +283,11 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                   ),
             }),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            // The branch follow-up is a no-op without a current branch.
+            Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
+            Layer.mock(ThreadManagementService)({}),
+            // No task folders: the worktree is a single checkout.
+            Layer.mock(TaskFolders.TaskFolders)({ find: () => Effect.succeed(null) }),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),

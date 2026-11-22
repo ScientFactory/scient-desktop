@@ -19,6 +19,8 @@ import { PreviewManager } from "../../preview/Manager.ts";
 import { safeHttpOrigin } from "../../preview/FaviconCapture.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { discoverSourceProfiles } from "./sourceProfiles.ts";
+import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "../../preview/BrowserImport/Sources.ts";
+import { throughBrowserIsOn } from "./browserConnectionImport.ts";
 import { makeSiteIcons } from "./siteIcons.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { groupSignedInSites } from "./signedInSites.ts";
@@ -318,6 +320,12 @@ export const withdrawFromMainHandler = Effect.fn("DesktopAccounts.withdrawFromMa
 );
 
 const decodeChromeSignIn = Schema.decodeUnknownOption(ChromeSignInInput);
+const decodeEndChromeSignIn = Schema.decodeUnknownOption(
+  Schema.Struct({
+    keep: Schema.Boolean,
+    attemptId: Schema.String.check(Schema.isMaxLength(128)),
+  }),
+);
 const chromeSignInHandler = Effect.fn("DesktopAccounts.chromeSignInHandler")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
@@ -333,6 +341,22 @@ const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
 ) {
   if (!(yield* appWindowSender(event)) || raw !== undefined) return [];
   return yield* discoverSourceProfiles();
+});
+
+const decodeSourceId = Schema.decodeUnknownOption(BrowserImportSourceId);
+/** Whether a browser that hands its cookies over itself has remote debugging on; never asks. */
+const browserConnection = Effect.fn("DesktopAccounts.browserConnection")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return null;
+  const sourceId = decodeSourceId(raw);
+  const definition = Option.isSome(sourceId)
+    ? BROWSER_IMPORT_SOURCES.find(({ id }) => id === sourceId.value)
+    : undefined;
+  if (definition === undefined) return null;
+  const on = yield* throughBrowserIsOn(definition, yield* sourcePathContext);
+  return on === undefined ? null : { on };
 });
 
 const decodePasswordSource = Schema.decodeUnknownOption(
@@ -378,6 +402,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
     handler: readBrowserPasswordsCsv,
   });
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
+  yield* ipc.handle({ channel: Channels.BROWSER_CONNECTION, handler: browserConnection });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
   yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });
   yield* ipc.handle({ channel: Channels.GOOGLE_SESSIONS, handler: googleSessions });
@@ -414,8 +439,11 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
       raw: unknown,
       event?: AccountsInvokeEvent,
     ) {
-      if (!(yield* appWindowSender(event)) || typeof raw !== "boolean") return false;
-      return yield* endChromeSignIn(raw);
+      if (!(yield* appWindowSender(event))) return false;
+      if (typeof raw === "boolean") return yield* endChromeSignIn(raw);
+      const ending = decodeEndChromeSignIn(raw);
+      if (Option.isNone(ending)) return false;
+      return yield* endChromeSignIn(ending.value.keep, ending.value.attemptId);
     }),
   });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });

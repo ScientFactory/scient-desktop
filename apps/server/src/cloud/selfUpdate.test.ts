@@ -18,6 +18,7 @@ import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as BootService from "./bootService.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -26,6 +27,7 @@ import * as ServerSelfUpdate from "./selfUpdate.ts";
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
+  readonly launcherProtocol?: 3 | typeof SERVICE_LAUNCHER_PROTOCOL;
   readonly preflight?: "ready" | "blocked";
   readonly preflightDuration?: Duration.Input;
   readonly preflightStarted?: Deferred.Deferred<void>;
@@ -43,9 +45,23 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
   const order: string[] = [];
   const urls: string[] = [];
+  const preflightProtocols: Array<string | undefined> = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
+        if (input.command === "busctl") {
+          // No user bus: the unit directory falls back to XDG_CONFIG_HOME or ~/.config.
+          return {
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }
         if (input.command === "npm") {
           // SCIENT-FORK: block the retained installer fixture instead of an upstream archive.
           if (options.beforeDownload) yield* options.beforeDownload;
@@ -97,14 +113,13 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           }
         }
         order.push("preflight");
+        // Like a release, report back the launcher protocol the server named.
+        const named = input.args[input.args.indexOf("--launcher-protocol") + 1];
+        preflightProtocols.push(named);
         const result =
           options.preflight === "blocked"
             ? { status: "blocked", version: "1.1.0", reason: "local update required" }
-            : {
-                status: "ready",
-                version: "1.1.0",
-                launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-              };
+            : { status: "ready", version: "1.1.0", launcherProtocol: Number(named) };
         return {
           stdout: JSON.stringify(result),
           stderr: "",
@@ -117,8 +132,10 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         };
       }),
   });
+  const managed = options.managed ?? true;
   const launcher = ServiceLauncherClient.ServiceLauncherClient.of({
-    managed: options.managed ?? true,
+    managed,
+    protocol: managed ? (options.launcherProtocol ?? SERVICE_LAUNCHER_PROTOCOL) : undefined,
     requestUpdate:
       options.requestUpdate ??
       (() =>
@@ -126,7 +143,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           order.push("accept");
           return "launcher-id";
         })),
-    prepareTrial: Effect.undefined,
+    prepareTrial: () => Effect.undefined,
   });
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
@@ -149,7 +166,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       ),
     ),
   );
-  return { selfUpdate, order, urls };
+  return { selfUpdate, order, urls, baseDir, preflightProtocols };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -162,6 +179,26 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         updateId: "launcher-id",
       });
       expect(order).toEqual(["install", "preflight", "accept"]);
+    }),
+  );
+
+  // regression: #34502 a remote update never replaces the launcher, so it can be older than the server
+  it.effect("names its launcher's protocol to the staged preflight, not its own", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, preflightProtocols, baseDir } = yield* makeHarness({
+        launcherProtocol: 3,
+      });
+      yield* TestClock.setTime(5_000);
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
+      expect(preflightProtocols).toEqual(["3"]);
+      // That launcher holds no lock between its servers; SSH launches wait on this marker instead.
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(
+        JSON.parse(
+          yield* fs.readFileString(path.join(baseDir, "runtime", "desktop-update-in-progress")),
+        ),
+      ).toEqual({ startedAt: 5_000, expiresAt: 65_000 });
     }),
   );
 
@@ -283,6 +320,19 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  it.effect("stages the runtime without asking the launcher to restart", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness();
+      expect(yield* selfUpdate.update({ targetVersion: "1.1.0", stageOnly: true })).toEqual({
+        targetVersion: "1.1.0",
+        method: "boot-service",
+      });
+      expect(order).toEqual(["install", "preflight"]);
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
+      expect(order).toEqual(["install", "preflight", "preflight", "accept"]);
+    }),
+  );
+
   // regression: #28198 a slow staged preflight on a loaded host no longer fails the update
   it.effect("waits for a staged preflight that takes a minute on a loaded host", () =>
     Effect.gen(function* () {
@@ -367,6 +417,8 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     readonly managed?: boolean;
     readonly symlinkedHome?: boolean;
     readonly ambiguousEntry?: boolean;
+    readonly servicePlistStarts?: string;
+    readonly servicePlistThroughLink?: boolean;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -386,6 +438,31 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
       yield* fs.utimes(sentinel, 0, 0);
     }
     if (input.symlinkedHome) yield* fs.symlink(realHome, baseDir);
+    const userHome = path.join(tempDir, "user");
+    if (input.servicePlistStarts !== undefined) {
+      const agentsDir = path.join(userHome, "Library", "LaunchAgents");
+      yield* fs.makeDirectory(agentsDir, { recursive: true });
+      const programHome = input.servicePlistThroughLink
+        ? path.join(tempDir, "alias-home")
+        : baseDir;
+      if (input.servicePlistThroughLink) yield* fs.symlink(realHome, programHome);
+      // SCIENT-FORK:START — Scient's launch agent starts the app's Node with the stable launcher
+      // copy, so it names no runtime version for pruning to keep.
+      yield* fs.writeFileString(
+        path.join(agentsDir, BootService.BOOT_SERVICE_PLIST_FILE),
+        BootService.renderBootServicePlist(
+          {
+            nodePath: "/usr/local/bin/node",
+            launcherPath: path.join(programHome, "runtime", "service-launcher.mjs"),
+            baseDir: programHome,
+            logPath: path.join(programHome, "userdata", "logs", "boot-service.log"),
+            unitPath: path.join(agentsDir, BootService.BOOT_SERVICE_PLIST_FILE),
+          },
+          { homeDir: userHome, environmentPath: "/usr/bin" },
+        ),
+      );
+      // SCIENT-FORK:END
+    }
     const runningEntry =
       input.executable === "own runtime"
         ? yield* fs.realPath(pinnedRuntimePaths(path, baseDir, packageJson.version).entryPath)
@@ -402,6 +479,7 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
       ]),
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(HostProcess.Environment, {}),
+      Effect.provideService(HostProcess.HomeDirectory, userHome),
       Effect.provideService(ProcessRunner.ProcessRunner, otherProcesses),
     );
     return { removed, remaining: (yield* fs.readDirectory(versionsDir)).toSorted() };
@@ -429,6 +507,24 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
       expect(removed).toEqual([staleVersion]);
     }),
   );
+
+  // SCIENT-FORK:START — T3's launch agent names a versioned runtime that pruning must keep.
+  // Scient's names the app's Node and the stable launcher, so the stale runtime still goes.
+  it.effect.each([
+    { name: "", throughLink: false },
+    { name: " through a symlinked Scient home", throughLink: true },
+  ])("prunes past a stopped service's launch agent$name", ({ throughLink }) =>
+    Effect.gen(function* () {
+      const { removed, remaining } = yield* pruneOnStart({
+        executable: "own runtime",
+        servicePlistStarts: staleVersion,
+        servicePlistThroughLink: throughLink,
+      });
+      expect(removed).toEqual([staleVersion]);
+      expect(remaining).toEqual([packageJson.version]);
+    }),
+  );
+  // SCIENT-FORK:END
 
   it.effect("leaves runtimes alone for an unmanaged server started elsewhere", () =>
     Effect.gen(function* () {

@@ -21,7 +21,6 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
-  type ThreadForkCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -64,6 +63,11 @@ import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import {
+  forkConversation,
+  type ConversationForkTestCommand,
+  conversationForkOf,
+} from "../testkit/ConversationForkCommand.ts";
 
 // Forks share history and files by reference, so only a dedicated worktree
 // still needs durable setup: a new-worktree fork is accepted `pending` with a
@@ -359,7 +363,7 @@ const seedWorkspace = Effect.fn("Lifecycle.seedWorkspace")(function* (suppliedCw
   });
   const commits: string[] = [];
   for (const n of [1, 2]) commits.push(yield* commitTurn(cwd, n));
-  const command: ThreadForkCommand = {
+  const command: ConversationForkTestCommand = {
     type: "thread.fork",
     commandId: CommandId.make("lifecycle-fork"),
     originThreadId: sourceId,
@@ -374,17 +378,17 @@ const forkBranch = (threadId: ThreadId) =>
   `scient/fork/${threadId.toLowerCase().replace(/[^a-z0-9._-]+/g, "-")}`;
 const branchExists = (cwd: string, threadId: ThreadId) =>
   git(cwd, ["branch", "--list", forkBranch(threadId)]).pipe(Effect.map((out) => out !== ""));
-const acceptPending = Effect.fn("Lifecycle.acceptPending")(function* (command: ThreadForkCommand) {
+const acceptPending = Effect.fn("Lifecycle.acceptPending")(function* (
+  command: ConversationForkTestCommand,
+) {
   const sink = yield* EventSinkV2;
   const pull = yield* Stream.toPull(
     sink.stream({ threadId: command.newThreadId, eventType: "thread.created", afterSequence: 0 }),
   );
-  const waiting = yield* (yield* ConversationForkService)
-    .dispatch(command)
-    .pipe(Effect.exit, Effect.forkChild);
+  const waiting = yield* forkConversation(command).pipe(Effect.exit, Effect.forkChild);
   yield* pull;
   const pending = yield* (yield* ProjectionStoreV2).getThreadProjection(command.newThreadId);
-  assert.equal(pending.thread.conversationFork?.status, "pending");
+  assert.equal((yield* conversationForkOf(pending.thread.id))?.status, "pending");
   return { waiting, pending };
 });
 const settledJobs = Effect.fn("Lifecycle.settledJobs")(function* (commandId: CommandId) {
@@ -404,8 +408,10 @@ const settledJobs = Effect.fn("Lifecycle.settledJobs")(function* (commandId: Com
     yield* pull;
   }
 });
-/** Every fork status the destination's durable log published, in order. */
-const publishedStatuses = Effect.fn("Lifecycle.publishedStatuses")(function* (threadId: ThreadId) {
+/** The destination's thread events in its durable log, in order: its creation, then each setup change. */
+const publishedThreadEvents = Effect.fn("Lifecycle.publishedThreadEvents")(function* (
+  threadId: ThreadId,
+) {
   const sink = yield* EventSinkV2;
   const latest = yield* sink.latestSequence({ threadId });
   const events = yield* sink.stream({ threadId, afterSequence: 0 }).pipe(
@@ -414,10 +420,7 @@ const publishedStatuses = Effect.fn("Lifecycle.publishedStatuses")(function* (th
     Effect.timeout("5 seconds"),
   );
   return events.flatMap(({ event }) =>
-    (event.type === "thread.created" || event.type === "thread.metadata-updated") &&
-    event.payload.conversationFork != null
-      ? [event.payload.conversationFork.status]
-      : [],
+    event.type === "thread.created" || event.type === "thread.metadata-updated" ? [event.type] : [],
   );
 });
 const inheritedRows = (projection: { visibleTurnItems: ReadonlyArray<VisibleRow> }) =>
@@ -440,11 +443,10 @@ it.live(
         const store = yield* ProjectionStoreV2;
         const source = yield* store.getThreadProjection(sourceId);
         const { waiting, pending } = yield* acceptPending(command);
-        const forks = yield* ConversationForkService;
         const sink = yield* EventSinkV2;
         const receipts = yield* CommandReceiptStoreV2;
         const outbox = yield* EffectOutboxV2;
-        const frozen = pending.thread.conversationFork!;
+        const frozen = (yield* conversationForkOf(pending.thread.id))!;
         assert.equal(frozen.workspaceMode, "new-worktree");
         assert.equal(frozen.checkpointOid, commits[0]);
         assert.ok(frozen.checkpointRef);
@@ -460,7 +462,7 @@ it.live(
         assert.equal(rows[0]?.request.type, "scient-fork.provision");
         assert.equal(rows[0]?.status, "pending");
         assert.equal(rows[0]?.attemptCount, 0);
-        const replay = yield* forks.dispatch(command).pipe(Effect.exit, Effect.forkChild);
+        const replay = yield* forkConversation(command).pipe(Effect.exit, Effect.forkChild);
         const seq = yield* sink.latestSequence({});
         const send = yield* Effect.result(
           (yield* OrchestratorV2).dispatch({
@@ -485,7 +487,7 @@ it.live(
         // The refused send committed nothing.
         assert.equal(yield* sink.latestSequence({}), seq);
         // Its history is shared and ready, so it forks locally now.
-        yield* forks.dispatch({
+        yield* forkConversation({
           ...command,
           commandId: CommandId.make("pending-child"),
           originThreadId: command.newThreadId,
@@ -494,7 +496,7 @@ it.live(
           workspaceMode: "local",
         });
         const child = yield* store.getThread(ThreadId.make("pending-child"));
-        assert.equal(child.conversationFork?.status, "ready");
+        assert.equal((yield* conversationForkOf(child.id))?.status, "ready");
         assert.equal(child.lineage.parentThreadId, command.newThreadId);
         // The pending parent only gains its outgoing transfer to the child.
         const parentAfter = yield* store.getThreadProjection(command.newThreadId);
@@ -516,7 +518,10 @@ it.live(
         assert.equal(completed._tag, "Success");
         assert.deepEqual(yield* Fiber.join(replay), completed);
         const ready = yield* store.getThreadProjection(command.newThreadId);
-        assert.deepEqual(ready.thread.conversationFork, { ...frozen, status: "ready" });
+        assert.deepEqual(yield* conversationForkOf(ready.thread.id), {
+          ...frozen,
+          status: "ready",
+        });
         assert.ok(ready.thread.worktreePath);
         assert.equal(ready.thread.branch, forkBranch(command.newThreadId));
         assert.equal(yield* git(ready.thread.worktreePath, ["rev-parse", "HEAD"]), commits[0]);
@@ -528,7 +533,7 @@ it.live(
           yield* sql`SELECT thread_id FROM scient_thread_lineage WHERE thread_id = ${command.newThreadId}`,
           [],
         );
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         assert.equal(
           receipt.sequence,
           completed._tag === "Success" ? completed.value.sequence : -1,
@@ -536,7 +541,7 @@ it.live(
         assert.deepEqual(
           receipt.forkAttachmentIdMap,
           Object.fromEntries(
-            ready.thread.conversationFork!.attachmentCopies.map((copy) => [
+            (yield* conversationForkOf(ready.thread.id))!.attachmentCopies.map((copy) => [
               copy.source.id,
               copy.target.id,
             ]),
@@ -560,12 +565,11 @@ it.live(
         const { cwd, commits, command } = yield* seedWorkspace();
         const store = yield* ProjectionStoreV2;
         const source = yield* store.getThreadProjection(sourceId);
-        const forks = yield* ConversationForkService;
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         const target = yield* store.getThreadProjection(command.newThreadId);
         assert.equal(attempts, 2);
-        assert.equal(target.thread.conversationFork?.status, "ready");
-        assert.isNull(target.thread.conversationFork?.error);
+        assert.equal((yield* conversationForkOf(target.thread.id))?.status, "ready");
+        assert.isNull((yield* conversationForkOf(target.thread.id))?.error);
         assert.ok(target.thread.worktreePath);
         assert.equal(yield* git(target.thread.worktreePath, ["rev-parse", "HEAD"]), commits[0]);
         const rows = yield* settledJobs(command.commandId);
@@ -574,8 +578,11 @@ it.live(
         assert.equal(rows[0]?.status, "succeeded");
         assert.isNull(rows[0]?.lastError);
         // The failed attempt published nothing: no failed state was ever visible.
-        assert.deepEqual(yield* publishedStatuses(command.newThreadId), ["pending", "ready"]);
-        assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+        assert.deepEqual(yield* publishedThreadEvents(command.newThreadId), [
+          "thread.created",
+          "thread.metadata-updated",
+        ]);
+        assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
         assert.equal(attempts, 2);
         const after = yield* store.getThreadProjection(sourceId);
         assert.deepEqual(after.thread, source.thread);
@@ -604,13 +611,13 @@ it.live(
         const { cwd, commits, command } = yield* seedWorkspace();
         const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
-        const result = yield* Effect.result(forks.dispatch(command));
+        const result = yield* Effect.result(forkConversation(command));
         assert.equal(result._tag, "Failure");
         if (result._tag === "Failure") assert.equal(result.failure.forkDisposition, "failed");
         const failed = yield* store.getThreadProjection(command.newThreadId);
         assert.equal(attempts, 5);
-        assert.equal(failed.thread.conversationFork?.status, "failed");
-        const failedError = failed.thread.conversationFork?.error ?? "";
+        assert.equal((yield* conversationForkOf(failed.thread.id))?.status, "failed");
+        const failedError = (yield* conversationForkOf(failed.thread.id))?.error ?? "";
         // Clients get a plain error; the Git output and paths stay in the server log.
         assert.equal(failedError, "Unable to set up this fork's worktree. Retry the fork.");
         assert.isNull(failed.thread.deletedAt);
@@ -620,10 +627,10 @@ it.live(
         assert.equal(rows[0]?.attemptCount, 5);
         assert.equal(rows[0]?.status, "failed");
         reject = false;
-        yield* forks.dispatch(command);
+        yield* forkConversation(command);
         const ready = yield* store.getThreadProjection(command.newThreadId);
-        assert.deepEqual(ready.thread.conversationFork, {
-          ...failed.thread.conversationFork!,
+        assert.deepEqual(yield* conversationForkOf(ready.thread.id), {
+          ...(yield* conversationForkOf(failed.thread.id))!,
           status: "ready",
           error: null,
         });
@@ -639,7 +646,7 @@ it.live(
         const before = attempts;
         yield* forks.provision(command.newThreadId, false);
         yield* forks.provision(command.newThreadId, true);
-        yield* forks.dispatch(command);
+        yield* forkConversation(command);
         assert.equal(attempts, before);
         assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), ready);
         assert.notInclude(failedError, cwd);
@@ -679,7 +686,7 @@ it.live(
         yield* (yield* OrchestrationEffectWorkerV2).drain();
         yield* (yield* ConversationForkService).provision(command.newThreadId, false);
         assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), deleted);
-        assert.notEqual(deleted.thread.conversationFork?.status, "ready");
+        assert.notEqual((yield* conversationForkOf(deleted.thread.id))?.status, "ready");
         assert.isFalse(yield* branchExists(cwd, command.newThreadId));
       }).pipe(Effect.provide(makeRuntime()), Effect.timeout("20 seconds")),
     ),
@@ -701,13 +708,13 @@ it.live(
         const sink = yield* EventSinkV2;
         const deleted = yield* store.getThreadProjection(command.newThreadId);
         assert.isNotNull(deleted.thread.deletedAt);
-        assert.equal(deleted.thread.conversationFork?.status, "pending");
+        assert.equal((yield* conversationForkOf(deleted.thread.id))?.status, "pending");
 
         // The replay reaches awaitReady after the terminal deletion is durable,
         // so its cursor cannot recover that event from a future-only stream.
         const forks = yield* ConversationForkService;
         const seq = yield* sink.latestSequence({});
-        const replayError = yield* forks.dispatch(command).pipe(Effect.flip);
+        const replayError = yield* forkConversation(command).pipe(Effect.flip);
         assert.equal(replayError.forkDisposition, "abandoned");
         assert.equal(yield* sink.latestSequence({}), seq);
         assert.equal((yield* Fiber.join(waiting))._tag, "Failure");
@@ -759,12 +766,11 @@ it.live.each(
       );
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const forks = yield* ConversationForkService;
-          const receipt = yield* forks.dispatch(saved.command);
+          const receipt = yield* forkConversation(saved.command);
           const store = yield* ProjectionStoreV2;
           const ready = yield* store.getThreadProjection(saved.command.newThreadId);
-          assert.deepEqual(ready.thread.conversationFork, {
-            ...saved.pending.thread.conversationFork!,
+          assert.deepEqual(yield* conversationForkOf(ready.thread.id), {
+            ...(yield* conversationForkOf(saved.pending.thread.id))!,
             status: "ready",
           });
           assert.deepEqual(ready.messages, saved.pending.messages);
@@ -784,7 +790,7 @@ it.live.each(
           assert.lengthOf(rows, 1);
           assert.equal(rows[0]?.status, "succeeded");
           assert.equal(rows[0]?.attemptCount, claimedBeforeRestart ? 2 : 1);
-          assert.equal((yield* forks.dispatch(saved.command)).sequence, receipt.sequence);
+          assert.equal((yield* forkConversation(saved.command)).sequence, receipt.sequence);
         }).pipe(
           Effect.provide(
             makeRuntime(gitLayer, {
@@ -836,7 +842,7 @@ const seedImported = Effect.gen(function* () {
   const source = yield* (yield* ProjectionStoreV2).getThreadProjection(result.threadId);
   const answer = source.messages.find((message) => message.text === "Answer 2");
   assert.ok(answer);
-  const command: ThreadForkCommand = {
+  const command: ConversationForkTestCommand = {
     type: "thread.fork",
     commandId: CommandId.make("lifecycle-local-fork"),
     originThreadId: source.thread.id,
@@ -867,18 +873,17 @@ it.live.each(
       });
       // A missing file no longer blocks a fork: it shows what the source shows.
       if (sourceFilesMissing) for (const path of paths) yield* fs.remove(path);
-      const forks = yield* ConversationForkService;
       const outbox = yield* EffectOutboxV2;
       // Dispatch settles without any effect worker, so nothing awaited a job.
-      const receipt = yield* forks.dispatch(command);
+      const receipt = yield* forkConversation(command);
       const target = yield* (yield* ProjectionStoreV2).getThreadProjection(command.newThreadId);
-      assert.equal(target.thread.conversationFork?.status, "ready");
-      assert.equal(target.thread.conversationFork?.workspaceMode, "local");
-      assert.isNull(target.thread.conversationFork?.error);
+      assert.equal((yield* conversationForkOf(target.thread.id))?.status, "ready");
+      assert.equal((yield* conversationForkOf(target.thread.id))?.workspaceMode, "local");
+      assert.isNull((yield* conversationForkOf(target.thread.id))?.error);
       assert.isNull(target.thread.deletedAt);
       assert.deepEqual(yield* outbox.listByCommandId(command.commandId), []);
       // The fork was created ready: no later metadata update published readiness.
-      assert.deepEqual(yield* publishedStatuses(command.newThreadId), ["ready"]);
+      assert.deepEqual(yield* publishedThreadEvents(command.newThreadId), ["thread.created"]);
 
       // Visible history is the source's retained items, in order: settled items
       // by reference, and actionable plans as fork-owned copies of them.
@@ -912,7 +917,7 @@ it.live.each(
 
       // Files are shared: the same attachment ids, mapped to themselves.
       const sourceIds = [...new Set(sourceAttachments.map((attachment) => attachment.id))].sort();
-      const copies = target.thread.conversationFork!.attachmentCopies;
+      const copies = (yield* conversationForkOf(target.thread.id))!.attachmentCopies;
       assert.deepEqual(copies.map((copy) => copy.source.id).sort(), sourceIds);
       assert.ok(copies.every((copy) => copy.target.id === copy.source.id));
       assert.deepEqual(

@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { captureRejectionAttribution } from "./FailureAttribution.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import type {
   ComputeCaptureReason,
   ComputeProjectCaptureStatus,
@@ -23,6 +25,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
   const service = yield* Effect.serviceOption(AnalyticsService);
   if (Option.isNone(service)) return (_input: ComputeOutputObservation) => Effect.void;
   const analytics = service.value;
+  const availability = yield* ScientAnalyticsAvailability;
   const active = new Map<
     string,
     {
@@ -34,16 +37,9 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
       rejectionReason?: ComputeCaptureReason | undefined;
     }
   >();
-  let epoch: number | undefined;
   return (input: ComputeOutputObservation) =>
     Effect.gen(function* () {
-      const currentEpoch = yield* analytics.collectionEpoch;
-      if (currentEpoch !== epoch) {
-        active.clear();
-        epoch = currentEpoch;
-      }
-      const status = yield* analytics.status;
-      if (!status.available || status.consent === "off") {
+      if (!availability.available) {
         active.clear();
         return;
       }
@@ -66,7 +62,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
         });
         return;
       }
-      // No replay of restored work, untracked starts, post-terminal updates or pre-consent work.
+      // No replay of restored work, untracked starts or post-terminal updates.
       if (observation === undefined) return;
       if (input.phase === "coverage") {
         observation.coverage = input.capture.coverage;
@@ -108,6 +104,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
         captureReason: observation.rejectionReason ?? observation.coverageReason ?? "none",
         retainedOutputCount: observation.retained,
         rejectedOutputCount: observation.rejected,
+        ...(outcome === "failed" ? captureRejectionAttribution(observation.rejectionReason) : {}),
       });
     }).pipe(Effect.ignoreCause());
 });

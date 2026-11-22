@@ -94,6 +94,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -251,7 +252,7 @@ const withNativeQueue = <A, E, R>(
     readonly controlStartupFailures?: boolean;
     readonly nativeSteering?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
-    readonly decorateProjectionStore?: (
+    readonly wrapProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly providerEnabled?: (instanceId: ProviderInstanceId) => boolean;
@@ -545,12 +546,12 @@ const withNativeQueue = <A, E, R>(
                               detail: "Synthetic external Git diff failure",
                             });
                           // Park the first real completion capture immediately before
-                          // Git imports its ref, after the actual tree/commit are built.
+                          // Git writes its ref, after the actual tree/commit are built.
                           if (
                             options.holdCheckpointCapture &&
                             !heldCapture &&
                             input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                            input.args.includes("fetch") &&
+                            input.args.includes("update-ref") &&
                             input.args.some((arg) => arg.endsWith("/ordinal/1"))
                           ) {
                             heldCapture = true;
@@ -613,6 +614,12 @@ const withNativeQueue = <A, E, R>(
                   // Use the production worktree/project resolver for relocation
                   // witnesses instead of the fixture's fixed cwd override.
                   runtimePolicyLayer: RuntimePolicy.layerFromProjectStore.pipe(
+                    // SCIENT-FORK: these threads track no other folders.
+                    Layer.provide(
+                      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+                        forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+                      }),
+                    ),
                     Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
                     Layer.provide(
                       Layer.mergeAll(
@@ -624,6 +631,7 @@ const withNativeQueue = <A, E, R>(
                             Effect.succeedSome({
                               projectId,
                               title: name,
+                              hasCustomTitle: false,
                               workspaceRoot: cwd,
                               defaultModelSelection: modelSelection,
                               defaultThreadEnvMode: null,
@@ -633,6 +641,7 @@ const withNativeQueue = <A, E, R>(
                               faviconPath: null,
                               projectIcon: null,
                               scripts: [],
+                              trackedFolders: [],
                               createdAt: "2026-10-12T00:00:00.000Z",
                               updatedAt: "2026-10-12T00:00:00.000Z",
                               deletedAt: null,
@@ -643,9 +652,9 @@ const withNativeQueue = <A, E, R>(
                   ),
                 }
               : {}),
-          ...(options.decorateProjectionStore === undefined
+          ...(options.wrapProjectionStore === undefined
             ? {}
-            : { decorateProjectionStore: options.decorateProjectionStore }),
+            : { wrapProjectionStore: options.wrapProjectionStore }),
           ...(decorateEventSink === undefined ? {} : { decorateEventSink }),
         },
       ).pipe(
@@ -1745,7 +1754,7 @@ it.live(
           // After the reorder, `first` is no longer the head. Send on it starts it
           // now, and the rest of the queue continues after it without a Resume.
           yield* orchestrator.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             threadId,
             runId: first.id,
             commandId: CommandId.make(`${threadId}:send-non-head`),
@@ -1889,14 +1898,21 @@ it.live(
               commandId: CommandId.make(`${threadId}:send:${label}`),
               threadId,
               messageId: MessageId.make(`${threadId}:message:${label}`),
-              text: label,
+              // Resume sends no text of its own.
+              text: label === "continuation" ? "" : label,
               attachments: [],
               createdBy: "user",
               creationSource: "web",
               ...start,
             });
             const started = yield* takeOffer;
-            assert.equal(started.input.message.text, label);
+            // This driver has no native resume, so Continue asks it to continue in a prompt.
+            assert.isTrue(
+              started.input.message.text.endsWith(
+                label === "continuation" ? "Continue where you left off." : label,
+              ),
+              label,
+            );
             yield* assertHeld(`${label} started`);
             yield* started.settle("completed");
             yield* waitFor(
@@ -1906,12 +1922,10 @@ it.live(
             );
             yield* assertHeld(`${label} completed`);
           }
-          assert.deepEqual(offers, [
-            "foreground",
-            "continuation",
-            "queue-fallback",
-            "steer-fallback",
-          ]);
+          assert.deepEqual(
+            offers.map((offer) => offer.split("\n").at(-1)),
+            ["foreground", "Continue where you left off.", "queue-fallback", "steer-fallback"],
+          );
         }),
     ),
 );
@@ -2139,10 +2153,11 @@ it.live.each(
             stopped.runs.filter((run) => run.status === "queued").every((run) => run.queueHeld),
           );
           const resume = {
-            type: "queue.resume" as const,
+            ...(release === "head"
+              ? { type: "queued-run.start" as const, runId: first.id }
+              : { type: "queue.resume" as const }),
             threadId: childThreadId,
             commandId: CommandId.make(`${childThreadId}:resume`),
-            ...(release === "head" ? { runId: first.id } : {}),
           };
           yield* orchestrator.dispatch(resume);
           stage = "resumed head offer";
@@ -2744,7 +2759,7 @@ it.live(
           assert.equal(
             (yield* Effect.result(
               orchestrator.dispatch({
-                type: "queue.resume",
+                type: "queued-run.start",
                 commandId: CommandId.make(`${threadId}:send-active`),
                 threadId,
                 runId: first.id,
@@ -2811,7 +2826,7 @@ it.live(
           assert.ok(first && second);
           phase = "send-non-head";
           yield* orchestrator.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             threadId,
             runId: second.id,
             commandId: CommandId.make(`${threadId}:non-head`),
@@ -2987,7 +3002,7 @@ it.live(
       {
         // The stored workspace no longer matches the checkpoint scope's identity,
         // a precondition the capture checks before it touches Git.
-        decorateProjectionStore: (store) => ({
+        wrapProjectionStore: (store) => ({
           ...store,
           getCheckpointCaptureContext: (threadId, target) =>
             store.getCheckpointCaptureContext(threadId, target).pipe(
@@ -3069,7 +3084,7 @@ it.live.each(
         assert.deepEqual(offers, ["foreground", "first"]);
       }),
     {
-      decorateProjectionStore: (store) => ({
+      wrapProjectionStore: (store) => ({
         ...store,
         getCheckpointCaptureContext: (threadId, target) =>
           Effect.suspend(() => {
@@ -3631,6 +3646,7 @@ it.live(
     ).pipe(
       Effect.provideService(RunFinalizationObserver, {
         refresh: () => Effect.void,
+        refreshRepositories: () => Effect.void,
         refreshAfterTurn: (projectId) =>
           Effect.sync(() => {
             refreshed.push(projectId);
@@ -4095,6 +4111,12 @@ it.live(
           Layer.provide(NodeServices.layer),
         );
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          // SCIENT-FORK: these threads track no other folders.
+          Layer.provide(
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+            }),
+          ),
           Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(
@@ -4444,7 +4466,10 @@ it.live(
                 // Future project authority is B, but restoring a captured A boundary must use A.
                 yield* relocate(workspaceB);
                 const capturedB = yield* snapshotB;
-                yield* checkpoints.restore({ scope: scopeA, checkpoint: checkpointA });
+                yield* checkpoints.restore({
+                  targets: [{ scope: scopeA, checkpoint: checkpointA }],
+                  scopes: [scopeA],
+                });
                 assert.equal(
                   yield* fs.readFileString(`${workspaceA}/evidence.txt`),
                   "Native A output\n",
@@ -4633,6 +4658,12 @@ it.live(
         );
         const serverConfigLayer = Layer.succeed(ServerConfig, yield* makeReplayServerConfig(name));
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          // SCIENT-FORK: these threads track no other folders.
+          Layer.provide(
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+            }),
+          ),
           Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(
@@ -5052,13 +5083,17 @@ it.live.each(["failed", "interrupted"] as const)(
             ["resume", undefined],
             ["send-row", queued.id],
           ] as const) {
-            yield* orchestrator.dispatch({
-              type: "queue.resume",
-              commandId: CommandId.make(`${threadId}:${action}`),
-              threadId,
-              ...(runId === undefined ? {} : { runId }),
-            });
-            // Production outbox/worker completion establishes that no accepted
+            const refused = yield* orchestrator
+              .dispatch({
+                ...(runId === undefined
+                  ? { type: "queue.resume" as const }
+                  : { type: "queued-run.start" as const, runId }),
+                commandId: CommandId.make(`${threadId}:${action}`),
+                threadId,
+              })
+              .pipe(Effect.flip);
+            assert.include(String(refused.cause), "Retry worktree setup");
+            // Production outbox/worker completion establishes that no refused
             // queue command has scheduled a hidden checkout provider start.
             yield* worker.drain();
             const held = yield* orchestrator.getThreadProjection(threadId);
@@ -5113,42 +5148,17 @@ it.live.each(["failed", "interrupted"] as const)(
             assert.equal(next.input.runId, queued.id);
             assert.equal(next.input.runtimePolicy.cwd, preparedCwd);
           } else {
-            // An ordinary newly admitted user Send is a later release boundary.
-            // The older interrupted preparation must not rehold that new run.
-            yield* send(orchestrator, threadId, "explicit new checkout turn");
+            // A new Send after the interrupted setup waits behind it as well, rather than
+            // starting in the project checkout with no worktree, as upstream does.
+            yield* send(orchestrator, threadId, "sent after the interrupted setup");
             yield* worker.drain();
-            const direct = yield* takeOffer;
-            // Context handoff remains part of the production provider input.
-            // Decide the exact new user payload and identity beneath that context.
-            assert.match(direct.input.message.text, /^Context handoff \(/);
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(after.thread.worktreePath, null);
+            assert.deepEqual(offers, []);
+            assert.deepEqual(after.providerTurns, []);
             assert.isTrue(
-              direct.input.message.text.endsWith("User message:\nexplicit new checkout turn"),
+              after.runs.every((run) => run.id === preparing.id || run.status === "queued"),
             );
-            assert.equal(
-              direct.input.message.messageId,
-              MessageId.make(`${threadId}:message:explicit new checkout turn`),
-            );
-            assert.notEqual(direct.input.runId, preparing.id);
-            yield* direct.settle("completed");
-            yield* waitFor((projection) =>
-              projection.runs.some(
-                (run) => run.id === direct.input.runId && run.status === "waiting",
-              ),
-            );
-            yield* worker.drain();
-            // The terminal listener commits queue promotion after checkpoint
-            // finalization. Wait for that persisted start before draining its
-            // newly published effect; this fixture has no background daemon.
-            yield* waitFor((projection) =>
-              projection.runs.some(
-                (run) =>
-                  run.id === queued.id && (run.status === "starting" || run.status === "running"),
-              ),
-            );
-            yield* worker.drain();
-            const next = yield* takeOffer;
-            assert.equal(next.input.runId, queued.id);
-            assert.equal(next.input.runtimePolicy.cwd, direct.input.runtimePolicy.cwd);
           }
         }),
       { runEffectWorker: false, honorPreparedWorktree: true },

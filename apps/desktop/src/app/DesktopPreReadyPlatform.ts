@@ -14,9 +14,18 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
-import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
+import {
+  renderUrlHandlerDesktopEntry,
+  replacedVersionedAppImagePath,
+} from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { enableAutomaticSpellingLanguages } from "../scient/spelling/macSpelling.ts";
+// SCIENT-FORK:START — development builds can trust a local test site's certificate.
+import { developmentTrustedCertificates } from "../scient/browser/developmentCertificates.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — soft-navigation detection can crash a renderer.
+import { disableFeaturesWithSoftNavigation } from "../scient/chromium/softNavigation.ts";
+// SCIENT-FORK:END
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -57,6 +66,8 @@ const LinuxDesktopEntryConfig = Config.all({
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
   launcherPath: trimmedString("T3CODE_DESKTOP_LAUNCHER_PATH"),
   appImagePath: trimmedString("APPIMAGE"),
+  // electron-updater sets this on the AppImage it relaunches after installing an update.
+  relaunchedByUpdater: trimmedString("APPIMAGE_SILENT_INSTALL"),
 });
 
 /** @public */
@@ -67,6 +78,19 @@ export const make = Effect.gen(function* () {
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
     // SCIENT-FORK:START — Chromium reads the macOS spelling setting while it starts.
     if (platform === "darwin") enableAutomaticSpellingLanguages();
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — development builds can trust a local test site's certificate.
+    // An installed app never trusts extra certificates, whatever its environment says.
+    const trusted = Electron.app.isPackaged
+      ? null
+      : developmentTrustedCertificates({
+          env: process.env,
+          homeDirectory,
+          joinPath: NodePath.join,
+          readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+        });
+    if (trusted !== null)
+      Electron.app.commandLine.appendSwitch("ignore-certificate-errors-spki-list", trusted);
     // SCIENT-FORK:END
     const linuxPasswordStoreCommandLine =
       platform === "linux"
@@ -108,17 +132,38 @@ export const make = Effect.gen(function* () {
         if (iconPath !== undefined) {
           try {
             NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-            NodeFS.copyFileSync(
-              NodePath.posix.join(
-                Electron.app.getAppPath(),
-                "apps/desktop/prod-resources/icon.png",
-              ),
+            // Electron's copyFileSync from app.asar extracts to a temp file it never deletes.
+            NodeFS.writeFileSync(
               iconPath,
+              NodeFS.readFileSync(
+                NodePath.posix.join(
+                  Electron.app.getAppPath(),
+                  "apps/desktop/prod-resources/icon.png",
+                ),
+              ),
             );
           } catch {}
         }
+        const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
+        const { appImagePath } = linuxDesktopEntryConfig;
+        if (
+          Option.isSome(appImagePath) &&
+          Option.isNone(linuxDesktopEntryConfig.launcherPath) &&
+          Option.contains(linuxDesktopEntryConfig.relaunchedByUpdater, "true")
+        ) {
+          try {
+            const replacedPath = replacedVersionedAppImagePath({
+              previousEntry: NodeFS.readFileSync(desktopEntryPath, "utf8"),
+              appImagePath: appImagePath.value,
+            });
+            // Relative, so the pair survives a moved folder; symlink never overwrites a file.
+            if (replacedPath !== null) {
+              NodeFS.symlinkSync(NodePath.posix.basename(appImagePath.value), replacedPath);
+            }
+          } catch {}
+        }
         NodeFS.writeFileSync(
-          NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
+          desktopEntryPath,
           renderUrlHandlerDesktopEntry({
             displayName: resolveDesktopAppBranding({
               isDevelopment: linux.isDevelopment,
@@ -160,6 +205,15 @@ export const make = Effect.gen(function* () {
         Electron.app.commandLine.appendSwitch("disable-features", disableFeatures);
       }
     }
+
+    // SCIENT-FORK:START — soft-navigation detection can crash a renderer, on every platform.
+    // Runs after the Linux merge: Chromium keeps only the last --disable-features value.
+    const disableFeatures = disableFeaturesWithSoftNavigation(
+      readCommandLineSwitchValue(Electron.app.commandLine, "disable-features"),
+    );
+    if (disableFeatures !== null)
+      Electron.app.commandLine.appendSwitch("disable-features", disableFeatures);
+    // SCIENT-FORK:END
 
     return { linux, linuxPasswordStoreCommandLine };
   });

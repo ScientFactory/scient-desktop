@@ -42,9 +42,9 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
 
 const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const pendingCodec = Schema.fromJsonString(
@@ -318,13 +318,12 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
               sourceAssistantMessageId: answer.messageId,
               workspaceMode: "local" as const,
             };
-            const forkService = yield* ConversationForkService;
             // A local fork shares its history and is ready at once.
-            const receipt = yield* forkService.dispatch(forkCommand);
+            const receipt = yield* forkConversation(forkCommand);
             const outbox = yield* EffectOutboxV2;
             assert.isEmpty(yield* outbox.listByCommandId(forkCommand.commandId));
             const frozen = yield* store.getThreadProjection(targetId);
-            assert.equal(frozen.thread.conversationFork?.status, "ready");
+            assert.equal((yield* conversationForkOf(frozen.thread.id))?.status, "ready");
             assert.deepEqual(
               frozen.messages.map((message) => message.text),
               [sourceText, sourceAnswer],
@@ -423,7 +422,7 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
               ...sendReceipt,
               replayed: true,
             });
-            assert.deepEqual(yield* forkService.dispatch(forkCommand), receipt);
+            assert.deepEqual(yield* forkConversation(forkCommand), receipt);
             yield* worker.drain(24);
             const held = yield* store.getThreadProjection(targetId);
             assert.lengthOf(held.runs, 1);

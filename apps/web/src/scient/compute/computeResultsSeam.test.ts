@@ -71,9 +71,9 @@ describe("compute result surface seam", () => {
       rightPanelTabsSource.indexOf("const addSurfaceActions"),
       rightPanelTabsSource.indexOf("const extraSessionAction"),
     );
-    expect(primaryActions).not.toContain('label: "Compute"');
-    expect(primaryActions).not.toContain('label: "Scientific computing"');
-    expect(rightPanelTabsSource).toContain('label: "Scientific computing"');
+    expect(primaryActions).not.toContain('label: msg("Compute")');
+    expect(primaryActions).not.toContain('label: msg("Scientific computing")');
+    expect(rightPanelTabsSource).toContain('label: msg("Scientific computing")');
   });
 
   // regression: 13a5e053d2 chore(compute): checkpoint before main alignment
@@ -88,8 +88,8 @@ describe("compute result surface seam", () => {
     );
     expect(runEntrySource).toContain("executionGeneration={execution.request.generation}");
     const actions = controlsSource.slice(
-      controlsSource.indexOf('aria-label="Session actions"'),
-      controlsSource.indexOf('aria-label="Session actions"') + 400,
+      controlsSource.indexOf('aria-label={gt("Session actions")}'),
+      controlsSource.indexOf('aria-label={gt("Session actions")}') + 400,
     );
     expect(actions).not.toContain("operation !== null");
     expect(actions).toContain('operation === "stop"');
@@ -136,7 +136,7 @@ describe("compute result surface seam", () => {
     );
     expect(pythonSurfaceSource).toContain('setPanelView(props.contextId, "results")');
     expect(pythonActionsSource).toContain("onRunRequested();");
-    expect(pythonActionsSource).toContain("Switch {languageName} environment…");
+    expect(pythonActionsSource).toContain("Switch <Var>{languageName}</Var> environment…");
   });
 
   // regression: 9d11c5ad39 feat(compute): selectively adopt runtime UX improvements
@@ -149,7 +149,7 @@ describe("compute result surface seam", () => {
     expect(pythonActionsSource).toContain('className="flex shrink-0 items-center"');
     expect(managedRuntimeSource).toContain("failure.summary");
     expect(managedRuntimeSource).toContain("failure.detail");
-    expect(managedRuntimeSource).toContain('aria-label="Copy error"');
+    expect(managedRuntimeSource).toContain('aria-label={gt("Copy error")}');
     expect(managedRuntimeSource).toContain("<details");
     expect(managedRuntimeSource).toContain("whitespace-nowrap");
     expect(managedRuntimeSource).not.toContain("title={onRetry");
@@ -204,7 +204,7 @@ it("keeps default selection separate from installation actions using shared sett
   expect(languagePageSource).toContain("SettingsSourcePanel");
   expect(settingsSource).not.toContain("Python & MATLAB");
   expect(settingsSource).not.toContain("Advanced");
-  expect(languagePanelSource).toContain('title="Runtime"');
+  expect(languagePanelSource).toContain('title={gt("Runtime")}');
   expect(languagePanelSource).toContain("SelectTrigger");
   expect(languagePanelSource).toContain("computeRuntimePickerLabel");
   expect(languagePanelSource).not.toContain("<select");
@@ -212,6 +212,6 @@ it("keeps default selection separate from installation actions using shared sett
   expect(languagePanelSource).toContain("ManagedRuntimeMaintenanceMenu");
   expect(languagePanelSource).toContain("ComputeInstallationRow");
   expect(settingsSource).not.toContain("coming soon");
-  expect(languagePageSource).toContain('title="Scientific Computing"');
+  expect(languagePageSource).toContain('title={gt("Scientific Computing")}');
   expect(pythonActionsSource).toContain("runtimeVersion:");
 });

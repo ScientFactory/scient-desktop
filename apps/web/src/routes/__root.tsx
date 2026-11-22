@@ -12,7 +12,8 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { Check, Copy } from "lucide";
+import { msg, T, useGT, Var } from "gt-react";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
@@ -22,6 +23,12 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 // SCIENT-FORK: conversation export dialog.
 import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
 import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
+// SCIENT-FORK:START — the What's new state and dialog, shared by the sidebar card and About.
+import {
+  ScientReleaseNotesDialogHost,
+  ScientReleaseNotesProvider,
+} from "../scient/releaseNotes/ScientReleaseNotes";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — sign-in pages open for the starting client from one app-level watcher.
 import { ProviderSignInPageCoordinator } from "../scient/providerConnection/ProviderSignInPageCoordinator";
 // SCIENT-FORK:END
@@ -31,7 +38,11 @@ import { OverleafNewProjectDialogHost } from "../scient/overleaf/OverleafNewProj
 // SCIENT-FORK:START — browser availability notices reuse the shared update owners.
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
-import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+// SCIENT-FORK: thread rooms replace T3's single-guest dialog.
+import { RoomDialogHost } from "../scient/room/RoomDialog";
+// SCIENT-FORK:START — the Share link dialog.
+import { ShareLinkDialogHost } from "../scient/cloud/ShareLinkDialog";
+// SCIENT-FORK:END
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -39,26 +50,31 @@ import { DevReplayHost } from "../components/DevReplayHost";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
+// SCIENT-FORK:START — on the desktop, signing in sets up Scient Connect.
+import { ScientConnectBridge } from "../scient/connect/ScientConnectBridge";
+// SCIENT-FORK:END
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+import { useDesktopUpdateSaveHandling } from "../components/desktop/useDesktopUpdateSaveHandling";
+// SCIENT-FORK:END
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { ConnectDeviceApprovalCoordinator } from "../components/ConnectDeviceApprovalCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { AppToastProviders } from "../components/ui/toast";
 import { isElectron } from "../env";
 // SCIENT-FORK:START — route recovery respects the file save barrier.
 import { requestDesktopReload } from "../lib/desktopReload";
 // SCIENT-FORK:END
-import { cn } from "../lib/utils";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -82,7 +98,17 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/serv
 import { readProject } from "../state/entities";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
+import { isChunkLoadError } from "../lib/chunkReloadGuard";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+
+// SCIENT-FORK:START hosted-landing
+import { useHostedLandingActive } from "~/scient/hosted/hostedLandingActive";
+// SCIENT-FORK:END hosted-landing
+// SCIENT-FORK:START — feedback reports to the Scient team.
+import { FeedbackCoordinator } from "~/scient/feedback/FeedbackCoordinator";
+import { FeedbackDialogHost, feedbackAvailable } from "~/scient/feedback/FeedbackDialog";
+import { requestFeedback } from "~/scient/feedback/feedbackStore";
+// SCIENT-FORK:END
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -144,18 +170,26 @@ function RootRouteNotFoundView() {
   return (
     <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
-        <h1 className="text-lg font-medium text-foreground">Page not found</h1>
+        <h1 className="text-lg font-medium text-foreground">
+          <T>Page not found</T>
+        </h1>
         <p className="text-sm text-muted-foreground">
-          This link doesn't point to a page in {APP_DISPLAY_NAME}. Go home to choose a project or
-          start a thread.
+          <T>
+            This link doesn't point to a page in <Var>{APP_DISPLAY_NAME}</Var>. Go home to choose a
+            project or start a thread.
+          </T>
         </p>
-        <Button render={<Link to="/" replace />}>Go home</Button>
+        <Button render={<Link to="/" replace />}>
+          <T>Go home</T>
+        </Button>
       </div>
     </main>
   );
 }
 
 function RootRouteBranch() {
+  // SCIENT-FORK: every window saves before a consented update restart.
+  useDesktopUpdateSaveHandling();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
@@ -167,10 +201,24 @@ function RootRouteBranch() {
   const hostedPromptLinkLanding = useHostedPromptLinkLanding(
     authGateState.status === "hosted-static",
   );
+  // SCIENT-FORK:START hosted-landing
+  const hostedLandingActive = useHostedLandingActive(
+    authGateState.status === "hosted-static",
+    pathname,
+  );
+  // SCIENT-FORK:END hosted-landing
 
   if (pathname === GUEST_PAGE_PATH) return <Outlet />;
+  // SCIENT-FORK:START — a shared conversation opened while signed in reads like the public page.
+  if (pathname.startsWith("/shared/")) return <Outlet />;
+  // SCIENT-FORK:END
 
-  if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect-agent") {
+  if (
+    pathname === "/pair" ||
+    pathname === "/connect" ||
+    pathname === "/connect-agent" ||
+    pathname === "/approve-agent"
+  ) {
     return <Outlet />;
   }
 
@@ -188,13 +236,17 @@ function RootRouteBranch() {
   // first-run gate and the event router, whose first navigation would leave the page.
   const appHosts = (
     <>
-      {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
       {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
-        <DesktopWebLinkCoordinator />
+        <>
+          <DesktopAppActivationCoordinator />
+          <DesktopWebLinkCoordinator />
+        </>
       ) : null}
       {isElectron ? <RunningThreadKeepAlive /> : null}
       <RelayClientInstallDialog />
-      <ConnectOnboardingDialog />
+      {/* SCIENT-FORK:START — on the desktop, signing in sets up Scient Connect; no wizard. */}
+      {isElectron ? <ScientConnectBridge /> : <ConnectOnboardingDialog />}
+      {/* SCIENT-FORK:END */}
       <SshPasswordPromptDialog />
       <SnapShotCoordinator />
       <ScientAnswerBadgeCoordinator />
@@ -205,23 +257,36 @@ function RootRouteBranch() {
       {/* SCIENT-FORK: conversation export dialog; imports wait while /welcome is open. */}
       <ConversationExportDialogHost />
       <ConversationImportDialogHost suspended={isWelcome} />
+      {/* SCIENT-FORK:START — What's new dialog; the sidebar card and About both open it. */}
+      <ScientReleaseNotesDialogHost />
+      {/* SCIENT-FORK:END */}
       {/* SCIENT-FORK:START — app-level sign-in page opener. */}
       <ProviderSignInPageCoordinator />
       {/* SCIENT-FORK:END */}
-      <GuestShareDialogHost />
+      {/* SCIENT-FORK: the share commands open the room dialog in place of T3's guest link one. */}
+      <RoomDialogHost />
+      {/* SCIENT-FORK:START — the Share link dialog. */}
+      <ShareLinkDialogHost />
+      {/* SCIENT-FORK:END */}
       <ProjectCloneToastCoordinator />
+      <ConnectDeviceApprovalCoordinator />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
       {/* SCIENT-FORK:START — Add project ▸ Overleaf project. */}
       <OverleafNewProjectDialogHost />
       {/* SCIENT-FORK:END */}
+      {/* SCIENT-FORK:START — Help ▸ Send Feedback and the feedback dialog. */}
+      <FeedbackCoordinator />
+      {/* SCIENT-FORK:END */}
     </>
   );
   const appShell = (
     <CommandPalette>
       {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
-      <AppSidebarLayout showSidebar={!isWelcome}>
+      {/* SCIENT-FORK:START hosted-landing — the hosted landing is a page of its own. */}
+      <AppSidebarLayout showSidebar={!isWelcome && !hostedLandingActive}>
+        {/* SCIENT-FORK:END hosted-landing */}
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>
@@ -229,8 +294,11 @@ function RootRouteBranch() {
 
   // Hosted clients retain upstream connection onboarding. ScientGettingStartedGate
   // owns local assisted setup; a second first-run wizard must not intercept it.
+  // SCIENT-FORK:START — the release notes provider wraps both shells, so the sidebar card and
+  // the app-level What's new dialog share one state.
   return (
-    <>
+    <ScientReleaseNotesProvider>
+      {/* SCIENT-FORK:END */}
       <ChatGptWelcomeCoordinator />
       {isWelcome ? (
         <>
@@ -252,8 +320,10 @@ function RootRouteBranch() {
       )}
       {/* Above both shells and the router, so drafts survive navigation, including to /welcome. */}
       <ThemeEditorHost />
-    </>
+      {/* SCIENT-FORK:START — closes the release notes provider. */}
+    </ScientReleaseNotesProvider>
   );
+  // SCIENT-FORK:END
 }
 
 function isTransientSessionError(error: unknown) {
@@ -266,7 +336,8 @@ function isTransientSessionError(error: unknown) {
 
 function RootRouteErrorView({ error }: ErrorComponentProps) {
   const router = useRouter();
-  const message = errorMessage(error);
+  const gt = useGT();
+  const message = errorMessage(error) ?? gt("An unexpected router error occurred.");
   const reconnecting = isTransientSessionError(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -302,27 +373,55 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
     <StandalonePage>
       {/* SCIENT-FORK:START — a transient session outage reads as reconnecting, not a failure. */}
       <StandalonePageHeader
-        title={reconnecting ? "Connecting to your server" : "Something went wrong."}
+        title={reconnecting ? gt("Connecting to your server") : gt("Something went wrong.")}
         description={
           reconnecting
-            ? "The server is temporarily unavailable. Scient will reconnect automatically when it is ready."
+            ? gt(
+                "The server is temporarily unavailable. Scient will reconnect automatically when it is ready.",
+              )
             : message
         }
       />
       {/* SCIENT-FORK:END */}
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void router.invalidate()}>
-          Try again
+        <Button
+          size="sm"
+          onClick={() =>
+            isChunkLoadError(error) ? window.location.reload() : void router.invalidate()
+          }
+        >
+          <T>Try again</T>
         </Button>
         <Button size="sm" variant="outline" onClick={() => requestDesktopReload(false)}>
-          Reload app
+          <T>Reload app</T>
         </Button>
         <CopyErrorButton report={report} />
+        {/* SCIENT-FORK:START — report the error to the Scient team from the page. */}
+        {feedbackAvailable() ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              requestFeedback({
+                source: "error-page",
+                error: { message: `${message}\n\n${report}`.slice(0, 8000) },
+              })
+            }
+          >
+            <T>Report problem</T>
+          </Button>
+        ) : null}
+        {/* SCIENT-FORK:END */}
       </div>
+      {/* SCIENT-FORK:START — the error page replaces the app, so it hosts its own dialog. */}
+      <FeedbackDialogHost />
+      {/* SCIENT-FORK:END */}
 
       <div className="mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
-        <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Error report</p>
+        <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
+          <T>Error report</T>
+        </p>
         <pre className="max-h-64 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs whitespace-pre-wrap text-foreground/85">
           {report}
         </pre>
@@ -332,17 +431,24 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
 }
 
 function CopyErrorButton({ report }: { report: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-report" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: {
+      target: "error-report",
+      unavailableMessage: msg("Clipboard API is unavailable while copying error-report."),
+      failureMessage: msg("Failed to copy error-report to the clipboard."),
+    },
+  });
+  const gt = useGT();
 
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
-      <MorphIcon className={cn(isCopied && "text-success")} icon={isCopied ? Check : Copy} />
-      {isCopied ? "Copied" : "Copy error"}
+      {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
+      {isCopied ? gt("Copied") : gt("Copy error")}
     </Button>
   );
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown): string | null {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
@@ -351,7 +457,7 @@ function errorMessage(error: unknown): string {
     return error;
   }
 
-  return "An unexpected router error occurred.";
+  return null;
 }
 
 function errorDetails(error: unknown): string {
@@ -366,6 +472,7 @@ function errorDetails(error: unknown): string {
   try {
     return JSON.stringify(error, null, 2);
   } catch {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- error report pasted into bug reports
     return "No additional error details are available.";
   }
 }

@@ -7,7 +7,7 @@ import {
   type ProjectId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ChevronDownIcon,
@@ -16,7 +16,8 @@ import {
   ChevronUpIcon,
   type LucideIcon,
 } from "lucide-react";
-import { createContext, type ReactNode, useContext } from "react";
+import { T, useGT, useMessages } from "gt-react";
+import { createContext, type ReactNode, useContext, useEffect } from "react";
 
 import {
   SettingsPageContainer,
@@ -137,7 +138,7 @@ export function ExtensionsPage({
     <SettingsPageContainer>
       {environmentId === null ? (
         <p className="text-sm text-muted-foreground">
-          Connect an execution environment to manage extensions.
+          <T>Connect an execution environment to manage extensions.</T>
         </p>
       ) : (
         <ExtensionsEnvironmentProvider
@@ -172,6 +173,8 @@ export function ExtensionsTopBar({
   readonly kind: ExtensionKind | undefined;
   readonly children?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const show = (nextTab: ExtensionsTab, nextKind: ExtensionKind | undefined) =>
     void navigate({
@@ -186,7 +189,7 @@ export function ExtensionsTopBar({
       {/* Fixed heights: the bar stays put whichever tab, kind or control is showing. */}
       <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
         <ToggleGroup
-          aria-label="Extensions"
+          aria-label={gt("Extensions")}
           variant="segmented"
           value={[tab]}
           onValueChange={(next) => {
@@ -196,14 +199,18 @@ export function ExtensionsTopBar({
             }
           }}
         >
-          <Toggle value="discover">Discover</Toggle>
-          <Toggle value="installed">Installed</Toggle>
+          <Toggle value="discover">
+            <T>Discover</T>
+          </Toggle>
+          <Toggle value="installed">
+            <T>Installed</T>
+          </Toggle>
         </ToggleGroup>
         {children}
       </div>
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
         <ToggleGroup
-          aria-label="Show"
+          aria-label={gt("Show", { $context: "which kind of extension to list" })}
           variant="pill"
           size="sm"
           className="-ms-3"
@@ -216,20 +223,23 @@ export function ExtensionsTopBar({
         >
           {EXTENSION_KINDS.map((item) => (
             <Toggle key={item} value={item}>
-              {EXTENSION_KIND_LABELS[item]}
+              {messages(EXTENSION_KIND_LABELS[item])}
             </Toggle>
           ))}
         </ToggleGroup>
-        <Link
-          to="/settings/extensions/all"
-          className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
-        >
-          Browse all MCP servers
-          <ChevronRightIcon
-            aria-hidden
-            className="size-3.5 transition-transform group-hover:translate-x-0.5"
-          />
-        </Link>
+        {/* MCP servers are plugins' business; the Skills tab has none to browse. */}
+        {kind === "skills" ? null : (
+          <Link
+            to="/settings/extensions/all"
+            className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
+          >
+            <T>Browse all MCP servers</T>
+            <ChevronRightIcon
+              aria-hidden
+              className="size-3.5 transition-transform group-hover:translate-x-0.5"
+            />
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -319,6 +329,7 @@ export function SectionShowAllToggle({
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
 }) {
+  const gt = useGT();
   const Icon = expanded ? ChevronUpIcon : ChevronDownIcon;
   return (
     <Button
@@ -336,7 +347,7 @@ export function SectionShowAllToggle({
         onExpandedChange(!expanded);
       }}
     >
-      {expanded ? "Show less" : `Show all ${total}`}
+      {expanded ? gt("Show less") : gt("Show all {total}", { total })}
       <Icon aria-hidden />
     </Button>
   );
@@ -348,6 +359,64 @@ export function SectionTitleChevron() {
       aria-hidden
       className="size-4.5 text-muted-foreground/70 transition-transform group-hover:translate-x-0.5"
     />
+  );
+}
+
+/**
+ * The list an item's page was opened from (Discover, a category, a store,
+ * Installed), with its search and filters, so the page's back link returns
+ * there. Remembered for this window only.
+ */
+let lastListPage: { readonly href: string; readonly label: string } | null = null;
+const ITEM_PATH_PREFIX = "/settings/extensions/item/";
+
+/** Forgets the remembered list, as a new window starts; tests start each case this way. */
+export function forgetListPage() {
+  lastListPage = null;
+}
+
+/** Called by every list page so the item pages opened from it can go back to it. */
+export function useRememberListPage(label: string) {
+  const href = useLocation({ select: (location) => location.href });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the list in a module store item pages read later
+  useEffect(() => {
+    // A list page still mounted while the router moves on sees the next page's address.
+    if (!href.startsWith(ITEM_PATH_PREFIX)) lastListPage = { href, label };
+  }, [href, label]);
+}
+
+/** Goes to the list an item's page was opened from, or to Installed when it was opened directly. */
+export function useBackToList(): () => void {
+  const router = useRouter();
+  return () => router.history.push(lastListPage?.href ?? "/settings/extensions/installed");
+}
+
+/**
+ * An item page's back link: to the list it was opened from, or to `fallback`
+ * when it was opened directly.
+ */
+export function BackToList({
+  fallback,
+  fallbackLabel,
+}: {
+  readonly fallback: "/settings/extensions" | "/settings/extensions/installed";
+  readonly fallbackLabel: string;
+}) {
+  const router = useRouter();
+  const remembered = lastListPage;
+  if (remembered === null) return <BackLink to={fallback}>{fallbackLabel}</BackLink>;
+  return (
+    <div>
+      <Button
+        size="sm"
+        variant="ghost-muted"
+        className="-ms-2.5"
+        onClick={() => router.history.push(remembered.href)}
+      >
+        <ChevronLeftIcon aria-hidden />
+        {remembered.label}
+      </Button>
+    </div>
   );
 }
 

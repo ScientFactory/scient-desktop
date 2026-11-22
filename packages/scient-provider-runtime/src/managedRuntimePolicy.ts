@@ -23,5 +23,7 @@ export const MANAGED_RUNTIME_POLICY: Readonly<
   pi: { revision: 1, historicalRevisions: [] },
   omp: { revision: 1, historicalRevisions: [] },
   scient: { revision: 1, historicalRevisions: [] },
-  muse: { revision: 1, historicalRevisions: [] },
+  // Muse 1.4.24 downloads past the 512 MiB older installers allow on Windows; keep their
+  // qualified feeds readable but never advertise a file they would reject.
+  muse: { revision: 2, historicalRevisions: [1] },
 };

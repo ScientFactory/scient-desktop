@@ -25,15 +25,44 @@ we may close it without merging it, or never review it.
 
 Documentation impact:
 
+## Platforms
+
+<!-- Expected behavior on each, the checks that ran there, and what is still unproven.
+     Lead with any difference between platforms. "Unaffected" needs its reason. -->
+
+| Platform | Expected behavior | Checks run | Unproven |
+| -------- | ----------------- | ---------- | -------- |
+| macOS    |                   |            |          |
+| Windows  |                   |            |          |
+| Linux    |                   |            |          |
+
+## Verification
+
+<!-- Commands run and their results, and what did not run and why. -->
+
 ## UI Changes
 
-<!-- If this PR changes UI, include clear before/after screenshots.
-     If the change involves motion or interaction, include a short video.
-     Delete this section if not applicable. -->
+<!-- Before/after screenshots of every changed screen, light and dark, checked against the
+     UI checklist (docs/internals/web-ui.md#ui-checklist). Add a short video for motion or
+     interaction. Delete this section if the PR changes no UI. -->
+
+## Review
+
+<!-- One tier, then its result and any skipped reviewer:
+     None — docs, or UI appearance or copy with no logic change
+     Light Codex — one pass of correctness findings, each verified, then one recheck of the fixes
+     Codex high and a live test — data, migrations, security, release or alignment; the changed
+     behavior run in a built app with synthetic state; then one recheck of the fixes
+     Example: Review: Light Codex — 2 findings, 1 fixed, 1 rejected (reason); recheck clean -->
+
+Review:
 
 ## Checklist
 
 - [ ] This PR is small and focused
 - [ ] I explained what changed and why
-- [ ] I included before/after screenshots for any UI changes
-- [ ] I included a video for animation/interaction changes
+- [ ] Focused tests and typecheck pass on this head
+- [ ] UI: before/after screenshots, light and dark, checked against the UI checklist (or no UI change)
+- [ ] Every link a reader can follow that this PR adds was fetched and works
+
+Model/harness:

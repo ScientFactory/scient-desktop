@@ -89,7 +89,8 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).toContain('role="status"');
     expect(markup).toContain("Stopping…");
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain("disabled");
+    // The button's class names carry `disabled:` variants; the attribute must not be set.
+    expect(markup).not.toContain('disabled=""');
     expect(await renderRunningActions(false, false)).not.toContain("Stopping…");
   });
   it("only renders stop while running when Enter-to-send is available", async () => {

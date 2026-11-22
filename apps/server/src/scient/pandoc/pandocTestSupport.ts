@@ -186,7 +186,9 @@ export function fakePandoc(pidFile: string): (mode: string) => PandocCommand {
 
 export function readPid(pidFile: string): number | null {
   try {
-    return Number.parseInt(NodeFS.readFileSync(pidFile, "utf8"), 10);
+    // The fake creates the file before writing its PID, so a watcher can read it empty.
+    const pid = Number.parseInt(NodeFS.readFileSync(pidFile, "utf8"), 10);
+    return Number.isNaN(pid) ? null : pid;
   } catch {
     return null;
   }

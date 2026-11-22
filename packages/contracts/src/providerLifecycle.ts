@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleOptional,
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /**
@@ -89,6 +95,53 @@ export const ProviderAuthorizationUrlKind = Schema.Literals(["primary", "manual_
 export type ProviderAuthorizationUrlKind = typeof ProviderAuthorizationUrlKind.Type;
 
 /**
+ * Why a sign-in failed, set where the failure is known, never read from its message.
+ * `timeout` is a deadline Scient set; `verification` an accepted account Scient could not
+ * confirm; `post_signin_setup` a failure after the provider accepted the sign-in.
+ */
+export const ProviderConnectionFailureReason = Schema.Literals([
+  "start_failed",
+  "no_signin_page",
+  "invalid_response",
+  "timeout",
+  "provider_failed",
+  "provider_exited",
+  "verification",
+  "post_signin_setup",
+  "flow_stopped",
+  "unknown",
+]);
+export type ProviderConnectionFailureReason = typeof ProviderConnectionFailureReason.Type;
+
+const connectionFailureReasons = new WeakMap<object, ProviderConnectionFailureReason>();
+
+/**
+ * Records why a sign-in failed on the error that says so, where the failure is
+ * known, for errors whose own type has no field for it. The first mark wins.
+ */
+export function markProviderConnectionFailure<E>(
+  reason: ProviderConnectionFailureReason,
+  error: E,
+): E {
+  if (typeof error === "object" && error !== null && !connectionFailureReasons.has(error)) {
+    connectionFailureReasons.set(error, reason);
+  }
+  return error;
+}
+
+/** The reason marked on an error, or on the first marked error among `errors`. */
+export function providerConnectionFailureReason(
+  ...errors: ReadonlyArray<unknown>
+): ProviderConnectionFailureReason | undefined {
+  for (const error of errors) {
+    if (typeof error !== "object" || error === null) continue;
+    const reason = connectionFailureReasons.get(error);
+    if (reason !== undefined) return reason;
+  }
+  return undefined;
+}
+
+/**
  * Opaque, client-generated id of one start request. It lets the client that
  * started a sign-in recognize its operation in streamed snapshots, so it can
  * open the sign-in page even if the start command's reply never arrives.
@@ -131,6 +184,8 @@ export const ProviderConnectionOperation = Schema.Struct({
    * a submission echoes this so an answer typed for an earlier one is refused.
    */
   questionId: Schema.optionalKey(ProviderConnectionQuestionId),
+  /** Why a failed operation failed. */
+  failureReason: ForwardCompatibleOptional(ProviderConnectionFailureReason),
 });
 export type ProviderConnectionOperation = typeof ProviderConnectionOperation.Type;
 
@@ -192,6 +247,22 @@ export const ProviderRuntimeFailureClass = Schema.Literals([
 ]);
 export type ProviderRuntimeFailureClass = typeof ProviderRuntimeFailureClass.Type;
 
+/** The install step a failed operation stopped in; `refresh` means the new runtime was active. */
+export const ProviderRuntimeFailedCheck = Schema.Literals([
+  "smoke",
+  "reserve",
+  "stop_sessions",
+  "rpc_start",
+  "protocol",
+  "version",
+  "get_state",
+  "qualification",
+  "activation",
+  "rollback",
+  "refresh",
+]);
+export type ProviderRuntimeFailedCheck = typeof ProviderRuntimeFailedCheck.Type;
+
 export const ProviderRuntimeOperation = Schema.Struct({
   operationId: TrimmedNonEmptyString,
   action: ProviderManagedRuntimeAction,
@@ -214,6 +285,46 @@ export const ProviderRuntimeOperation = Schema.Struct({
   retrying: Schema.optionalKey(Schema.Boolean),
   /** Set on a failed operation. Optional for older clients. */
   failureClass: Schema.optionalKey(ProviderRuntimeFailureClass),
+  /** Set on a failed operation when the step is known. Optional for older clients. */
+  failedCheck: ForwardCompatibleOptional(ProviderRuntimeFailedCheck),
+  /**
+   * Scient started it on its own, not the user: clients show its progress where the
+   * user looks for the provider, and no notice, failure or cancellation.
+   */
+  background: Schema.optionalKey(Schema.Boolean),
+  /** Which background try this is, from 1, for analytics. */
+  attempt: Schema.optionalKey(PositiveInt),
+  /**
+   * How the download went, for analytics: once complete, or as far as a failed try got. Fields
+   * after `compressed` are optional so older clients keep decoding the operation.
+   */
+  download: Schema.optionalKey(
+    Schema.Struct({
+      resumedBytes: NonNegativeInt,
+      source: Schema.Literals(["primary", "fallback"]),
+      compressed: Schema.Boolean,
+      sourceKind: ForwardCompatibleOptional(Schema.Literals(["scient_mirror", "github", "vendor"])),
+      tries: Schema.optionalKey(PositiveInt),
+      progressPercent: Schema.optionalKey(NonNegativeInt),
+      /** Received bytes per second of request time; kept bytes and waits between tries excluded. */
+      bytesPerSecond: Schema.optionalKey(NonNegativeInt),
+      /** How the latest try's connection failed; `stalled` is 30 seconds without data. */
+      networkKind: ForwardCompatibleOptional(
+        Schema.Literals([
+          "dns",
+          "refused",
+          "reset",
+          "unreachable",
+          "connect_timeout",
+          "stalled",
+          "cut_off",
+          "other",
+        ]),
+      ),
+      /** Why the zstd copy failed, when the raw binary was downloaded after it. */
+      compressedFailure: ForwardCompatibleOptional(ProviderRuntimeFailureClass),
+    }),
+  ),
 });
 export type ProviderRuntimeOperation = typeof ProviderRuntimeOperation.Type;
 
@@ -262,6 +373,20 @@ export const ProviderRuntimeCatalogFreshness = Schema.Struct({
 });
 export type ProviderRuntimeCatalogFreshness = typeof ProviderRuntimeCatalogFreshness.Type;
 
+/** Why a provider's status check failed, from its error types; never its message. */
+export const ProviderStatusCheckFailure = Schema.Literals([
+  "version_timeout",
+  "version_failed",
+  "start_failed",
+  "busy",
+  "command_timeout",
+  "command_failed",
+  "exit",
+  "parse",
+  "other",
+]);
+export type ProviderStatusCheckFailure = typeof ProviderStatusCheckFailure.Type;
+
 export const ProviderRuntimeSummary = Schema.Struct({
   source: ProviderRuntimeSource,
   supportTier: ProviderRuntimeSupportTier,
@@ -276,6 +401,16 @@ export const ProviderRuntimeSummary = Schema.Struct({
   /** For runtimes Scient can manage; optional so older servers keep decoding. */
   catalog: Schema.optionalKey(ProviderRuntimeCatalogFreshness),
   operation: Schema.NullOr(ProviderRuntimeOperation),
+  /** A requested change waiting for recovery; it is not a running operation. */
+  pendingRecovery: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        requestId: TrimmedNonEmptyString,
+        action: Schema.Literals(["install", "update", "repair"]),
+        nextRetryAt: IsoDateTime,
+      }),
+    ),
+  ),
   message: TrimmedNonEmptyString,
   /**
    * Whether the selected runtime passed the provider's own capability check, for a provider that
@@ -311,6 +446,8 @@ export const ProviderConnectionSummary = Schema.Struct({
    * unknown scient_agent_account method. Publish account sign-in separately from operation.
    */
   accountOperation: Schema.optionalKey(Schema.NullOr(ProviderConnectionOperation)),
+  /** Why the provider's latest status check failed, for a provider that names it. */
+  checkFailure: ForwardCompatibleOptional(ProviderStatusCheckFailure),
 });
 
 /** The sign-in a provider is in or last ended, whichever field carries it. */
@@ -430,11 +567,17 @@ export const ProviderRuntimeStartInput = Schema.Struct({
 });
 export type ProviderRuntimeStartInput = typeof ProviderRuntimeStartInput.Type;
 
-export const ProviderRuntimeCancelInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  operationId: TrimmedNonEmptyString,
-});
+export const ProviderRuntimeCancelInput = Schema.Union([
+  Schema.Struct({ instanceId: ProviderInstanceId, operationId: TrimmedNonEmptyString }),
+  Schema.Struct({ instanceId: ProviderInstanceId, requestId: TrimmedNonEmptyString }),
+]);
 export type ProviderRuntimeCancelInput = typeof ProviderRuntimeCancelInput.Type;
+
+/** The user picked this provider in the composer, for "ready at first pick" analytics. */
+export const ProviderRuntimePickInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+});
+export type ProviderRuntimePickInput = typeof ProviderRuntimePickInput.Type;
 
 export class ProviderConnectionError extends Schema.TaggedError<ProviderConnectionError>()(
   "ProviderConnectionError",

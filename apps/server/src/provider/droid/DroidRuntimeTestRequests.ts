@@ -7,7 +7,9 @@ export function classifyDroidRuntimeTestRequest(
   const system = Array.isArray(messages)
     ? messages.flatMap((message: unknown) => {
         if (typeof message !== "object" || message === null) return [];
-        if (!("role" in message) || message.role !== "system") return [];
+        // The Responses protocol carries system instructions in a "developer" message.
+        if (!("role" in message) || (message.role !== "system" && message.role !== "developer"))
+          return [];
         return "content" in message ? [message.content] : [];
       })
     : [];

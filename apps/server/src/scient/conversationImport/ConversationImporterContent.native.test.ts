@@ -526,7 +526,8 @@ describe("native imported content", () => {
       ),
     );
 
-    it.effect("counts a hundred thousand warnings and accounts for a later warning kind", () =>
+    // ConversationImportNotices.bench.ts counts 100,000 warnings exactly, on both import paths.
+    it.effect("accounts for a warning kind first listed after many warnings", () =>
       withImporter(
         Effect.gen(function* () {
           const fixture = importFixture({ turns: 1 });
@@ -537,9 +538,6 @@ describe("native imported content", () => {
                 `The linked image figure-${index + 1}.png was unavailable.`,
               ),
             );
-          const warnings = many(100_000);
-          const notices = yield* noticesOf({ ...fixture.input, warnings });
-          assert.deepStrictEqual(notices, ["100000 linked files or images were not included."]);
           // A kind first listed after the warnings read in full is still counted.
           const late = yield* noticesOf({
             ...fixture.input,
@@ -702,13 +700,9 @@ describe("native imported content", () => {
         });
         assert.isNull(projection.thread.forkedFrom);
         assert.isNull(projection.thread.activeProviderThreadId);
-        const inherited = new Set(
-          projection.turnItems.flatMap((item) =>
-            item.historyTurnId == null ? [] : [item.historyTurnId],
-          ),
-        );
+        // Every imported item belongs to an inherited turn: none is left without one.
         assert.deepStrictEqual(
-          inherited,
+          new Set(projection.turnItems.map((item) => item.historyTurnId ?? null)),
           new Set(thread.messages.map((message) => message.turnId)),
         );
         // Imported groups are inert item history, never executable native runs/transfers.

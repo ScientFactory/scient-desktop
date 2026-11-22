@@ -18,17 +18,18 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
+import { AnalyticsService } from "./AnalyticsService.ts";
+import * as ScientAnalytics from "./ScientAnalytics.ts";
 import {
   createV2AnalyticsEventMapper,
   launchV2AnalyticsEventObservers,
   makeV2AnalyticsObservers,
 } from "./AnalyticsEventObserversV2.ts";
 import { BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
+import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { EventSinkStreamError, EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
@@ -135,152 +136,131 @@ function metadata(update: Partial<OrchestrationV2AppThread>): OrchestrationV2Dom
 }
 function analyticsFixture() {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
-  const listeners = new Set<(epoch: number, phase: "invalidated" | "ready") => Promise<void>>();
-  const advance = async () => {
-    epoch++;
-    await Promise.all(
-      [...listeners].map((listener) => listener(epoch, "invalidated").catch(() => undefined)),
-    );
-    epoch++;
-    await Promise.all(
-      [...listeners].map((listener) => listener(epoch, "ready").catch(() => undefined)),
-    );
-  };
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
-    record: (name, properties, expectedEpoch) =>
+    record: (name, properties) =>
       Effect.sync(() => {
-        if (expectedEpoch !== undefined && expectedEpoch !== epoch) return;
         events.push({ name, properties });
-      }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
-    observeCollectionBoundary: (listener) =>
-      Effect.promise(async () => {
-        listeners.add(listener);
-        await listener(epoch, "ready").catch(() => undefined);
-        return () => listeners.delete(listener);
       }),
     flush: Effect.void,
   });
-  // A consent change or a deletion moves observers across a collection boundary.
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
-    Effect.promise(async () => {
-      status = { ...status, consent };
-      await advance();
+  const setAvailable = (next: boolean) =>
+    Effect.sync(() => {
+      availability.available = next;
     });
-  const deleteData = Effect.promise(advance);
-  return { service, events, setConsent, deleteData };
+  return { service, availability, events, setAvailable };
 }
 
 describe("native V2 analytics", () => {
-  it.effect.each(["failed", "superseded"] as const)(
-    "recovers from %s registration without capturing an invalid subscription cursor",
-    (mode) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = analyticsFixture();
-          const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-          const initialEntered = yield* Deferred.make<void>();
-          const releaseInitial = yield* Deferred.make<void>();
-          const boundaryEntered = yield* Deferred.make<void>();
-          const releaseBoundary = yield* Deferred.make<void>();
-          const subscribed = yield* Deferred.make<void>();
-          const recorded = yield* Deferred.make<void>();
-          let latest = 0;
-          let reads = 0;
-          let subscriptionAfter: number | undefined;
-          const launch = yield* launchV2AnalyticsEventObservers.pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(AnalyticsService, {
-                  ...fixture.service,
-                  record: (name, properties, epoch) =>
-                    fixture.service
-                      .record(name, properties, epoch)
-                      .pipe(Effect.andThen(Deferred.succeed(recorded, undefined))),
-                }),
-                Layer.mock(EventSinkV2)({
-                  latestSequence: () =>
-                    Effect.gen(function* () {
-                      const read = ++reads;
-                      const cutoff = latest;
-                      if (read === 1) {
-                        yield* Deferred.succeed(initialEntered, undefined);
-                        if (mode === "failed")
-                          return yield* new EventSinkStreamError({
-                            cause: "synthetic unavailable sink",
-                          });
-                        yield* Deferred.await(releaseInitial);
-                      } else {
-                        yield* Deferred.succeed(boundaryEntered, undefined);
-                        yield* Deferred.await(releaseBoundary);
-                      }
-                      return cutoff;
-                    }),
-                  stream: (input) =>
-                    Stream.unwrap(
-                      Effect.gen(function* () {
-                        subscriptionAfter = input?.afterSequence;
-                        yield* Deferred.succeed(subscribed, undefined);
-                        // Match the immutable EventSink cursor, not an unconstrained queue.
-                        return Stream.fromQueue(queue).pipe(
-                          Stream.filter((stored) => stored.sequence > (input?.afterSequence ?? 0)),
-                        );
-                      }),
-                    ),
-                }),
-                Layer.mock(ProviderRegistry)({
-                  getProviders: Effect.succeed([]),
-                  streamChanges: Stream.empty,
-                }),
-                Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.undefined,
-                }),
-                Layer.mock(ProjectionStoreV2)({}),
-              ),
-            ),
-            Effect.forkScoped,
-          );
-          yield* Deferred.await(initialEntered);
-          latest = 10;
-          const control = yield* fixture.setConsent("product").pipe(Effect.forkScoped);
-          yield* Deferred.await(boundaryEntered);
-          yield* Deferred.succeed(releaseInitial, undefined);
-          yield* Fiber.join(launch);
-          yield* Deferred.succeed(releaseBoundary, undefined);
-          yield* Fiber.join(control);
-          yield* Deferred.await(subscribed);
-          expect(subscriptionAfter).toBe(10);
-          latest = 11;
-          yield* Queue.offer(queue, {
-            sequence: 11,
-            commandId: null,
-            event: { ...runEvent("running"), type: "run.created" },
-          });
-          yield* Deferred.await(recorded);
-          expect(fixture.events).toMatchObject([{ name: "provider.turn.sent" }]);
-        }),
-      ),
-  );
-  it.effect("counts the very first fresh admission after enabling, without a priming event", () =>
+  it.effect("observes only events committed after the startup watermark", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fixture = analyticsFixture();
-        yield* fixture.setConsent("off");
+        const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+        const recorded = yield* Deferred.make<void>();
+        let subscriptionAfter: number | undefined;
+        yield* launchV2AnalyticsEventObservers.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+              Layer.succeed(AnalyticsService, {
+                ...fixture.service,
+                record: (name, properties) =>
+                  fixture.service
+                    .record(name, properties)
+                    .pipe(Effect.andThen(Deferred.succeed(recorded, undefined))),
+              }),
+              Layer.mock(EventSinkV2)({
+                latestSequence: () => Effect.succeed(10),
+                stream: (input) => {
+                  subscriptionAfter = input?.afterSequence;
+                  return Stream.fromQueue(queue);
+                },
+              }),
+              Layer.mock(ProviderRegistry)({
+                getProviders: Effect.succeed([]),
+                streamChanges: Stream.empty,
+              }),
+              Layer.mock(ProviderInstanceRegistry)({
+                getInstance: () => Effect.undefined,
+              }),
+              Layer.mock(ProjectionStoreV2)({}),
+            ),
+          ),
+        );
+        expect(subscriptionAfter).toBe(10);
+        for (const sequence of [10, 11]) {
+          yield* Queue.offer(queue, {
+            sequence,
+            commandId: null,
+            event: {
+              ...runEvent("running"),
+              type: "run.created",
+              payload: { ...run, id: RunId.make("run:" + sequence) },
+            },
+          });
+        }
+        yield* Deferred.await(recorded);
+        expect(fixture.events).toMatchObject([{ name: "provider.turn.sent" }]);
+        expect(fixture.events).toHaveLength(1);
+      }),
+    ),
+  );
+  it.effect("stays fenced when the startup watermark cannot be read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = analyticsFixture();
+        let subscribed = false;
+        let providersRead = false;
+        yield* launchV2AnalyticsEventObservers.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+              Layer.succeed(AnalyticsService, fixture.service),
+              Layer.mock(EventSinkV2)({
+                latestSequence: () =>
+                  Effect.fail(new EventSinkStreamError({ cause: "synthetic unavailable sink" })),
+                stream: () => {
+                  subscribed = true;
+                  return Stream.empty;
+                },
+              }),
+              Layer.mock(ProviderRegistry)({
+                getProviders: Effect.sync(() => {
+                  providersRead = true;
+                  return [];
+                }),
+                streamChanges: Stream.empty,
+              }),
+              Layer.mock(ProviderInstanceRegistry)({
+                getInstance: () => Effect.undefined,
+              }),
+              Layer.mock(ProjectionStoreV2)({}),
+            ),
+          ),
+        );
+        expect(subscribed).toBe(false);
+        expect(providersRead).toBe(true);
+      }),
+    ),
+  );
+  it.effect("counts the very first fresh admission, without a priming event", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = analyticsFixture();
         const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
         const recorded = yield* Deferred.make<void>();
         let latest = 0;
         yield* launchV2AnalyticsEventObservers.pipe(
           Effect.provide(
             Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
               Layer.succeed(AnalyticsService, {
                 ...fixture.service,
-                record: (name, properties, epoch) =>
+                record: (name, properties) =>
                   fixture.service
-                    .record(name, properties, epoch)
+                    .record(name, properties)
                     .pipe(
                       Effect.andThen(
                         Effect.suspend(() =>
@@ -306,7 +286,6 @@ describe("native V2 analytics", () => {
             ),
           ),
         );
-        yield* fixture.setConsent("product");
         for (const sequence of [1, 2]) {
           latest = sequence;
           yield* Queue.offer(queue, {
@@ -330,126 +309,6 @@ describe("native V2 analytics", () => {
         ]);
       }),
     ),
-  );
-  it.effect.each(["consent", "deletion"] as const)(
-    "discards a buffered earlier-period message across %s, through the real observer",
-    (boundary) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = analyticsFixture();
-          const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-          const entered = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
-          const fenced = yield* Deferred.make<void>();
-          const recorded = yield* Deferred.make<void>();
-          let latest = 0;
-          let reads = 0;
-          const analytics = AnalyticsService.of({
-            ...fixture.service,
-            record: (name, properties, epoch) =>
-              fixture.service
-                .record(name, properties, epoch)
-                .pipe(
-                  Effect.andThen(
-                    Effect.suspend(() =>
-                      fixture.events.length > 0
-                        ? Deferred.succeed(recorded, undefined)
-                        : Effect.void,
-                    ),
-                  ),
-                ),
-          });
-          yield* launchV2AnalyticsEventObservers.pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(AnalyticsService, analytics),
-                Layer.mock(EventSinkV2)({
-                  latestSequence: () =>
-                    Effect.gen(function* () {
-                      reads++;
-                      const cutoff = latest;
-                      if (reads > 1) yield* Deferred.succeed(fenced, undefined);
-                      return cutoff;
-                    }),
-                  stream: () => Stream.fromQueue(queue),
-                }),
-                Layer.mock(ProviderRegistry)({
-                  getProviders: Effect.succeed([]),
-                  streamChanges: Stream.empty,
-                }),
-                Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.undefined,
-                }),
-                Layer.mock(ProjectionStoreV2)({
-                  getThreadShell: () =>
-                    Deferred.succeed(entered, undefined).pipe(
-                      Effect.andThen(Deferred.await(release)),
-                      Effect.as(null),
-                    ),
-                }),
-              ),
-            ),
-          );
-          latest = 1;
-          yield* Queue.offer(queue, {
-            sequence: 1,
-            commandId: null,
-            event: {
-              ...base,
-              type: "thread.created",
-              payload: {
-                ...thread,
-                conversationFork: {
-                  commandId: CommandId.make("private-fork"),
-                  sourceThreadId: threadId,
-                  workspaceMode: "local",
-                  status: "pending",
-                  cwd: "/private",
-                  checkpointRef: null,
-                  checkpointOid: null,
-                  attachmentCopies: [],
-                  error: null,
-                },
-              },
-            },
-          });
-          yield* Deferred.await(entered);
-          if (boundary === "consent") yield* fixture.setConsent("off");
-          latest = 2;
-          yield* Queue.offer(queue, {
-            sequence: 2,
-            commandId: null,
-            event: { ...runEvent("running"), type: "run.created", driver },
-          });
-          if (boundary === "consent") yield* fixture.setConsent("product");
-          else yield* fixture.deleteData;
-          yield* Deferred.succeed(release, undefined);
-          yield* Deferred.await(fenced);
-          latest = 3;
-          yield* Queue.offer(queue, {
-            sequence: 3,
-            commandId: null,
-            event: {
-              ...runEvent("running"),
-              type: "run.created",
-              payload: {
-                ...run,
-                id: RunId.make("private-fresh"),
-                userMessageId: MessageId.make("private-fresh"),
-              },
-              driver: ProviderDriverKind.make("scient"),
-            },
-          });
-          yield* Deferred.await(recorded);
-          expect(fixture.events).toMatchObject([
-            {
-              name: "provider.turn.sent",
-              properties: { provider: "scient" },
-            },
-          ]);
-          expect(fixture.events).toHaveLength(1);
-        }),
-      ),
   );
   it.each(["codex", "claudeAgent", "scient", "omp", "muse", "acpRegistry"])(
     "counts initial, queued and steering %s prompts once without reading content",
@@ -494,7 +353,7 @@ describe("native V2 analytics", () => {
         mapper.event(steerEvent("private-message", "promoted_queued_to_steer"), context),
       ).toEqual([]);
       mapper.clear();
-      // Promotion remains excluded even after an epoch reset and with identical timestamps.
+      // Promotion remains excluded even after the caches clear and with identical timestamps.
       expect(
         mapper.event(steerEvent("private-message", "promoted_queued_to_steer"), context),
       ).toEqual([]);
@@ -528,31 +387,26 @@ describe("native V2 analytics", () => {
       ]);
     }
   });
-  it.effect(
-    "never backfills held Droid re-delivery or legacy unknown admission after privacy boundaries",
-    () => {
-      const fixture = analyticsFixture();
-      return Effect.gen(function* () {
-        const observer = yield* makeV2AnalyticsObservers;
-        const context = { driver: ProviderDriverKind.make("droid") };
-        yield* fixture.setConsent("off");
-        yield* observer.event(steerEvent(), context);
-        yield* fixture.setConsent("product");
-        // Held release may have fresh timestamps and a reconstructed `steer` intent.
-        yield* observer.event(steerEvent("private-steer", "steer", true), context);
-        const unknown = steerEvent("private-unknown");
-        Object.defineProperty(unknown.payload, "inputAlreadyAdmitted", { value: undefined });
-        yield* observer.event(unknown, context);
-        yield* fixture.deleteData;
-        yield* observer.event(steerEvent("private-steer", "steer", true), context);
-        expect(fixture.events).toEqual([]);
-        yield* observer.event(steerEvent("private-fresh-steer"), context);
-        expect(fixture.events).toMatchObject([
-          { name: "provider.turn.sent", properties: { provider: "droid" } },
-        ]);
-      }).pipe(Effect.provideService(AnalyticsService, fixture.service));
-    },
-  );
+  it.effect("never counts held Droid re-delivery or legacy unknown admission", () => {
+    const fixture = analyticsFixture();
+    return Effect.gen(function* () {
+      const observer = yield* makeV2AnalyticsObservers;
+      const context = { driver: ProviderDriverKind.make("droid") };
+      // Held release may have fresh timestamps and a reconstructed `steer` intent.
+      yield* observer.event(steerEvent("private-steer", "steer", true), context);
+      const unknown = steerEvent("private-unknown");
+      Object.defineProperty(unknown.payload, "inputAlreadyAdmitted", { value: undefined });
+      yield* observer.event(unknown, context);
+      expect(fixture.events).toEqual([]);
+      yield* observer.event(steerEvent("private-fresh-steer"), context);
+      expect(fixture.events).toMatchObject([
+        { name: "provider.turn.sent", properties: { provider: "droid" } },
+      ]);
+    }).pipe(
+      Effect.provideService(AnalyticsService, fixture.service),
+      Effect.provideService(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+    );
+  });
   it("ignores restored terminal admissions and progress as new prompts", () => {
     for (const status of [
       "completed",
@@ -571,31 +425,6 @@ describe("native V2 analytics", () => {
     expect(mapper.event(runEvent("completed")).map((event) => event.name)).toEqual([
       "provider.turn.completed",
     ]);
-  });
-  it.effect("does not backfill a submission captured in an earlier collection epoch", () => {
-    const fixture = analyticsFixture();
-    return Effect.gen(function* () {
-      const observer = yield* makeV2AnalyticsObservers;
-      const admission: OrchestrationV2DomainEvent = { ...runEvent("running"), type: "run.created" };
-      yield* fixture.setConsent("off");
-      yield* observer.event(admission);
-      yield* fixture.setConsent("product");
-      yield* observer.event(admission, undefined, 0);
-      expect(fixture.events).toEqual([]);
-      yield* observer.event(
-        {
-          ...admission,
-          payload: {
-            ...run,
-            id: RunId.make("private-new"),
-            userMessageId: MessageId.make("private-new"),
-          },
-        },
-        undefined,
-        yield* fixture.service.collectionEpoch,
-      );
-      expect(fixture.events).toMatchObject([{ name: "provider.turn.sent" }]);
-    }).pipe(Effect.provideService(AnalyticsService, fixture.service));
   });
   it("uses the real driver and reports one observed outcome without private identifiers or transcript", () => {
     const mapper = createV2AnalyticsEventMapper();
@@ -631,37 +460,317 @@ describe("native V2 analytics", () => {
         properties: {
           provider: "codex",
           model: "gpt-6",
+          runRef: analyticsRunRef(runId),
           durationMs: 5000,
           usedTools: true,
           hasAttachment: false,
+          retryAttempts: 0,
+        },
+      },
+      {
+        name: "provider.commands.observed",
+        properties: {
+          provider: "codex",
+          model: "gpt-6",
+          commandCategory: "shell-other",
+          commandCount: 1,
+          failedCount: 0,
         },
       },
     ]);
     expect(JSON.stringify(output)).not.toContain("private");
     expect(mapper.event(runEvent("completed"))).toEqual([]);
   });
+  describe("why a turn failed", () => {
+    const rootNodeId = NodeId.make("private-root-node");
+    const rootRun = { ...run, rootNodeId };
+    const runAt = (status: OrchestrationV2Run["status"]) => ({
+      ...runEvent(status),
+      payload: { ...rootRun, status },
+    });
+    const errorItem = (
+      id: string,
+      status: "running" | "completed" | "failed",
+      failure: {
+        class: "provider_error" | "usage_limit" | "transport_error";
+        code: string | null;
+        httpStatus?: number;
+      },
+      options: { attempt?: number; nodeId?: string; ordinal?: number; at?: number } = {},
+    ): OrchestrationV2DomainEvent => ({
+      ...base,
+      type: "turn-item.updated",
+      payload: {
+        id: TurnItemId.make(id),
+        threadId,
+        runId,
+        nodeId: NodeId.make(options.nodeId ?? rootNodeId),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: options.ordinal ?? 1,
+        status,
+        title: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: DateTime.add(now, { seconds: options.at ?? 0 }),
+        type: "error",
+        failure: { message: "private provider text", retryable: null, ...failure },
+        ...(options.attempt === undefined
+          ? {}
+          : { retry: { attempt: options.attempt, maxAttempts: null, retryDelayMs: null } }),
+      },
+    });
+
+    it("reports the run's terminal failure, not a retry that recovered", () => {
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event(runAt("running"));
+      mapper.event(
+        errorItem(
+          "terminal",
+          "failed",
+          { class: "provider_error", code: "auth-failed", httpStatus: 401 },
+          { ordinal: 2, at: 4 },
+        ),
+      );
+      // A retry row whose last word arrives after the terminal: it recovered, so it is not the failure.
+      const recovered = { class: "transport_error" as const, code: "transient", httpStatus: 503 };
+      mapper.event(errorItem("retry", "running", recovered, { attempt: 1, at: 5 }));
+      mapper.event(errorItem("retry", "running", recovered, { attempt: 2, at: 6 }));
+      mapper.event(errorItem("retry", "completed", recovered, { attempt: 2, at: 7 }));
+      mapper.event(
+        errorItem(
+          "child",
+          "failed",
+          { class: "usage_limit", code: "usage-limit" },
+          { nodeId: "private-child-node", ordinal: 3, at: 5 },
+        ),
+      );
+      const output = mapper.event(runAt("failed"));
+      expect(output).toEqual([
+        {
+          name: "provider.turn.failed",
+          properties: {
+            provider: "codex",
+            model: "gpt-6",
+            runRef: analyticsRunRef(runId),
+            durationMs: 5000,
+            failureClass: "provider_error",
+            started: true,
+            // Codex never sets "auth-failed", so that code is dropped; its status is still a status.
+            httpStatus: 401,
+            retryAttempts: 2,
+          },
+        },
+      ]);
+      expect(JSON.stringify(output)).not.toContain("private");
+    });
+
+    it("keeps a known code and the HTTP status of the provider that set them", () => {
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event({ ...runAt("running"), driver: ProviderDriverKind.make("scient") });
+      mapper.event(
+        errorItem("terminal", "failed", {
+          class: "provider_error",
+          code: "context-overflow",
+          httpStatus: 400,
+        }),
+      );
+      expect(
+        mapper.event({ ...runAt("failed"), driver: ProviderDriverKind.make("scient") }),
+      ).toEqual([
+        {
+          name: "provider.turn.failed",
+          properties: {
+            provider: "scient",
+            model: "gpt-6",
+            runRef: analyticsRunRef(runId),
+            durationMs: 5000,
+            failureClass: "provider_error",
+            started: true,
+            failureCode: "context-overflow",
+            httpStatus: 400,
+            retryAttempts: 0,
+          },
+        },
+      ]);
+    });
+
+    it("reports a run that fails while its session opens, and not one stopped before starting", () => {
+      const created = (status: OrchestrationV2Run["status"]) => ({
+        ...runEvent(status),
+        type: "run.created" as const,
+        payload: { ...rootRun, status, startedAt: null },
+      });
+      const failedBeforeStart = (status: OrchestrationV2Run["status"]) => ({
+        ...runAt(status),
+        payload: { ...rootRun, status, startedAt: null },
+      });
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event(created("queued"));
+      mapper.event(errorItem("open", "failed", { class: "provider_error", code: "process_exit" }));
+      expect(mapper.event(failedBeforeStart("failed"))).toEqual([
+        {
+          name: "provider.turn.failed",
+          properties: {
+            provider: "codex",
+            model: "gpt-6",
+            runRef: analyticsRunRef(runId),
+            durationMs: undefined,
+            failureClass: "provider_error",
+            started: false,
+            retryAttempts: 0,
+          },
+        },
+      ]);
+      const stopped = createV2AnalyticsEventMapper();
+      stopped.event(created("queued"));
+      expect(stopped.event(failedBeforeStart("cancelled"))).toEqual([]);
+    });
+
+    it("counts each retry cycle's attempts on any node, including a row a provider reuses after recovering", () => {
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event(runAt("running"));
+      const transient = { class: "transport_error" as const, code: null };
+      for (const [status, attempt] of [
+        ["running", 1],
+        ["running", 2],
+        ["running", 3],
+        ["completed", 3],
+        ["completed", 3],
+        ["running", 1],
+        ["completed", 1],
+      ] as const)
+        mapper.event(errorItem("reused-retry", status, transient, { attempt }));
+      // A native retry row sits on its own node, not the run's root.
+      const nodeId = "native-retry-node";
+      mapper.event(errorItem("second-retry", "running", transient, { attempt: 1, nodeId }));
+      mapper.event(errorItem("second-retry", "completed", transient, { attempt: 1, nodeId }));
+      expect(mapper.event(runAt("completed"))).toMatchObject([
+        { name: "provider.turn.completed", properties: { retryAttempts: 5 } },
+      ]);
+    });
+  });
+  it("tallies an agent's own terminal commands by category once each, never their text", () => {
+    const mapper = createV2AnalyticsEventMapper();
+    mapper.event(runEvent("running"));
+    const item = (
+      id: string,
+      status: "running" | "completed" | "failed" | "cancelled",
+      fields:
+        | { type: "command_execution"; input: string; exitCode?: number; title?: string }
+        | { type: "dynamic_tool"; toolName: string; input: unknown },
+    ) =>
+      mapper.event({
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          id: TurnItemId.make(id),
+          threadId,
+          runId,
+          nodeId: NodeId.make("private-node"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          ...fields,
+          title: "title" in fields ? (fields.title ?? null) : null,
+        },
+      });
+    const script = {
+      type: "command_execution",
+      input: '/bin/zsh -lc "python private.py"',
+    } as const;
+    item("private-1", "running", script);
+    item("private-1", "completed", { ...script, exitCode: 0 });
+    item("private-1", "completed", { ...script, exitCode: 0 });
+    item("private-2", "failed", {
+      type: "command_execution",
+      input: "cd private && Rscript private.R",
+      exitCode: 1,
+    });
+    item("private-3", "completed", {
+      type: "command_execution",
+      input: "pdflatex private.tex",
+      exitCode: 2,
+    });
+    item("private-4", "completed", {
+      type: "dynamic_tool",
+      toolName: "bash",
+      input: { command: "python3 -m pip install private-package" },
+    });
+    item("private-5", "cancelled", { type: "command_execution", input: "python private.py" });
+    item("private-6", "completed", { type: "dynamic_tool", toolName: "read", input: "python" });
+    item("private-7", "completed", { type: "command_execution", input: "Preparing workspace" });
+    const output = mapper.event(runEvent("completed"));
+    const tallies = output
+      .filter((entry) => entry.name === "provider.commands.observed")
+      .map((entry) => entry.properties);
+    expect(tallies).toEqual([
+      {
+        provider: "codex",
+        model: "gpt-6",
+        commandCategory: "python",
+        commandCount: 2,
+        failedCount: 0,
+        stoppedCount: 1,
+      },
+      { provider: "codex", model: "gpt-6", commandCategory: "r", commandCount: 1, failedCount: 1 },
+      {
+        provider: "codex",
+        model: "gpt-6",
+        commandCategory: "latex",
+        commandCount: 1,
+        failedCount: 1,
+      },
+      {
+        provider: "codex",
+        model: "gpt-6",
+        commandCategory: "python-package-install",
+        commandCount: 1,
+        failedCount: 0,
+      },
+    ]);
+    expect(JSON.stringify(output)).not.toContain("private");
+  });
   it.each(["completed", "failed", "cancelled"] as const)(
     "keeps browser counts on the %s turn, not the next turn",
     (status) => {
       const ledger = new BrowserToolCallLedger();
       const completedAt = DateTime.toEpochMillis(runEvent("completed").occurredAt);
-      ledger.record(threadId, completedAt - 2_000, false);
-      ledger.record(threadId, completedAt - 1_000, true);
-      ledger.record(threadId, completedAt + 1, false);
+      const call = (at: number, failed: boolean) =>
+        ledger.record(threadId, { at, tool: "preview_act", durationMs: 100, failed });
+      call(completedAt - 2_000, false);
+      call(completedAt - 1_000, true);
+      call(completedAt + 1, false);
       const mapper = createV2AnalyticsEventMapper(ledger);
       mapper.event(runEvent("running"));
-      expect(mapper.event(runEvent(status))).toMatchObject([
-        {
-          name:
-            status === "completed"
-              ? "provider.turn.completed"
-              : status === "failed"
-                ? "provider.turn.failed"
-                : "provider.turn.stopped",
-          properties: { browserToolCalls: 2, browserToolFailures: 1 },
-        },
-      ]);
-      expect(ledger.take(threadId, completedAt + 1)).toEqual({ calls: 1, failures: 0 });
+      const output = mapper.event(runEvent(status));
+      expect(output[0]).toMatchObject({
+        name:
+          status === "completed"
+            ? "provider.turn.completed"
+            : status === "failed"
+              ? "provider.turn.failed"
+              : "provider.turn.stopped",
+        properties: { browserToolCalls: 2, browserToolFailures: 1 },
+      });
+      expect(
+        output.find((entry) => entry.name === "browser.turn.summary")?.properties,
+      ).toMatchObject({
+        provider: "codex",
+        turnOutcome: status,
+        calls: 2,
+        failures: 1,
+        actCalls: 2,
+      });
+      expect(ledger.take(threadId, completedAt + 1)).toMatchObject({ calls: 1, failures: 0 });
     },
   );
   it("ignores restored terminals and workspace-preparation failures", () => {
@@ -683,7 +792,13 @@ describe("native V2 analytics", () => {
       expect(mapper.event(runEvent(status))).toEqual([
         {
           name: "provider.turn.stopped",
-          properties: { provider: "codex", model: "gpt-6", durationMs: 5000, stopClass: status },
+          properties: {
+            provider: "codex",
+            model: "gpt-6",
+            runRef: analyticsRunRef(runId),
+            durationMs: 5000,
+            stopClass: status,
+          },
         },
       ]);
     }
@@ -723,7 +838,7 @@ describe("native V2 analytics", () => {
     const conversationFork = {
       commandId: CommandId.make("private-fork-command"),
       sourceThreadId: ThreadId.make("private-origin"),
-      workspaceMode: "local" as const,
+      workspaceMode: "new-worktree" as const,
       status: "pending" as const,
       cwd: "/private",
       checkpointRef: null,
@@ -732,56 +847,47 @@ describe("native V2 analytics", () => {
       error: null,
     };
     mapper.event(
-      { ...base, type: "thread.created", payload: { ...thread, conversationFork } },
-      { refork: true },
+      { ...base, type: "thread.created", payload: thread },
+      { refork: true, conversationFork },
     );
-    const ready = metadata({ conversationFork: { ...conversationFork, status: "ready" } });
-    expect(mapper.event(ready)).toEqual([
+    const readyFork = { conversationFork: { ...conversationFork, status: "ready" as const } };
+    expect(mapper.event(metadata({}), readyFork)).toEqual([
       {
         name: "thread.fork.completed",
-        properties: { workspaceMode: "local", boundaryClass: "conversation", refork: true },
+        properties: { workspaceMode: "new-worktree", boundaryClass: "conversation", refork: true },
       },
     ]);
-    expect(mapper.event(ready)).toEqual([]);
+    expect(mapper.event(metadata({}), readyFork)).toEqual([]);
   });
-  it.effect(
-    "clears correlations on consent and data-deletion boundaries before later native outcomes",
-    () => {
-      const fixture = analyticsFixture();
-      return Effect.gen(function* () {
-        const observer = yield* makeV2AnalyticsObservers;
-        yield* observer.event(runEvent("running"));
-        yield* fixture.setConsent("off");
-        yield* fixture.setConsent("product");
-        yield* observer.event(runEvent("completed"));
-        expect(fixture.events).toEqual([]);
-        yield* observer.event({
-          ...runEvent("running"),
-          payload: { ...run, id: RunId.make("second") },
-        });
-        yield* fixture.deleteData;
-        yield* observer.event({
-          ...runEvent("completed"),
-          payload: { ...run, id: RunId.make("second"), status: "completed" },
-        });
-        expect(fixture.events).toEqual([]);
-        yield* observer.event({
-          ...runEvent("running"),
-          payload: { ...run, id: RunId.make("third") },
-        });
-        yield* observer.event({
-          ...runEvent("completed"),
-          payload: { ...run, id: RunId.make("third"), status: "completed" },
-        });
-        expect(fixture.events).toHaveLength(1);
-      }).pipe(Effect.provideService(AnalyticsService, fixture.service));
-    },
-  );
+  it.effect("clears correlations while unavailable before later native outcomes", () => {
+    const fixture = analyticsFixture();
+    return Effect.gen(function* () {
+      const observer = yield* makeV2AnalyticsObservers;
+      yield* observer.event(runEvent("running"));
+      yield* fixture.setAvailable(false);
+      yield* observer.event(runEvent("waiting"));
+      yield* fixture.setAvailable(true);
+      yield* observer.event(runEvent("completed"));
+      expect(fixture.events).toEqual([]);
+      yield* observer.event({
+        ...runEvent("running"),
+        payload: { ...run, id: RunId.make("third") },
+      });
+      yield* observer.event({
+        ...runEvent("completed"),
+        payload: { ...run, id: RunId.make("third"), status: "completed" },
+      });
+      expect(fixture.events).toHaveLength(1);
+    }).pipe(
+      Effect.provideService(AnalyticsService, fixture.service),
+      Effect.provideService(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+    );
+  });
   it.effect("does not acquire provider or orchestration observers when unavailable", () =>
     launchV2AnalyticsEventObservers.pipe(
       Effect.provide(
         Layer.mergeAll(
-          AnalyticsService.layerDisabled,
+          ScientAnalytics.layerDisabled,
           Layer.mock(EventSinkV2)({}),
           Layer.mock(ProjectionStoreV2)({}),
           Layer.mock(ProviderRegistry)({}),

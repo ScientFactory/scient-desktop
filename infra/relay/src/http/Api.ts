@@ -64,6 +64,9 @@ import * as AgentActivityRows from "../agentActivity/AgentActivityRows.ts";
 import * as Devices from "../agentActivity/Devices.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+// SCIENT-FORK:START clerk-legacy-instance
+import * as ClerkInstances from "../auth/ClerkInstances.ts";
+// SCIENT-FORK:END clerk-legacy-instance
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
@@ -82,6 +85,9 @@ import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import { withSpanAttributes } from "../observability.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
+// SCIENT-FORK:START link-supersession
+import * as LinkSupersession from "../environments/LinkSupersession.ts";
+// SCIENT-FORK:END link-supersession
 
 // Delegated IDs exceed the router's default 100-character limit; match the environment server.
 export const RELAY_HTTP_ROUTER_CONFIG = {
@@ -527,12 +533,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
           });
-    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
-    const deprovisioned = yield* managedEndpointProvider.deprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-      target: deprovisionTarget,
-    });
+    // Cleared before teardown, which can fail: a later link under another key shares this inbox.
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -551,6 +552,12 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
         ),
       );
     }
+    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
+    const deprovisioned = yield* managedEndpointProvider.deprovision({
+      userId: input.userId,
+      environmentId: input.environmentId,
+      target: deprovisionTarget,
+    });
     if (!deprovisioned) {
       const key = { userId: input.userId, environmentId: input.environmentId };
       const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
@@ -814,6 +821,9 @@ export const layerClientApi = HttpApiBuilder.group(
     const devices = yield* Devices.Devices;
     const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
     const tunnelLimits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+    // SCIENT-FORK:START link-supersession — optional so the API runs without the relay database.
+    const linkSupersession = yield* Effect.serviceOption(LinkSupersession.LinkSupersession);
+    // SCIENT-FORK:END link-supersession
     return handlers
       .handle(
         "listEnvironments",
@@ -854,6 +864,49 @@ export const layerClientApi = HttpApiBuilder.group(
             yield* appendRelayCredentialResponseHeaders;
             const { userId } = yield* RelayClientPrincipal;
             const result = yield* linker.link({ userId, request: payload });
+            // SCIENT-FORK:START link-supersession — this key now belongs to this account only.
+            if (Option.isSome(linkSupersession)) {
+              const own = yield* links.getForUser({ userId, environmentId: result.environmentId });
+              const others = own
+                ? yield* linkSupersession.value
+                    .otherAccountUserIds({
+                      userId,
+                      environmentId: result.environmentId,
+                      environmentPublicKey: own.environmentPublicKey,
+                    })
+                    .pipe(
+                      Effect.catchTags({
+                        LinkSupersessionPersistenceError: () =>
+                          relayInternalErrorResponse("internal_error"),
+                      }),
+                    )
+                : [];
+              yield* Effect.forEach(
+                others,
+                (otherUserId) =>
+                  unlinkEnvironmentRecord({
+                    userId: otherUserId,
+                    environmentId: result.environmentId,
+                    managedEndpointNamespace: config.managedEndpointNamespace,
+                  }).pipe(
+                    // Past loading, the grant is already revoked: a leftover tunnel serves no one
+                    // and its allocation stays for the managed-endpoint sweep.
+                    Effect.catchTags({
+                      ManagedEndpointDeprovisioningFailed: (error) =>
+                        error.stage === "load-allocation"
+                          ? relayInternalErrorResponse("internal_error")
+                          : Effect.logWarning("Could not remove a superseded account's tunnel", {
+                              environmentId: result.environmentId,
+                              stage: error.stage,
+                            }),
+                    }),
+                  ),
+                { discard: true },
+              ).pipe(
+                Effect.catchTags({ SqlError: () => relayInternalErrorResponse("internal_error") }),
+              );
+            }
+            // SCIENT-FORK:END link-supersession
             return {
               ok: true,
               cloudUserId: userId,
@@ -895,6 +948,12 @@ export const layerClientApi = HttpApiBuilder.group(
               new RelayEnvironmentLinkProofInvalidError({
                 code: "environment_link_proof_invalid",
                 reason: "origin_not_allowed",
+                traceId,
+              }),
+            ManagedEndpointDeprovisioningFailed: (_error, traceId) =>
+              new RelayEnvironmentLinkUnavailableError({
+                code: "environment_link_unavailable",
+                reason: "managed_endpoint_provisioning_failed",
                 traceId,
               }),
             ManagedTunnelLimitExceeded: (limitError, traceId) =>
@@ -1430,6 +1489,21 @@ export const layerServerApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "updateLiveActivityPreference",
+        Effect.fn("relay.api.server.updateLiveActivityPreference")(function* ({ params, payload }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          const links = yield* EnvironmentLinks.EnvironmentLinks;
+          const ok = yield* links.updateLiveActivityPreference({
+            userId: payload.cloudUserId,
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            liveActivitiesEnabled: payload.liveActivitiesEnabled,
+          });
+          return { ok };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "wakeHeldHooks",
         Effect.fn("relay.api.server.wakeHeldHooks")(function* ({ params }) {
           yield* requireOwnEnvironment(params.environmentId);
@@ -1675,29 +1749,59 @@ function verifyClerkBearerToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
+  // SCIENT-FORK:START clerk-legacy-instance — verify with the instance that issued the token.
+  const instance = ClerkInstances.clerkInstanceForJwt(config, token);
+  // SCIENT-FORK:END clerk-legacy-instance
   return Effect.tryPromise({
     try: () =>
       verifyToken(token, {
-        secretKey: Redacted.value(config.clerkSecretKey),
+        // SCIENT-FORK:START clerk-legacy-instance
+        secretKey: Redacted.value(instance.secretKey),
+        // SCIENT-FORK:END clerk-legacy-instance
         audience: config.clerkJwtAudience,
       }),
     catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
   }).pipe(
     Effect.withSpan("verify_clerk_bearer_token", {
-      attributes: { "relay.auth.token_length": token.length },
+      attributes: {
+        "relay.auth.token_length": token.length,
+        // SCIENT-FORK:START clerk-legacy-instance
+        "relay.auth.clerk_instance": instance.name,
+        // SCIENT-FORK:END clerk-legacy-instance
+      },
     }),
   );
 }
 
+// SCIENT-FORK:START clerk-legacy-instance — opaque tokens name no issuer: primary, then legacy.
 function verifyClerkOAuthBearerToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
+  const primary = verifyClerkOAuthBearerTokenWith(
+    config,
+    ClerkInstances.primaryClerkInstance(config),
+    token,
+  );
+  const legacy = ClerkInstances.legacyClerkInstance(config);
+  return legacy
+    ? primary.pipe(Effect.catch(() => verifyClerkOAuthBearerTokenWith(config, legacy, token)))
+    : primary;
+}
+
+function verifyClerkOAuthBearerTokenWith(
+  config: RelayConfiguration.RelayConfiguration["Service"],
+  instance: ClerkInstances.ClerkInstance,
+  token: string,
+) {
+  // SCIENT-FORK:END clerk-legacy-instance
   return Effect.tryPromise({
     try: async () => {
       const client = createClerkClient({
-        secretKey: Redacted.value(config.clerkSecretKey),
-        publishableKey: config.clerkPublishableKey,
+        // SCIENT-FORK:START clerk-legacy-instance
+        secretKey: Redacted.value(instance.secretKey),
+        publishableKey: instance.publishableKey,
+        // SCIENT-FORK:END clerk-legacy-instance
       });
       const state = await client.authenticateRequest(
         new Request(config.relayIssuer, {

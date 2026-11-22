@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -26,12 +27,15 @@ import {
 } from "../../../integration/TransferBudgetV2Fixture.integration.ts";
 import { ServerConfig } from "../../config.ts";
 import { GitManager } from "../../git/GitManager.ts";
+import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as Settings from "../../serverSettings.ts";
 import * as StorageCleanup from "../../storageCleanup.ts";
+import * as TaskFolders from "../../workspace/TaskFolders.ts";
 import { presentQueuedRunsAsBusy } from "./QueuedRunWorktreeRetention.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
@@ -45,7 +49,7 @@ const testLayer = Layer.merge(
     ProviderAdapterRegistry.layerFromAdapters([]),
     { databaseLayer: database, runEffectWorker: false },
   ),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -181,6 +185,11 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            // The branch follow-up is a no-op without a current branch.
+            Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
+            Layer.mock(ThreadManagementService)({}),
+            // No task folders: the worktree is a single checkout.
+            Layer.mock(TaskFolders.TaskFolders)({ find: () => Effect.succeed(null) }),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),

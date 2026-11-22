@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { AppWindowIcon } from "lucide-react";
 import { createContext, useContext, type ReactNode } from "react";
 
@@ -37,6 +38,7 @@ export function PanelTabNewWindowItem(props: {
   /** Puts the item in a group of its own at the end of the menu. */
   readonly separated?: boolean;
 }) {
+  const gt = useGT();
   const open = useContext(PanelTabNewWindowContext);
   if (!open) return null;
   return (
@@ -44,7 +46,7 @@ export function PanelTabNewWindowItem(props: {
       {props.separated ? <MenuSeparator /> : null}
       <MenuItem onClick={open}>
         {props.plain ? null : <AppWindowIcon className={props.iconClassName} />}
-        {props.label ?? "Open in new window"}
+        {props.label ?? gt("Open in new window")}
       </MenuItem>
     </>
   );

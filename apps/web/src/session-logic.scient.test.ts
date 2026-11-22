@@ -3,6 +3,7 @@ import {
   CheckpointRef,
   RunId,
   MessageId,
+  RoomMessageId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2Checkpoint,
@@ -189,6 +190,42 @@ describe("Scient work-log entries", () => {
       sourceThreadId: forkId,
       itemId: call.id,
     });
+  });
+});
+
+describe("thread room messages in the timeline", () => {
+  const roomMessage = (
+    id: string,
+    extra: Partial<Extract<OrchestrationV2TurnItem, { type: "room_message" }>> = {},
+  ): OrchestrationV2TurnItem => ({
+    ...base,
+    id: TurnItemId.make(id),
+    runId: null,
+    type: "room_message",
+    roomMessageId: RoomMessageId.make(`message-${id}`),
+    author: { kind: "owner" },
+    text: "For people first",
+    anchorRunOrdinal: null,
+    ...extra,
+  });
+  const delivery = (status: "sent" | "cancelled") => ({
+    messageId: MessageId.make("sent-message"),
+    by: { kind: "owner" as const },
+    at: "2026-09-04T12:01:00.000Z",
+    status,
+  });
+
+  it("shows a message until it is sent to the agent or deleted, and again if the send is cancelled", () => {
+    const entries = entriesFor(
+      roomMessage("waiting"),
+      roomMessage("sent", { deliveries: [delivery("sent")] }),
+      roomMessage("cancelled", { deliveries: [delivery("cancelled")] }),
+      roomMessage("deleted", { deletedAt: "2026-09-04T12:02:00.000Z" }),
+    );
+    expect(entries.map((entry) => [entry.id, entry.kind])).toEqual([
+      ["waiting", "event"],
+      ["cancelled", "event"],
+    ]);
   });
 });
 
@@ -489,7 +526,7 @@ describe("rewind targets without a file snapshot", () => {
         deriveRevertTurnCountByUserMessageId({
           timelineEntries: [1, 2, 3].map(userTurn),
           checkpoints,
-          threadStartCheckpointReady: true,
+          threadStartCheckpointAvailable: true,
         }),
       );
     expect(targets([summary(1, "error"), summary(2, "missing")])).toEqual({
@@ -511,10 +548,19 @@ describe("rewind targets without a file snapshot", () => {
         ordinalWithinScope: 0,
         appRunOrdinal: null,
       }) as OrchestrationV2Checkpoint;
+    const projection = (checkpoints: OrchestrationV2Checkpoint[]) => ({
+      checkpoints,
+      checkpointScopes: [],
+    });
     expect(
-      findRevertCheckpoint([checkpoint("captured", "ready"), checkpoint("failed", "error")], 0)?.id,
+      findRevertCheckpoint(
+        projection([checkpoint("captured", "ready"), checkpoint("failed", "error")]),
+        0,
+      )?.id,
     ).toBe("captured");
-    expect(findRevertCheckpoint([checkpoint("failed", "error")], 0)?.id).toBe("failed");
-    expect(findRevertCheckpoint([checkpoint("rolled-back", "stale")], 0)).toBeUndefined();
+    expect(findRevertCheckpoint(projection([checkpoint("failed", "error")]), 0)?.id).toBe("failed");
+    expect(
+      findRevertCheckpoint(projection([checkpoint("rolled-back", "stale")]), 0),
+    ).toBeUndefined();
   });
 });

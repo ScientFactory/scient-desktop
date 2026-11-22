@@ -76,8 +76,10 @@ session's cwd. Provider switches still use portable handoff summaries.
 See the [adapter](../../packages/provider-pi/src/server/adapter.ts).
 
 Antigravity separates account profiles per instance while sharing installed executables across the
-environment. It forces file-based credential storage because the native macOS keychain entry would
-otherwise be shared across instances. The launch environment removes ambient Google credentials,
+environment. The 1.5 CLI keeps every profile's sign-in in one OS keyring entry and ignores
+`AGY_ACP_FORCE_FILE_STORAGE`; only its SSH-session check stores the sign-in in the profile, so Google
+account instances launch with `SSH_CONNECTION` set and sign in with `--login`. Gemini Enterprise
+has no such sign-in and still shares the keyring entry. The launch environment removes ambient Google credentials,
 so an instance cannot silently use another account or billing project. The agent also resolves
 its user-global skill directories under that profile, so the profile links those two directories
 back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
@@ -177,6 +179,28 @@ Configuration and execution share the canonical instance registry:
   per-turn selected-skill scope, idle release and exact-instance teardown. Durable provider sessions
   and threads remain V2 facts even when an in-memory process has gone away.
 
+For a provider session that negotiates both multiple threads and
+per-thread workspaces, switch planning compares the last bound native workspace
+(`nativeMetadata.cwd`) with the conversation's resolved target, not with the shared
+process's opening directory. A genuine workspace change still restarts the binding.
+Older bindings without that metadata conservatively use the session's cwd until rebound.
+Adapters do not own this binding and re-emit cached copies of the row, sometimes from before a
+relocation (OpenCode 2 does). While the same session owns the thread, `ProviderEventIngestor`
+and run finalization in `RunExecutionService` restore the recorded `nativeMetadata.cwd` over
+whatever the adapter carries (`scient-provider/RecordedWorkspace.ts`).
+Detach also unloads the native thread its runtime still holds for the app thread when the
+durable record already names a replacement session; attached peers remain loaded. Because the
+next owner may be another process, detach asks the adapter to wait for the release
+(`awaitRelease`): Codex answers `thread/unsubscribe` before it closes the thread, so the Codex
+adapter then waits up to 5 seconds for `thread/closed`, including a close still pending from an
+earlier idle unsubscribe. Detach also re-joins a thread an idle unload already released, because
+the reassigned row no longer names the old session. Idle unloads do not wait.
+
+Codex launches with `-c thread_unload_delay_secs=0` ahead of user launch arguments, so Codex
+closes a thread as soon as Scient unsubscribes; a launch-argument override still wins. A
+`thread/resume` that Codex refuses because the thread is still closing waits up to 10 seconds
+for this connection's `thread/closed`, then retries.
+
 `ProviderTurnStartService` projects typed composer context, applies selected Scient skills, resolves
 native or portable context transfers, and calls the session manager and `RunExecutionService`.
 Native start and steer expand supported composer citations. Current-input validation includes that
@@ -251,7 +275,17 @@ instances. The open driver and instance identifiers require no database migratio
 WebSocket and provider-instance scopes. Instances share an explicit download operation and the
 completed runtime. Client disconnects and instance rebuilds do not cancel installation.
 
-The fixed [release table][antigravity-release] supplies the bundled floor. Scient's qualified
+On Scient's ACP targets the managed default is the agy CLI that Scient's catalog lists under the
+`antigravity` key, from 1.5.12 on: it serves ACP as `agy acp` and loads full plugins. The
+catalog's URL policy and T3's CLI release parser both apply. The paired release below is the
+floor where no qualified CLI is listed (no catalog check yet, musl Linux). The CLI supersedes
+every paired release, so a paired install is offered it as an update and an installed CLI is
+never offered a paired release. A paired Google sign-in is not converted: both runtimes use the
+same Google OAuth client, but the paired grant lacks scopes the CLI requests (`openid`,
+`userinfo.profile`, `cclog`, `experimentsandconfigs`), so the user signs in once after the
+switch.
+
+The fixed [release table][antigravity-release] supplies the paired bundled floor. Scient's qualified
 catalog may advance immutable release facts under the separate `antigravityAcp` key; the app
 still owns the allowed targets, Google URL family, exact executable pair, and launch policy.
 The catalog's semver is distinct from the agent's native build version. When the bundled
@@ -276,7 +310,8 @@ the same verified archive updates its receipt without replacing or downloading t
 
 Resolution order is explicit `binaryPath`, active managed release, then the instance's `PATH`.
 An invalid explicit path fails without fallback. Manual installations are never changed by the
-installer. Every launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's sibling.
+installer. Every paired launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's
+sibling.
 
 ### Google profiles and sign-in
 
@@ -288,11 +323,14 @@ the official macOS keychain entry being shared across instances. Profile directo
 `0700` on POSIX. This is file storage, not an encrypted keychain. Windows uses the host profile's
 filesystem permissions.
 
-The private profile links the user's documented loose and provider-managed skill roots. Global
-plugin skills receive a skill-only projection containing each plugin manifest and skill directory;
-plugin MCP servers, hooks, rules, agents, and credentials remain outside the profile. This keeps
-native skill loading available without expanding a provider session's authority as a side effect of
-skill discovery.
+The private profile links the user's documented loose and provider-managed skill roots. The agy
+CLI loads plugins natively from the OS user's `~/.gemini/config/plugins` whatever `GEMINI_HOME`
+says, and `agy plugin enable|disable` keeps their switches in `~/.gemini/config/config.json`;
+installed plugins are therefore shared with the user's own Antigravity. For a paired runtime,
+which loads no plugins of its own, global plugin skills receive a skill-only projection
+containing each enabled plugin's manifest and skill directory; plugin MCP servers, hooks, rules,
+agents, and credentials remain outside the profile. A CLI launch skips the projection and removes
+only a `config/plugins` link that points at one of Scient's projected generations.
 
 The launch environment removes API-key and cloud-billing variables, disables inherited
 environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A tested Node or
@@ -854,8 +892,15 @@ the agent's cancellation closes expired dialogs. Plain confirms offer Yes/No onl
   The extension proxies Scient's MCP tools with
   `loadMode: "essential"`, because OMP presents extension tools as `discoverable` by default and
   keeps those out of the top-level tool list. Tool calls go through Scient's MCP server, which
-  authorizes each one against the session token; `stopSession` revokes it. The adapter declares
+  authorizes each one against the session token; `stopSession` revokes it. A tool call may run for
+  65 minutes, above the hour a thread wait can block, as Claude's and Codex's limits allow; the
+  handshake keeps a 3-minute limit. The adapter declares
   `mcpSessionInjection`, and `SCIENT_SKILL_DELIVERY.omp` is `mcp`.
+- The appended system-prompt element (`provider/omp/OmpScientGuidance.ts`) carries what Claude's
+  session carries: the awareness, Scient's runtime and pull-request linking instructions, and, with
+  the `orchestration` grant, the shared orchestration rules plus a note that OMP's native `task`
+  serves only the models it offers (the current model unless `task.perCallModel` adds a `model`
+  argument), so another model is a `delegate_task`.
 - OMP's RPC host tools (`set_host_tools`) are not used. An unexpected host-tool call is rejected
   with an explicit warning rather than being silently dropped. Full access is the only runtime
   mode. `Adapters/OmpAdapterV2.ts` maps the shared native session runtime into V2;
@@ -876,12 +921,16 @@ Scient Agent.
   starting it. Oh My Pi is probed with `--version`. Scient Agent is probed with `--runtime-info`,
   which prints one JSON object: `product`, the Scient Agent `version`, the `upstream` Oh My Pi
   release, and `rpcProtocolVersions`. The product must be `scient-agent`, the version 0.1.0 or
-  newer below 1.0, the upstream release one this server supports for Oh My Pi, and RPC v2 offered.
+  newer below 2.0, the upstream release Oh My Pi 18.2.8 or newer on major 18 or 19 (1.x is built on
+  19), and RPC v2 offered. That upstream range is Scient Agent's own, apart from the stock Oh My Pi
+  provider's.
   An `omp` executable fails that probe, and a `scient-agent` executable fails Oh My Pi's. The probe
   runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
 - Two versions. A process reports `version` (the product's, shown to the user) and
   `runtimeVersion` (the Oh My Pi release it runs). Resume cursors and protocol switches follow
-  `runtimeVersion`. For Oh My Pi the two are equal.
+  `runtimeVersion`. For Oh My Pi the two are equal. A cursor resumes on the major that wrote it,
+  and Scient Agent's also resumes forward from 18 to 19 (`resumableUpstreamMajors`), since 19 reads
+  an 18 session.
 - State. The driver assigns `SCIENT_AGENT_ROOT=<stateDir>/scient-agent/instances/<instanceId>`
   and passes no other `SCIENT_AGENT_*` variable, inherited or set on the instance. The agent
   treats that root as authoritative: it ignores `SCIENT_AGENT_DIR` under it and does not take a
@@ -909,6 +958,15 @@ Scient Agent.
   Sparse updates retain known metadata without changing child identity or the original
   background launch's ownership. Native read-only child conversations project the supplied
   assignment and terminal result as stable message artifacts.
+  Their steps come from the conversation OMP saves for each subagent (the lifecycle and progress
+  `sessionFile`, which must resolve inside the session directory). `OmpSubagentTranscript.ts`
+  reads complete records in bounded chunks; `OmpAdapterV2` reads at most once a second per
+  subagent while it runs, two reads at a time per session, outside the event consumer, then
+  twice after it ends. `NativeSessionAdapterV2` projects text, reasoning and tool calls into the
+  child thread with ids derived from the saved records, so a re-read writes nothing new; the
+  terminal result appears once, after the steps. Tool input and output use the parent's previews
+  and redaction. The RPC's `get_subagent_messages` returns the same records, unbounded, and only
+  while the process remembers the subagent, so Scient reads the file.
   Terminal progress can precede the closing lifecycle frame. Matching terminal frames
   enrich retained metadata and any supplied result or error without reopening the child;
   identical repeats are ignored.
@@ -1197,10 +1255,12 @@ and npm are proven by the real path (symlinks followed): a versioned keg or cask
 `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
 Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
 either the resolved path or its real target, since those installers place real files or their own
-symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
-nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
-`pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
-the runner's version check catches an updater that exits 0 without updating. Mise is checked
+symlinks there. Volta is proven by the package's image directory plus either its `volta-shim` link
+or, on Windows, the exact cmd or bash forwarding script Volta generates; a custom script that merely
+calls `volta run` does not qualify. When nothing is proven, Pi's and Grok's own updaters
+(`pi update --self`, `grok update`) run instead, because each detects its installer itself; the
+runner's version check catches an updater that exits 0 without updating. Claude, Codex, and OpenCode updaters only act on their own native layout, so
+those providers stay manual-only unless that layout is proven. Mise is checked
 first, since a `mise x` wrapper can sit at a native installer's path, and `MISE_DATA_DIR` can put
 installs anywhere, so `mise which` is asked whenever mise is on `PATH`. Each driver names its fixed
 mise tool; mise must resolve the binary and list it in an active install of that tool requested as
@@ -1208,7 +1268,7 @@ mise tool; mise must resolve the binary and list it in an active install of that
 path must be a shim or under the tool's `latest` link, which the upgrade repoints: a version
 directory (including one `mise activate` put on `PATH`) would keep running the old binary until mise
 prunes it. Everything else mise touches (fixed version paths, pinned tools, wrappers, OpenCode 1.x,
-whose mise tool crosses into 2.x) stays manual-only, so T3 Code never edits mise config. `mise latest` supplies the version, because settings such as
+whose mise tool crosses into 2.x) stays manual-only, so T3 Code never edits mise config. Nix store installs stay manual-only too, since the store is read-only. `mise latest` supplies the version, because settings such as
 `minimum_release_age` can hold mise behind npm. A Grok cask whose Homebrew prefix
 cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew

@@ -1,8 +1,10 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ScientProjectInspection } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { m } from "../i18n/messages";
 import {
   initializeScientProjectForOpening,
   inspectScientProjectForOpening,
@@ -12,7 +14,7 @@ import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/project
 import { readPreparedConnection } from "../state/session";
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An unexpected error occurred.";
+  return error instanceof Error ? error.message : m(msg("An unexpected error occurred."));
 }
 
 /**
@@ -58,7 +60,7 @@ export function useScientProjectInitialization() {
     const runInitialization = async () => {
       const prepared = readPreparedConnection(input.environmentId);
       if (prepared === null) {
-        throw new Error("The selected environment is not connected.");
+        throw new Error(m(msg("The selected environment is not connected.")));
       }
       const result = await initializeScientProjectForOpening({
         prepared,
@@ -67,16 +69,16 @@ export function useScientProjectInitialization() {
       });
       if (result.state !== "initialized") {
         throw new Error(
-          result.issues[0]?.message ?? "This folder could not be initialized safely.",
+          result.issues[0]?.message ?? m(msg("This folder could not be initialized safely.")),
         );
       }
       toastManager.add({
         type: "success",
-        title: "Scient project ready",
+        title: m(msg("Scient project ready")),
         description:
           result.created.length > 0
-            ? `Created ${result.created.join(", ")}.`
-            : "The existing Scient project foundation is ready.",
+            ? m(msg("Created {files}.", { files: result.created.join(", ") }))
+            : m(msg("The existing Scient project foundation is ready.")),
       });
     };
 
@@ -85,16 +87,16 @@ export function useScientProjectInitialization() {
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Project opened without Scient setup",
+        title: m(msg("Project opened without Scient setup")),
         description: errorMessage(error),
         data: {
           secondaryActionProps: {
-            children: "Retry setup",
+            children: m(msg("Retry setup")),
             onClick: () => {
               void runInitialization().catch((retryError) => {
                 toastManager.add({
                   type: "error",
-                  title: "Scient project setup still needs attention",
+                  title: m(msg("Scient project setup still needs attention")),
                   description: errorMessage(retryError),
                 });
               });
@@ -116,9 +118,12 @@ export function useScientProjectInitialization() {
     if (prepared === null) {
       toastManager.add({
         type: "warning",
-        title: "Scient project setup could not be checked",
-        description:
-          "The selected environment is still connecting. The folder will open without changing its files.",
+        title: m(msg("Scient project setup could not be checked")),
+        description: m(
+          msg(
+            "The selected environment is still connecting. The folder will open without changing its files.",
+          ),
+        ),
       });
       return { root: input.root, initialize: false };
     }
@@ -140,8 +145,12 @@ export function useScientProjectInitialization() {
       if (input.isCurrent?.() === false) return null;
       toastManager.add({
         type: "warning",
-        title: "Scient project setup could not be checked",
-        description: `${errorMessage(error)} The folder will open without changing its files.`,
+        title: m(msg("Scient project setup could not be checked")),
+        description: m(
+          msg("{error} The folder will open without changing its files.", {
+            error: errorMessage(error),
+          }),
+        ),
       });
       return { root: input.root, initialize: false };
     }

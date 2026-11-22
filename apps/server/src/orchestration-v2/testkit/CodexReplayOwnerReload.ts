@@ -82,9 +82,17 @@ export function materializeCodexOwnerReload(
     !Predicate.isObject(start.frame.params)
   )
     throw new Error("Declared Codex owner reload has no recorded creation policy.");
+  // Codex reads its config inside the turn start, after the owner resume.
+  const configRead = transcript.entries[targetIndex - 2];
+  const turnStartIndex =
+    configRead?.type === "expect_outbound" &&
+    Predicate.isObject(configRead.frame) &&
+    configRead.frame.method === "config/read"
+      ? targetIndex - 2
+      : targetIndex;
   const insertionIndex =
     options === undefined
-      ? targetIndex
+      ? turnStartIndex
       : transcript.entries.findIndex(
           (entry, index) =>
             index > responseIndex &&
@@ -109,11 +117,29 @@ export function materializeCodexOwnerReload(
   for (const [index, entry] of transcript.entries.entries()) {
     if (index === insertionIndex) {
       entries.push(
+        // The resume first reads the config for the stdio MCP servers it gives the thread id.
+        {
+          type: "expect_outbound",
+          label: "canonical-owner.config/read",
+          frame: {
+            id: insertion.frame.id,
+            method: "config/read",
+            params: {
+              ...(runtimeParams.cwd === undefined ? {} : { cwd: runtimeParams.cwd }),
+              includeLayers: false,
+            },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "canonical-owner.config/read:response",
+          frame: { id: insertion.frame.id, result: { config: {}, origins: {} } },
+        },
         {
           type: "expect_outbound",
           label: "canonical-owner.thread/resume",
           frame: {
-            id: insertion.frame.id,
+            id: insertion.frame.id + 1,
             method: "thread/resume",
             params: {
               ...runtimeParams,
@@ -126,12 +152,12 @@ export function materializeCodexOwnerReload(
           type: "emit_inbound",
           label: "canonical-owner.thread/resume:response",
           frame: {
-            id: insertion.frame.id,
+            id: insertion.frame.id + 1,
             result: { ...response.frame.result },
           },
         },
       );
-      requestOffset = 1;
+      requestOffset = 2;
     }
     if (
       (entry.type === "expect_outbound" || entry.type === "emit_inbound") &&

@@ -59,6 +59,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { programRunAttribution } from "../../telemetry/FailureAttribution.ts";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -73,6 +74,7 @@ import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolv
 import { appendBoundedAnalysisOutput, makeHeldAnalysisOutput } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
 import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
+import { isComputeCaptureReason } from "../compute/ComputeCaptureStatus.ts";
 import { ComputeProjectOutputObserver } from "../compute/ComputeProjectOutputObserver.ts";
 import { makeRunTableAdapters } from "./RunTableAdapter.ts";
 
@@ -240,6 +242,8 @@ const make = Effect.gen(function* () {
     ),
   );
   const runsRef = yield* Ref.make(new Map<string, AnalysisRunSnapshot>());
+  // Why a run could not start, by run id, kept only until its failure is measured.
+  const notStartedReasons = new Map<string, "source-changed" | "runtime-missing">();
   const loadedProjectsRef = yield* Ref.make(new Set<string>());
   const dirtyIndexProjectsRef = yield* Ref.make(new Set<string>());
   const runtimeQueuesRef = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
@@ -278,7 +282,7 @@ const make = Effect.gen(function* () {
     const key = [run.projectId, String(receipt.runId)]
       .map((part) => `${part.length}:${part}`)
       .join("|");
-    // Phase/queue updates are not new work, including after a consent reset.
+    // Phase/queue updates are not new work.
     if (isNewRun || isTerminal(receipt.status)) {
       yield* observeOperation({
         key,
@@ -294,19 +298,39 @@ const make = Effect.gen(function* () {
         startedAt: Date.parse(receipt.startedAt),
         ...(receipt.finishedAt === null ? {} : { finishedAt: Date.parse(receipt.finishedAt) }),
         trigger: "user",
+        entry: "run-file",
+        language: run.runtime.kind,
+        ...(receipt.status === "failed" || receipt.status === "lost"
+          ? {
+              attribution: programRunAttribution(
+                receipt.status,
+                receipt.exitCode,
+                notStartedReasons.get(String(receipt.runId)),
+              ),
+            }
+          : {}),
       });
+      if (isTerminal(receipt.status)) notStartedReasons.delete(String(receipt.runId));
     }
 
     // Capture is a separate persisted outcome: code can succeed without its figures.
-    // Admission starts observation once; later progress must not replay pre-consent work.
+    // Admission starts observation once; later progress must not replay earlier work.
     const capture = run.artifactReceipt.status;
     if (capture === "not-requested") return;
     if (!isNewRun && capture === "pending" && !isTerminal(receipt.status)) return;
+    // Runs recorded before coverage was kept read as complete, as they were reported then.
+    const facts = run.artifactReceipt.coverage;
+    const rejected = facts?.rejectedCount ?? 0;
+    const coverage = facts?.coverage ?? "complete";
+    const reason = (value: string | undefined) =>
+      isComputeCaptureReason(value) ? value : undefined;
     const status =
       capture === "succeeded"
-        ? run.artifacts.length > 0
-          ? "completed"
-          : "skipped"
+        ? rejected > 0
+          ? "failed"
+          : run.artifacts.length > 0
+            ? "completed"
+            : "skipped"
         : capture === "failed"
           ? "failed"
           : receipt.cancellationRequested
@@ -329,26 +353,33 @@ const make = Effect.gen(function* () {
               captureSource: "run-file" as const,
               captureOutcome:
                 capture === "succeeded"
-                  ? run.artifacts.length > 0
-                    ? ("retained" as const)
-                    : ("none" as const)
+                  ? rejected > 0
+                    ? run.artifacts.length > 0
+                      ? ("partial" as const)
+                      : ("failed" as const)
+                    : run.artifacts.length > 0
+                      ? ("retained" as const)
+                      : coverage === "complete"
+                        ? ("none" as const)
+                        : ("unobserved" as const)
                   : run.artifacts.length > 0
                     ? ("partial" as const)
                     : status === "cancelled"
                       ? ("unobserved" as const)
                       : ("failed" as const),
-              captureCoverage:
-                capture === "succeeded" ? ("complete" as const) : ("unavailable" as const),
+              captureCoverage: capture === "succeeded" ? coverage : ("unavailable" as const),
               captureReason:
                 capture === "succeeded"
-                  ? ("none" as const)
+                  ? (reason(facts?.rejectionReason) ?? reason(facts?.coverageReason) ?? "none")
                   : status === "cancelled"
                     ? ("observation-unavailable" as const)
                     : ("artifact-collection-failed" as const),
               retainedOutputCount: run.artifacts.length,
-              ...(capture === "succeeded" || status === "cancelled"
-                ? { rejectedOutputCount: 0 }
-                : {}),
+              ...(capture === "succeeded"
+                ? { rejectedOutputCount: rejected }
+                : status === "cancelled"
+                  ? { rejectedOutputCount: 0 }
+                  : {}),
             },
           }),
     });
@@ -916,6 +947,12 @@ const make = Effect.gen(function* () {
           absoluteSourcePath,
           artifactStagingDirectory,
         };
+        const releaseRun = adapter.releaseRun;
+        if (releaseRun) {
+          yield* Effect.addFinalizer(() =>
+            Effect.promise(() => releaseRun(runContext)).pipe(Effect.ignoreCause({ log: true })),
+          );
+        }
         const prepareRun = adapter.prepareRun;
         if (prepareRun) {
           yield* Effect.tryPromise({
@@ -1089,6 +1126,7 @@ const make = Effect.gen(function* () {
               artifacts,
               writtenFiles: collected.writtenFiles ?? [],
               failureMessage: collected.failureMessage,
+              coverage: collected.coverage,
             };
           }).pipe(
             Effect.catchCause((cause) =>
@@ -1102,6 +1140,7 @@ const make = Effect.gen(function* () {
                   artifacts: [],
                   writtenFiles: [],
                   failureMessage: `${profile.label} finished, but Scient could not collect its generated figures.`,
+                  coverage: undefined,
                 };
               }),
             ),
@@ -1115,6 +1154,7 @@ const make = Effect.gen(function* () {
             artifactReceipt: {
               status: collection.status,
               failureMessage: collection.failureMessage,
+              ...(collection.coverage === undefined ? {} : { coverage: collection.coverage }),
             },
           }));
         } else {
@@ -1181,6 +1221,13 @@ const make = Effect.gen(function* () {
             latest = (yield* Ref.get(runsRef)).get(runId) ?? latest;
           }
           const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+          if (
+            status === "failed" &&
+            isOperationError(failure) &&
+            (failure.reason === "source-changed" || failure.reason === "runtime-missing")
+          ) {
+            notStartedReasons.set(runId, failure.reason);
+          }
           yield* finishRun(
             runId,
             status,

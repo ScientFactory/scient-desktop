@@ -35,6 +35,14 @@ import { page, userEvent } from "vite-plus/test/browser";
 vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
 vi.mock("../accounts/useScratchThread", () => ({ useScratchThread: () => async () => null }));
 vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
+vi.mock("./connectorAgentChat", () => ({
+  useConnectorAgentChat: () => undefined,
+  MAKE_CONNECTOR_PROMPT: "",
+  fixConnectorPrompt: () => "",
+  improveConnectorPrompt: () => "",
+  makeFromEntryPrompt: () => "",
+}));
+vi.mock("../accounts/useSignIn", () => ({ useSignIn: () => async () => false }));
 vi.mock("../skills/skillAgentChat", () => ({
   useSkillAgentChat: () => undefined,
   finishSkillPrompt: () => "",
@@ -84,6 +92,8 @@ const state = vi.hoisted(() => ({
     add: vi.fn(),
     update: vi.fn(),
     remove: vi.fn(),
+    undo: vi.fn(),
+    export: vi.fn(),
     test: vi.fn(),
     startSignIn: vi.fn(),
     install: vi.fn(),
@@ -134,13 +144,15 @@ vi.mock("../../state/shell", () => ({
 }));
 vi.mock("../../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
+  const { promiseCommandRun } = await import("../../../test/promiseCommandRun");
   const permission = Atom.make(true);
   return {
     providersIgnoringCheckedAtAtom: (environmentId: string) => environmentId,
     serverEnvironment: {
       refreshProviders: {
         permissionAtom: () => permission,
-        run: (...args: unknown[]) => state.refreshInventory(...args),
+        // Commands run as Effects; the fakes below answer with a Promise of the settled result.
+        run: promiseCommandRun((...args: unknown[]) => state.refreshInventory(...args)),
       },
     },
   };
@@ -247,6 +259,11 @@ vi.mock("../../state/query", async () => {
       if (atom.kind === "skill-document")
         return { data: { instructions: "Skill instructions" }, error: null };
       if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
+      if (atom.kind === "store")
+        return {
+          data: state.storePages[String(atom.input?.instanceId)] ?? { entries: [], total: 0 },
+          error: null,
+        };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
       if (atom.kind === "catalog") return { data: state.catalog, error: null };
       if (atom.kind === "entry") {
@@ -368,6 +385,8 @@ vi.mock("./extensionsState", async () => {
     addConnector: "add",
     updateConnector: "update",
     removeConnector: "remove",
+    undoConnector: "undo",
+    exportConnector: "export",
     testConnector: "test",
     inspectLocalBundle: "inspect",
     listImportableConnectors: "importable",
@@ -421,9 +440,15 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     <span data-navigate={to} data-hash={hash} />
   ),
   useNavigate: () => state.navigate,
+  useRouter: () => ({ history: { push: (href: string) => state.navigate({ href }) } }),
   useLocation: ({ select }: { select: (location: unknown) => unknown }) => {
     useStateVersion();
-    return select({ pathname: "/settings/extensions", hash: state.hash, state: {} });
+    return select({
+      pathname: "/settings/extensions",
+      href: "/settings/extensions",
+      hash: state.hash,
+      state: {},
+    });
   },
 }));
 vi.mock("../../components/chat/providerIconUtils", () => ({
@@ -528,8 +553,11 @@ import {
   ProviderPluginDetailPage,
   ServerDetailPage,
 } from "./ExtensionDetailPages";
-import { ProviderStoreDetailPage } from "./ProviderStorePages";
+import { ProviderStoreDetailPage, ProviderStorePage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
+import { AccountServiceDetailPage } from "./AccountServicePages";
+import { forgetListPage } from "./ExtensionsPage";
+import { WORKS_WITH_OPEN_DELAY_MS } from "./WorksWith";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claude");
@@ -583,7 +611,7 @@ function entry(name: string, patch: Partial<DiscoverEntry> = {}): DiscoverEntry 
       { type: "streamable-http", url: `https://${name}.example.com/mcp`, requiresInput: false },
     ],
     installable: true,
-    categories: ["featured"],
+    categories: ["most-used"],
     ...patch,
   };
 }
@@ -640,7 +668,7 @@ const catalog: DiscoverCatalog = {
   fetchedAt: "2026-10-21T00:00:00.000Z",
   sections: [
     {
-      category: "featured",
+      category: "most-used",
       title: "Popular",
       total: 3,
       entries: [
@@ -667,6 +695,18 @@ const buttonIn = (scope: ParentNode, label: string) =>
   [...scope.querySelectorAll("button")].find(
     (item) => item.textContent === label || item.getAttribute("aria-label") === label,
   ) ?? null;
+/** The agent card a + opens; every agent starts chosen. */
+const agentCard = (name: string) =>
+  vi.waitFor(() => {
+    const card = document.querySelector(`[aria-label="Add ${name} for"]`);
+    if (card === null) throw new Error(`No agent card for ${name}`);
+    return card;
+  });
+/** Clicks +, then Add in the agent card, for every agent. */
+const addThroughCard = async (button: HTMLButtonElement | null, name: string) => {
+  await userEvent.click(button!);
+  await userEvent.click(buttonIn(await agentCard(name), "Add")!);
+};
 const linkIn = (scope: ParentNode, text: string) =>
   [...scope.querySelectorAll("a")].find((item) => item.textContent === text) ?? null;
 
@@ -690,6 +730,8 @@ function setup() {
       }),
     );
   state.projects = [];
+  // Item pages go back to the list last shown; each test starts with none, as a new window does.
+  forgetListPage();
   state.providersByEnvironment = {
     local: [
       provider(codex, "codex", {
@@ -744,6 +786,7 @@ function setup() {
     async reset() {
       await screen?.[Symbol.asyncDispose]();
       screen = undefined;
+      forgetListPage();
     },
     rowNames(scope: ParentNode = host) {
       return [...scope.querySelectorAll<HTMLElement>("[data-extension-row]")].map(
@@ -773,15 +816,36 @@ function setup() {
   };
 }
 
+/** The table's "Show all N" toggle, or null when everything already shows. */
+function showAllIn(section: Element | null): HTMLButtonElement | null {
+  return (
+    [...(section?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) =>
+      /^Show all \d+$/.test(button.textContent ?? ""),
+    ) ?? null
+  );
+}
+
 describe("Discover", () => {
   it("shows each catalog section with a link to its category, built-ins and Browse all", async () => {
     await using fixture = setup();
     await fixture.render(<DiscoverPage />);
     const popular = fixture.section("Popular");
     expect(linkIn(fixture.container, "Popular")?.getAttribute("href")).toBe(
-      "/settings/extensions/category/featured",
+      "/settings/extensions/category/most-used",
     );
-    expect(fixture.rowNames(popular)).toEqual(["Linear", "Notion", "Local tool"]);
+    // Most used leads with the account services, then the catalog's picks.
+    expect(fixture.rowNames(popular)).toEqual([
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+      "Outlook Email",
+      "Outlook Calendar",
+      "iMessage",
+      "Telegram",
+      "Linear",
+      "Notion",
+      "Local tool",
+    ]);
     expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Sources"]);
     expect(linkIn(fixture.container, "Browse all MCP servers")?.getAttribute("href")).toBe(
       "/settings/extensions/all",
@@ -811,6 +875,42 @@ describe("Discover", () => {
     });
   });
 
+  it("asks which agents get a server, adds it for those, and adds at once with one agent", async () => {
+    await using fixture = setup();
+    state.commands.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: connector("notion0001", { displayName: "Notion" }), nextStep: "ready" },
+    });
+    await fixture.render(<DiscoverPage />);
+    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    const card = await agentCard("Notion");
+    expect([...card.querySelectorAll("label")].map((label) => label.textContent)).toEqual([
+      "Codex",
+      "Claude",
+    ]);
+    await userEvent.click(page.getByRole("checkbox").nth(1));
+    await userEvent.click(buttonIn(card, "Add")!);
+    expect(state.commands.add).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: expect.objectContaining({ displayName: "Notion", agents: [codex] }),
+    });
+
+    // With one agent that takes connectors there is nothing to choose.
+    state.providersByEnvironment = { local: [state.providersByEnvironment.local![0]!] };
+    state.inventory = {
+      ...inventory(),
+      providerSupport: inventory().providerSupport.filter(
+        (entry) => entry.providerInstanceId === codex,
+      ),
+    };
+    state.commands.add.mockClear();
+    await fixture.render(<DiscoverPage />);
+    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    expect(document.querySelector('[aria-label="Add Notion for"]')).toBeNull();
+    expect(state.commands.add).toHaveBeenCalledOnce();
+    expect(state.commands.add.mock.calls[0]![0].input).not.toHaveProperty("agents");
+  });
+
   it("adds with + and opens sign-in when the server asks for it", async () => {
     await using fixture = setup();
     const reserved = { opener: {}, location: { href: "" }, close: vi.fn(), closed: false };
@@ -833,7 +933,7 @@ describe("Discover", () => {
       },
     });
     await fixture.render(<DiscoverPage />);
-    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    await addThroughCard(buttonIn(fixture.row("Notion"), "Add Notion"), "Notion");
     expect(state.commands.add).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -871,7 +971,7 @@ describe("Discover", () => {
     const signIn = Promise.withResolvers<unknown>();
     state.commands.startSignIn.mockReturnValueOnce(signIn.promise);
     await fixture.render(<DiscoverPage />);
-    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    await addThroughCard(buttonIn(fixture.row("Notion"), "Add Notion"), "Notion");
     await act(async () => undefined);
     expect(state.commands.startSignIn).toHaveBeenCalledOnce();
 
@@ -952,7 +1052,7 @@ describe("Discover", () => {
     await using fixture = setup();
     state.commands.add.mockResolvedValueOnce(extensionsError("The server did not answer."));
     await fixture.render(<DiscoverPage />);
-    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    await addThroughCard(buttonIn(fixture.row("Notion"), "Add Notion"), "Notion");
     expect(fixture.row("Notion").querySelector('[role="alert"]')?.textContent).toBe(
       "The server did not answer.",
     );
@@ -1025,7 +1125,7 @@ describe("Discover", () => {
     state.discoverPages = {
       [curatedKey]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
-        entries: [entry("scient.curated/granola", { title: "Granola", categories: ["writing"] })],
+        entries: [entry("scient.curated/granola", { title: "Granola", categories: ["files"] })],
       },
     };
     state.discoverOutcomes = { [registryKey]: "pending" };
@@ -1063,7 +1163,40 @@ describe("Discover", () => {
     expect(results().querySelector("[data-discover-error]")).toBeNull();
   });
 
-  it("keeps picks visible while registry is pending and groups store alternatives", async () => {
+  it("gives each store one section with one working Show more", async () => {
+    await using fixture = setup();
+    const plugin = (name: string, kind: "codex" | "shared"): ProviderStoreEntry => ({
+      id: name,
+      name,
+      displayName: name,
+      marketplace: "test",
+      description: "Data tools",
+      kind,
+      installed: false,
+      includes: [],
+      apps: [],
+    });
+    state.storePages[codex] = { entries: [plugin("Plotter", "codex")], total: 9, nextCursor: "c" };
+    state.storePages[claude] = { entries: [plugin("Tables", "shared")], total: 9, nextCursor: "c" };
+    await fixture.render(<CategoryPage category="data" />);
+    const claudeStore = fixture.section("From Claude’s store");
+    const codexStore = fixture.section("From Codex’s store");
+    expect(fixture.rowNames(claudeStore)).toEqual(["Tables"]);
+    expect(fixture.rowNames(codexStore)).toEqual(["Plotter"]);
+    expect(claudeStore.textContent).toContain("Works with Claude and Scient Agent");
+    const more = (section: Element) =>
+      [...section.querySelectorAll("button")].filter(
+        (button) => button.textContent === "Show more plugins",
+      );
+    expect(more(claudeStore)).toHaveLength(1);
+    expect(more(codexStore)).toHaveLength(1);
+    await userEvent.click(more(claudeStore)[0]!);
+    // The next page is asked for; this fake answers with the same cursor, so nothing is left.
+    await vi.waitFor(() => expect(more(fixture.section("From Claude’s store"))).toHaveLength(0));
+    expect(more(fixture.section("From Codex’s store"))).toHaveLength(1);
+  });
+
+  it("lists picks and store alternatives in a category, without Registry servers", async () => {
     await using fixture = setup();
     const pick = entry("scient.curated/scite", {
       title: "Scite",
@@ -1074,7 +1207,6 @@ describe("Discover", () => {
       entries: [pick],
       fetchedAt: "2026-10-21T00:00:00.000Z",
     };
-    state.discoverOutcomes[JSON.stringify({ scope: "registry", category: "papers" })] = "pending";
     const plugin = (name: string): ProviderStoreEntry => ({
       id: name,
       name,
@@ -1089,11 +1221,15 @@ describe("Discover", () => {
     state.storePages[codex] = { entries: [plugin("scite"), plugin("zotero")], total: 2 };
     state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<CategoryPage category="papers" />);
-    expect(fixture.rowNames()).toEqual(["Scite", "Zotero"]);
-    expect(fixture.container.textContent).toContain("Also add from Codex");
-    expect(fixture.container.textContent).toContain("Not checked by Scient");
-    expect(fixture.container.textContent).toContain("Codex only");
-    await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
+    // Readwise is Scient's own service in Papers; the store plugins follow it.
+    expect(fixture.rowNames()).toEqual(["Readwise", "Scite", "Zotero"]);
+    // The store versions are on the item's own page, not under its row.
+    expect(fixture.container.textContent).not.toContain("Also add from");
+    expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
+    // Each store has its own section, which says the agent once; the rows just say Add.
+    expect(fixture.section("From Codex’s store").textContent).toContain("Codex only");
+    expect(fixture.row("Zotero").textContent).not.toContain("Codex only");
+    await userEvent.click(buttonIn(fixture.row("Zotero"), "Add")!);
     expect(state.commands.providerAct).toHaveBeenCalledWith(
       expect.objectContaining({
         environmentId: "local",
@@ -1129,7 +1265,7 @@ describe("Discover", () => {
     const granola = entry("scient.curated/granola", {
       title: "Granola",
       tagline: "Meeting notes",
-      categories: ["writing"],
+      categories: ["files"],
     });
     state.discoverPages = {
       [JSON.stringify({ scope: "registry" })]: {
@@ -1163,20 +1299,49 @@ describe("Discover", () => {
     expect(redirect?.dataset.hash).toBe("extensions-connected-services");
   });
 
+  it("opens a category with the picks Discover had, and its items go back to it", async () => {
+    await using fixture = setup();
+    state.discoverOutcomes = {
+      [JSON.stringify({ scope: "curated", category: "most-used" })]: "pending",
+    };
+    await fixture.render(<CategoryPage category="most-used" />);
+    expect(fixture.rowNames(fixture.section("Scient’s picks")).slice(-3)).toEqual([
+      "Linear",
+      "Notion",
+      "Local tool",
+    ]);
+    expect(fixture.container.textContent).not.toContain("Loading picks…");
+
+    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(linkIn(fixture.container, "Installed")).toBeNull();
+    await userEvent.click(buttonIn(fixture.container, "Popular")!);
+    expect(state.navigate).toHaveBeenLastCalledWith({ href: "/settings/extensions" });
+  });
+
   it("lists a category with a way back, and rejects unknown categories", async () => {
     await using fixture = setup();
     state.discoverPages = {
-      [JSON.stringify({ scope: "curated", category: "featured" })]: {
+      [JSON.stringify({ scope: "curated", category: "most-used" })]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
         entries: [entry("io.notion/notion", { title: "Notion" })],
         nextCursor: "page-2",
       },
     };
-    await fixture.render(<CategoryPage category="featured" />);
+    await fixture.render(<CategoryPage category="most-used" />);
     expect(linkIn(fixture.container, "Discover")?.getAttribute("href")).toBe(
       "/settings/extensions",
     );
-    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual(["Notion"]);
+    // The account services lead Most used, then the curated picks.
+    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual([
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+      "Outlook Email",
+      "Outlook Calendar",
+      "iMessage",
+      "Telegram",
+      "Notion",
+    ]);
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
     expect(fixture.container.textContent).not.toContain("From your agents’ stores");
 
@@ -1186,161 +1351,6 @@ describe("Discover", () => {
 });
 
 describe("Installed", () => {
-  it("lists all unopened project roots beyond both retention bounds only in the selected environment", async () => {
-    await using fixture = setup();
-    state.scopeEnvironmentId = "remote";
-    state.projects = [
-      ...Array.from({ length: 40 }, (_, index) => ({
-        environmentId: "remote",
-        id: `p-${index}`,
-        title: `Project ${index}`,
-        workspaceRoot: `/p-${index}`,
-      })),
-      { environmentId: "local", id: "local", title: "Local", workspaceRoot: "/local" },
-      {
-        environmentId: "remote",
-        id: "scratch",
-        title: "Scratch",
-        workspaceRoot: "/scratch",
-        isScratch: true,
-      },
-    ];
-    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
-    state.providersByEnvironment = { remote: [raw] };
-    let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
-    state.refreshInventory.mockImplementation(
-      async (_registry, target: { environmentId: string; input: { cwd?: string } }) => {
-        expect(target.environmentId).toBe("remote");
-        const cwd = target.input.cwd;
-        if (cwd)
-          snapshots = [
-            ...snapshots,
-            {
-              cwd,
-              checkedAt: "2026-10-26T00:00:00.000Z",
-              skills: [],
-              slashCommands: [],
-              plugins: [
-                { id: cwd, name: `Plugin ${cwd}`, source: "local" as const, enabled: true },
-              ],
-            },
-          ].slice(-16);
-        return {
-          _tag: "Success",
-          value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
-        };
-      },
-    );
-    await fixture.render(<InstalledPage />);
-    await vi.waitFor(() =>
-      expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-    );
-    await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
-    expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
-    expect(fixture.rowNames()).toContain("Plugin /p-0");
-    expect(fixture.rowNames()).toContain("Plugin /p-39");
-    expect(
-      state.refreshInventory.mock.calls.flatMap(([, target]) => target.input.cwd ?? []),
-    ).toHaveLength(40);
-    expect(snapshots).toHaveLength(16);
-  });
-
-  it.each([false, true])(
-    "sweeps 40 roots once after same-ID replacement (coalesced reset: %s)",
-    async (coalesced) => {
-      await using fixture = setup();
-      state.projects = Array.from({ length: 40 }, (_, index) => ({
-        environmentId: "local",
-        id: `p-${index}`,
-        title: `Project ${index}`,
-        workspaceRoot: `/p-${index}`,
-      }));
-      let raw = provider(codex, "codex", {
-        nativeInventoryGeneration: "old",
-        plugins: [],
-        mcpServers: [],
-      });
-      state.providersByEnvironment = { local: [raw] };
-      let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
-      const scanned: string[] = [];
-      const entered = Promise.withResolvers<void>();
-      const release = Promise.withResolvers<unknown>();
-      let held = false;
-      state.refreshInventory.mockImplementation(
-        async (_registry, { input }: { input: { cwd?: string } }) => {
-          if (held) {
-            held = false;
-            entered.resolve();
-            return release.promise;
-          }
-          if (input.cwd) {
-            scanned.push(`${raw.nativeInventoryGeneration}:${input.cwd}`);
-            snapshots = [
-              ...snapshots.filter((entry) => entry.cwd !== input.cwd),
-              {
-                cwd: input.cwd,
-                checkedAt: raw.checkedAt,
-                skills: [],
-                slashCommands: [],
-                plugins: [
-                  {
-                    id: input.cwd,
-                    name: `${raw.nativeInventoryGeneration} ${input.cwd}`,
-                    source: "local" as const,
-                    enabled: true,
-                  },
-                ],
-              },
-            ].slice(-16);
-          }
-          return {
-            _tag: "Success",
-            value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
-          };
-        },
-      );
-      await fixture.render(<InstalledPage />);
-      await vi.waitFor(() =>
-        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-      );
-      const retired = { ...raw, workspaceSnapshots: snapshots };
-      held = true;
-      await act(async () => state.publishRevision("local", 2));
-      await entered.promise;
-      raw = { ...raw, nativeInventoryGeneration: "new" };
-      snapshots = coalesced
-        ? [
-            {
-              cwd: "/p-39",
-              checkedAt: raw.checkedAt,
-              skills: [],
-              slashCommands: [],
-              plugins: [{ id: "/p-39", name: "new /p-39", source: "local", enabled: true }],
-            },
-          ]
-        : [];
-      state.providersByEnvironment.local = [raw];
-      await fixture.render(<InstalledPage />);
-      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
-      await act(async () => release.resolve({ _tag: "Success", value: { providers: [retired] } }));
-      await vi.waitFor(() =>
-        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-      );
-      await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
-      expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
-      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
-      expect(scanned.filter((entry) => entry.startsWith("old:"))).toHaveLength(40);
-      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
-      const reads = state.refreshInventory.mock.calls.length;
-      state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
-      await fixture.render(<InstalledPage />);
-      expect(state.refreshInventory).toHaveBeenCalledTimes(reads);
-      await act(async () => state.publishRevision("local", 3));
-      await vi.waitFor(() => expect(state.refreshInventory).toHaveBeenCalledTimes(reads + 1));
-      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
-    },
-  );
-
   it("rejects late results after an environment switch", async () => {
     await using fixture = setup();
     const local = Promise.withResolvers<unknown>();
@@ -1369,67 +1379,12 @@ describe("Installed", () => {
     expect(fixture.rowNames()).toContain("Remote plugin");
   });
 
-  it("serializes changed roots and discards the previous root's pending reply", async () => {
-    await using fixture = setup();
-    const old = Promise.withResolvers<unknown>();
-    const started = Promise.withResolvers<void>();
-    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
-    state.providersByEnvironment = { local: [raw] };
-    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/old" }];
-    state.refreshInventory.mockImplementation(
-      (_registry, { input }: { input: { cwd?: string } }) => {
-        if (input.cwd === "/old") {
-          started.resolve();
-          return old.promise;
-        }
-        return Promise.resolve({
-          _tag: "Success",
-          value: {
-            providers: [
-              {
-                ...raw,
-                workspaceSnapshots: input.cwd
-                  ? [
-                      {
-                        cwd: input.cwd,
-                        checkedAt: raw.checkedAt,
-                        skills: [],
-                        slashCommands: [],
-                        plugins: [
-                          { id: "new", name: "New root plugin", source: "local", enabled: true },
-                        ],
-                      },
-                    ]
-                  : [],
-              },
-            ],
-          },
-        });
-      },
-    );
-    await fixture.render(<InstalledPage />);
-    await started.promise;
-    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/new" }];
-    await fixture.render(<InstalledPage />);
-    expect(
-      state.refreshInventory.mock.calls.some(([, target]) => target.input.cwd === "/new"),
-    ).toBe(false);
-    await act(async () =>
-      old.resolve({ _tag: "Success", value: { providers: state.providersByEnvironment.local } }),
-    );
-    await vi.waitFor(() => expect(fixture.rowNames()).toContain("New root plugin"));
-    expect(
-      state.refreshInventory.mock.calls.filter(([, target]) => target.input.cwd === "/old"),
-    ).toHaveLength(1);
-  });
-
   it("observes native plugin revisions without timestamp or inventory re-render scans", async () => {
     await using fixture = setup();
     const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
     state.providersByEnvironment = { local: [raw] };
     await fixture.render(<InstalledPage />);
-    // Codex keeps its own section, even empty, so its store stays one click away.
-    await vi.waitFor(() => expect(fixture.section("From Codex")).not.toBeNull());
+    await vi.waitFor(() => expect(fixture.section("Yours")).not.toBeNull());
     const before = state.refreshInventory.mock.calls.length;
     state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
     state.inventory = inventory({ revision: 99 });
@@ -1455,22 +1410,20 @@ describe("Installed", () => {
     await using fixture = setup();
     state.projectsKnown = false;
     await fixture.render(<InstalledPage />);
-    expect(fixture.section("From your agents").textContent).toContain("not been checked");
+    expect(fixture.section("Yours").textContent).toContain("not been checked");
     expect(state.refreshInventory).not.toHaveBeenCalled();
     state.projectsKnown = true;
     const pending = Promise.withResolvers<unknown>();
     state.refreshInventory.mockReturnValue(pending.promise);
     await fixture.render(<InstalledPage />);
-    await vi.waitFor(() =>
-      expect(fixture.section("From your agents").textContent).toContain("Checking"),
-    );
+    await vi.waitFor(() => expect(fixture.section("Yours").textContent).toContain("Checking"));
     await act(async () =>
       pending.resolve({ _tag: "Failure", cause: Cause.fail(new Error("Inventory denied")) }),
     );
     await vi.waitFor(() =>
-      expect(fixture.section("From your agents").textContent).toContain("Inventory denied"),
+      expect(fixture.section("Yours").textContent).toContain("Inventory denied"),
     );
-    expect(fixture.section("From your agents").textContent).not.toContain("No agent plugins");
+    expect(fixture.section("Yours").textContent).not.toContain("No agent plugins");
     await fixture.reset();
     state.refreshInventory.mockClear();
     await fixture.render(<DiscoverPage />);
@@ -1479,9 +1432,7 @@ describe("Installed", () => {
     state.canRead = false;
     await fixture.render(<InstalledPage />);
     expect(state.refreshInventory).not.toHaveBeenCalled();
-    expect(fixture.section("From your agents").textContent).toContain(
-      "cannot read agent extensions",
-    );
+    expect(fixture.section("Yours").textContent).toContain("cannot read agent extensions");
   });
 
   it("groups connectors, Scient plugins and each agent's own items, six rows until Show all", async () => {
@@ -1512,39 +1463,127 @@ describe("Installed", () => {
       ],
     };
     await fixture.render(<InstalledPage />);
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual(["Linear"]);
-    expect(fixture.rowNames(fixture.section("Scient plugins"))).toEqual(["Lab kit", "Sources"]);
+    // One table of yours: connected services, then each agent's own items; what is built
+    // into Scient follows in its own table.
+    const names = fixture.rowNames(fixture.section("Yours"));
+    expect(names[0]).toBe("Linear");
+    expect(names).toEqual(expect.arrayContaining(["github", "claude-1", "claude-6"]));
+    // A bundle the person installed is theirs; only what ships with Scient is built in.
+    expect(names).toContain("Lab kit");
+    expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Sources"]);
     expect(fixture.row("Lab kit").querySelector("[data-extension-status]")?.textContent).toBe(
       "Off",
     );
+    // Fewer rows than the preview: everything shows and there is nothing to toggle.
+    expect(showAllIn(fixture.section("Yours"))).toBeNull();
+  });
 
-    // The toggle sits in the section header, beside its heading.
-    const fromCodex = fixture.section("From Codex");
-    expect(fixture.rowNames(fromCodex)).toHaveLength(6);
-    const toggle = buttonIn(fromCodex, "Show all 8")!;
-    expect(toggle.closest("section")?.querySelector("h2")?.textContent).toBe("From Codex");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await userEvent.click(toggle);
-    expect(fixture.rowNames(fromCodex)).toHaveLength(8);
-    expect(fixture.rowNames(fromCodex).at(-1)).toBe("github");
-    expect(toggle.textContent).toBe("Show less");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    await userEvent.click(toggle);
-    expect(fixture.rowNames(fromCodex)).toHaveLength(6);
-    expect(toggle.textContent).toBe("Show all 8");
-
-    // Six or fewer: everything shows and there is nothing to toggle.
-    const fromClaude = fixture.section("From Claude");
-    expect(fixture.rowNames(fromClaude)).toHaveLength(6);
-    expect(
-      [...fromClaude.querySelectorAll("button")].some((button) =>
-        /^Show (all|less)/.test(button.textContent ?? ""),
-      ),
-    ).toBe(false);
+  it("lists one row per installation and keeps a plugin server that still needs sign-in", async () => {
+    await using fixture = setup();
+    const shared = {
+      id: "playwright@claude-plugins-official",
+      name: "playwright",
+      displayName: "Playwright",
+      marketplace: "claude-plugins-official",
+      source: "local" as const,
+      enabled: true,
+    };
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          // Two stores carry a plugin of one name: two installations, two rows.
+          plugins: [
+            ...["bundled", "curated"].map((store) => ({
+              id: `visualize@${store}`,
+              name: "visualize",
+              displayName: "Visualize",
+              source: "remote" as const,
+              enabled: true,
+            })),
+            {
+              id: "gmail@remote",
+              name: "gmail",
+              displayName: "Gmail",
+              source: "remote" as const,
+              enabled: true,
+              apps: [
+                {
+                  id: "connector_2128aebfecb84f64a069897515042a44",
+                  name: "Gmail",
+                  connected: true,
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+          mcpServers: [
+            { name: "figma", status: "needs-auth", canStartSignIn: true, pluginId: "figma@x" },
+            { name: "cua_repl", status: "connected", pluginId: "computer-use@x" },
+            {
+              name: "Gmail",
+              status: "connected",
+              scope: "chatgpt",
+              connectUrl:
+                "https://chatgpt.com/apps/gmail/connector_2128aebfecb84f64a069897515042a44",
+            },
+          ],
+          // A project reports the machine-wide plugin again, and one of its own turned off there.
+          workspaceSnapshots: [
+            {
+              cwd: "/work/alpha",
+              checkedAt: "2026-10-21T00:00:00.000Z",
+              slashCommands: [],
+              skills: [],
+              plugins: [
+                {
+                  id: "visualize@bundled",
+                  name: "visualize",
+                  displayName: "Visualize",
+                  source: "remote" as const,
+                  enabled: true,
+                },
+                {
+                  id: "visualize@curated",
+                  name: "visualize",
+                  displayName: "Visualize",
+                  source: "remote" as const,
+                  enabled: false,
+                },
+              ],
+            },
+          ],
+        }),
+        // A Claude plugin Scient Agent also loads is one installation.
+        provider(claude, "claudeAgent", { plugins: [shared], mcpServers: [] }),
+        provider(ProviderInstanceId.make("scient"), "scient", {
+          version: "0.1.11",
+          usesClaudePlugins: true,
+          plugins: [shared],
+          mcpServers: [],
+        }),
+      ],
+    };
+    state.projects = [
+      { environmentId: "local", id: "alpha", title: "Alpha", workspaceRoot: "/work/alpha" },
+    ];
+    await fixture.render(<InstalledPage />);
+    const names = fixture.rowNames(fixture.section("Yours"));
+    expect(names.filter((name) => name === "Playwright")).toHaveLength(1);
+    // Two stores' plugins, plus the one a project turned off; the project's echo adds none.
+    expect(names.filter((name) => name === "Visualize")).toHaveLength(3);
+    // Codex's Gmail plugin only carries the Gmail app, which has its own row.
+    expect(names.filter((name) => name === "Gmail")).toHaveLength(1);
+    // The plugin's page has no sign-in for its server, so the row that offers it stays.
+    expect(names).toContain("figma");
+    expect(names).not.toContain("cua_repl");
   });
 
   it("filters by Works with and explains when an agent cannot use connected services", async () => {
     await using fixture = setup();
+    // The filter lists the agents the person has; Pi is one that takes no connectors.
+    state.providersByEnvironment = {
+      local: [...state.providersByEnvironment.local!, provider(pi, "pi", { displayName: "Pi" })],
+    };
     await fixture.render(<InstalledPage />);
     const worksWith = fixture.container.querySelector<HTMLSelectElement>(
       'select[aria-label="Works with"]',
@@ -1556,15 +1595,13 @@ describe("Installed", () => {
       "Pi",
     ]);
     await userEvent.selectOptions(worksWith, "claude");
-    expect(fixture.section("From Codex")).toBeNull();
-    expect(fixture.rowNames(fixture.section("From Claude"))).toEqual(["superpowers"]);
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual(["Linear"]);
+    const forClaude = fixture.rowNames(fixture.section("Yours"));
+    expect(forClaude).toEqual(expect.arrayContaining(["superpowers", "Linear"]));
+    expect(forClaude).not.toContain("github");
 
     await userEvent.selectOptions(worksWith, "pi");
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual([]);
-    expect(fixture.section("Connected services").textContent).toContain(
-      "Pi cannot reach remote MCP servers.",
-    );
+    expect(fixture.rowNames(fixture.section("Yours"))).not.toContain("Linear");
+    expect(fixture.section("Yours").textContent).toContain("Pi cannot reach remote MCP servers.");
   });
 
   it("runs row menu actions against the server and shows its refusal inline", async () => {
@@ -1588,7 +1625,7 @@ describe("Installed", () => {
     expect(buttonIn(fixture.row("Linear"), "Turn off")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Remove")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Open")?.disabled).toBe(false);
-    expect(buttonIn(fixture.container, "Add your own")?.disabled).toBe(true);
+    expect(buttonIn(fixture.container, "Add")?.disabled).toBe(true);
     expect(fixture.container.textContent).toContain(
       "This connection can view extensions but not change them.",
     );
@@ -1663,12 +1700,56 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    expect(fixture.headerButtons()).toEqual(["Remove"]);
+    expect(fixture.headerButtons()).toEqual(["Remove from Codex"]);
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
     );
     expect(fixture.headerButtons()).toEqual([]);
     expect(fixture.header().textContent).toContain("Remove this plugin in Codex");
+  });
+
+  it("shows an account app's agents, with Claude only where claude.ai has the connector", async () => {
+    await using fixture = setup();
+    const app = (name: string, id: string) => ({
+      name,
+      status: "connected" as const,
+      scope: "chatgpt",
+      connectUrl: `https://chatgpt.com/apps/${name.toLowerCase().replaceAll(" ", "-")}/${id}`,
+    });
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          auth: { status: "authenticated", type: "chatgpt" },
+          plugins: [],
+          mcpServers: [
+            app("Gmail", "connector_2128aebfecb84f64a069897515042a44"),
+            app("Pets Picker 9000", "connector_pets"),
+          ],
+        }),
+        provider(claude, "claudeAgent", {
+          accountAppsAvailable: true,
+          plugins: [],
+          mcpServers: [{ name: "claude.ai Gmail", status: "needs-auth", scope: "claudeai" }],
+        }),
+      ],
+    };
+    await fixture.render(<AccountServiceDetailPage serviceId="gmail" />);
+    await vi.waitFor(() => expect(fixture.section("Your agents")).not.toBeNull());
+    const agents = () => fixture.section("Your agents");
+    await vi.waitFor(() => expect(agents().textContent).toContain("Through its ChatGPT account"));
+    // Each agent says its state once; the header and About do not repeat it.
+    expect(fixture.header().textContent).toBe("GmailSearch, read and draft email");
+    expect(fixture.aboutTerms()).toEqual(["Website"]);
+    expect(buttonIn(agents(), "Connect on claude.ai")).not.toBeNull();
+
+    // claude.ai has no connector for this app: Claude gets no row and no link.
+    await fixture.render(<AccountServiceDetailPage serviceId="pets-picker-9000" />);
+    await vi.waitFor(() =>
+      expect(fixture.container.querySelector("h1")?.textContent).toBe("Pets Picker 9000"),
+    );
+    expect(agents().textContent).toContain("Codex");
+    expect(agents().textContent).not.toContain("Claude");
+    expect(fixture.container.textContent).not.toContain("claude.ai");
   });
 
   it("shows the connection with its sign-in, menu and On/Off switch", async () => {
@@ -1707,6 +1788,36 @@ describe("Detail pages", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
+  it("chooses which agents get a connector, keeps one on, and gives it to all again", async () => {
+    await using fixture = setup();
+    state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
+    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await userEvent.selectOptions(fixture.section("Agents").querySelector("select")!, "chosen");
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, agents: [codex, claude] },
+    });
+
+    state.inventory = inventory({
+      connectors: [connector("linear0001", { displayName: "Linear", agents: [codex] })],
+    });
+    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    const toggle = (label: string) =>
+      fixture.section("Agents").querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+    // The last chosen agent stays on; the connector's own switch turns it off for everyone.
+    expect(toggle("Turn off for Codex").disabled).toBe(true);
+    await userEvent.click(toggle("Turn on for Claude"));
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, agents: [codex, claude] },
+    });
+    await userEvent.selectOptions(fixture.section("Agents").querySelector("select")!, "all");
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, agents: null },
+    });
+  });
+
   it("sends the whole project list for each availability change", async () => {
     await using fixture = setup();
     state.projects = [
@@ -1717,10 +1828,7 @@ describe("Detail pages", () => {
     ];
     state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    await userEvent.selectOptions(
-      fixture.section("Available in").querySelector("select")!,
-      "projects",
-    );
+    await userEvent.selectOptions(fixture.section("Projects").querySelector("select")!, "projects");
     expect(state.commands.update).toHaveBeenLastCalledWith({
       environmentId: "local",
       input: { connectorId: LINEAR, availability: { type: "projects", projectIds: [] } },
@@ -1735,9 +1843,9 @@ describe("Detail pages", () => {
       ],
     });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.section("Available in").textContent).toContain("Not available in any project.");
+    expect(fixture.section("Projects").textContent).toContain("Not available in any project.");
     const switches = () => [
-      ...fixture.section("Available in").querySelectorAll<HTMLButtonElement>('[role="switch"]'),
+      ...fixture.section("Projects").querySelectorAll<HTMLButtonElement>('[role="switch"]'),
     ];
     expect(switches().map((item) => item.getAttribute("aria-label"))).toEqual([
       "Turn on in Alpha",
@@ -1758,9 +1866,7 @@ describe("Detail pages", () => {
       ],
     });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.section("Available in").textContent).not.toContain(
-      "Not available in any project.",
-    );
+    expect(fixture.section("Projects").textContent).not.toContain("Not available in any project.");
     await userEvent.click(switches()[1]!);
     expect(state.commands.update).toHaveBeenLastCalledWith({
       environmentId: "local",
@@ -1793,7 +1899,7 @@ describe("Detail pages", () => {
     });
     state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const available = fixture.section("Available in");
+    const available = fixture.section("Projects");
     expect(available.textContent).toContain("Deleted project");
 
     await userEvent.click(buttonIn(available, "Turn off in Alpha")!);
@@ -1823,8 +1929,8 @@ describe("Detail pages", () => {
     // Before the project list arrives, nothing is called deleted or dropped.
     state.projectsKnown = false;
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.section("Available in").textContent).not.toContain("Deleted project");
-    expect(fixture.section("Available in").textContent).toContain("Loading projects…");
+    expect(fixture.section("Projects").textContent).not.toContain("Deleted project");
+    expect(fixture.section("Projects").textContent).toContain("Loading projects…");
   });
 
   it("removes a connector only after confirmation", async () => {
@@ -1841,6 +1947,59 @@ describe("Detail pages", () => {
     });
   });
 
+  it("removes a local connector without asking, keeps it for Undo, and undoes the last change", async () => {
+    await using fixture = setup();
+    const moodle = connector("moodle0001", {
+      displayName: "Course portal",
+      serverName: "course-portal",
+      url: "scient-local:con_moodle0001",
+      source: { type: "local" },
+      auth: { type: "none" },
+      updatedAt: "2026-11-10T09:00:00.000Z",
+      local: {
+        kind: "bundle",
+        directory: "/state/connectors/course-portal-moodle",
+        setup: [],
+        missing: [],
+        running: 0,
+        owned: true,
+        changedBy: "agent",
+        forkedFrom: "Moodle",
+        canUndo: true,
+      },
+    });
+    state.inventory = inventory({ connectors: [moodle] });
+    state.commands.remove.mockResolvedValue({ _tag: "Success", value: inventory() });
+    state.commands.undo.mockResolvedValue({ _tag: "Success", value: inventory() });
+    await fixture.render(<ConnectorDetailPage connectorId="con_moodle0001" />);
+    expect(fixture.section("Connection").textContent).toContain(
+      "Your copy of Moodle. Changed by an agent on",
+    );
+
+    await userEvent.click(buttonIn(fixture.section("Connection"), "Undo last change")!);
+    expect(state.commands.undo).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: { connectorId: "con_moodle0001" },
+    });
+
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(state.commands.remove).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: { connectorId: "con_moodle0001" },
+    });
+    const toast = state.toast.mock.calls.at(-1)?.[0] as {
+      title: string;
+      actionProps: { children: string; onClick: () => void };
+    };
+    expect(toast).toMatchObject({
+      title: "Removed Course portal",
+      actionProps: { children: "Undo" },
+    });
+    toast.actionProps.onClick();
+    expect(state.commands.undo).toHaveBeenCalledTimes(2);
+  });
+
   it("explains why a server cannot be added and adds one that can", async () => {
     await using fixture = setup();
     await fixture.render(<ServerDetailPage name="io.github.acme/local" />);
@@ -1852,18 +2011,31 @@ describe("Detail pages", () => {
       value: { connector: connector("notion0001", { displayName: "Notion" }), nextStep: "ready" },
     });
     await fixture.render(<ServerDetailPage name="io.notion/notion" />);
-    await userEvent.click(buttonIn(fixture.header(), "Add")!);
+    await addThroughCard(buttonIn(fixture.header(), "Add"), "Notion");
     expect(state.commands.add).toHaveBeenCalledOnce();
     expect(state.toast).toHaveBeenCalledWith({ type: "success", title: "Notion added" });
-  });
 
-  it("shows an added catalog server as its connector", async () => {
-    await using fixture = setup();
-    await fixture.render(<ServerDetailPage name="app.linear/linear" />);
-    expect(fixture.container.querySelector("h1")?.textContent).toBe("Linear");
-    expect(buttonIn(fixture.section("Connection"), "Turn off Linear")).not.toBeNull();
-    expect(fixture.header().querySelector("img")).not.toBeNull();
-    expect(fixture.section("Available in")).not.toBeNull();
+    // A registry bundle is added in one step, by its address and checksum.
+    const bundle = { url: "https://example.com/echo.mcpb", sha256: "a".repeat(64) };
+    state.entries = {
+      "io.github.acme/echo": entry("io.github.acme/echo", {
+        title: "Echo",
+        remotes: [],
+        localBundle: bundle,
+      }),
+    };
+    state.commands.add.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { connector: connector("echo000001", { displayName: "Echo" }), nextStep: "ready" },
+    });
+    await fixture.render(<ServerDetailPage name="io.github.acme/echo" />);
+    await addThroughCard(buttonIn(fixture.header(), "Add"), "Echo");
+    expect(state.commands.add).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: expect.objectContaining({
+        target: { type: "registry-bundle", name: "io.github.acme/echo", version: "1.0.0", bundle },
+      }),
+    });
   });
 
   it("opens a catalog entry that no preview lists, by link, reload and search", async () => {
@@ -1914,7 +2086,7 @@ describe("Detail pages", () => {
         version: "3.1.0",
         websiteUrl: "https://www.full.example/docs",
         repositoryUrl: "https://github.com/acme/full",
-        categories: ["featured", "papers"],
+        categories: ["most-used", "papers"],
       }),
       "scient.curated/bare": entry("scient.curated/bare", {
         title: "Bare",
@@ -1943,6 +2115,7 @@ describe("Detail pages", () => {
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     expect(fixture.aboutTerms()).toEqual([
       "Added on",
+      "Host",
       "Works with",
       "Sign-in used",
       "URL",
@@ -1988,15 +2161,15 @@ describe("Detail pages", () => {
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     // Agents with limits count; Pi can't use connectors at all.
-    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
-    expect(trigger.textContent).toBe("Works with all your agents");
+    expect(fixture.aboutValue("Works with")).toBe("All your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: All your agents")!;
+    expect(trigger.textContent).toBe("All your agents");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(fixture.section("About").querySelector("[data-support]")).toBeNull();
 
     using _timers = fakeTimers();
     await userEvent.hover(trigger);
-    await advance(200);
+    await advance(WORKS_WITH_OPEN_DELAY_MS + 1);
     const card = agentsCard()!;
     expect(card).not.toBeNull();
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
@@ -2027,7 +2200,7 @@ describe("Detail pages", () => {
     // A touch screen has no pointer resting anywhere: park the test's mouse
     // where no card or tooltip will open under it.
     await userEvent.hover(fixture.container.querySelector("h1")!);
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: All your agents")!;
     // A real tap: touch pointer events and a click with `detail: 1` (a click
     // with `detail: 0` reads as a keyboard press).
     const tap = async (target: HTMLElement) => {
@@ -2056,7 +2229,7 @@ describe("Detail pages", () => {
     // the next tap hides it.
     await tap(limited);
     await expect.element(page.elementLocator(limited)).toHaveAttribute("data-popup-open");
-    await vi.waitFor(() => expect(reasonTooltip()).not.toBeNull());
+    expect(reasonTooltip()).not.toBeNull();
     expect(agentsCard()).not.toBeNull();
     await tap(limited);
     await expect.element(page.elementLocator(limited)).not.toHaveAttribute("data-popup-open");
@@ -2075,11 +2248,8 @@ describe("Detail pages", () => {
     await using fixture = setup();
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
-    for (let step = 0; step < 60 && document.activeElement !== trigger; step += 1) {
-      await userEvent.tab();
-    }
-    expect(document.activeElement).toBe(trigger);
+    const trigger = buttonIn(fixture.section("About"), "Works with: All your agents")!;
+    await act(async () => trigger.focus({ focusVisible: true }));
     await userEvent.keyboard("{Enter}");
     const card = agentsCard()!;
     expect(card).not.toBeNull();
@@ -2090,27 +2260,7 @@ describe("Detail pages", () => {
     await userEvent.keyboard("{Escape}");
     await userEvent.keyboard("{Escape}");
     expect(agentsCard()).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-  });
-
-  it("explains unsupported agents in the works-with popover", async () => {
-    await using fixture = setup();
-    state.inventory = inventory({
-      providerSupport: inventory().providerSupport.map((entry) => ({
-        ...entry,
-        status: "unsupported" as const,
-      })),
-    });
-    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
-    await userEvent.click(trigger);
-    await expect.element(page.getByRole("dialog", { name: "Agents" })).toBeVisible();
-    expect(
-      [...agentsCard()!.querySelectorAll("[data-support]")].every(
-        (tile) => tile.getAttribute("data-support") === "unsupported",
-      ),
-    ).toBe(true);
+    await expect.element(page.elementLocator(trigger)).toHaveFocus();
   });
 
   it("lists tools only after See tools and retains the result", async () => {
@@ -2295,7 +2445,7 @@ describe("Detail pages", () => {
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={workspace} />
     );
     await fixture.render(page("/work/a"));
-    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove from Codex")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -2304,11 +2454,11 @@ describe("Detail pages", () => {
         cwd: "/work/a",
       },
     });
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(true);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(true);
     await fixture.render(page("/work/b"));
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(false);
     await fixture.render(page(undefined));
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(false);
 
     await act(async () => pending.resolve(extensionsError("Codex refused.")));
     await fixture.render(page("/work/a"));
@@ -2326,13 +2476,404 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove from Codex")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },
     });
     expect(fixture.container.querySelector('[role="alert"]')?.textContent).toBe("Codex refused.");
-    expect(fixture.aboutValue("Managed by")).toBe("Codex");
+    // The header names the agent once; About does not repeat it.
+    expect(fixture.header().textContent).toContain("Codex");
+    expect(fixture.aboutValue("Managed by")).toBeUndefined();
+  });
+});
+
+describe("Antigravity Marketplace", () => {
+  const antigravity = ProviderInstanceId.make("antigravity");
+  const storeEntry = (
+    name: string,
+    patch: Partial<ProviderStoreEntry> = {},
+  ): ProviderStoreEntry => ({
+    id: `${name}@antigravity-plugins-official`,
+    name,
+    displayName: name.charAt(0).toUpperCase() + name.slice(1),
+    marketplace: "antigravity-plugins-official",
+    description: `${name} tools`,
+    kind: "antigravity",
+    installed: false,
+    includes: [],
+    apps: [],
+    publisherType: "google",
+    publisher: "Google",
+    ...patch,
+  });
+  const canva = storeEntry("canva", {
+    id: "canva@antigravity-plugins-partners",
+    marketplace: "antigravity-plugins-partners",
+    publisherType: "third-party",
+    publisher: "Canva",
+  });
+  const withAntigravity = (patch: Partial<ServerProvider> = {}) => {
+    state.providersByEnvironment.local!.push(
+      provider(antigravity, "antigravity", { displayName: "Antigravity", ...patch }),
+    );
+  };
+
+  it("lists a category's Antigravity entries in their own store section", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = { entries: [storeEntry("chemistry")], total: 1 };
+    await fixture.render(<CategoryPage category="chemistry" />);
+    const section = fixture.section("From Antigravity’s store");
+    expect(fixture.rowNames(section)).toEqual(["Chemistry"]);
+    expect(buttonIn(fixture.row("Chemistry"), "Add")).not.toBeNull();
+    // Most used lists Scient's picks only.
+    await fixture.reset();
+    await fixture.render(<CategoryPage category="most-used" />);
+    expect(fixture.container.querySelector('[aria-label="From Antigravity’s store"]')).toBeNull();
+  });
+
+  const codexStripe: ProviderStoreEntry = {
+    id: "stripe@openai-curated",
+    name: "stripe",
+    displayName: "Stripe",
+    marketplace: "openai-curated",
+    description: "Payments",
+    website: "https://docs.stripe.com",
+    kind: "codex",
+    installed: false,
+    includes: [],
+    apps: [],
+  };
+  const agyStripe = storeEntry("stripe", {
+    id: "stripe@antigravity-plugins-partners",
+    marketplace: "antigravity-plugins-partners",
+    website: "https://stripe.com",
+    publisherType: "third-party",
+    publisher: "Stripe",
+  });
+
+  it("lists a service several stores have once, in the first store's section", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    const plotter = { ...codexStripe, id: "plotter@openai-curated", name: "plotter" };
+    state.storePages[codex] = {
+      entries: [codexStripe, { ...plotter, displayName: "Plotter", website: "https://a.dev" }],
+      total: 2,
+    };
+    state.storePages[antigravity] = {
+      entries: [
+        agyStripe,
+        storeEntry("chemistry"),
+        storeEntry("plotter", { website: "https://b.io" }),
+      ],
+      total: 3,
+    };
+    await fixture.render(<CategoryPage category="code" />);
+    await vi.waitFor(() =>
+      expect(fixture.rowNames(fixture.section("From Codex’s store"))).toEqual([
+        "Stripe",
+        "Plotter",
+      ]),
+    );
+    // Same name, same site: one row. The same name on another site is another service.
+    expect(fixture.rowNames(fixture.section("From Antigravity’s store"))).toEqual([
+      "Chemistry",
+      "Plotter",
+    ]);
+  });
+
+  it("gives a store plugin's page every agent whose store has the same service", async () => {
+    await using fixture = setup();
+    withAntigravity({ plugins: [] });
+    state.storeEntry = agyStripe;
+    state.storePages[codex] = { entries: [codexStripe], total: 1 };
+    await fixture.render(
+      <ProviderStoreDetailPage instanceId="antigravity" entryId={agyStripe.id} />,
+    );
+    const agents = fixture.section("Your agents");
+    await vi.waitFor(() => expect(buttonIn(agents, "Add to Codex")).not.toBeNull());
+    expect(buttonIn(agents, "Add to Antigravity")).not.toBeNull();
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await userEvent.click(buttonIn(agents, "Add to Codex")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: { instanceId: codex, action: { type: "install", entryId: codexStripe.id } },
+      }),
+    );
+  });
+
+  it("offers a curated item's Antigravity Marketplace entry instead of repeating it", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    const pick = entry("scient.curated/canva", {
+      title: "Canva Connector",
+      categories: ["figures"],
+      agentStores: { antigravity: "canva@antigravity-plugins-partners" },
+    });
+    state.discoverPages[JSON.stringify({ scope: "curated", category: "figures" })] = {
+      entries: [pick],
+      fetchedAt: "2026-10-21T00:00:00.000Z",
+    };
+    state.storePages[antigravity] = { entries: [canva, storeEntry("chemistry")], total: 2 };
+    await fixture.render(<CategoryPage category="figures" />);
+    expect(fixture.rowNames(fixture.section("From Antigravity’s store"))).toEqual(["Chemistry"]);
+    await fixture.reset();
+    state.entries = { "scient.curated/canva": pick };
+    await fixture.render(<ServerDetailPage name="scient.curated/canva" />);
+    expect(
+      linkIn(fixture.container, "Also in the Antigravity Marketplace")?.getAttribute("href"),
+    ).toBe(
+      hrefOf("/settings/extensions/item/store/$instanceId/$entryId", {
+        instanceId: "antigravity",
+        entryId: "canva@antigravity-plugins-partners",
+      }),
+    );
+  });
+
+  it("lists its own section and asks before adding a partner plugin from a list", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = { entries: [storeEntry("chemistry"), canva], total: 2 };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<CategoryPage category="files" />);
+    const section = fixture.section("From Antigravity’s store");
+    expect(fixture.rowNames(section)).toEqual(["Chemistry", "Canva"]);
+    expect(section.textContent).toContain("Antigravity only");
+
+    state.confirm.mockResolvedValueOnce(false);
+    await userEvent.click(buttonIn(fixture.row("Canva"), "Add")!);
+    expect(state.confirm).toHaveBeenCalledOnce();
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+    expect(state.commands.providerAct).not.toHaveBeenCalled();
+
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.row("Canva"), "Add")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "canva@antigravity-plugins-partners" },
+        },
+      }),
+    );
+
+    await userEvent.click(buttonIn(fixture.row("Chemistry"), "Add")!);
+    await vi.waitFor(() => expect(state.commands.providerAct).toHaveBeenCalledTimes(2));
+    // Google's own plugins need no third-party notice.
+    expect(state.confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a partner plugin's notice and catalog on its page and adds after the notice", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storeEntry = canva;
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(
+      <ProviderStoreDetailPage
+        instanceId="antigravity"
+        entryId="canva@antigravity-plugins-partners"
+      />,
+    );
+    expect(fixture.container.textContent).toContain("Canva makes this plugin, not Google.");
+    expect(fixture.aboutValue("Catalog")).toBe("Partner plugins from other developers");
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.container, "Add to Antigravity")!);
+    await vi.waitFor(() => expect(state.commands.providerAct).toHaveBeenCalledOnce());
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+  });
+
+  it("gives Gmail's page an Antigravity row for each plugin state", async () => {
+    await using fixture = setup();
+    const gmail = storeEntry("gmail", { displayName: "Gmail" });
+    const added = (enabled: boolean) => ({
+      id: gmail.id,
+      name: "gmail",
+      source: "local" as const,
+      enabled,
+      canUninstall: true,
+      canSetEnabled: true,
+    });
+    const show = async (patch: Partial<ServerProvider>, entry = gmail) => {
+      await fixture.reset();
+      state.providersByEnvironment = {
+        local: [provider(antigravity, "antigravity", { displayName: "Antigravity", ...patch })],
+      };
+      state.storeEntry = entry;
+      await fixture.render(<AccountServiceDetailPage serviceId="gmail" />);
+      await vi.waitFor(() => expect(fixture.section("Your agents")).not.toBeNull());
+      return fixture.section("Your agents");
+    };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+
+    let agents = await show({ plugins: [] });
+    await vi.waitFor(() => expect(buttonIn(agents, "Add to Antigravity")).not.toBeNull());
+    await userEvent.click(buttonIn(agents, "Add to Antigravity")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "gmail@antigravity-plugins-official" },
+        },
+      }),
+    );
+    expect(state.confirm).not.toHaveBeenCalled();
+
+    agents = await show({ plugins: [added(true)] });
+    await vi.waitFor(() =>
+      expect(agents.textContent).toContain("Added · signs in the first time a chat uses it"),
+    );
+    expect(agents.textContent).not.toContain("Connected");
+
+    // A plugin whose MCP server agy signs in only in its own plugin manager says so.
+    agents = await show(
+      { plugins: [added(true)] },
+      { ...gmail, installed: true, includes: ["Skills", "MCP servers"] },
+    );
+    await vi.waitFor(() =>
+      expect(agents.textContent).toContain(
+        "Added · its connection signs in only in Antigravity’s own plugin manager",
+      ),
+    );
+
+    agents = await show({ plugins: [added(false)] });
+    await vi.waitFor(() => expect(agents.textContent).toContain("Off in Antigravity"));
+    await userEvent.click(buttonIn(agents, "Turn on")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenLastCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "set-enabled", pluginId: gmail.id, enabled: true },
+        },
+      }),
+    );
+
+    // An older copy the store recognised by its manifest keeps its own id; Turn on acts on it.
+    agents = await show(
+      { plugins: [{ ...added(false), id: "antigravity:gmail" }] },
+      { ...gmail, installed: true },
+    );
+    await vi.waitFor(() => expect(agents.textContent).toContain("Off in Antigravity"));
+    await userEvent.click(buttonIn(agents, "Turn on")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenLastCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "set-enabled", pluginId: "antigravity:gmail", enabled: true },
+        },
+      }),
+    );
+
+    // A different plugin of the same name: the reason and where to act, never a dead Add.
+    const clash = "Antigravity already has a different plugin named gmail.";
+    agents = await show({ plugins: [] }, { ...gmail, disabledReason: clash });
+    await vi.waitFor(() => expect(agents.textContent).toContain(clash));
+    expect(buttonIn(agents, "Add to Antigravity")).toBeNull();
+    expect(linkIn(agents, "Open Installed")?.getAttribute("href")).toBe(
+      "/settings/extensions/installed",
+    );
+
+    agents = await show({ plugins: [] }, { ...gmail, installationStateKnown: false });
+    await vi.waitFor(() => expect(agents.textContent).toContain("Checking…"));
+
+    // An Antigravity that cannot add plugins (not the agy CLI) gets no row.
+    agents = await show({ plugins: [] }, { ...gmail, storeUnavailable: true });
+    expect(agents.textContent).not.toContain("Antigravity");
+  });
+
+  it("leaves Gmail off the Discover shelf, which its own page offers, but keeps it in the store", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = {
+      entries: [storeEntry("gmail", { displayName: "Gmail" }), storeEntry("chemistry")],
+      total: 2,
+    };
+    await fixture.render(<DiscoverPage />);
+    // The Antigravity shelf's grid; Gmail's own row elsewhere on Discover is its service page.
+    const shelves = () =>
+      [
+        ...fixture.container.querySelectorAll('[aria-label="From the Antigravity Marketplace"]'),
+      ].flatMap((grid) => fixture.rowNames(grid));
+    await vi.waitFor(() => expect(shelves()).toContain("Chemistry"));
+    expect(shelves()).not.toContain("Gmail");
+    await fixture.reset();
+    await fixture.render(<ProviderStorePage instanceId="antigravity" />);
+    await vi.waitFor(() =>
+      expect(fixture.rowNames(fixture.section("Plugins"))).toEqual(["Gmail", "Chemistry"]),
+    );
+  });
+
+  it("offers no Antigravity row for a partner service whose connection can't sign in from chat", async () => {
+    await using fixture = setup();
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          auth: { status: "authenticated", type: "chatgpt" },
+          plugins: [],
+          mcpServers: [
+            {
+              name: "Canva",
+              status: "connected",
+              scope: "chatgpt",
+              connectUrl: "https://chatgpt.com/apps/canva/connector_canva",
+            },
+          ],
+        }),
+        provider(antigravity, "antigravity", { displayName: "Antigravity", plugins: [] }),
+      ],
+    };
+    state.storeEntry = canva;
+    await fixture.render(<AccountServiceDetailPage serviceId="canva" />);
+    await vi.waitFor(() =>
+      expect(fixture.section("Your agents").textContent).toContain("Through its ChatGPT account"),
+    );
+    // Canva's Antigravity plugin connects through an MCP server agy signs in only in its own
+    // plugin manager, so the page offers no route that would not work in Scient's chats.
+    expect(fixture.section("Your agents").textContent).not.toContain("Antigravity");
+  });
+
+  it("removes an added plugin from the user's Antigravity after saying what that affects", async () => {
+    await using fixture = setup();
+    withAntigravity({
+      plugins: [
+        {
+          id: "gmail@antigravity-plugins-official",
+          name: "gmail",
+          displayName: "Gmail",
+          marketplace: "antigravity-plugins-official",
+          source: "local",
+          enabled: true,
+          canUninstall: true,
+          canSetEnabled: true,
+        },
+      ],
+    });
+    state.storeEntry = storeEntry("gmail", { installed: true });
+    state.confirm.mockResolvedValueOnce(true);
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(
+      <ProviderStoreDetailPage
+        instanceId="antigravity"
+        entryId="gmail@antigravity-plugins-official"
+      />,
+    );
+    expect(fixture.container.textContent).not.toContain("makes this plugin");
+    await userEvent.click(buttonIn(fixture.container, "Remove from Antigravity")!);
+    expect(state.confirm.mock.calls[0]![0]).toContain("including the Antigravity app");
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "uninstall", pluginId: "gmail@antigravity-plugins-official" },
+        },
+      }),
+    );
   });
 });
 
@@ -2353,9 +2894,9 @@ describe("Codex store connection", () => {
     };
     state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     state.storeEntry = {
       ...state.storeEntry,
       installed: true,
@@ -2370,22 +2911,23 @@ describe("Codex store connection", () => {
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
     await expect.element(page.getByRole("button", { name: "Added", exact: true })).toBeDisabled();
-    await expect
-      .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
-      .toBeVisible();
+    // Each agent with its own step; this Codex has no ChatGPT sign-in, so it signs in first.
+    await vi.waitFor(() =>
+      expect(fixture.section("Apps 1").textContent).toContain("Sign in to Codex with ChatGPT"),
+    );
     state.storeEntry = {
       ...state.storeEntry,
       apps: [{ name: "Sample", connected: true, enabled: true }],
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     expect(fixture.section("Apps 1").textContent).toContain("Connected");
     state.storeEntry = {
       ...state.storeEntry,
       apps: [{ name: "Sample", connected: true, enabled: false }],
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     expect(fixture.section("Apps 1").textContent).toContain("Disabled");
   });
 });

@@ -73,21 +73,29 @@ connecting.
 ## Scient Connect
 
 Scient Connect reaches your computers from anywhere without opening ports or
-setting up a VPN. Sign in once, turn it on for a computer, and that computer
-appears in Scient on your other devices and at
+setting up a VPN. Sign in to Scient on a computer and Scient Connect turns on
+for it: that computer appears in Scient on your other devices and at
 [app.scientfactory.com](https://app.scientfactory.com) in any browser.
 
 1. On the computer to share, open **Settings → Sharing & access** and sign in
-   to Scient Connect with Google, Microsoft, GitHub or email.
-2. Turn on **Scient Connect** for that environment. The first time, Scient
-   asks to download the relay client (`cloudflared`) and checks it against a
-   pinned checksum before installing it.
+   with Google, Microsoft, GitHub or email.
+2. That's all. The first time, Scient downloads the tunnel program
+   (`cloudflared`) in the background, checks it against a pinned checksum,
+   installs it and connects. **Sharing & access** shows each step, and so does
+   the invite dialog if you are waiting to share a thread. If the network is
+   down or the relay is busy, Scient keeps trying.
 3. On another device, sign in with the same account. The computer is listed
    under Scient Connect; select it to connect.
 
+To keep a computer off Scient Connect, turn **Scient Connect** off in
+**Sharing & access**. Scient remembers that for the computer, also after you
+sign out and back in, until you turn it on again. Signing out leaves the
+computer reachable for your account; turn Scient Connect off to stop that.
+Signing in with another account moves the computer to that account.
+
 On a server without a screen, run `scient connect` and open the printed link on
-any device to sign in. `scient connect status` shows whether other devices can
-reach the computer. When a connection fails, see
+any device to sign in. `scient connect status` checks the connection from that
+computer. When a connection fails, see
 [Scient Connect troubleshooting](./scient-connect-troubleshooting.md).
 
 How it works: Scient's relay at `relay.scientfactory.com` keeps your account's
@@ -99,13 +107,49 @@ any site behind Cloudflare. A computer that stays offline for a while loses its
 tunnel and gets a new one, at the same address, when it comes back.
 
 Each account can link a limited number of computers at once. **Settings →
-Sharing & access** shows how many are in use; remove one you no longer use to
-free a place.
+Sharing & access** shows how many are in use, and says so when a new computer
+doesn't fit. To free a place, select **Manage tunnels**, then **Deregister** a
+computer you no longer use, and turn Scient Connect on again.
+
+Scient Connect runs on macOS (Apple Silicon and Intel), Windows (x64, and ARM on
+Windows 11, which runs the x64 tunnel program) and Linux (x64 and arm64). A
+network that blocks GitHub downloads stops the first setup; **Sharing &
+access** shows the reason.
 
 A computer is reachable only while Scient runs on it: the desktop app, or
 `scient serve` on a server (see [headless server](background-service.md)). This
 is the same on macOS, Windows and Linux; Scient does not install a background
 service.
+
+### Approve new devices
+
+By default, any device signed in to your Scient Connect account can open a linked
+machine. To require approval instead, turn on **Require approval for new
+devices** with the Scient Connect settings in **Settings → Sharing & access** on the
+host, or when you first set up Scient Connect. Then someone who takes over your
+Scient Connect account cannot reach the machine from a new device without your
+approval. Review the devices that are already approved, described below.
+
+A new device waits and shows a code such as `K7QM-2XFD`. Approve it from a
+device that is already connected, using the prompt or **Settings → Sharing &
+access**. Check that the code matches the one on the waiting device. On a
+headless host, run `scient auth connect-device list` and then
+`scient auth connect-device approve K7QM-2XFD`. A request expires after 10 minutes,
+and the device asks again when it retries. Deny keeps that device out until its
+request expires.
+
+Each device is approved once. Revoke it from **Scient Connect devices** in the same
+settings page, or with `scient auth connect-device revoke <code>`. With approval on,
+it has to ask again. With approval off, it can connect again on its own, so
+revoking in the app offers to turn approval on first. Devices that connected through
+Scient Connect while approval was off stay approved and appear in that list for you to
+review. A device that has not connected since you updated Scient asks for approval like
+a new one. Older apps cannot show the code, so update them before you turn approval on.
+
+### Share a thread with people
+
+People without Scient can join a thread in their browser, talk with you there and,
+if you allow it, with the agent. See [Invite people to a thread](./thread-rooms.md).
 
 ## Direct and private-network access
 
@@ -165,7 +209,9 @@ Scient connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried
 again, after the other routes, if none of them connect. While connected over a
 later route, Scient checks the earlier ones when your network changes, when you
-return to the app, and every minute, and moves back as soon as one works.
+return to the app, and every minute, and moves back as soon as one works. A
+route whose machine refused this device's sign-in is marked **Sign-in
+refused**; pair that address again with **Add route** to use it.
 
 On web and desktop, select the route count under the machine's name in
 **Settings → Environments** to see its routes. Drag a route to change the order,
@@ -204,6 +250,13 @@ Tailnet IP, MagicDNS name, and an HTTPS MagicDNS endpoint. Tailscale HTTPS is
 off until you explicitly enable it. Turning it on asks Tailscale Serve to proxy
 private HTTPS traffic to the local Scient backend; turning it off removes that
 mapping.
+
+Your tailnet needs MagicDNS and HTTPS certificates enabled; see
+[Tailscale's HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
+On Linux, Scient also needs permission to manage Tailscale; see
+[operator permission](https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission)
+for non-root users. If any of these is missing, Scient still starts but can't
+add the HTTPS route.
 
 This is an endpoint option, not a separate kind of Scient environment. LAN,
 custom HTTPS, Tailscale, and SSH connections all use the same environment and
@@ -267,13 +320,25 @@ bug report. See [Antigravity](./providers-antigravity.md) for the complete flow.
 ## Keep versions aligned
 
 When the remote server version differs from the desktop client, Scient offers
-the appropriate action from the update control at the bottom of the sidebar and
+the appropriate action from the sidebar's update controls and
 in **Settings → Environments**. Use that
 exact action or copied command; see [Update Scient](updating.md). Changing the
 package or version can produce an incompatible server.
 
 The hosted app at app.scientfactory.com follows the latest Scient release, so
 keep computers you open there updated.
+
+Scient cannot answer a second sign-in prompt such as a Duo code. On macOS and
+Linux it can reuse a connection you signed in to in a terminal instead: turn on
+connection sharing for the host in `~/.ssh/config`, run `ssh <alias>`, then
+connect. When that connection closes, sign in again in a terminal and retry.
+
+```sshconfig
+Host <alias>
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 8h
+```
 
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that Scient launched; a server that was already
@@ -295,6 +360,9 @@ environment** in **Settings → Environments**. Scient restarts without a local
 server: local providers and terminals stop, WSL backends stay off, and other
 devices can no longer connect to this computer. Existing local projects, history,
 and saved connections are kept.
+If a [background service](./background-service.md) on this computer uses the same Scient home,
+the app still treats it as this computer: **Open in** and file reveal for its projects run here,
+whichever connection you reach it through.
 
 ## Browser on a remote environment
 
@@ -303,6 +371,52 @@ tabs from any device. The desktop app shows its own environment's tabs
 directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
+
+A tab you open yourself in the desktop app for another environment loads on
+your computer instead, so the element picker, screenshots, and annotations work
+as they do locally. Its `localhost` addresses still reach servers on the host,
+over the connection the app already has, whichever way you connected. If the
+host cannot be reached, the tab shows a connection error; a `localhost`,
+`127.0.0.1`, or `[::1]` address never opens a server on your own computer.
+Other names that point at your computer, such as `/etc/hosts` entries, still
+do. These tabs ignore your system proxy settings, so they can't reach a host
+you connect to only through a proxy or over HTTPS with a privately issued
+certificate. The web app keeps streaming.
+
+The desktop app can also forward a port on the host to your computer, so any
+app there, such as your own browser, `curl`, or a database client, reaches it
+at `localhost`. Use the forward button on a server in the thread's **Servers**
+list, or **Forwarded ports** in the command palette, where you can also type
+any port number and stop forwards. A forward keeps the host's port number
+unless that port is taken on your computer, in which case it uses a free one
+and shows it. Forwards end when you stop them or quit the app. ⌘-click
+(Ctrl-click on Windows and Linux) on a remote server forwards it and opens it
+in your browser.
+
+A forwarded port behaves like a server running on your computer: anything on
+your computer can reach it, including web pages open in your browser, so a
+forwarded service is exposed the same way a local dev server is. Forwards
+listen only on your computer's loopback, never on your network. On Linux they
+accept only apps running as your user; on macOS and Windows, other users signed
+in to the same computer can reach them too.
+
+On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
+has **Open on this device** in its menu. So does a long press on a `localhost`
+link in a chat. It opens the page in the phone's own browser view, at the same
+`localhost` address, so it scrolls and responds to touch natively. Like the
+desktop app, it never opens a server on the phone itself. The streamed tab
+stays where it was, and agents keep using it. Each host keeps its own cookies
+and site data on the phone. On iPhone and iPad the page runs under a stand-in
+address while the address bar shows `localhost`, so browser features that need
+a secure page, such as the clipboard or service workers, aren't available there.
+
+All of this rides the host's preview tunnel. Turn off **Settings → Sharing &
+access → Preview tunnel** on the host to stop other devices from loading its
+`localhost` pages themselves: port forwarding and **Open on this device** go
+away, and open tunnels close. Tabs keep working by streaming from the host, so
+anyone who can use the host's browser tabs can still view its `localhost` pages
+there. An administrator can also turn it off with a
+[managed policy](./managed-policy.md#other-capabilities).
 
 The first tab downloads a headless Chrome, about 120 MB, into the Scient home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
@@ -349,8 +463,10 @@ the full path of the desktop app's `scient` launcher or of the Node runtime and
 server it runs from, so it works even where `scient` is not on your `PATH`. It
 keeps your `PATH` when Node is installed only for your user. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries and system fonts with apt; pages that load without text
-can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
-reports what it would change.
+can mean the host has no fonts. It is safe to run again, and each run reloads
+the AppArmor profile: run it again if the browser reports a blocked sandbox on a
+host restored from an image or snapshot, where the profile can be on disk
+without being loaded. Without `sudo`, it only reports what it would change.
 
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your Scient server runs as root, run it as a nonroot user to keep
@@ -382,22 +498,44 @@ the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks.
 
 Linked environments is a beta. Turn it on for both machines in **Settings →
-Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
+Labs**; on mobile, **Settings → Labs** lists each connected machine. On a
+headless server, open its address in a browser and pair to reach its **Settings
+→ Labs**, or add `"linkedEnvironmentsEnabled": true` to `settings.json` in its
+`userdata` directory, such as `~/.t3/userdata/settings.json`; a running server
+picks it up. While it is
 off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.
 
 On the machine you will work from, open **Settings → Environments → Linked environments**,
 choose **Link**, and pick the other machine or enter its address. The list
-holds the machines this app knows. If this
-app is connected to that machine with a session that manages access there, it
-makes the pairing code itself; otherwise paste one from that machine's
-**Settings → Sharing & access**. From a terminal, use
+holds the machines this app knows. If this app has an address for that machine
+and is connected to it with a session that manages access there, it makes the
+pairing code itself; otherwise paste one from that machine's
+**Settings → Sharing & access**. An address you type always needs a pasted code.
+From a terminal, use
 `scient environment link <address> --pairing-code <code> --access <mode>`.
+
+To link many machines at once, choose **Link several…** (it appears once this
+app has two other machines saved). Tick the machines, pick one access level for
+all of them, and confirm once. A machine can be ticked when this app is
+connected to it with a session that manages access there and has an address
+another machine can reach; the list says why when it cannot. Each machine
+reports its own result, and the ones that failed stay ticked so you can try
+only those again. Machines already linked are left as they are.
+
+For machines no app is connected to, put one `<address> <pairing-code>` per
+line in a file (make each code with `scient pair` on that machine) and run
+`scient environment link --from <file> --access <mode>`, or `--from -` to read
+standard input. It prints a result per line, leaves machines already linked as
+they are, and exits non-zero if any line failed, so the same file can be run
+again with fresh codes for the failures.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
-and the access, then approve.
+and the access, then approve. An address the agent gives that this app does
+not know for one of your machines also needs a pasted code. Paste one only for
+an address you trust: the code is sent there.
 
 - The access you pick is the most agents from this machine may do there. An
   agent also never gets more there than its own mode here.
@@ -409,7 +547,53 @@ and the access, then approve.
 - The link shows up in that machine's **Settings → Sharing & access** like any
   outside agent. Revoke it there to end it. **Forget** on this machine only
   removes it here.
-- Links last 30 days. Link again with a new pairing code to renew one.
+- A link stays valid while agents use it. One unused for 30 days expires, as
+  does one to a machine on an older Scient after 30 days; link again with a
+  new pairing code.
+
+On web and desktop, **Settings → Environments** opens as a map of your machines:
+this app, each environment with one line per route (the one in use is
+highlighted), and the machines an environment links to. Select a machine to
+manage it, or switch to **List** for the same controls as rows. To link from
+the map, drag the plus on an environment onto another machine, or press it and
+pick one. If this app is connected to both machines, knows an address the first
+can reach the other at, and its session on the other one manages access there,
+it needs no pairing code.
+
+A machine this app is not connected to, shown only because another environment
+links to it, can still be linked without a code when that link has full access:
+drop the plus on it and the environment holding the link gets the pairing code
+from it. Your session on that environment must manage access there. The result
+is a separate link with the access you pick, listed and revocable on the linked
+machine like any other. Links still do not chain.
+
+A link goes one way. To let the other machine's agents work back, tick **Also
+link … back** when you create the link, or select a one-way link and use
+**Link back…**. It is offered when this app is connected to both machines and
+may manage access on each. Two machines linked to each other at the same access
+are drawn as one line with an arrowhead at each end; they are still two links,
+and each is forgotten on its own.
+
+To link one environment to several machines at once, Shift-click the machines
+(or Shift-drag a box around them, or press Space on a focused machine), then
+drag the environment's plus onto any of them, or use **Link several…** above
+the map. Dropping the plus on a stack offers the stack's machines. The dialog
+ticks the machines it can link without a pairing code and says why for the
+rest. When this app is connected to none of them, each needs a pairing code,
+so the map says so and offers to link one at a time instead.
+
+Large setups fold: machines known only through links that share the same
+linking environments and access levels become one stack, and once this app
+knows more than 12 environments, the ones that are not connected and have no
+links fold by state. Select a stack to list and filter every machine in it.
+Opening a stack on the map draws its first 24 below its card: the rest of the
+map stays where it is and the map grows taller, so pan or press the fit button
+to see all of it. **Find a machine** above the map searches by name, and Enter
+goes to the first match. The **?** button above the map lists these gestures.
+
+The map draws the links of the machines this app is connected to; a machine it
+is not connected to may hold links the map cannot show. A link reaches one
+machine and does not carry on through that machine's own links.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
@@ -417,6 +601,38 @@ one `target.projectId` names), and this thread wakes with its result when it
 ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
+
+### Read a linked machine's threads
+
+You can read a thread on a linked machine without connecting this app to it. Open
+a task that was delegated there from the thread's agents, or a thread link that
+points there, and the thread opens read-only, streamed through the machine you
+are connected to over its link. It follows the thread live. On web and desktop
+it opens as a tab in the right panel, beside the thread you are in, or in the
+main view with ⌘/Ctrl-click, like
+[subagents and side chats](thread-sidebar.md#open-a-thread-beside-the-one-you-are-in).
+On mobile it opens in the inspector on layouts that have one, where Maximize
+fills the screen, and as its own screen elsewhere. It shows the same timeline as
+any other thread on web and desktop, and a shorter read-only list on mobile.
+
+- The view is marked **Read-only** with both machines' names. To reply, approve
+  or stop the thread, choose **Connect to interact**. When the link has full
+  access, this app pairs with that machine in one step and opens the thread
+  there; you need permission to manage access on the machine you are connected
+  to. Otherwise the add-environment form opens for that machine and asks for a
+  pairing code you create on it.
+- This app connects to that machine directly, so it must be able to reach one of
+  the addresses the link uses. If it cannot, the view says so and stays
+  read-only. The new connection appears in that machine's **Settings → Sharing &
+  access**, named after this device and the machine it came through, and is
+  revoked there like any other.
+- Files, images and published visuals stay on that machine and do not load
+  here. A command's output shows as of when you open its row.
+- If this app is already connected to that machine, the thread opens there as
+  usual instead.
+- You need permission to read threads on the machine you are connected to, and
+  Linked environments must be on there. Both machines need a version of Scient
+  that has this view.
 
 ## Manage or revoke access
 
@@ -444,10 +660,15 @@ scient pair --scope orchestration:read --scope relay:read
 The selected scopes replace the default permissions. The same option works with
 `scient auth pairing create` and `scient auth session issue`; each command's
 `--help` lists the available scopes. Without `--scope`, pairing tokens and issued
-bearer sessions get every permission, including managing access. A terminal or a
-full-access agent on the host can reach that as well, so a client that should not
-manage access also needs to go without `terminal:operate` and
-`orchestration:operate`.
+bearer sessions get the standard client permissions, including managing access.
+Setting up or replacing a Scient Connect link requires the separate `relay:configure` permission.
+A terminal or a full-access agent on the host can reach those as well, so a
+client that should not manage access also needs to go without `terminal:operate`
+and `orchestration:operate`.
+
+A paired device stays signed in while you keep using it, until you revoke it in
+**Settings → Sharing & access** on the host. One unused for 30 days, or paired
+with a host older than this release, has to pair again.
 
 To change an existing client's permissions, create a fresh pairing link with the
 scopes it needs. In a browser opened directly on the environment, open that link
@@ -467,8 +688,10 @@ worktree still creates that branch and worktree with `orchestration:operate`,
 and the agent it runs can use Git however the environment allows.
 
 Settings changes, provider management, environment maintenance, access
-management, and relay management can each be granted separately. New pairings
-without `--scope` include all of them. Existing clients keep the
+management, and Scient Connect preferences can each be granted separately. Setting
+up or replacing a Scient Connect link requires the administrative
+`relay:configure` permission. `relay:write` covers preferences and unlinking.
+New pairings without `--scope` include the standard client permissions. Existing clients keep the
 permissions they paired with and can stay connected after an update, but newly
 separated features may require pairing again with the permissions they need.
 Older clients may show controls that the server denies. Create a fresh pairing
@@ -477,5 +700,12 @@ link to change a client's permissions.
 `filesystem:read` allows browsing host files, opening workspace files, and viewing
 local changes. Add `filesystem:write` to allow editing files or saving plans to
 the workspace. These scopes control direct file access from the client.
+
+Some permissions also give a client indirect access. With `terminal:operate`,
+a client can run commands that read or change any files the server’s OS account
+can access, even when the pairing link omits file permissions. With
+`relay:configure`, a client can replace the trusted issuer of pairing
+credentials. Grant these permissions only to clients you trust with those
+capabilities.
 
 Treat pairing URLs and authorization codes as passwords. Do not include them in screenshots, logs, or bug reports.

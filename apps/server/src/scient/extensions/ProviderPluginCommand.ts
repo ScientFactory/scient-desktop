@@ -27,7 +27,13 @@ const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
   );
 
 export const runProviderPluginCommand = Effect.fn("runProviderPluginCommand")(
-  function* (executable: string, env: NodeJS.ProcessEnv, cwd: string, args: ReadonlyArray<string>) {
+  function* (
+    executable: string,
+    env: NodeJS.ProcessEnv,
+    cwd: string,
+    args: ReadonlyArray<string>,
+    options?: { readonly acceptNonZeroExit?: boolean },
+  ) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const command = yield* resolveSpawnCommand(executable, args, { env, extendEnv: false });
     const child = yield* spawner.spawn(
@@ -44,7 +50,7 @@ export const runProviderPluginCommand = Effect.fn("runProviderPluginCommand")(
       [collect(child.stdout), collect(child.stderr), child.exitCode],
       { concurrency: "unbounded" },
     );
-    if (Number(code) !== 0)
+    if (Number(code) !== 0 && !options?.acceptNonZeroExit)
       return yield* Effect.fail({ message: "The agent rejected the plugin command." });
     return stdout;
   },
@@ -68,7 +74,7 @@ export const runScientAgentPluginCommand = Effect.fn("runScientAgentPluginComman
       {
         ...env,
         SCIENT_AGENT_ENABLE_SOURCES: supportsScientClaudePlugins(runtime.version)
-          ? "claude-plugins"
+          ? "claude-plugins,codex-plugins"
           : undefined,
       },
       cwd,

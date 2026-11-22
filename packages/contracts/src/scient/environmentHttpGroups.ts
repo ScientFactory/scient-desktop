@@ -4,6 +4,14 @@ import {
   ScientPdfEditError,
 } from "../scientPdfEdits.ts";
 import { KEEP_AWAKE_WORK_PATH, KeepAwakeWork } from "../scientKeepAwake.ts";
+import {
+  ScientAnnotationMutationRequest,
+  ScientAnnotationMutationResult,
+  ScientAnnotationsDocumentRequest,
+  ScientAnnotationsDocumentResult,
+  ScientAnnotationsSourceRequest,
+  ScientAnnotationsSourceResult,
+} from "../scientAnnotations.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -30,6 +38,10 @@ import {
   ScientSourceImportOperation,
   ScientSourceAttachmentPreviewRequest,
   ScientSourceAttachmentPreviewResult,
+  ScientSourcesFullTextSearchRequest,
+  ScientSourcesFullTextSearchResult,
+  ScientSourceSavePageRequest,
+  ScientSourceSavePageResult,
   ScientSourceDetailRequest,
   ScientSourceDetailResult,
   ScientSourceJournalIconRequest,
@@ -39,19 +51,65 @@ import {
   ScientSourceMetadataUpdateRequest,
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateRequest,
-  ScientSourceReviewUpdateRequest,
   ScientSourceNoteUpdateResult,
-  ScientSourceReviewUpdateResult,
+  ScientSourcePersonalNoteUpdateRequest,
+  ScientSourcePersonalNoteUpdateResult,
+  ScientSourcesReadingStateRequest,
+  ScientSourcesReadingStateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
+  ScientSourcesAddByIdentifierRequest,
+  ScientSourcesAddByIdentifierResult,
+  ScientSourceRestoreRequest,
+  ScientSourceRestoreResult,
+  ScientSourceRevertRequest,
+  ScientSourceRevertResult,
+  ScientSourceRevisionsRequest,
+  ScientSourceRevisionsResult,
+  ScientSourcesPermanentDeletionRequest,
+  ScientSourcePermanentDeletionResult,
+  ScientSourcesRecentChangesRequest,
+  ScientSourcesTrashRequest,
+  ScientLibraryRecentChanges,
+  ScientSourceUsesRequest,
+  ScientSourceUses,
+  ScientSourceCitationKeysRequest,
+  ScientSourceCitationKeys,
+  ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
+  ScientSourcesBulkResult,
+  ScientSourcesBackupStatusRequest,
+  ScientSourcesLibraryCopies,
+  ScientSourcesLibraryRestoreRequest,
+  ScientSourcesRestoreStatus,
+  ScientSourcesBulkUpdateRequest,
+  ScientSystematicReviewChangeRequest,
+  ScientSystematicReviewChangeResult,
+  ScientSystematicReviewConflictRequest,
+  ScientSystematicReviewConflictResult,
+  ScientSystematicReviewConflictsRequest,
+  ScientSystematicReviewConflictsResult,
+  ScientSystematicReviewList,
+  ScientSystematicReviewRequest,
+  ScientSystematicReviewResult,
+  ScientSystematicReviewsRequest,
+  ScientSourcesOrganizeRequest,
+  ScientSourcesOrganizeResult,
   ScientSourcesBeginImportRequest,
   ScientSourcesCancelImportRequest,
   ScientSourcesRetryImportRequest,
   ScientSourcesDiscardStagedRequest,
+  ScientSourcesExportRequest,
+  ScientSourcesExportResult,
+  ScientSourcesFileImportRequest,
+  ScientSourcesFileImportResult,
   ScientSourcesDiscardStagedResult,
   ScientSourcesLocalPdfUploadRequest,
   ScientSourcesLocalPdfUploadResult,
+  ScientSourcesMoveStatus,
+  ScientSourcesDuplicatesRequest,
+  ScientSourcesDuplicatesResult,
+  ScientSourcesMoveStatusRequest,
   ScientSourcesOverviewResult,
   ScientSourcesOverviewRequest,
   ScientSourcesPreflightRequest,
@@ -63,7 +121,19 @@ import {
   ZoteroLibraryRequest,
   ZoteroScopedImportRequest,
   ZoteroStatusRequest,
+  ScientSourcesZoteroRefreshRequest,
+  ScientSourcesZoteroSendRequest,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
 } from "../scientSources.ts";
+import {
+  ScientManagedBibliographyStatus,
+  ScientCitationStylesRequest,
+  ScientCitationStylesResult,
+  ScientCitationStyleSetRequest,
+  ScientCitationStyleSetResult,
+  ScientManagedBibliographySyncRequest,
+} from "../scientBibliography.ts";
 import {
   ScientLatexBuildRequest,
   ScientLatexArtworkRequest,
@@ -159,6 +229,28 @@ import {
   ScientOverleafUndoResult,
   ScientOverleafWorkspaceRequest,
 } from "../scientOverleaf.ts";
+import {
+  ScientReferenceCheckError,
+  ScientReferenceCheckRequest,
+  ScientReferenceCheckResult,
+  ScientReferenceDocumentsRequest,
+  ScientReferenceDocumentsResult,
+  ScientReferenceResolveRequest,
+  ScientReferenceResolveResult,
+} from "../scientReferences.ts";
+import {
+  ScientCloudEnrollmentCompleteRequest,
+  ScientCloudEnrollmentProof,
+  ScientCloudEnrollmentProofRequest,
+  ScientCloudError,
+  ScientCloudSetEnabledRequest,
+  ScientCloudShareBuild,
+  ScientCloudShareBuildRequest,
+  ScientCloudStatus,
+  ScientCloudStopRequest,
+  ScientCloudTakeOverRequest,
+  ScientCloudTakeOverResult,
+} from "../scientCloud.ts";
 
 /** Scient reasons inside environmentHttp's EnvironmentInternalErrorReason, in wire order. */
 export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
@@ -166,6 +258,8 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_project_inspection_failed",
   "scient_project_initialization_failed",
   "scient_sources_operation_failed",
+  /** A write waited its bound for the project's move into the library; the move goes on. */
+  "scient_sources_library_moving",
   "scient_latex_build_failed",
   "scient_latex_navigation_failed",
   "scient_latex_toolchain_failed",
@@ -176,6 +270,9 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_conversation_import_failed",
   "scient_word_export_failed",
   "scient_overleaf_operation_failed",
+  "scient_annotations_operation_failed",
+  "scient_references_operation_failed",
+  "scient_cloud_operation_failed",
 ] as const;
 
 export class ScientThreadQueueOperationError extends Schema.TaggedError<ScientThreadQueueOperationError>()(
@@ -264,6 +361,22 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
+      HttpApiEndpoint.post("fullTextSearch", "/api/scient/sources/full-text/search", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesFullTextSearchRequest,
+        success: ScientSourcesFullTextSearchResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("savePage", "/api/scient/sources/pages/save", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceSavePageRequest,
+        success: ScientSourceSavePageResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("journalIcon", "/api/scient/sources/journal-icon", {
         headers: OptionalBearerHeaders,
         payload: ScientSourceJournalIconRequest,
@@ -296,10 +409,18 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
-      HttpApiEndpoint.post("updateReview", "/api/scient/sources/review/update", {
+      HttpApiEndpoint.post("updatePersonalNote", "/api/scient/sources/personal-note/update", {
         headers: OptionalBearerHeaders,
-        payload: ScientSourceReviewUpdateRequest,
-        success: ScientSourceReviewUpdateResult,
+        payload: ScientSourcePersonalNoteUpdateRequest,
+        success: ScientSourcePersonalNoteUpdateResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("setReadingState", "/api/scient/sources/reading-state", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesReadingStateRequest,
+        success: ScientSourcesReadingStateResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
@@ -308,6 +429,170 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceRemovalRequest,
         success: ScientSourceRemovalResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("organize", "/api/scient/sources/organize", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesOrganizeRequest,
+        success: ScientSourcesOrganizeResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("addByIdentifier", "/api/scient/sources/identifiers/add", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesAddByIdentifierRequest,
+        success: ScientSourcesAddByIdentifierResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("recentChanges", "/api/scient/sources/recent-changes", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesRecentChangesRequest,
+        success: ScientLibraryRecentChanges,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("sourceUses", "/api/scient/sources/source-uses", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceUsesRequest,
+        success: ScientSourceUses,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("sourceCitationKeys", "/api/scient/sources/citation-keys", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceCitationKeysRequest,
+        success: ScientSourceCitationKeys,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("trash", "/api/scient/sources/trash", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesTrashRequest,
+        success: ScientSourceTrashListing,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReviews", "/api/scient/sources/reviews", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewsRequest,
+        success: ScientSystematicReviewList,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReview", "/api/scient/sources/reviews/detail", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewRequest,
+        success: ScientSystematicReviewResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReviewChange", "/api/scient/sources/reviews/change", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewChangeRequest,
+        success: ScientSystematicReviewChangeResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReviewConflicts", "/api/scient/sources/reviews/conflicts", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewConflictsRequest,
+        success: ScientSystematicReviewConflictsResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        "systematicReviewConflict",
+        "/api/scient/sources/reviews/conflicts/change",
+        {
+          headers: OptionalBearerHeaders,
+          payload: ScientSystematicReviewConflictRequest,
+          success: ScientSystematicReviewConflictResult,
+          error: EnvironmentHttpCommonError,
+        },
+      ).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("duplicates", "/api/scient/sources/duplicates", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesDuplicatesRequest,
+        success: ScientSourcesDuplicatesResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("moveStatus", "/api/scient/sources/move/status", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesMoveStatusRequest,
+        success: ScientSourcesMoveStatus,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("backupStatus", "/api/scient/sources/backup/status", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesBackupStatusRequest,
+        success: ScientSourcesLibraryCopies,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("libraryRestore", "/api/scient/sources/backup/restore", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesLibraryRestoreRequest,
+        success: ScientSourcesRestoreStatus,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("bulkUpdate", "/api/scient/sources/bulk-update", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesBulkUpdateRequest,
+        success: ScientSourcesBulkResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("restore", "/api/scient/sources/trash/restore", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceRestoreRequest,
+        success: ScientSourceRestoreResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("deletePermanently", "/api/scient/sources/trash/delete", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesPermanentDeletionRequest,
+        success: ScientSourcePermanentDeletionResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("revisions", "/api/scient/sources/revisions", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceRevisionsRequest,
+        success: ScientSourceRevisionsResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("revert", "/api/scient/sources/revert", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceRevertRequest,
+        success: ScientSourceRevertResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
@@ -368,6 +653,22 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
+      HttpApiEndpoint.post("fileImport", "/api/scient/sources/files/import", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesFileImportRequest,
+        success: ScientSourcesFileImportResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("export", "/api/scient/sources/export", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesExportRequest,
+        success: ScientSourcesExportResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("beginImport", "/api/scient/sources/import/begin", {
         headers: OptionalBearerHeaders,
         payload: ScientSourcesBeginImportRequest,
@@ -380,6 +681,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ZoteroScopedImportRequest,
         success: ScientSourceImportOperation,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("zoteroRefresh", "/api/scient/sources/zotero/refresh", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesZoteroRefreshRequest,
+        success: ScientSourceZoteroRefreshResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("zoteroSend", "/api/scient/sources/zotero/send", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesZoteroSendRequest,
+        success: ScientSourceZoteroSendResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
@@ -404,6 +721,30 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesRetryImportRequest,
         success: ScientSourceImportOperation,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("syncBibliography", "/api/scient/sources/bibliography/sync", {
+        headers: OptionalBearerHeaders,
+        payload: ScientManagedBibliographySyncRequest,
+        success: ScientManagedBibliographyStatus,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("citationStyles", "/api/scient/sources/citation-styles", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCitationStylesRequest,
+        success: ScientCitationStylesResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("citationStyleSet", "/api/scient/sources/citation-styles/set", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCitationStyleSetRequest,
+        success: ScientCitationStyleSetResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
@@ -519,14 +860,39 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
-  class EnvironmentScientPdfHttpApi extends HttpApiGroup.make("scientPdf").add(
-    HttpApiEndpoint.post("save", "/api/scient/pdf/save", {
-      headers: OptionalBearerHeaders,
-      payload: ScientPdfEditSaveRequest,
-      success: ScientPdfEditSaveResult,
-      error: [EnvironmentHttpCommonError, ScientPdfEditError],
-    }).middleware(EnvironmentAuthenticatedAuth),
-  ) {}
+  class EnvironmentScientPdfHttpApi extends HttpApiGroup.make("scientPdf")
+    .add(
+      HttpApiEndpoint.post("save", "/api/scient/pdf/save", {
+        headers: OptionalBearerHeaders,
+        payload: ScientPdfEditSaveRequest,
+        success: ScientPdfEditSaveResult,
+        error: [EnvironmentHttpCommonError, ScientPdfEditError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("annotationsForDocument", "/api/scient/pdf/annotations/document", {
+        headers: OptionalBearerHeaders,
+        payload: ScientAnnotationsDocumentRequest,
+        success: ScientAnnotationsDocumentResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("annotationsForSource", "/api/scient/pdf/annotations/source", {
+        headers: OptionalBearerHeaders,
+        payload: ScientAnnotationsSourceRequest,
+        success: ScientAnnotationsSourceResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("annotationsMutate", "/api/scient/pdf/annotations/mutate", {
+        headers: OptionalBearerHeaders,
+        payload: ScientAnnotationMutationRequest,
+        success: ScientAnnotationMutationResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
 
   class EnvironmentScientMarkdownHttpApi extends HttpApiGroup.make("scientMarkdown").add(
     HttpApiEndpoint.post("imageUpload", "/api/scient/markdown/images/upload", {
@@ -867,6 +1233,92 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  // Scient reference check group: checks a document or the Library, then fixes or ignores findings.
+  class EnvironmentScientReferencesHttpApi extends HttpApiGroup.make("scientReferences")
+    .add(
+      HttpApiEndpoint.post("documents", "/api/scient/references/v1/documents", {
+        headers: OptionalBearerHeaders,
+        payload: ScientReferenceDocumentsRequest,
+        success: ScientReferenceDocumentsResult,
+        error: [EnvironmentHttpCommonError, ScientReferenceCheckError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("check", "/api/scient/references/v1/check", {
+        headers: OptionalBearerHeaders,
+        payload: ScientReferenceCheckRequest,
+        success: ScientReferenceCheckResult,
+        error: [EnvironmentHttpCommonError, ScientReferenceCheckError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("resolve", "/api/scient/references/v1/resolve", {
+        headers: OptionalBearerHeaders,
+        payload: ScientReferenceResolveRequest,
+        success: ScientReferenceResolveResult,
+        error: [EnvironmentHttpCommonError, ScientReferenceCheckError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
+
+  // Scient Cloud group: this computer's enrollment, the conversation copy,
+  // share building and take-over import. The renderer calls the cloud itself.
+  class EnvironmentScientCloudHttpApi extends HttpApiGroup.make("scientCloud")
+    .add(
+      HttpApiEndpoint.post("status", "/api/scient/cloud/v1/status", {
+        headers: OptionalBearerHeaders,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("enrollmentProof", "/api/scient/cloud/v1/enrollment/proof", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudEnrollmentProofRequest,
+        success: ScientCloudEnrollmentProof,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("enrollmentComplete", "/api/scient/cloud/v1/enrollment/complete", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudEnrollmentCompleteRequest,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("setEnabled", "/api/scient/cloud/v1/enabled", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudSetEnabledRequest,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("stop", "/api/scient/cloud/v1/stop", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudStopRequest,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("shareBuild", "/api/scient/cloud/v1/share/build", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudShareBuildRequest,
+        success: ScientCloudShareBuild,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("takeOver", "/api/scient/cloud/v1/take-over", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudTakeOverRequest,
+        success: ScientCloudTakeOverResult,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
+
   return {
     EnvironmentScientKeepAwakeHttpApi,
     EnvironmentScientProjectHttpApi,
@@ -880,5 +1332,7 @@ export function makeScientEnvironmentHttpGroups({
     EnvironmentScientConversationImportHttpApi,
     EnvironmentScientWordExportHttpApi,
     EnvironmentScientOverleafHttpApi,
+    EnvironmentScientReferencesHttpApi,
+    EnvironmentScientCloudHttpApi,
   };
 }

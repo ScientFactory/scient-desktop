@@ -36,6 +36,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectSettingsOverrideSweep from "../provider/ProjectSettingsOverrideSweep.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
@@ -55,6 +56,7 @@ import { layer as ProjectHandlersLive } from "../mcp/toolkits/project/handlers.t
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import { writeConversationFork } from "../orchestration-v2/scient-fork/ConversationForkRecords.ts";
 
 const layerEventPersistence = EventSink.layer.pipe(
   Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
@@ -631,6 +633,7 @@ it.effect("shared V2 deletion stops a real pending clone only after deletion com
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: temporaryRoot,
+          isScratchProject: () => Effect.succeed(false),
         }),
         Layer.succeed(McpInvocationContext.McpInvocationContext, {
           environmentId: EnvironmentId.make("clone-delete-environment"),
@@ -826,20 +829,20 @@ it.effect("force-deleting a project releases a fork lineage's shared files after
                 relationshipToParent: "fork",
                 rootThreadId: sourceId,
               },
-              conversationFork: {
-                commandId: CommandId.make("command:fork"),
-                sourceThreadId: sourceId,
-                workspaceMode: "local",
-                status: "ready",
-                cwd: `/work/${projectId}`,
-                checkpointRef: null,
-                checkpointOid: null,
-                attachmentCopies: [],
-                error: null,
-              },
             },
           },
         ],
+      });
+      yield* writeConversationFork(sql, forkId, {
+        commandId: CommandId.make("command:fork"),
+        sourceThreadId: sourceId,
+        workspaceMode: "local",
+        status: "ready",
+        cwd: `/work/${projectId}`,
+        checkpointRef: null,
+        checkpointOid: null,
+        attachmentCopies: [],
+        error: null,
       });
       yield* service.delete({ commandId, projectId, force: true });
       const release = yield* sql<{ readonly thread_id: string }>`
@@ -855,9 +858,13 @@ it.effect("force-deleting a project releases a fork lineage's shared files after
   }).pipe(Effect.provide(layerDatabase)),
 );
 
-it.effect(
-  "clears a deleted project's settings overrides so a machine-disabled instance cannot stay alive",
-  () =>
+it.effect.each([
+  { policy: "no", worktreeCleanup: undefined },
+  { policy: "its off", worktreeCleanup: { mode: "off" } as const },
+  { policy: "its legacy", worktreeCleanup: null },
+])(
+  "clears a deleted project's settings overrides, keeping $policy worktree cleanup policy, so a machine-disabled instance cannot stay alive",
+  ({ worktreeCleanup }) =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project:overrides-cleanup");
       const instanceId = ProviderInstanceId.make("codex_work");
@@ -870,9 +877,10 @@ it.effect(
         yield* serverSettings.updateSettings({
           projectSettingsOverrides: {
             [projectId]: {
+              providerInstances: { [instanceId]: { enabled: true } },
               defaultAutoPull: true,
               threadTitleInstructions: "",
-              providerInstances: { [instanceId]: { enabled: true } },
+              ...(worktreeCleanup === undefined ? {} : { worktreeCleanup }),
             },
           },
         });
@@ -882,8 +890,35 @@ it.effect(
           projectId,
         });
 
-        const settingsAfterDelete = yield* serverSettings.getSettings;
-        assert.isUndefined(settingsAfterDelete.projectSettingsOverrides[projectId]);
+        const entry = (yield* serverSettings.getSettings).projectSettingsOverrides[projectId];
+        if (worktreeCleanup === undefined) {
+          assert.isUndefined(entry);
+        } else {
+          assert.deepStrictEqual(entry, { worktreeCleanup, providerInstances: {} });
+        }
+
+        const liveProjectId = ProjectId.make("project:still-live");
+        const missingProjectId = ProjectId.make("project:missing");
+        yield* seedProject(liveProjectId);
+        // Older deletions or interrupted best-effort cleanup can leave the original overrides on restart.
+        yield* serverSettings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: {
+              providerInstances: { [instanceId]: { enabled: true } },
+              defaultAutoPull: true,
+              ...(worktreeCleanup === undefined ? {} : { worktreeCleanup }),
+            },
+            [liveProjectId]: { defaultAutoPull: true },
+            [missingProjectId]: { worktreeCleanup: { mode: "off" } },
+          },
+        });
+        yield* ProjectSettingsOverrideSweep.sweep;
+        assert.deepStrictEqual((yield* serverSettings.getSettings).projectSettingsOverrides, {
+          [liveProjectId]: { defaultAutoPull: true },
+          ...(worktreeCleanup === undefined
+            ? {}
+            : { [projectId]: { worktreeCleanup, providerInstances: {} } }),
+        });
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
 );

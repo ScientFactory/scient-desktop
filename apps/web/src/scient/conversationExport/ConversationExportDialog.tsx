@@ -4,6 +4,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { TriangleAlertIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -23,6 +24,7 @@ import { Label } from "../../components/ui/label";
 import { Radio, RadioGroup } from "../../components/ui/radio-group";
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import {
   exportConversation,
   prepareConversationExport,
@@ -88,6 +90,8 @@ type Loading =
   | { readonly _tag: "ready"; readonly preparation: ScientConversationExportPreparation };
 
 function ConversationExportDialog({ request }: { readonly request: OpenRequest }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { threadRef } = request;
   const navigate = useNavigate();
   const [loading, setLoading] = useState<Loading>({ _tag: "loading" });
@@ -96,7 +100,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
   const [error, setError] = useState<string | null>(null);
   const registrations = registeredConversationExportFormats();
   const registration = registrations.find((entry) => entry.format === request.format) ?? null;
-  const label = registration?.label ?? request.format;
+  const label = registration ? messages(registration.label) : request.format;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the export preparation over the environment connection, ignoring replies after unmount
   useEffect(() => {
@@ -134,7 +138,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
   const availability =
     preparation === null
       ? null
-      : exportFormatAvailability(request.format, preparation, registrations);
+      : exportFormatAvailability(request.format, preparation, registrations, messages);
   const exportRequest =
     preparation === null || state === null || availability?.available !== true
       ? null
@@ -164,7 +168,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
                 ? {}
                 : {
                     actionProps: {
-                      children: "Open",
+                      children: m(msg("Open", { $context: "verb, opens the exported file" })),
                       // A sidebar export's conversation may not be the one on screen.
                       onClick: () => showInOwningThread(navigate, threadRef, open),
                     },
@@ -173,7 +177,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
               produced.warnings.length > 0
                 ? {
                     type: "warning",
-                    title: `${produced.title} with notes`,
+                    title: m(msg("{title} with notes", { title: produced.title })),
                     description: produced.warnings.map((warning) => warning.message).join("\n"),
                     ...openAction,
                   }
@@ -208,14 +212,14 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
             }
             toastManager.add({
               type: "success",
-              title: saved._tag === "saved" ? "Export saved" : "Download started",
+              title: saved._tag === "saved" ? m(msg("Export saved")) : m(msg("Download started")),
               description: saved._tag === "saved" ? saved.path : result.file.fileName,
             });
           }
           if (result.warnings.length > 0) {
             toastManager.add({
               type: "warning",
-              title: "Exported with notes",
+              title: m(msg("Exported with notes")),
               description: result.warnings.map((warning) => warning.message).join("\n"),
             });
           }
@@ -248,10 +252,14 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
       <DialogPopup className="sm:max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-1">
-            <DialogTitle>Export as {label}</DialogTitle>
+            <DialogTitle>
+              <T>
+                Export as <Var>{label}</Var>
+              </T>
+            </DialogTitle>
             {registration ? (
-              <ExportInfoButton label={`About ${label} export`}>
-                {registration.about}
+              <ExportInfoButton label={gt("About {format} export", { format: label })}>
+                {messages(registration.about)}
               </ExportInfoButton>
             ) : null}
           </div>
@@ -259,7 +267,9 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
             {preparation !== null ? (
               preparation.title
             ) : loading._tag === "loading" ? (
-              <span role="status">Preparing the conversation…</span>
+              <span role="status">
+                <T>Preparing the conversation…</T>
+              </span>
             ) : null}
           </DialogDescription>
         </DialogHeader>
@@ -274,7 +284,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
                 variant="outline"
                 onClick={() => requestConversationExport(threadRef, request.format)}
               >
-                Try again
+                <T>Try again</T>
               </Button>
             </div>
           ) : null}
@@ -308,11 +318,11 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
         <DialogFooter>
           {busy ? (
             <p role="status" className="text-muted-foreground text-sm sm:me-auto sm:self-center">
-              Exporting…
+              <T>Exporting…</T>
             </p>
           ) : null}
           <Button type="button" variant="outline" disabled={busy} onClick={() => closeRequest()}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           {preparation !== null && state !== null && availability?.available === true ? (
             <Button
@@ -320,7 +330,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
               disabled={exportRequest === null || busy}
               onClick={() => void run()}
             >
-              {exportSaveLabel(state, preparation, registrations)}
+              {exportSaveLabel(state, preparation, registrations, messages)}
             </Button>
           ) : null}
         </DialogFooter>
@@ -348,6 +358,7 @@ function IncludeCaution({
   readonly id: string;
   readonly position: CautionPosition;
 }) {
+  const messages = useMessages();
   return createPortal(
     <p
       id={id}
@@ -356,14 +367,14 @@ function IncludeCaution({
       style={{ top: position.top, left: position.left, maxWidth: position.maxWidth }}
     >
       <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0 text-warning" />
-      {INCLUDE_CAUTION}
+      {messages(INCLUDE_CAUTION)}
     </p>,
     position.popup,
   );
 }
 
 /** The export choices. Inclusion choices live in the dialog; the caution is local and temporary. */
-export function ConversationExportForm(props: {
+function ConversationExportForm(props: {
   readonly preparation: ScientConversationExportPreparation;
   readonly registrations: ReadonlyArray<ConversationExportFormatRegistration>;
   readonly state: ExportDialogState;
@@ -371,8 +382,10 @@ export function ConversationExportForm(props: {
   readonly onChange: (state: ExportDialogState) => void;
 }) {
   const { preparation, registrations, state, disabled, onChange } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const variant = offeredVariant(state, preparation, registrations);
-  const warnings = exportDialogWarnings(preparation);
+  const warnings = exportDialogWarnings(preparation, messages);
   const update = (patch: Partial<ExportDialogState>) => onChange({ ...state, ...patch });
   const [cautionFor, setCautionFor] = useState<CautionTarget | null>(null);
   const [cautionPosition, setCautionPosition] = useState<CautionPosition | null>(null);
@@ -430,7 +443,7 @@ export function ConversationExportForm(props: {
     <div className="flex flex-col gap-4">
       {variant ? (
         <RadioGroup
-          aria-label={variant.label}
+          aria-label={messages(variant.label)}
           value={state.variant ?? variant.defaultValue}
           onValueChange={(value) => update({ variant: String(value) })}
           disabled={disabled}
@@ -438,14 +451,16 @@ export function ConversationExportForm(props: {
           {variant.choices.map((choice) => (
             <Label key={choice.value}>
               <Radio value={choice.value} />
-              {choice.label}
+              {messages(choice.label)}
             </Label>
           ))}
         </RadioGroup>
       ) : null}
 
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Include</span>
+        <span className="text-sm font-medium">
+          <T context="choose what the export includes">Include</T>
+        </span>
         <Label ref={workLogRef}>
           <Switch
             checked={state.includeWorkLog}
@@ -455,7 +470,7 @@ export function ConversationExportForm(props: {
             }
             onCheckedChange={(checked) => changeInclude("includeWorkLog", checked)}
           />
-          Work log: tools, commands, results
+          <T>Work log: tools, commands, results</T>
         </Label>
         <Label ref={reasoningRef}>
           <Switch
@@ -466,7 +481,7 @@ export function ConversationExportForm(props: {
             }
             onCheckedChange={(checked) => changeInclude("includeReasoning", checked)}
           />
-          Reasoning: the thinking shown in chat
+          <T>Reasoning: the thinking shown in chat</T>
         </Label>
       </div>
 
@@ -482,7 +497,7 @@ export function ConversationExportForm(props: {
       ) : null}
 
       {warnings.length > 0 ? (
-        <ul className="flex flex-col gap-1" aria-label="Export warnings">
+        <ul className="flex flex-col gap-1" aria-label={gt("Export warnings")}>
           {warnings.map((warning) => (
             <li key={warning} className="flex items-start gap-1.5 text-warning text-xs">
               <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />

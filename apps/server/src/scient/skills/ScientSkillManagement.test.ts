@@ -45,25 +45,53 @@ describe("Scient skill management", () => {
           "workspace-readiness-review",
           "improve-workspace-readiness",
           "scient-skill-authoring",
+          "connector-authoring",
           "pdf-authoring",
-          "html-pdf-authoring",
           "latex-authoring",
           "overleaf-sync",
+          "references",
+          "systematic-review",
+          "compare-sources",
+          "statistics-review",
+          "check-reported-numbers",
+          "reviewer-response",
+          "ml-evaluation-audit",
+          "reporting-guideline-check",
+          "diagnose-analysis",
+          "grill-me",
+          "to-questionnaire",
+          "teach",
         ]);
         expect(initial.skills.map((skill) => skill.category)).toEqual([
           "Workspace readiness",
           "Workspace readiness",
           "Skill creation",
+          "Connector creation",
           "Document creation",
           "Document creation",
           "Document creation",
-          "Document creation",
+          "Research",
+          "Research",
+          "Research",
+          "Analysis",
+          "Analysis",
+          "Analysis",
+          "Analysis",
+          "Analysis",
+          "Analysis",
+          "Planning and learning",
+          "Planning and learning",
+          "Planning and learning",
         ]);
         expect(new Set(initial.skills.map((skill) => skill.categoryDescription))).toEqual(
           new Set([
             "Review and improve a workspace so people and agents can understand it and work safely.",
             "Create and improve reusable guidance for Scient agents.",
+            "Make and fix connectors that give agents tools for a service.",
             "Create polished documents and reliable final outputs.",
+            "Check, find and cite the literature.",
+            "Check research methods, results and manuscript reporting.",
+            "Think a plan through, get expert input and learn new methods.",
           ]),
         );
         expect(initial.skills.every((skill) => skill.scope === "user")).toBe(true);
@@ -72,15 +100,11 @@ describe("Scient skill management", () => {
         expect(initial.supportedProviders).toContain("antigravity");
         expect(initial.supportedProviders).toContain("cursor");
 
-        const htmlPdf = initial.skills.find((skill) => skill.name === "html-pdf-authoring")!;
-        const document = yield* management.readDocument(htmlPdf.releaseKey);
-        expect(document).toMatchObject({
-          releaseKey: htmlPdf.releaseKey,
-          name: "html-pdf-authoring",
-          description:
-            "Create or revise HTML when it is the editable source for a PDF requested in Scient. Do not use for ordinary webpage work.",
-        });
-        expect(document.instructions).toContain("# HTML-to-PDF Authoring");
+        const pdf = initial.skills.find((skill) => skill.name === "pdf-authoring")!;
+        const document = yield* management.readDocument(pdf.releaseKey);
+        expect(document).toMatchObject({ releaseKey: pdf.releaseKey, name: "pdf-authoring" });
+        expect(document.description).toContain("PDF");
+        expect(document.instructions).toContain("# PDF authoring");
 
         const selected = initial.skills.find((skill) => skill.name === "scient-skill-authoring")!;
         const updated = yield* management.setUserActivation({
@@ -185,7 +209,7 @@ describe("Scient skill management", () => {
           active: false,
           invocationPolicy: "explicit",
         });
-        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(7);
+        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(19);
         yield* Effect.promise(() =>
           NodeFSP.appendFile(
             NodePath.join(projectRoot, ".scient", "skills", "project-method", "SKILL.md"),

@@ -1,5 +1,8 @@
 import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
 import type { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { getActiveLocale, m, type MessageResolver } from "../../i18n/messages";
 import {
   resolveSelectableProviderInstanceEntry,
   type ProviderInstanceEntry,
@@ -35,18 +38,25 @@ export function hasAvailableCompactionProvider(input: {
   );
 }
 
-export function formatContextWindowCompactionMessage(autoCompactThreshold?: number | null): string {
+export function formatContextWindowCompactionMessage(
+  autoCompactThreshold?: number | null,
+  resolve: MessageResolver = m,
+  locale: string = getActiveLocale(),
+): string {
   if (typeof autoCompactThreshold === "number" && autoCompactThreshold > 0) {
-    return `Compacts automatically at about ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
+    return resolve(
+      msg("Compacts automatically at about {tokens} tokens.", {
+        tokens: autoCompactThreshold.toLocaleString(locale),
+      }),
+    );
   }
-  return "Context compacts automatically when needed.";
+  return resolve(msg("Context compacts automatically when needed."));
 }
 
 // SCIENT-FORK:START — resume compaction before an ordinary send.
-/** Compact only ordinary server sends; queue edits/retries keep their captured payload. */
+/** Compact only ordinary server sends; steers, annotations and direct prompts keep their payload. */
 export function shouldCompactBeforeSend(input: {
   readonly ordinaryServerSend: boolean;
-  readonly hasCapturedQueueSubmission: boolean;
   readonly multipleModels: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly keepFullHistory: boolean;
@@ -54,7 +64,6 @@ export function shouldCompactBeforeSend(input: {
 }): boolean {
   return (
     input.ordinaryServerSend &&
-    !input.hasCapturedQueueSubmission &&
     !input.multipleModels &&
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&

@@ -1,8 +1,12 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ModelPickerProviderUpdateFooter } from "~/scient/providerConnection/ModelPickerProviderUpdateFooter";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 describe("ModelPickerProviderUpdateFooter", () => {
   it("keeps the update visible but unavailable while the provider is busy", () => {

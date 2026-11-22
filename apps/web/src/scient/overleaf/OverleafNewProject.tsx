@@ -2,12 +2,14 @@
 // the entry; the Connect to Overleaf dialog, in its new-project mode, makes the
 // Scient project and brings the paper in as a subfolder of it.
 import type { EnvironmentId } from "@t3tools/contracts";
+import { msg, useGT } from "gt-react";
 import { useRef } from "react";
 import { create } from "zustand";
 
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "~/components/CommandPalette.logic";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { waitForProjectProjection } from "~/lib/projectProjection";
 import { readLocalApi } from "~/localApi";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
@@ -28,12 +30,15 @@ const useRequest = create<{ request: OverleafNewProjectRequest | null }>(() => (
 }));
 
 /** The Add project list's "Overleaf project" entry for one environment. */
-export function overleafAddProjectItem(input: {
-  readonly environmentId: EnvironmentId;
-  readonly location: string;
-  /** Whether the environment runs on this computer. */
-  readonly isPrimary: boolean;
-}): CommandPaletteActionItem {
+export function overleafAddProjectItem(
+  input: {
+    readonly environmentId: EnvironmentId;
+    readonly location: string;
+    /** Whether the environment runs on this computer. */
+    readonly isPrimary: boolean;
+  },
+  resolve: MessageResolver = m,
+): CommandPaletteActionItem {
   const request: OverleafNewProjectRequest = {
     environmentId: input.environmentId,
     location: input.location,
@@ -43,8 +48,8 @@ export function overleafAddProjectItem(input: {
     kind: "action",
     value: `action:add-project:${input.environmentId}:overleaf`,
     searchTerms: ["overleaf", "latex", "paper", "thesis", "tex"],
-    title: "Overleaf project",
-    description: "Bring a paper in from Overleaf",
+    title: resolve(msg("Overleaf project")),
+    description: resolve(msg("Bring a paper in from Overleaf")),
     icon: <OverleafMark aria-hidden className={ITEM_ICON_CLASS} />,
     // The palette closes; the dialog takes over.
     run: async () => {
@@ -60,6 +65,7 @@ export function overleafAddProjectItem(input: {
 export function insertOverleafAddProjectItem(
   sources: Array<{ readonly value: string }>,
   input: Parameters<typeof overleafAddProjectItem>[0],
+  resolve: MessageResolver = m,
 ): void {
   const prefix = `action:add-project:${input.environmentId}:`;
   const after = (source: string) =>
@@ -68,7 +74,7 @@ export function insertOverleafAddProjectItem(
         item.value === `${prefix}${source}` || item.value === `${prefix}${source}:not-ready`,
     );
   const anchor = after("github") >= 0 ? after("github") : after("url");
-  const item = overleafAddProjectItem(input);
+  const item = overleafAddProjectItem(input, resolve);
   if (anchor >= 0) sources.splice(anchor + 1, 0, item);
   else sources.push(item);
 }
@@ -98,6 +104,7 @@ export function OverleafNewProjectDialogHost() {
 }
 
 function OverleafNewProjectDialog({ request }: { readonly request: OverleafNewProjectRequest }) {
+  const gt = useGT();
   const openNewThread = useNewThreadHandler();
   const made = useRef<ProjectForOverleaf | null>(null);
 
@@ -110,8 +117,8 @@ function OverleafNewProjectDialog({ request }: { readonly request: OverleafNewPr
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to open project",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Failed to open project"),
+          description: error instanceof Error ? error.message : gt("An error occurred."),
         }),
       );
     });
@@ -124,8 +131,11 @@ function OverleafNewProjectDialog({ request }: { readonly request: OverleafNewPr
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "The project is made but not in the sidebar yet",
-          description: `It's in ${project.cwd}. It appears in the sidebar once this window catches up; Add project ▸ Local folder opens it too.`,
+          title: gt("The project is made but not in the sidebar yet"),
+          description: gt(
+            "It's in {path}. It appears in the sidebar once this window catches up; Add project ▸ Local folder opens it too.",
+            { path: project.cwd },
+          ),
         }),
       );
       return;

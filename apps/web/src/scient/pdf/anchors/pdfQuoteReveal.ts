@@ -15,7 +15,7 @@ import {
   textLayerText,
   textRangeDomRanges,
 } from "./pdfTextLayer";
-import { PDF_EXTRACTOR_VERSION, pdfTextHash } from "./pdfTextTarget";
+import { pdfTextHash } from "./pdfTextTarget";
 
 /** How a quote was found again in the PDF the reader shows now. */
 export type PdfRevealOutcome =
@@ -176,7 +176,6 @@ export async function locatePdfQuote(
   }
   const verification = verifyPdfTarget(target, {
     material: null,
-    extractorVersion: PDF_EXTRACTOR_VERSION,
     page: (page) => live.get(page),
   });
   if (verification.selectorValid) {

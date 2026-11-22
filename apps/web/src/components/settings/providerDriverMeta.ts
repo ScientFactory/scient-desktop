@@ -1,12 +1,6 @@
-import {
-  DroidSettings,
-  OmpSettings,
-  ScientAgentSettings,
-  compareProviderDriverKinds,
-  ProviderDriverKind,
-} from "@t3tools/contracts";
-import { providerClients as upstreamProviderClients } from "@t3tools/client-runtime/provider-clients";
-import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
+import { compareProviderDriverKinds, ProviderDriverKind } from "@t3tools/contracts";
+import { msg } from "gt-react";
+import { providerClients } from "@t3tools/client-runtime/scient-provider-clients";
 import type { ProviderClientDefinition as CoreProviderClientDefinition } from "@t3tools/provider-core/client";
 import type * as Schema from "effect/Schema";
 import { createElement, type SVGProps } from "react";
@@ -45,33 +39,8 @@ export interface DriverOption {
   readonly searchAliases?: ReadonlyArray<string>;
 }
 
-/**
- * The browser-safe provider packages own their schemas and plain-data icons.
- * These local entries retain Scient providers that upstream does not ship.
- */
-const localProviderClients: ReadonlyArray<CoreProviderClientDefinition> = [
-  {
-    driverKind: ProviderDriverKind.make("droid"),
-    label: "Droid",
-    settingsSchema: DroidSettings,
-  },
-  {
-    driverKind: ProviderDriverKind.make("omp"),
-    label: "Oh My Pi",
-    settingsSchema: OmpSettings,
-  },
-  {
-    driverKind: ProviderDriverKind.make("scient"),
-    label: "Scient",
-    settingsSchema: ScientAgentSettings,
-  },
-];
-
 /** The provider client definitions this web build supports: upstream's shared registry plus Scient's. */
-export const providerClients = makeProviderClientRegistry([
-  ...upstreamProviderClients.definitions,
-  ...localProviderClients,
-]);
+export { providerClients };
 
 const metadataByDriver: Readonly<
   Record<
@@ -81,19 +50,21 @@ const metadataByDriver: Readonly<
 > = {
   codex: {
     vendorLabel: "OpenAI",
-    accountLabel: "ChatGPT subscription",
+    accountLabel: msg("ChatGPT subscription"),
     searchAliases: ["openai", "chatgpt", "gpt"],
   },
   claudeAgent: {
     vendorLabel: "Anthropic",
-    accountLabel: "Claude subscription",
+    accountLabel: msg("Claude subscription"),
     searchAliases: ["anthropic"],
   },
   grok: { vendorLabel: "xAI", searchAliases: ["xai"] },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- company name
   droid: { vendorLabel: "Factory", searchAliases: ["factory"], supportsCustomModels: false },
   antigravity: {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- company name
     vendorLabel: "Google",
-    accountLabel: "Gemini subscription",
+    accountLabel: msg("Gemini subscription"),
     searchAliases: ["google", "gemini"],
     supportsCustomModels: false,
   },
@@ -101,7 +72,7 @@ const metadataByDriver: Readonly<
   omp: { supportsCustomModels: false },
   scient: { supportsCustomModels: false },
   acpRegistry: { hasDefaultInstance: false, supportsCustomModels: false },
-  muse: { badgeLabel: "Beta" },
+  muse: { badgeLabel: msg("Beta") },
 };
 
 const providerOptionsUnordered: readonly DriverOption[] = providerClients.definitions.map(

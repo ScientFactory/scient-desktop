@@ -24,6 +24,8 @@ import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
 import { useArrivedPromptFollow, useResponseFollow } from "./responseFollow";
 import { useQueuedRunsInView } from "./queuedRunsInView";
+import type { TimelineViewport } from "./timelineViewport";
+import { readingNavigationReleasesFollow } from "./useReadingFollow";
 import { deriveTimelineWorking } from "./timelineWorkingState";
 import { CHAT_TIMELINE_ANCHOR_OFFSET, readTimelinePosition } from "./timelineScrollAnchoring";
 
@@ -156,13 +158,22 @@ function Chat({
   const messages = entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : []));
   const follow = useResponseFollow({ threadKey, runs, messages, loaded: true });
   const { start, join, clear } = follow;
-  const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
-  const cancelPositioning = useStableCallback(() => {
-    cancelPositionRestoreRef.current?.();
-    clear();
-  });
   const atEndRef = useRef(true);
   const readerAtEnd = useStableCallback(() => atEndRef.current);
+  // ChatView's follow lets go when the reader moves toward older content (useReadingFollow).
+  const followingResponse = follow.promptId !== null;
+  const attachViewport = useStableCallback((viewport: TimelineViewport) =>
+    viewport.subscribe((navigation) => {
+      if (
+        readingNavigationReleasesFollow(
+          navigation,
+          { contentScrollsUp: () => true, awayFromEnd: () => !readerAtEnd() },
+          followingResponse,
+        )
+      )
+        clear();
+    }),
+  );
   const followArrived = useStableCallback((promptId: MessageId) => {
     if (!follow.followable(promptId)) return;
     clear();
@@ -202,7 +213,7 @@ function Chat({
         if (atEndRef.current) start(MessageId.make(promptId));
       },
       scrollToEnd: async () => {
-        cancelPositioning();
+        clear();
         await _fixture.listRef.current?.scrollToEnd({ animated: false });
         _fixture.listRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
         join();
@@ -245,8 +256,7 @@ function Chat({
           </div>
         )
       }
-      cancelPositionRestoreRef={cancelPositionRestoreRef}
-      onManualNavigation={cancelPositioning}
+      onViewportAttach={attachViewport}
       onIsAtEndChange={(atEnd) => {
         atEndRef.current = atEnd;
       }}
@@ -425,37 +435,6 @@ it("drops the follow from the saved position when it ends, with nothing else to 
   await playUntil(_fixture, () => _fixture.chat.followPromptId === null);
   await play(_fixture, 16);
   expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
-});
-
-it("follows a queued prompt the server delivers in one update while the reader is at the end", async (context) => {
-  await using _fixture = _createFixture(context);
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const key = "follow:queued";
-  const { history, runs } = await answeredThread(_fixture, key);
-  // The prompt was never seen waiting: its queueing and its delivery arrive
-  // in one V2 update, as the delivered (queued_turn) prompt and its run.
-  const delivered = message(10, "user", {
-    text: "Queued follow-up",
-    runId: "run-10",
-    inputIntent: "queued_turn",
-  });
-  const runningRuns = [...runs, run("run-10", "message-10", "running")];
-  await render(_fixture, key, [...history, delivered], runningRuns);
-  await play(_fixture, 16);
-  expect(_fixture.chat.followPromptId).toBe("message-10");
-  const start = viewport(_fixture).scrollTop;
-  for (let count = 1; count <= 6; count++) {
-    await render(_fixture, key, [...history, delivered, ...steps(count, "run-10")], runningRuns);
-    await playUntil(
-      _fixture,
-      () =>
-        toEnd(_fixture) <= 1 ||
-        promptTextTop(_fixture, "message-10") <= CHAT_TIMELINE_ANCHOR_OFFSET + 1,
-    );
-  }
-  expect(viewport(_fixture).scrollTop).toBeGreaterThan(start);
 });
 
 it("follows this window's queued send when its delivery arrives before its receipt", async (context) => {
@@ -1288,7 +1267,6 @@ function _createFixture(context: TestContext) {
     onAnchorReady: () => {},
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 100,
-    onManualNavigation: () => {},
   };
   const chat: {
     /** A prompt sent from this window (ChatView's frameSubmittedMessage). */

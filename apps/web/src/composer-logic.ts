@@ -12,17 +12,33 @@ import {
   withComposerCitationComment,
 } from "@t3tools/shared/composerCitations";
 // SCIENT-FORK:END
-import { isCurrencyAmountQuery, isPathWord } from "@t3tools/shared/composerTrigger";
+import {
+  detectComposerPullRequestTrigger,
+  isCurrencyAmountQuery,
+  isPathWord,
+} from "@t3tools/shared/composerTrigger";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
 
-import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
+import {
+  resolveShortcutCommand,
+  type ShortcutEventLike,
+  type ShortcutMatchContext,
+} from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 // SCIENT-FORK: "fork" reseats conversation forks in the composer slash menu.
-export type ComposerSlashCommand = "model" | "fork" | "side" | "btw" | "clear";
+// SCIENT-FORK: "feedback" opens "Send feedback to Scient".
+export type ComposerSlashCommand =
+  | "model"
+  | "fork"
+  | "fork-worktree"
+  | "side"
+  | "btw"
+  | "clear"
+  | "feedback";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -67,6 +83,8 @@ export function composerRequiresModifier(
 export function composerSubmissionIntentForKey(input: {
   event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number; repeat?: boolean };
   keybindings: ResolvedKeybindingsConfig;
+  /** The when-clause context ChatView's shortcut listeners see, so both resolve Enter alike. */
+  context: Partial<ShortcutMatchContext>;
   platform?: string;
   isSoftwareKeyboardOpen: boolean;
   isDraftThread: boolean;
@@ -81,6 +99,7 @@ export function composerSubmissionIntentForKey(input: {
   const command = resolveShortcutCommand(event, input.keybindings, {
     ...(input.platform === undefined ? {} : { platform: input.platform }),
     context: {
+      ...input.context,
       composerFocus: true,
       draftThreadRoute: input.isDraftThread,
       turnRunning: input.isRunning === true,
@@ -292,15 +311,8 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch) {
-    return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
-      rangeStart: tokenStart,
-      rangeEnd: cursor,
-    };
-  }
+  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor);
+  if (pullRequestTrigger) return pullRequestTrigger;
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
     if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;

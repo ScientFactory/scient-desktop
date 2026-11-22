@@ -24,6 +24,12 @@ as it is. Custom models already keep their keys in Accounts' encrypted store. Re
 keeps the keys you typed into its settings here, and adding that kind of agent again offers them
 back.
 
+Research keys also serve the [Library](sources.md) and paper downloads. With an **OpenAlex**,
+**Google Books**, **NCBI / PubMed** or **Semantic Scholar** key saved, Scient's own lookups use it, and
+**Unpaywall email** lets Scient ask Unpaywall for a free copy that OpenAlex doesn't list; without
+one, Scient uses the Library's contact email (Settings ▸ Documents ▸ Library) if you set it. A key you
+turn Off for agents is not used. The values stay in Accounts and never appear in what agents see.
+
 ## What agents may use
 
 Everything you add starts **Allowed**. **Ask me** asks you each time, **Off** keeps agents out, and
@@ -52,6 +58,15 @@ in a browser's profiles with their sign-ins, passwords and pictures (quit that b
 refresh button brings in new ones later. Each profile's row says how many sites it is signed in to;
 open it to see them, each with its agent access and status, **Imported** until Scient sees it
 working.
+
+On Windows, Chrome and Edge keep their sign-ins from other apps, so Scient asks the browser itself
+to hand them over. The first import walks you through turning on **Allow remote debugging for this
+browser instance** at `chrome://inspect/#remote-debugging` (`edge://inspect/#remote-debugging` in
+Edge), once. The browser then asks **Allow remote debugging?**: click **Allow**. Scient opens a tab
+in that profile, copies its sign-ins, closes the tab and disconnects; one Allow covers every profile
+of one import, and Refresh asks again. The browser can stay open. Saved passwords stay in the
+browser there. You can turn the setting off again on the same page; Scient then can't refresh from
+that browser until it's back on. A computer managed by your organisation may block the setting.
 
 **Main**, Scient's own profile, gets a copy of every sign-in from your other profiles, so it can open
 everything. On first start Scient fills Main once and opens new tabs in it; Browser profiles says so
@@ -94,7 +109,7 @@ submit a new or changed password, Scient offers to save it.
 **When a sign-in doesn't go through**, Scient stops trying that site by itself, however long it
 waits, so it never repeats a wrong password. The row says **Sign in needed**, **Needs you**,
 **Password rejected** or **Code rejected**, with a **Sign in** button, and papers waiting on it show
-"N papers wait for you to sign in to …" in Sources. Signing in, **Check my accounts** or a changed
+"N papers wait for you to sign in to …" in the Library. Signing in, **Check my accounts** or a changed
 saved password lets Scient try again.
 
 **Sign in** opens the site's own sign-in beside your work. Scient types what it may and you finish
@@ -105,16 +120,44 @@ needs Full Disk Access). A CAPTCHA or passkey needs the desktop.
 
 **Check my accounts** opens your browser sign-ins one at a time and marks each signed in, signed
 out, needs you or rejected. It counts as your own press, so it tries a saved password once more.
-A Google sign-in copied from Chrome can stop working while you use Chrome. Google doesn't allow
-signing in from inside Scient, so sign in to Google in Chrome, then choose **Refresh from Chrome**
-on the profile's row. A profile that didn't come from a browser offers **Import from a browser…**
-instead. When a site's sign-in doesn't work in Main but works in another profile, the site's row in
-Main says which profile is used; for Google it offers **Copy from** that profile.
+A profile that didn't come from a browser offers **Import from a browser…** instead. When a site's
+sign-in doesn't work in Main but works in another profile, the site's row in Main says which
+profile is used; for Google it offers **Copy from** that profile.
 
 **Apps and connectors** lists connections you sign in to elsewhere: Claude, Codex, Droid, Source
 Control and [Extensions](extensions.md). Connections that use a key are under API keys. A
 connector reported by two agents signed in to the same account is one row. Each GitHub login is one
 row, with its own chip for Source Control and for the GitHub connector.
+
+### Google
+
+Google decides each sign-in inside the browsers built into apps, Scient's included. It may
+let you sign in in the tab as usual, or refuse with "This browser or app may not be
+secure". When it refuses, in the tab or in a window a site's **Continue with Google** opened,
+Scient explains over the page and offers two ways that work:
+
+- **Sign in in a Chrome window** opens a small window of your own Chrome, Edge, Brave or Chromium,
+  with a separate profile that is deleted afterwards. Sign in there and click **Done** (on Linux,
+  close the window); the tab's profile gets the sign-in and the tab opens the page again, signed
+  in. For **Continue with Google**, the window opens the site you were on: press **Continue with
+  Google** there again.
+- **Open in my browser** opens Google, or the site you were on, in your usual browser, and you
+  carry on there. Nothing comes back into Scient's profile.
+
+A profile already holding a Google sign-in keeps using it: Google's account chooser and other
+sites' **Continue with Google** work in it without asking for anything.
+
+If Google asks for a passkey you don't have (on Windows, a **Windows Security** window asking for a
+passkey, a phone or a security key), cancel it and choose **Try another way** on Google's page.
+Google then offers your password or another way it knows, such as a phone prompt. You don't need
+an authenticator app for this.
+
+A Google sign-in copied into Scient, from the window or from a browser import, is a copy: Google
+may stop accepting it, sooner where Google ties sign-ins to the browser that made them, which
+Chrome does on Windows. After the window copies a Google sign-in, Scient asks Google right away
+and says whether Google accepted it; after a browser import, the profile's row shows it at the
+next check. When it stops working, the profile's row says so and offers **Refresh from Chrome**
+or the window again. For Google you use all day, your own browser is the reliable place.
 
 ## Other computers
 
@@ -133,8 +176,9 @@ on that computer can read them.
 ## Papers behind a subscription
 
 On a university network, **Get PDF** and agents reach closed papers with no setup. From anywhere
-else, connect your university: **Connect your university** is the first row in Sources. Its own
-sign-in opens beside your work, and its crest then stays beside the Sources title. If your
+else, connect your university: choose **Connect your university** beside the Library's title. Its
+own sign-in opens beside your work, and its crest then stands in that place, showing **Sign in**
+when its sign-in has lapsed. If your
 university isn't listed, paste a link from your library's website. The first article you open at a
 journal reloads once through your university. Being on campus never counts as signed in, and
 scripts can't take your university sign-in's session.
@@ -142,9 +186,19 @@ scripts can't take your university sign-in's session.
 **Get PDF** attaches a source's paper; **Get missing PDFs** fetches a project's whole list, and
 agents queue any number. One queue runs every paper, one at a time per publisher, and pauses a
 publisher that refuses several in a row. A sign-in or a publisher's check asks you once, then every
-paper waiting on it continues, even after a restart. Many university licences forbid systematic
+paper waiting on it continues, even after a restart; so does connecting your university after an
+agent asked. What an agent's papers may use is decided each time one is tried, from that
+conversation's access in **Settings → Accounts & secrets**: a university it may not use is
+skipped, and its papers say "this conversation may not use …" until you allow it there. Many university licences forbid systematic
 downloading, so how many papers you fetch is your call. Scient saves only a PDF that is the paper,
-in the project's `papers` folder, and never fetches one twice.
+in the project's `papers` folder, and never fetches one twice. Papers an agent gets for your
+library also go on their source in the [Library](sources.md), which is added when missing.
+
+NEJM can ask you to accept its terms before the first paper opens through your university.
+Scient pauses those papers and offers **Open** in the same browser profile. Read the terms
+yourself and accept only if you agree; Scient never accepts them for you. After you open the
+page, the queue checks again for up to ten minutes and continues when access is available.
+If you finish later, ask for the paper again to resume it.
 
 ## What Accounts doesn't protect against
 

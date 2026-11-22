@@ -1,6 +1,7 @@
 /* oxlint-disable react/no-array-index-key -- Notebook outputs keep their saved order and have no identity. */
 import type { EnvironmentId, NotebookCellView, ScopedThreadRef } from "@t3tools/contracts";
 import type { Root, RootContent } from "mdast";
+import { useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { computeEnvironment } from "~/state/compute";
@@ -91,6 +92,7 @@ function SavedFigure(props: {
   readonly data: Readonly<Record<string, unknown>>;
   readonly label: string;
 }) {
+  const gt = useGT();
   const url = dataUrl(props.mediaType, props.data[props.mediaType]);
   const pdf = props.data["application/pdf"];
   const extension = props.mediaType.split("/")[1] ?? "png";
@@ -98,13 +100,13 @@ function SavedFigure(props: {
   const actions: ReadonlyArray<ScientImageAction> = [
     {
       id: "copy",
-      label: "Copy image",
+      label: gt("Copy image"),
       requiresUserActivation: true,
       run: () => copyStaticImage(url),
     },
     {
       id: "download",
-      label: "Download image",
+      label: gt("Download image"),
       run: () => downloadStaticImage(url, `${props.label}.${extension}`),
     },
     ...(pdf === undefined
@@ -112,7 +114,7 @@ function SavedFigure(props: {
       : [
           {
             id: "pdf",
-            label: "Download PDF",
+            label: gt("Download PDF"),
             run: () => downloadStaticImage(dataUrl("application/pdf", pdf), `${props.label}.pdf`),
           },
         ]),

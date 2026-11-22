@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AccountId,
   ProjectId,
@@ -15,8 +16,9 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { addSignIn, askForAccountKey } from "./accountAdd.ts";
+import { addSignIn, askForAccountKey, cardEndedNote } from "./accountAdd.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
 
 const signIns = vi.hoisted(() => ({
@@ -92,6 +94,44 @@ const run = (
   );
 };
 
+it.effect("closes the card before the calling agent would drop the call", () =>
+  Effect.gen(function* () {
+    const waitFor = (driver: string | undefined) => {
+      const cards: Array<OrchestratorMcpRequestSecretInput> = [];
+      return askForAccountKey(scope, { name: "Brave", reason: "r", sites: ["brave.com"] }).pipe(
+        Effect.provideService(AccountsService, fakeAccounts().service),
+        Effect.provideService(McpInvocationContext, {
+          thread: { providerInstanceId: "agent-1" },
+        } as never),
+        Effect.provideService(OrchestratorMcpService, {
+          requestSecret: (_scope: unknown, card: OrchestratorMcpRequestSecretInput) =>
+            Effect.sync(() => {
+              cards.push(card);
+              return { status: "timed_out" as const };
+            }),
+        } as never),
+        Effect.provideService(SecretRequests, {} as never),
+        driver === undefined
+          ? (effect) => effect
+          : Effect.provideService(ProviderRegistry, {
+              getProviders: Effect.succeed([{ instanceId: "agent-1", driver }]),
+            } as never),
+        Effect.map((result) => ({ result, timeoutMs: cards[0]?.timeoutMs })),
+      );
+    };
+    // regression: Antigravity ends a tool call at 180 s while the card waited 10 minutes, so
+    // the call ended with no result.
+    const antigravity = yield* waitFor("antigravity");
+    expect(antigravity.timeoutMs).toBeLessThan(180_000);
+    expect(antigravity.result).toMatchObject({ status: "timed_out" });
+    // An agent whose client may cut a silent call at 300 s gets a card that ends before that.
+    for (const driver of ["codex", "claudeAgent", "someNewAgent", undefined])
+      expect((yield* waitFor(driver)).timeoutMs).toBeLessThan(300_000);
+    // Scient Agent's bridge keeps the call open (no Bun deadline, a 65-minute signal).
+    expect((yield* waitFor("scient")).timeoutMs).toBeLessThan(65 * 60_000);
+  }),
+);
+
 it.effect("keeps a new key as an API-key account and never returns its value", () =>
   Effect.gen(function* () {
     const fake = fakeAccounts();
@@ -104,6 +144,13 @@ it.effect("keeps a new key as an API-key account and never returns its value", (
     });
     expect(cards).toHaveLength(1);
     expect(cards[0]?.label).toBe("Anthropic API key");
+    // A name that already ends in "token" or "key" is the label, even after an underscore.
+    const token = yield* run(fakeAccounts(), {
+      name: "Drive GOOGLE_ACCESS_TOKEN",
+      reason: "r",
+      sites: ["googleapis.com"],
+    });
+    expect(token.cards[0]?.label).toBe("Drive GOOGLE_ACCESS_TOKEN");
     expect(cards[0]?.clientRequestId).toMatch(/^scient-account:/);
     expect(fake.saves[0]).toMatchObject({
       name: "Anthropic",
@@ -192,7 +239,11 @@ it.effect("asks no one when nobody can answer, and keeps nothing when declined",
     expect(off.result.status).toBe("unavailable");
     const fake = fakeAccounts();
     const declined = yield* run(fake, input, { status: "declined" });
-    expect(declined.result).toEqual({ status: "declined" });
+    expect(declined.result).toEqual({ status: "declined", note: cardEndedNote("declined") });
+    // A timeout is not the user's answer, but the card is closed and stays closed this turn.
+    const late = yield* run(fake, input, { status: "timed_out" });
+    expect(late.result).toEqual({ status: "timed_out", note: cardEndedNote("timed_out") });
+    expect(cardEndedNote("timed_out")).toContain("Don't open it again this turn");
     expect(fake.saves).toHaveLength(0);
   }),
 );
@@ -208,6 +259,8 @@ const signInWith = (
     Effect.provideService(AccountsService, fake.service),
     Effect.provideService(AgentInvocationContext, {} as never),
     Effect.provideService(PreviewAutomationBroker, {} as never),
+    // A sign-in that works releases waiting papers, which reads the project's queue files.
+    Effect.provide(NodeServices.layer),
   );
 };
 
@@ -326,11 +379,14 @@ it.effect("asks no one in an unattended run, and passes on a cancel or a timeout
     );
     expect(signIns.calls).toEqual([]);
     signIns.outcome = { outcome: "needs-user", message: "The user cancelled the sign-in." };
-    expect(yield* signInWith(fakeAccounts(), input)).toEqual({ status: "cancelled" });
+    expect(yield* signInWith(fakeAccounts(), input)).toMatchObject({ status: "cancelled" });
     signIns.outcome = {
       outcome: "needs-user",
       message: "The user did not finish signing in within 15 minutes.",
     };
-    expect(yield* signInWith(fakeAccounts(), input)).toEqual({ status: "timed_out" });
+    expect(yield* signInWith(fakeAccounts(), input)).toMatchObject({
+      status: "timed_out",
+      note: expect.stringContaining("Don't open it again this turn"),
+    });
   }),
 );

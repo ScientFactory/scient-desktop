@@ -1,11 +1,20 @@
 import { DEFAULT_CLIENT_SETTINGS, type InterfaceFontWeight } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyAppearanceFontVariables,
   cssFontFamilyName,
   type AppearanceFontPreferences,
 } from "./appearanceFonts";
+
+// The list-marker probe measures with a canvas; these unit tests run without a DOM, so the
+// canvas has no 2D context, as when a browser cannot provide one.
+beforeEach(() => {
+  vi.stubGlobal("document", { createElement: () => ({ getContext: () => null }) });
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // regression: 901a58418a fix(web): render font picker previews reliably
 describe("cssFontFamilyName", () => {
@@ -67,9 +76,9 @@ describe("interface text weight", () => {
       expect(style.getPropertyValue("--font-sans")).toContain("Arial");
       expect(style.getPropertyValue("--font-mono")).toContain("Menlo");
       expect(style.getPropertyValue("--font-composer")).toContain("Georgia");
-      expect(style.fontSize).toBe("17px");
+      expect(style.fontSize).toBe("15px");
       expect(style.getPropertyValue("--font-size-prompt")).toBe("16px");
-      expect(style.getPropertyValue("--diffs-font-size")).toBe("15px");
+      expect(style.getPropertyValue("--diffs-font-size")).toBe("14px");
     }
     applyAppearanceFontVariables(root, preferences);
     expect(style.getPropertyValue("--font-sans")).toBe("");

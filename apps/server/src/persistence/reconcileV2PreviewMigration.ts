@@ -17,6 +17,50 @@ const COMPOSED_AUTO_SETTLE_DISABLED_AT = 57;
 const COMPOSED_ORCHESTRATION_V2 = 59;
 const COMPOSED_REMOVE_REDUNDANT_INDEXES = 60;
 
+type MigrationRow = { readonly id: number; readonly name: string };
+
+// A preview ledger holds nothing but the migrations it actually ran. Any other row at these ids
+// means this is not a ledger we know how to lift, and rewriting it would guess.
+function v2PreviewId(history: ReadonlyArray<MigrationRow>): number | "invalid" | undefined {
+  const later = history.filter((row) => row.id >= 53);
+  const legacy = later.find(
+    (row) => row.name === "OrchestrationV2" && (row.id === 53 || row.id === 54),
+  );
+  if (!legacy) return undefined;
+  const valid = later.every(
+    (row) =>
+      row === legacy ||
+      (legacy.id === 54 &&
+        ((row.id === 53 && row.name === "PullRequestFilesViewed") ||
+          (row.id === 55 && row.name === "RemoveRedundantProjectionIndexes"))),
+  );
+  return valid ? legacy.id : "invalid";
+}
+
+/** The history as startup's preview reconciliation leaves it, or null when startup rejects it. */
+export function reconciledV2PreviewHistory(
+  history: ReadonlyArray<MigrationRow>,
+): ReadonlyArray<MigrationRow> | null {
+  const previewId = v2PreviewId(history);
+  if (previewId === undefined) return history;
+  if (previewId === "invalid") return null;
+  // SCIENT-FORK:START — the lift below lands on Scient's immutable ids 53-60.
+  return [
+    ...history.filter((row) => row.id < 53),
+    { id: 53, name: "ProjectionThreadPullRequests" },
+    { id: 54, name: "ProjectionThreadMessageContext" },
+    { id: 55, name: "ProjectionThreadTitleState" },
+    { id: COMPOSED_PULL_REQUEST_FILES_VIEWED, name: "PullRequestFilesViewed" },
+    { id: COMPOSED_AUTO_SETTLE_DISABLED_AT, name: "ProjectionThreadsAutoSettleDisabledAt" },
+    { id: 58, name: "ProjectionThreadSections" },
+    { id: COMPOSED_ORCHESTRATION_V2, name: "OrchestrationV2" },
+    ...(history.some((row) => row.id === 55)
+      ? [{ id: COMPOSED_REMOVE_REDUNDANT_INDEXES, name: "RemoveRedundantProjectionIndexes" }]
+      : []),
+  ];
+  // SCIENT-FORK:END
+}
+
 export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigration")(function* () {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
@@ -30,26 +74,11 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
         SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 53
         ORDER BY migration_id
       `;
-      const legacy = history.find(
-        (row) =>
-          row.name === "OrchestrationV2" && (row.migration_id === 53 || row.migration_id === 54),
+      const previewId = v2PreviewId(
+        history.map((row) => ({ id: row.migration_id, name: row.name })),
       );
-      if (!legacy) return [];
-
-      // A preview ledger holds nothing but the migrations it actually ran. Any
-      // other row at these ids means this is not a ledger we know how to lift,
-      // and rewriting it would guess.
-      const recognised = history.every(
-        (row) =>
-          row === legacy ||
-          (legacy.migration_id === 54 &&
-            row.name === "PullRequestFilesViewed" &&
-            row.migration_id === 53) ||
-          (legacy.migration_id === 54 &&
-            row.name === "RemoveRedundantProjectionIndexes" &&
-            row.migration_id === 55),
-      );
-      if (!recognised) {
+      if (previewId === undefined) return [];
+      if (previewId === "invalid") {
         return yield* new Migrator.MigrationError({
           kind: "BadState",
           message:
@@ -63,14 +92,14 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
       // Relabel first. These ids are free in a preview ledger (its maximum is
       // 55) and every write below inserts rather than overwrites, so there is no
       // primary-key collision to step around.
-      if (legacy.migration_id === 54) {
+      if (previewId === 54) {
         yield* sql`UPDATE effect_sql_migrations SET migration_id = ${COMPOSED_PULL_REQUEST_FILES_VIEWED}
           WHERE migration_id = 53 AND name = 'PullRequestFilesViewed'`;
         yield* sql`UPDATE effect_sql_migrations SET migration_id = ${COMPOSED_REMOVE_REDUNDANT_INDEXES}
           WHERE migration_id = 55 AND name = 'RemoveRedundantProjectionIndexes'`;
       }
       yield* sql`UPDATE effect_sql_migrations SET migration_id = ${COMPOSED_ORCHESTRATION_V2}
-        WHERE migration_id = ${legacy.migration_id} AND name = 'OrchestrationV2'`;
+        WHERE migration_id = ${previewId} AND name = 'OrchestrationV2'`;
 
       // The migrator only runs above the latest recorded id. Apply every
       // prerequisite inside this transaction before publishing the lifted 59,
@@ -107,7 +136,7 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
         VALUES (55, 'ProjectionThreadTitleState')`;
       executed.push([55, "ProjectionThreadTitleState"]);
 
-      if (legacy.migration_id === 53) {
+      if (previewId === 53) {
         yield* PullRequestFilesViewed;
         yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
           VALUES (${COMPOSED_PULL_REQUEST_FILES_VIEWED}, 'PullRequestFilesViewed')`;

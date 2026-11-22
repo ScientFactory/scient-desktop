@@ -1,9 +1,9 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import * as DateTime from "effect/DateTime";
 import { useEffect, useEffectEvent, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
-  BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_PROFILE_MAX_COUNT,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BrowserProfileRecordUpdateInput,
@@ -15,7 +15,9 @@ import {
   type AccountSummary,
   type EnvironmentId,
   type BrowserProfileRecord,
+  type BrowserImportSource,
 } from "@t3tools/contracts";
+import { browserImportFailureMessage } from "@t3tools/client-runtime/contract-labels";
 import { sitesNest } from "@t3tools/shared/scientSiteMatch";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
@@ -64,12 +66,23 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
+import { getActiveLocale, m, type MessageResolver } from "~/i18n/messages";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
+import { forgetGoogleCopy } from "./googleCopyObservation";
 import { recordImportedSessions } from "./importedSessions";
+import { protectedNotice } from "./importSummary";
 import { copySignInIntoMain } from "./mainFill";
 import { CHROME_WINDOW_ACTION, useChromeSignIn } from "./ChromeSignIn";
+import {
+  BrowserConnectStep,
+  REMOTE_DEBUGGING_QUESTION,
+  REMOTE_DEBUGGING_SETTING,
+  isConnectable,
+  type ConnectableSource,
+} from "./BrowserConnectStep";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
@@ -91,7 +104,11 @@ import {
   sitesToKeep,
 } from "./accountsView";
 
-const RUNNING_BROWSER_COPY = "open, quit to import";
+const RUNNING_BROWSER_COPY = msg("open, quit to import");
+
+/** "Chrome and Edge" in the UI language, for toasts outside React. */
+const andList = (items: Iterable<string>) =>
+  new Intl.ListFormat(getActiveLocale(), { type: "conjunction" }).format([...items]);
 
 const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput);
 
@@ -139,7 +156,7 @@ export function useImportingPasswords() {
 }
 
 function profileError() {
-  toastManager.add({ type: "error", title: "Browser profile action failed" });
+  toastManager.add({ type: "error", title: m(msg("Browser profile action failed")) });
 }
 
 type RenderSignIn = (account: AccountSummary, menu: ReactNode) => ReactNode;
@@ -203,11 +220,12 @@ function SitesCount({
   rows: ReadonlyArray<AccountSummary>;
 }) {
   const { sites } = useProfileSites(profileId, environmentId);
+  const gt = useGT();
   const count = siteCount(rows, sites ?? []);
   if (count === 0) return null;
   return (
     <span className="text-xs text-muted-foreground">
-      {count === 1 ? "1 site" : `${count} sites`} ›
+      {gt("{count, plural, one {{count} site} other {{count} sites}}", { count })} ›
     </span>
   );
 }
@@ -234,7 +252,8 @@ function SignedInSitesDialog({
   const { sites, remote, reload } = useProfileSites(profile.id, environmentId);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const remoteLabel = useEnvironment(environmentId)?.label ?? "this computer";
+  const gt = useGT();
+  const remoteLabel = useEnvironment(environmentId)?.label ?? gt("this computer");
   const sender = profile.record.received?.[0]?.label;
   const signOutRemote = useAccountCommand(accountsState.sessionsSignOutLocal, environmentId);
   const recordSignOut = useAccountCommand(accountsState.profileSignedOut, environmentId);
@@ -250,8 +269,11 @@ function SignedInSitesDialog({
           ? await accounts?.signOutMainSite?.(site, environmentId).catch(() => false)
           : await accounts?.signOutSite?.(profile.id, site, environmentId).catch(() => false));
     if (!done) profileError();
-    // Every count and list of this profile reads again, this one too.
-    else window.dispatchEvent(new Event("scient-accounts-session-changed"));
+    else {
+      if (site === GOOGLE_SITE) forgetGoogleCopy(environmentId, profile.id);
+      // Every count and list of this profile reads again, this one too.
+      window.dispatchEvent(new Event("scient-accounts-session-changed"));
+    }
     if (!done) await reload();
     setBusy(null);
   };
@@ -290,8 +312,15 @@ function SignedInSitesDialog({
           <div className="grid gap-3">
             <Input
               type="search"
-              aria-label="Find a site"
-              placeholder={sites ? `${siteCount(rows, sites)} signed-in sites` : "Signed-in sites"}
+              aria-label={gt("Find a site")}
+              placeholder={
+                sites
+                  ? gt(
+                      "{count, plural, one {{count} signed-in site} other {{count} signed-in sites}}",
+                      { count: siteCount(rows, sites) },
+                    )
+                  : gt("Signed-in sites")
+              }
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -305,7 +334,9 @@ function SignedInSitesDialog({
                       disabled={!canWrite || busy !== null}
                       onClick={() => void signOut(cookieSite)}
                     >
-                      Sign out of {cookieSite}
+                      <T>
+                        Sign out of <Var>{cookieSite}</Var>
+                      </T>
                     </MenuItem>
                   ) : null,
                 );
@@ -324,7 +355,7 @@ function SignedInSitesDialog({
                         disabled={!canWrite || busy !== null}
                         onClick={() => void signOut(site.domain)}
                       >
-                        Sign out
+                        <T>Sign out</T>
                       </Button>
                     </span>
                   ) : null}
@@ -332,13 +363,16 @@ function SignedInSitesDialog({
               ))}
               {sites && shown.length === 0 && shownRows.length === 0 ? (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No sign-ins
+                  <T>No sign-ins</T>
                 </div>
               ) : null}
             </div>
             {remote && sender ? (
               <p className="text-sm text-muted-foreground">
-                Signs out on {remoteLabel}. {sender}'s next sign-in to this site copies it again.
+                <T>
+                  Signs out on <Var>{remoteLabel}</Var>. <Var>{sender}</Var>'s next sign-in to this
+                  site copies it again.
+                </T>
               </p>
             ) : null}
           </div>
@@ -373,24 +407,44 @@ export function BrowserImportDialog({
   const [busy, setBusy] = useState(false);
   // Closing never stops an import: it finishes in the background and reports in a toast.
   const close = () => {
-    if (busy) toastManager.add({ type: "info", title: "The import continues in the background" });
+    if (busy)
+      toastManager.add({ type: "info", title: m(msg("The import continues in the background")) });
     onClose();
   };
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const [quitting, setQuitting] = useState<ReturnType<typeof mergeSourceProfiles>[number] | null>(
     null,
   );
+  // A browser that hands its sign-ins over itself: the step before its import, then which one
+  // is asking the person to allow the connection.
+  const [connecting, setConnecting] = useState<ConnectableSource<
+    ReturnType<typeof mergeSourceProfiles>[number]
+  > | null>(null);
+  const [connectReady, setConnectReady] = useState<ReadonlySet<string>>(new Set());
+  const [asking, setAsking] = useState<string | null>(null);
   // What each profile imported here brought, by its key.
   const [brought, setBrought] = useState<ReadonlyMap<string, string>>(new Map());
   const passwordsImporting = useImportingPasswords();
   const chromeSignIn = useChromeSignIn(environmentId);
-  // On Windows the system keeps Chromium's cookies from other apps: Chrome and Edge are listed
-  // as unsupported there, never as missing.
-  const chromiumUnreadable = sources.some(
-    (source) =>
-      (source.id === "chrome" || source.id === "edge") &&
-      source.unavailable === "unsupportedPlatform",
-  );
+  const gt = useGT();
+  const messages = useMessages();
+  // The browser a sign-in window would open in, by its own name; null when there is none.
+  const [windowBrowser, setWindowBrowser] = useState<string | null>(null);
+  const windowAction =
+    windowBrowser && chromeSignIn.available
+      ? /^[aeiou]/i.test(windowBrowser)
+        ? gt("Sign in in an {browser} window", { browser: windowBrowser })
+        : gt("Sign in in a {browser} window", { browser: windowBrowser })
+      : undefined;
+  // Windows keeps these browsers' sign-ins from other apps; an older desktop calls Chrome and
+  // Edge unsupported there instead.
+  const isProtected = (source: BrowserImportSource) =>
+    !(isConnectable(source) && source.profiles.length > 0) &&
+    (source.unavailable === "appBoundEncryption" ||
+      ((source.id === "chrome" || source.id === "edge") &&
+        source.unavailable === "unsupportedPlatform"));
+  /** Whether a selected profile of `source` can be imported now, or how it can be. */
+  const importable = (source: BrowserImportSource) => !source.unavailable || isConnectable(source);
   const linkedProfile = (
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
@@ -417,8 +471,12 @@ export function BrowserImportDialog({
   };
   const permission = usePermissionStatus(
     async () => {
-      const loaded = await load();
+      const [loaded, browser] = await Promise.all([
+        load(),
+        window.desktopBridge?.accounts?.chromeSignInBrowser?.().catch(() => null),
+      ]);
       setSources(loaded);
+      setWindowBrowser(browser?.name ?? null);
       setLoaded(true);
       return {
         fullDiskAccess: !loaded.some((source) => source.unavailable === "needsFullDiskAccess"),
@@ -437,10 +495,10 @@ export function BrowserImportDialog({
   const selectedPasswordCount = withPasswords.length
     ? withPasswords.reduce((sum, profile) => sum + (profile.passwordCount ?? 0), 0)
     : undefined;
-  const runImport = async (loaded = sources) => {
+  const runImport = async (loaded = sources, ready = connectReady) => {
     if (!canWrite || !previewBridge) return;
     if (importRunning) {
-      toastManager.add({ type: "info", title: "A browser import is already running" });
+      toastManager.add({ type: "info", title: m(msg("A browser import is already running")) });
       return;
     }
     const running = loaded.find(
@@ -455,6 +513,22 @@ export function BrowserImportDialog({
       return;
     }
     setQuitting(null);
+    // The step comes once per browser and dialog; after it the browser asks for each connection.
+    const toConnect = loaded.find(
+      (source): source is ConnectableSource<(typeof loaded)[number]> =>
+        isConnectable(source) &&
+        !ready.has(source.id) &&
+        source.profiles.some(
+          (profile) =>
+            selected.has(JSON.stringify([source.id, profile.directory])) &&
+            !isImported(source, profile),
+        ),
+    );
+    if (toConnect) {
+      setConnecting(toConnect);
+      return;
+    }
+    setConnecting(null);
     importRunning = true;
     setBusy(true);
     const done = new Set<string>();
@@ -465,15 +539,21 @@ export function BrowserImportDialog({
     }> = [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
     const sessionsFrom: Array<{ profileId: string; from: string; filled: boolean }> = [];
+    /** Browsers this import connected to, which keep remote debugging on until turned off. */
+    const connected = new Map<string, ConnectableSource>();
+    /** Browsers that didn't connect: their other profiles aren't asked about again. */
+    const refused = new Set<string>();
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
           const key = JSON.stringify([source.id, profile.directory]);
-          if (!selected.has(key) || source.unavailable) continue;
+          if (!selected.has(key) || !importable(source) || refused.has(source.id)) continue;
           let profileId: string | undefined = linkedProfile(source, profile);
           // A profile imported before keeps its sign-ins; only its passwords can still come in.
           if (!isImported(source, profile)) {
             profileId = `profile-${randomUUID()}`;
+            // Its first profile opens the connection, which the browser asks about.
+            if (isConnectable(source) && !connected.has(source.id)) setAsking(source.name);
             const outcome = await importBrowserCookiesIntoTarget(
               previewBridge,
               source,
@@ -485,19 +565,35 @@ export function BrowserImportDialog({
                 fillMain: false,
               },
             );
+            setAsking(null);
             if (outcome.kind === "blocked") {
               toastManager.add({
                 type: "error",
-                title: BROWSER_IMPORT_FAILURE_COPY[outcome.reason],
+                title: browserImportFailureMessage(outcome.reason, m),
               });
+              if (isConnectable(source) && outcome.reason.startsWith("connection"))
+                refused.add(source.id);
+              // Turned off since the step: the step shows again next time.
+              if (outcome.reason === "connectionOff")
+                setConnectReady(
+                  (current) => new Set([...current].filter((id) => id !== source.id)),
+                );
               continue;
             }
+            if (isConnectable(source)) connected.set(source.id, source);
             // Before the passwords: an interrupted import still leaves a complete profile.
             const record = sourceRecord(profileId, source.id, profile);
             if (Option.isSome(record)) await updateRecord(record.value);
             else profileError();
             const label = importedLabel(outcome.imported, outcome.importedSites);
             setBrought((current) => new Map(current).set(key, label));
+            const notice = protectedNotice(outcome.protectedSkipped);
+            if (notice)
+              toastManager.add({
+                type: "info",
+                title: `${profile.name}: ${label}`,
+                description: notice,
+              });
           }
           done.add(key);
           if (profileId !== undefined)
@@ -528,18 +624,39 @@ export function BrowserImportDialog({
       for (const { profileId, from, filled } of sessionsFrom)
         await recordImportedSessions(environmentId, profileId, from, { fillMain: filled });
       if (passwordTotals.failed)
-        toastManager.add({ type: "error", title: "Could not import saved passwords" });
+        toastManager.add({ type: "error", title: m(msg("Could not import saved passwords")) });
       else if (passwordTotals.imported || passwordTotals.skipped)
         toastManager.add({
           type: "success",
           title: passwordTotals.skipped
-            ? `Imported ${passwordTotals.imported} passwords, ${passwordTotals.skipped} skipped`
-            : `Imported ${passwordTotals.imported} passwords`,
+            ? m(
+                msg("Imported {imported} passwords, {skipped} skipped", {
+                  imported: passwordTotals.imported,
+                  skipped: passwordTotals.skipped,
+                }),
+              )
+            : m(msg("Imported {imported} passwords", { imported: passwordTotals.imported })),
+        });
+      for (const source of connected.values())
+        toastManager.add({
+          type: "info",
+          title: m(msg("Remote debugging is still on in {browser}", { browser: source.name })),
+          description: m(
+            msg("To turn it off, open {url} in {browser}.", {
+              url: source.connection.settingsUrl,
+              browser: source.name,
+            }),
+          ),
+          actionProps: {
+            children: m(msg("Copy address")),
+            onClick: () => void writeTextToClipboard(source.connection.settingsUrl),
+          },
         });
       setSelected((current) => new Set([...current].filter((key) => !done.has(key))));
     } catch {
       profileError();
     }
+    setAsking(null);
     setImportingPasswords(false);
     importRunning = false;
     setBusy(false);
@@ -552,7 +669,29 @@ export function BrowserImportDialog({
       }}
     >
       <DialogPopup data-accounts-dialog>
-        {quitting ? (
+        {connecting ? (
+          <BrowserConnectStep
+            source={connecting}
+            onCancel={() => setConnecting(null)}
+            {...(windowAction
+              ? {
+                  alternative: {
+                    label: gt("{action} instead", { action: windowAction }),
+                    onSelect: () => {
+                      setConnecting(null);
+                      chromeSignIn.start({ id: DEFAULT_BROWSER_PROFILE_ID, name: "Main" });
+                    },
+                  },
+                }
+              : {})}
+            onContinue={() => {
+              const ready = new Set([...connectReady, connecting.id]);
+              setConnectReady(ready);
+              setConnecting(null);
+              void runImport(sources, ready);
+            }}
+          />
+        ) : quitting ? (
           <QuitStep
             source={quitting}
             onCancel={() => setQuitting(null)}
@@ -568,14 +707,16 @@ export function BrowserImportDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Import from a browser</DialogTitle>
+              <DialogTitle>
+                <T>Import from a browser</T>
+              </DialogTitle>
             </DialogHeader>
             <DialogPanel scrollAreaClassName="min-h-0 flex-1">
               <DiscoveryList>
                 {sources
                   .filter((source) => source.unavailable !== "notInstalled")
                   .flatMap((source) =>
-                    source.unavailable === "needsFullDiskAccess"
+                    isProtected(source)
                       ? [
                           <div
                             key={source.id}
@@ -585,117 +726,143 @@ export function BrowserImportDialog({
                             <span className="grid min-w-0 flex-1 text-sm">
                               <span>{source.name}</span>
                               <span className="text-xs text-muted-foreground">
-                                Needs Full Disk Access to see what it holds
+                                {browserImportFailureMessage("appBoundEncryption", messages)}
                               </span>
                             </span>
-                            <div className="shrink-0">
-                              <Button
-                                size="xs"
-                                variant="outline"
-                                onClick={() =>
-                                  void readLocalApi()
-                                    ?.shell.openSystemSettings("full-disk-access")
-                                    .catch(profileError)
-                                }
-                              >
-                                Open Settings <ArrowRightIcon />
-                              </Button>
-                            </div>
+                            {windowAction ? (
+                              <div className="shrink-0">
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  disabled={busy || !canWrite}
+                                  onClick={() =>
+                                    chromeSignIn.start({
+                                      id: DEFAULT_BROWSER_PROFILE_ID,
+                                      name: "Main",
+                                    })
+                                  }
+                                >
+                                  {windowAction}
+                                </Button>
+                              </div>
+                            ) : null}
                           </div>,
                         ]
-                      : source.profiles.map((profile) => {
-                          const key = JSON.stringify([source.id, profile.directory]);
-                          const alreadyImported = isImported(source, profile);
-                          const passwordsOnly =
-                            alreadyImported &&
-                            !!readPasswords &&
-                            profile.passwordCount !== undefined;
-                          const checked = selected.has(key);
-                          return (
-                            <DiscoveryListRow
-                              key={key}
-                              role="checkbox"
-                              aria-checked={checked}
-                              aria-label={`${profile.name} · ${source.name}`}
-                              disabled={
-                                busy ||
-                                !canWrite ||
-                                (alreadyImported && !passwordsOnly) ||
-                                (!!source.unavailable && source.unavailable !== "browserRunning")
-                              }
-                              icon={
-                                <ProfilePicture
-                                  name={profile.name}
-                                  picture={profile.picture}
-                                  color={profile.color}
-                                  browser={source.id}
-                                />
-                              }
-                              title={profile.name}
-                              description={
-                                alreadyImported
-                                  ? [
-                                      source.name,
-                                      profile.email,
-                                      brought.get(key) ?? (passwordsOnly && "Imported"),
-                                    ]
-                                      .filter(Boolean)
-                                      .join(" · ")
-                                  : source.unavailable === "browserRunning"
-                                    ? `${source.name} · ${RUNNING_BROWSER_COPY}`
-                                    : source.unavailable
-                                      ? BROWSER_IMPORT_FAILURE_COPY[source.unavailable]
-                                      : [
-                                          source.name,
-                                          profile.email,
-                                          cookiesLabel(profile.cookieCount),
-                                        ]
-                                          .filter(Boolean)
-                                          .join(" · ")
-                              }
-                              action={
-                                alreadyImported && !passwordsOnly ? (
-                                  <span className="text-xs text-muted-foreground">Imported</span>
-                                ) : (
-                                  <span
-                                    aria-hidden
-                                    className={`flex size-4 shrink-0 items-center justify-center rounded border ${checked ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}
-                                  >
-                                    {checked ? <CheckIcon className="size-3" /> : null}
-                                  </span>
-                                )
-                              }
-                              onClick={() =>
-                                setSelected((current) => {
-                                  const next = new Set(current);
-                                  if (next.has(key)) next.delete(key);
-                                  else next.add(key);
-                                  return next;
-                                })
-                              }
-                            />
-                          );
-                        }),
+                      : source.unavailable === "needsFullDiskAccess"
+                        ? [
+                            <div
+                              key={source.id}
+                              className="flex min-h-15 items-center gap-3 px-3 py-2"
+                            >
+                              <ProfilePicture name={source.name} browser={source.id} />
+                              <span className="grid min-w-0 flex-1 text-sm">
+                                <span>{source.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  <T>Needs Full Disk Access to see what it holds</T>
+                                </span>
+                              </span>
+                              <div className="shrink-0">
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  onClick={() =>
+                                    void readLocalApi()
+                                      ?.shell.openSystemSettings("full-disk-access")
+                                      .catch(profileError)
+                                  }
+                                >
+                                  <T>Open Settings</T> <ArrowRightIcon />
+                                </Button>
+                              </div>
+                            </div>,
+                          ]
+                        : source.profiles.map((profile) => {
+                            const key = JSON.stringify([source.id, profile.directory]);
+                            const alreadyImported = isImported(source, profile);
+                            const passwordsOnly =
+                              alreadyImported &&
+                              !!readPasswords &&
+                              profile.passwordCount !== undefined;
+                            const checked = selected.has(key);
+                            return (
+                              <DiscoveryListRow
+                                key={key}
+                                role="checkbox"
+                                aria-checked={checked}
+                                aria-label={`${profile.name} · ${source.name}`}
+                                disabled={
+                                  busy ||
+                                  !canWrite ||
+                                  (alreadyImported && !passwordsOnly) ||
+                                  (!importable(source) && source.unavailable !== "browserRunning")
+                                }
+                                icon={
+                                  <ProfilePicture
+                                    name={profile.name}
+                                    picture={profile.picture}
+                                    color={profile.color}
+                                    browser={source.id}
+                                  />
+                                }
+                                title={profile.name}
+                                description={
+                                  alreadyImported
+                                    ? [
+                                        source.name,
+                                        profile.email,
+                                        brought.get(key) ?? (passwordsOnly && gt("Imported")),
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" · ")
+                                    : source.unavailable === "browserRunning"
+                                      ? `${source.name} · ${messages(RUNNING_BROWSER_COPY)}`
+                                      : source.unavailable && !isConnectable(source)
+                                        ? browserImportFailureMessage(source.unavailable, messages)
+                                        : [
+                                            source.name,
+                                            profile.email,
+                                            cookiesLabel(profile.cookieCount, messages),
+                                          ]
+                                            .filter(Boolean)
+                                            .join(" · ")
+                                }
+                                action={
+                                  alreadyImported && !passwordsOnly ? (
+                                    <span className="text-xs text-muted-foreground">
+                                      <T>Imported</T>
+                                    </span>
+                                  ) : (
+                                    <span
+                                      aria-hidden
+                                      className={`flex size-4 shrink-0 items-center justify-center rounded border ${checked ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}
+                                    >
+                                      {checked ? <CheckIcon className="size-3" /> : null}
+                                    </span>
+                                  )
+                                }
+                                onClick={() =>
+                                  setSelected((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(key)) next.delete(key);
+                                    else next.add(key);
+                                    return next;
+                                  })
+                                }
+                              />
+                            );
+                          }),
                   )}
-                {chromiumUnreadable && chromeSignIn.available ? (
-                  <DiscoveryListRow
-                    disabled={busy || !canWrite}
-                    icon={<ProfilePicture name="Chrome" browser="chrome" />}
-                    title={CHROME_WINDOW_ACTION}
-                    description="Chrome's and Edge's sign-ins can't be read on Windows"
-                    action={<ArrowRightIcon className="size-4 text-muted-foreground" />}
-                    onClick={() =>
-                      chromeSignIn.start({ id: DEFAULT_BROWSER_PROFILE_ID, name: "Main" })
-                    }
-                  />
-                ) : loaded &&
-                  sources.every(
-                    (source) =>
-                      source.unavailable === "notInstalled" ||
-                      (source.profiles.length === 0 &&
-                        source.unavailable !== "needsFullDiskAccess"),
-                  ) ? (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">No browsers found</div>
+                {loaded &&
+                sources.every(
+                  (source) =>
+                    source.unavailable === "notInstalled" ||
+                    (source.profiles.length === 0 &&
+                      source.unavailable !== "needsFullDiskAccess" &&
+                      !isProtected(source)),
+                ) ? (
+                  <div className="px-3 py-3 text-sm text-muted-foreground">
+                    <T>No browsers found</T>
+                  </div>
                 ) : null}
                 {sources.some((source) => source.unavailable === "notInstalled") ? (
                   <Collapsible>
@@ -703,7 +870,11 @@ export function BrowserImportDialog({
                       render={
                         <DiscoveryListRow
                           icon={null}
-                          title={<span className="text-muted-foreground">More browsers</span>}
+                          title={
+                            <span className="text-muted-foreground">
+                              <T>More browsers</T>
+                            </span>
+                          }
                           description={null}
                           action={
                             <ChevronRightIcon className="size-4 text-muted-foreground in-data-panel-open:rotate-90" />
@@ -722,7 +893,9 @@ export function BrowserImportDialog({
                             <ProfilePicture name={source.name} browser={source.id} />
                             <div className="flex min-w-0 flex-1 flex-col">
                               <span className="truncate text-sm font-medium">{source.name}</span>
-                              <span className="text-xs text-muted-foreground">Not installed</span>
+                              <span className="text-xs text-muted-foreground">
+                                <T>Not installed</T>
+                              </span>
                             </div>
                           </div>
                         ))}
@@ -730,9 +903,16 @@ export function BrowserImportDialog({
                   </Collapsible>
                 ) : null}
               </DiscoveryList>
-              {passwordsImporting ? (
+              {asking ? (
                 <p role="status" className="py-3 text-sm text-muted-foreground">
-                  Importing saved passwords…
+                  {gt("{browser} asks “{question}”: click Allow in {browser}.", {
+                    browser: asking,
+                    question: messages(REMOTE_DEBUGGING_QUESTION),
+                  })}
+                </p>
+              ) : passwordsImporting ? (
+                <p role="status" className="py-3 text-sm text-muted-foreground">
+                  <T>Importing saved passwords…</T>
                 </p>
               ) : readPasswords && selectedPasswordCount !== undefined ? (
                 <label className="flex items-center gap-2 py-3 text-sm">
@@ -741,7 +921,9 @@ export function BrowserImportDialog({
                     onCheckedChange={setPasswords}
                     disabled={busy || !canWrite}
                   />
-                  Also import saved passwords ({selectedPasswordCount})
+                  <T>
+                    Also import saved passwords (<Var>{selectedPasswordCount}</Var>)
+                  </T>
                 </label>
               ) : null}
               {permission.error ? (
@@ -752,13 +934,15 @@ export function BrowserImportDialog({
             </DialogPanel>
             <DialogFooter>
               <Button variant="outline" onClick={close}>
-                {busy || brought.size ? "Close" : "Cancel"}
+                {busy || brought.size ? gt("Close") : gt("Cancel")}
               </Button>
               <Button
                 disabled={busy || !canWrite || selected.size === 0}
                 onClick={() => void runImport()}
               >
-                Import ({selected.size})
+                <T>
+                  Import (<Var>{selected.size}</Var>)
+                </T>
               </Button>
             </DialogFooter>
           </>
@@ -778,7 +962,7 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
 }
 
 /** Google signed this profile out; Google refuses signing in from Scient's browser, so the way back is a browser's sign-in. */
-export const GOOGLE_SIGNED_OUT = "Signed out of Google.";
+export const GOOGLE_SIGNED_OUT = msg("Signed out of Google.");
 
 /**
  * What a signed-out profile does: bring the browser's Google sign-in in again. A profile with no
@@ -793,38 +977,49 @@ export function googleRecovery(
     readonly copyFrom?: { readonly name: string; readonly run: () => void } | undefined;
     readonly chromeWindow?: (() => void) | undefined;
   },
+  resolve: MessageResolver = m,
 ) {
+  const message = resolve(GOOGLE_SIGNED_OUT);
   const inWindow = actions.chromeWindow
-    ? { also: { action: CHROME_WINDOW_ACTION, onAction: actions.chromeWindow } }
+    ? { also: { action: resolve(CHROME_WINDOW_ACTION), onAction: actions.chromeWindow } }
     : {};
   if (!source)
     return actions.copyFrom
       ? {
-          message: GOOGLE_SIGNED_OUT,
-          hint: `Copy ${actions.copyFrom.name}'s Google sign-in into Main.`,
-          action: `Copy from ${actions.copyFrom.name}`,
+          message,
+          hint: resolve(
+            msg("Copy {name}''s Google sign-in into Main.", { name: actions.copyFrom.name }),
+          ),
+          action: resolve(msg("Copy from {name}", { name: actions.copyFrom.name })),
           onAction: actions.copyFrom.run,
           ...inWindow,
         }
       : actions.chromeWindow
         ? {
-            message: GOOGLE_SIGNED_OUT,
-            hint: "Sign in to Google in a small Chrome window, or import a browser profile that has it.",
-            action: CHROME_WINDOW_ACTION,
+            message,
+            hint: resolve(
+              msg(
+                "Sign in to Google in a small Chrome window, or import a browser profile that has it.",
+              ),
+            ),
+            action: resolve(CHROME_WINDOW_ACTION),
             onAction: actions.chromeWindow,
-            also: { action: "Import from a browser…", onAction: actions.importProfile },
+            also: {
+              action: resolve(msg("Import from a browser…")),
+              onAction: actions.importProfile,
+            },
           }
         : {
-            message: GOOGLE_SIGNED_OUT,
-            hint: "Sign in to Google in your browser, then import that profile.",
-            action: "Import from a browser…",
+            message,
+            hint: resolve(msg("Sign in to Google in your browser, then import that profile.")),
+            action: resolve(msg("Import from a browser…")),
             onAction: actions.importProfile,
           };
   const browser = browserName(source.browser);
   return {
-    message: GOOGLE_SIGNED_OUT,
-    hint: `Sign in to Google in ${browser}, then Refresh.`,
-    action: `Refresh from ${browser}`,
+    message,
+    hint: resolve(msg("Sign in to Google in {browser}, then Refresh.", { browser })),
+    action: resolve(msg("Refresh from {browser}", { browser })),
     onAction: actions.refresh,
     ...inWindow,
   };
@@ -840,6 +1035,7 @@ export function ProfileDetail({
   signedOut: boolean;
   recover?: ReturnType<typeof googleRecovery> | undefined;
 }) {
+  const gt = useGT();
   if (!email && !signedOut) return null;
   if (signedOut && recover)
     return (
@@ -851,7 +1047,7 @@ export function ProfileDetail({
             render={
               <button
                 type="button"
-                aria-label="Why signed out of Google"
+                aria-label={gt("Why signed out of Google")}
                 onClick={(event) => event.stopPropagation()}
                 className="inline-flex shrink-0 text-muted-foreground hover:text-foreground"
               />
@@ -884,7 +1080,12 @@ export function ProfileDetail({
   return (
     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
       {email ? <span className="truncate">{email}</span> : null}
-      {signedOut ? <span className="shrink-0">{email ? "· " : ""}Signed out of Google</span> : null}
+      {signedOut ? (
+        <span className="shrink-0">
+          {email ? "· " : ""}
+          <T>Signed out of Google</T>
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -929,13 +1130,15 @@ export function BrowserProfiles({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   const listed = mergeProfiles(settings.browserProfiles, snapshot.profiles);
   const unlisted = unlistedProfiles(snapshot, listed);
   const isUnlisted = (profileId: string) => unlisted.some((profile) => profile.id === profileId);
   const profiles = [...listed, ...unlisted];
   const disabled = !canWrite || !hydrated || busy;
   const linkedProfiles = listed.filter((profile) => profile.record.source);
-  const folded = foldedNotice(snapshot, DateTime.nowUnsafe().epochMilliseconds);
+  const folded = foldedNotice(snapshot, DateTime.nowUnsafe().epochMilliseconds, messages);
   /** Each profile back in use; it was never off this client's list. Stops at the first failure. */
   const undoFold = async (merged: ReadonlyArray<{ profileId: string }>) => {
     for (const { profileId } of merged)
@@ -965,6 +1168,7 @@ export function BrowserProfiles({
         },
       },
     );
+    for (const env of environments) forgetGoogleCopy(env.environmentId, profileId);
   };
   /** For Main signed out of Google: another listed profile whose Google works, to copy from. */
   const googleToCopy = (profileId: string) => {
@@ -989,7 +1193,7 @@ export function BrowserProfiles({
           if (outcome === "copied" || outcome === "same") {
             toastManager.add({
               type: "success",
-              title: `Copied ${from.name}'s Google sign-in into Main`,
+              title: m(msg("Copied {from}''s Google sign-in into Main", { from: from.name })),
             });
             window.dispatchEvent(new Event("scient-accounts-session-changed"));
           } else profileError();
@@ -1033,7 +1237,7 @@ export function BrowserProfiles({
   const refresh = async (targets: ReadonlyArray<{ id: string; record: BrowserProfileRecord }>) => {
     if (!previewBridge) return;
     if (importRunning) {
-      toastManager.add({ type: "info", title: "A browser import is already running" });
+      toastManager.add({ type: "info", title: m(msg("A browser import is already running")) });
       return;
     }
     const sources = await loadSourceProfiles();
@@ -1042,6 +1246,19 @@ export function BrowserProfiles({
     const stillOut: Array<{ readonly name: string; readonly browser: string }> = [];
     const renames: Array<{ id: string; from: string; to: string }> = [];
     let failed = false;
+    let protectedSkipped = 0;
+    /** Browsers whose every readable sign-in Windows keeps from other apps. */
+    const protectedOnly = new Set<string>();
+    /** Browsers that hand sign-ins over themselves but didn't this time, with why. */
+    const notConnected = new Map<string, { source: ConnectableSource; reason: string }>();
+    const told = new Set<string>();
+    const turnOnToRefresh = (source: ConnectableSource) =>
+      m(
+        msg("Turn on “{setting}” at {url}, then Refresh.", {
+          setting: m(REMOTE_DEBUGGING_SETTING),
+          url: source.connection.settingsUrl,
+        }),
+      );
     for (const { id, record } of targets) {
       let refreshed = false;
       const linked = record.source;
@@ -1057,8 +1274,34 @@ export function BrowserProfiles({
       }
       // Sign-ins can only be read once the browser is closed; passwords and details can now.
       if (source.unavailable === "browserRunning") running.add(source.name);
-      else if (source.unavailable) failed = true;
-      else {
+      else if (source.unavailable && !isConnectable(source)) failed = true;
+      // Off, or it didn't connect for an earlier profile: its profiles keep their sign-ins, and
+      // their pictures, names and passwords still refresh below.
+      else if (
+        isConnectable(source) &&
+        (notConnected.has(source.id) ||
+          !(await window.desktopBridge?.accounts?.browserConnection?.(source.id).catch(() => null))
+            ?.on)
+      ) {
+        if (!notConnected.has(source.id))
+          notConnected.set(source.id, {
+            source,
+            reason: turnOnToRefresh(source),
+          });
+      } else {
+        // Once per browser: its one connection serves every profile of the refresh.
+        if (isConnectable(source) && !told.has(source.id)) {
+          told.add(source.id);
+          toastManager.add({
+            type: "info",
+            title: m(
+              msg("{browser} asks “{question}”: click Allow in {browser}", {
+                browser: source.name,
+                question: m(REMOTE_DEBUGGING_QUESTION),
+              }),
+            ),
+          });
+        }
         // Asked now: Accounts may not have seen yet that Google signed this profile out.
         const google = await window.desktopBridge?.accounts
           ?.googleSessions?.(id, environmentId)
@@ -1073,7 +1316,22 @@ export function BrowserProfiles({
           ),
           fillMain: false,
         });
-        if (result.kind === "blocked") failed = true;
+        protectedSkipped += result.protectedSkipped ?? 0;
+        if (result.kind === "blocked" && result.reason === "appBoundEncryption")
+          protectedOnly.add(source.name);
+        else if (
+          result.kind === "blocked" &&
+          isConnectable(source) &&
+          result.reason.startsWith("connection")
+        )
+          notConnected.set(source.id, {
+            source,
+            reason:
+              result.reason === "connectionOff"
+                ? turnOnToRefresh(source)
+                : browserImportFailureMessage(result.reason, m),
+          });
+        else if (result.kind === "blocked") failed = true;
         else refreshed = true;
         if (refreshed && google && !google.some((session) => session.valid)) {
           const after = await window.desktopBridge?.accounts
@@ -1109,19 +1367,45 @@ export function BrowserProfiles({
     // Google and every row look again at what the refresh brought.
     window.dispatchEvent(new Event("scient-accounts-session-changed"));
     if (failed) profileError();
+    else if (notConnected.size)
+      for (const { source, reason } of notConnected.values())
+        toastManager.add({
+          type: "error",
+          title: m(msg("Couldn't refresh sign-ins from {browser}", { browser: source.name })),
+          description: reason,
+        });
+    else if (protectedOnly.size)
+      toastManager.add({
+        type: "error",
+        title: m(
+          msg("Couldn't refresh sign-ins from {browser}", { browser: andList(protectedOnly) }),
+        ),
+        description: browserImportFailureMessage("appBoundEncryption", m),
+      });
     else if (stillOut.length)
       toastManager.add({
         type: "info",
-        title: `Sign in to Google in ${[...new Set(stillOut.map(({ browser }) => browser))].join(" and ")}, then Refresh`,
+        title: m(
+          msg("Sign in to Google in {browser}, then Refresh", {
+            browser: andList(new Set(stillOut.map(({ browser }) => browser))),
+          }),
+        ),
         description: stillOut.map(({ name }) => name).join(", "),
       });
     else if (running.size)
       toastManager.add({
         type: "info",
-        title: `Quit ${[...running].join(" and ")} to refresh sign-ins too`,
-        description: "Passwords, pictures and names are up to date.",
+        title: m(msg("Quit {browser} to refresh sign-ins too", { browser: andList(running) })),
+        description: m(msg("Passwords, pictures and names are up to date.")),
       });
-    else toastManager.add({ type: "success", title: "Browser profiles refreshed" });
+    else {
+      const notice = protectedNotice(protectedSkipped);
+      toastManager.add({
+        type: notice ? "info" : "success",
+        title: m(msg("Browser profiles refreshed")),
+        ...(notice ? { description: notice } : {}),
+      });
+    }
   };
   const linkSource = async (profileId: string, match: SourceMatch) => {
     const metadata = sourceRecord(profileId, match.source.id, match.profile);
@@ -1168,7 +1452,7 @@ export function BrowserProfiles({
   return (
     <SettingsSection
       id="accounts-browser-profiles"
-      title="Browser profiles"
+      title={gt("Browser profiles")}
       titleAction={
         <span className="flex items-center gap-1">
           <Menu>
@@ -1177,7 +1461,7 @@ export function BrowserProfiles({
                 <Button
                   size="icon-xs"
                   variant="ghost"
-                  aria-label="Add profile"
+                  aria-label={gt("Add profile")}
                   disabled={
                     disabled || settings.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT
                   }
@@ -1194,10 +1478,12 @@ export function BrowserProfiles({
                   })
                 }
               >
-                New profile
+                <T>New profile</T>
               </MenuItem>
               {previewBridge ? (
-                <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
+                <MenuItem onClick={onImport}>
+                  <T>Import from a browser…</T>
+                </MenuItem>
               ) : null}
             </MenuPopup>
           </Menu>
@@ -1208,7 +1494,7 @@ export function BrowserProfiles({
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label="Refresh from browsers"
+                    aria-label={gt("Refresh from browsers")}
                     disabled={disabled}
                     onClick={() => void act(() => refresh(linkedProfiles))}
                   />
@@ -1217,7 +1503,7 @@ export function BrowserProfiles({
                 <RefreshCwIcon className={busy ? "animate-spin" : undefined} />
               </TooltipTrigger>
               <TooltipPopup>
-                Refresh sign-ins, passwords and pictures from your browsers
+                <T>Refresh sign-ins, passwords and pictures from your browsers</T>
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -1234,19 +1520,21 @@ export function BrowserProfiles({
               disabled={disabled}
               onClick={() => void act(() => undoFold(folded.merged))}
             >
-              Undo
+              <T>Undo</T>
             </Button>
           }
         />
       ) : null}
       {settings.mainDefaultNotice ? (
         <SettingsRow
-          title="New tabs now open in Main, which has your sign-ins. You can change this here."
+          title={gt(
+            "New tabs now open in Main, which has your sign-ins. You can change this here.",
+          )}
           control={
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label="Dismiss"
+              aria-label={gt("Dismiss")}
               onClick={() =>
                 void changeSettings((current) => ({ ...current, mainDefaultNotice: false }))
               }
@@ -1260,7 +1548,7 @@ export function BrowserProfiles({
         <SettingsRow
           key={profile.id}
           {...clickableAccountRow(() => setViewingSites(profile.id))}
-          aria-label={`Signed-in sites for ${profile.name}`}
+          aria-label={gt("Signed-in sites for {name}", { name: profile.name })}
           title={
             <div className="flex items-center gap-3">
               <ProfilePicture
@@ -1272,7 +1560,7 @@ export function BrowserProfiles({
               />
               {renaming === profile.id ? (
                 <DraftInput
-                  aria-label="Profile name"
+                  aria-label={gt("Profile name")}
                   autoFocus
                   nativeInput
                   size="sm"
@@ -1297,7 +1585,7 @@ export function BrowserProfiles({
                     <RenamedSource name={profile.name} source={profile.record.source} />
                     {settings.browserDefaultProfileId === profile.id ? (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        New tabs
+                        <T>New tabs</T>
                       </span>
                     ) : null}
                   </span>
@@ -1306,15 +1594,19 @@ export function BrowserProfiles({
                     signedOut={signedOutOfGoogle(snapshot.accounts, profile.id)}
                     recover={
                       previewBridge
-                        ? googleRecovery(profile.record.source, {
-                            refresh: () => void act(() => refresh([profile])),
-                            importProfile: onImport,
-                            copyFrom: googleToCopy(profile.id),
-                            chromeWindow:
-                              onChromeWindow && !disabled
-                                ? () => onChromeWindow(profile)
-                                : undefined,
-                          })
+                        ? googleRecovery(
+                            profile.record.source,
+                            {
+                              refresh: () => void act(() => refresh([profile])),
+                              importProfile: onImport,
+                              copyFrom: googleToCopy(profile.id),
+                              chromeWindow:
+                                onChromeWindow && !disabled
+                                  ? () => onChromeWindow(profile)
+                                  : undefined,
+                            },
+                            messages,
+                          )
                         : undefined
                     }
                   />
@@ -1331,7 +1623,9 @@ export function BrowserProfiles({
               />
               {profile.record.received?.[0] ? (
                 <span className="text-xs text-muted-foreground">
-                  Set on {profile.record.received[0].label}
+                  <T>
+                    Set on <Var>{profile.record.received[0].label}</Var>
+                  </T>
                 </span>
               ) : null}
               <AccessChip
@@ -1352,13 +1646,17 @@ export function BrowserProfiles({
                     })
                   }
                 >
-                  Share with scripts
+                  <T>Share with scripts</T>
                 </MenuCheckboxItem>
                 {window.desktopBridge?.accounts ? (
-                  <MenuItem onClick={() => setViewingSites(profile.id)}>Signed-in sites</MenuItem>
+                  <MenuItem onClick={() => setViewingSites(profile.id)}>
+                    <T>Signed-in sites</T>
+                  </MenuItem>
                 ) : null}
                 {isBuiltInBrowserProfileId(profile.id) || isUnlisted(profile.id) ? null : (
-                  <MenuItem onClick={() => setRenaming(profile.id)}>Rename</MenuItem>
+                  <MenuItem onClick={() => setRenaming(profile.id)}>
+                    <T>Rename</T>
+                  </MenuItem>
                 )}
                 {isBuiltInBrowserProfileId(profile.id) ||
                 isUnlisted(profile.id) ||
@@ -1372,7 +1670,7 @@ export function BrowserProfiles({
                         .catch(() => undefined);
                     }}
                   >
-                    Match to browser profile…
+                    <T>Match to browser profile…</T>
                   </MenuItem>
                 )}
                 {profile.record.received ? null : (
@@ -1392,12 +1690,14 @@ export function BrowserProfiles({
                       }))
                     }
                   >
-                    Use for new tabs
+                    <T>Use for new tabs</T>
                   </MenuItem>
                 )}
                 {previewBridge && profile.record.source && !isUnlisted(profile.id) ? (
                   <MenuItem onClick={() => void act(() => refresh([profile]))}>
-                    Refresh from {browserName(profile.record.source.browser)}
+                    <T>
+                      Refresh from <Var>{browserName(profile.record.source.browser)}</Var>
+                    </T>
                   </MenuItem>
                 ) : null}
                 {profile.record.source?.email && profile.record.source.browser === "chrome" ? (
@@ -1408,11 +1708,11 @@ export function BrowserProfiles({
                         .catch(() => undefined)
                     }
                   >
-                    Manage passwords in Google
+                    <T>Manage passwords in Google</T>
                   </MenuItem>
                 ) : null}
                 <MenuItem onClick={() => void act(() => clear(profile.id))}>
-                  Clear cookies and cache
+                  <T>Clear cookies and cache</T>
                 </MenuItem>
                 {!isBuiltInBrowserProfileId(profile.id) ? (
                   <MenuItem
@@ -1434,7 +1734,7 @@ export function BrowserProfiles({
                       })
                     }
                   >
-                    Remove and sign out
+                    <T>Remove and sign out</T>
                   </MenuItem>
                 ) : null}
               </ControlsMenu>
@@ -1456,7 +1756,9 @@ export function BrowserProfiles({
         <Dialog open onOpenChange={(open) => !open && setLinking(null)}>
           <DialogPopup data-accounts-dialog>
             <DialogHeader>
-              <DialogTitle>Match to browser profile</DialogTitle>
+              <DialogTitle>
+                <T>Match to browser profile</T>
+              </DialogTitle>
             </DialogHeader>
             <DialogPanel>
               <DiscoveryList>

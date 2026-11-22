@@ -16,6 +16,7 @@ import {
 import {
   type ContextMenuItem,
   type EnvironmentId,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
   type ProjectDirectoryEntry,
   type WorkspaceEntryChange,
   type WorkspaceEntryChangeOutcome,
@@ -25,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
+import { msg, T, useGT } from "gt-react";
 import {
   use,
   useEffect,
@@ -37,6 +39,7 @@ import {
 } from "react";
 
 import { folderDropTarget } from "~/components/chat/folderDrop";
+import { m } from "~/i18n/messages";
 import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
 import {
   AlertDialog,
@@ -273,6 +276,7 @@ export function useScientFileActions(input: {
   /** Selection changes until the end of this task are the tree's own, not a request to open. */
   readonly quietSelection: () => void;
 }) {
+  const gt = useGT();
   const { environmentId, cwd } = input;
   const enabled = !input.hostFolder;
   const key = workspaceKey(environmentId, cwd);
@@ -302,7 +306,8 @@ export function useScientFileActions(input: {
     readonly allowed: boolean;
   } | null>(null);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const trashLabel = serverConfig?.environment.platform.os === "windows" ? "Recycle Bin" : "Trash";
+  // The Recycle Bin on Windows, the Trash elsewhere: an ICU select picks the words.
+  const trashOs = serverConfig?.environment.platform.os === "windows" ? "windows" : "other";
   // The chat whose tabs follow moved files; a detached window without one leaves them.
   const threadRef = use(FileMetadataThreadContext);
   const [clash, setClash] = useState<{
@@ -323,6 +328,15 @@ export function useScientFileActions(input: {
       primaryEnvironmentId: readPrimaryEnvironmentId(),
       connection: readPreparedConnection(environmentId),
       isDesktopRenderer: true,
+      // A WSL primary names files by Linux paths, so this computer's paths do not reach it.
+      primaryRunsInWsl:
+        window.desktopBridge
+          ?.getLocalEnvironmentBootstraps()
+          .some(
+            (bootstrap) =>
+              bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID &&
+              typeof bootstrap.runningDistro === "string",
+          ) === true,
     }) === "local";
 
   const refresh = () => {
@@ -343,7 +357,7 @@ export function useScientFileActions(input: {
     if (failure === undefined) return true;
     toastManager.add({
       type: "error",
-      title: `Couldn’t save ${baseName(failure.path)} first`,
+      title: m(msg("Couldn’t save {name} first", { name: baseName(failure.path) })),
       description: failure.message,
     });
     return false;
@@ -383,7 +397,7 @@ export function useScientFileActions(input: {
         ? error.message
         : error instanceof Error
           ? error.message
-          : "Something went wrong.",
+          : m(msg("Something went wrong.")),
     });
   };
 
@@ -478,7 +492,9 @@ export function useScientFileActions(input: {
     if (at < 0) return;
     stack!.splice(at, 1);
     for (const step of record!) {
-      if ((await perform(step, { failureTitle: "Couldn’t undo", recordUndo: false })) === null) {
+      if (
+        (await perform(step, { failureTitle: m(msg("Couldn’t undo")), recordUndo: false })) === null
+      ) {
         return;
       }
     }
@@ -533,7 +549,7 @@ export function useScientFileActions(input: {
     await windowFocused();
     // Clicked elsewhere meanwhile (the chat box, say): that is where the typing goes.
     if (early.typed.abandoned) return;
-    model.add(treePath);
+    controller.addProvisional(treePath);
     pendingCreateRef.current = { relativePath, kind };
     input.quietSelection();
     model.startRenaming(treePath, { removeIfCanceled: true });
@@ -566,7 +582,10 @@ export function useScientFileActions(input: {
     input.treeController.current?.noteAdded(relativePath, kind === "folder" ? "directory" : "file");
     void perform(
       { _tag: kind === "folder" ? "create-folder" : "create-file", relativePath },
-      { failureTitle: kind === "folder" ? "Couldn’t make a folder" : "Couldn’t make a file" },
+      {
+        failureTitle:
+          kind === "folder" ? m(msg("Couldn’t make a folder")) : m(msg("Couldn’t make a file")),
+      },
     );
   };
 
@@ -605,7 +624,7 @@ export function useScientFileActions(input: {
     const besideItself = mode === "copy" && items.every((item) => item.from === item.to);
     const done = await perform(
       { _tag: mode, items, collision: besideItself ? "keep-both" : "ask" },
-      { failureTitle: mode === "move" ? "Couldn’t move" : "Couldn’t copy" },
+      { failureTitle: mode === "move" ? m(msg("Couldn’t move")) : m(msg("Couldn’t copy")) },
     );
     return done ?? [];
   };
@@ -618,7 +637,7 @@ export function useScientFileActions(input: {
     if (items.length === 0 || !(await saveEditorsUnder(paths))) return;
     await perform(
       { _tag: "copy", items, collision: "keep-both" },
-      { failureTitle: "Couldn’t duplicate" },
+      { failureTitle: m(msg("Couldn’t duplicate")) },
     );
   };
 
@@ -647,7 +666,12 @@ export function useScientFileActions(input: {
     const trashed = await perform(
       { _tag: "trash", relativePaths: targets },
       {
-        failureTitle: `Couldn’t move to the ${trashLabel}`,
+        failureTitle: m(
+          msg(
+            "{os, select, windows {Couldn’t move to the Recycle Bin} other {Couldn’t move to the Trash}}",
+            { os: trashOs },
+          ),
+        ),
         onUndoRecord: (record) => {
           ownUndo = record;
         },
@@ -661,12 +685,22 @@ export function useScientFileActions(input: {
       timeout: 10_000,
       title:
         trashed.length === 1
-          ? `Moved ${baseName(trashed[0]!.from ?? "")} to the ${trashLabel}`
-          : `Moved ${trashed.length} items to the ${trashLabel}`,
+          ? m(
+              msg(
+                "{os, select, windows {Moved {name} to the Recycle Bin} other {Moved {name} to the Trash}}",
+                { os: trashOs, name: baseName(trashed[0]!.from ?? "") },
+              ),
+            )
+          : m(
+              msg(
+                "{os, select, windows {Moved {count} items to the Recycle Bin} other {Moved {count} items to the Trash}}",
+                { os: trashOs, count: trashed.length },
+              ),
+            ),
       ...(canUndo
         ? {
             actionProps: {
-              children: "Undo",
+              children: m(msg("Undo")),
               onClick: () => {
                 toastManager.close(toastId);
                 // This toast's own step, even if other changes came after it.
@@ -683,7 +717,7 @@ export function useScientFileActions(input: {
     if (sources.length === 0) return;
     await perform(
       { _tag: "import", sources: [...sources], folder, collision: "ask" },
-      { failureTitle: "Couldn’t add" },
+      { failureTitle: m(msg("Couldn’t add")) },
     );
   };
 
@@ -719,7 +753,7 @@ export function useScientFileActions(input: {
     try {
       await writeTextToClipboard(text);
     } catch (error) {
-      reportFailure("Couldn’t copy the path", error);
+      reportFailure(m(msg("Couldn’t copy the path")), error);
     }
   };
 
@@ -829,12 +863,12 @@ export function useScientFileActions(input: {
           if (!(await saveEditorsUnder([from]))) return refresh();
           await perform(
             { _tag: "move", items: [{ from, to }], collision: "ask" },
-            { failureTitle: "Couldn’t rename" },
+            { failureTitle: m(msg("Couldn’t rename")) },
           );
         })();
       },
       onError: (message: string) =>
-        toastManager.add({ type: "error", title: "Couldn’t rename", description: message }),
+        toastManager.add({ type: "error", title: m(msg("Couldn’t rename")), description: message }),
     },
   };
 
@@ -901,22 +935,26 @@ export function useScientFileActions(input: {
         <AlertDialogHeader>
           <AlertDialogTitle>
             {clash?.paths.length === 1
-              ? `“${baseName(clash.paths[0]!)}” already exists here`
-              : `${clash?.paths.length ?? 0} items already exist here`}
+              ? gt("“{name}” already exists here", { name: baseName(clash.paths[0]!) })
+              : gt("{count} items already exist here", { count: clash?.paths.length ?? 0 })}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Replace moves what is there now to the {trashLabel}. Keep Both gives the new{" "}
-            {clash?.paths.length === 1 ? "item" : "items"} a numbered name.
+            {gt(
+              "{os, select, windows {{count, plural, =1 {Replace moves what is there now to the Recycle Bin. Keep Both gives the new item a numbered name.} other {Replace moves what is there now to the Recycle Bin. Keep Both gives the new items a numbered name.}}} other {{count, plural, =1 {Replace moves what is there now to the Trash. Keep Both gives the new item a numbered name.} other {Replace moves what is there now to the Trash. Keep Both gives the new items a numbered name.}}}}",
+              { os: trashOs, count: clash?.paths.length ?? 0 },
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <Button variant="outline" onClick={() => clash?.resolve(null)}>
-            Stop
+            <T context="cancel the move">Stop</T>
           </Button>
           <Button variant="outline" onClick={() => clash?.resolve("keep-both")}>
-            Keep Both
+            <T>Keep Both</T>
           </Button>
-          <Button onClick={() => clash?.resolve("replace")}>Replace</Button>
+          <Button onClick={() => clash?.resolve("replace")}>
+            <T context="replace the existing item">Replace</T>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
@@ -954,40 +992,69 @@ export function useScientFileActions(input: {
       const intoFolder = folderWritable(folder);
       const canPaste = fileClipboard?.key === key && intoFolder;
       // As Finder does, a selection says how many items an action takes.
-      const items = single ? "" : ` ${targets.length} Items`;
-      const what = single ? (isFolder(targets[0]!) ? "Folder" : "File") : `${targets.length} Items`;
+      const count = targets.length;
+      const what = single
+        ? isFolder(targets[0]!)
+          ? m(msg("Folder", { $context: "copy the folder" }))
+          : m(msg("File", { $context: "copy the file" }))
+        : m(msg("{count} Items", { count }));
       const create: ContextMenuItem[] = [
-        { id: MENU.newFile, label: "New File", separatorBefore: true, disabled: !intoFolder },
-        { id: MENU.newFolder, label: "New Folder", disabled: !intoFolder },
+        {
+          id: MENU.newFile,
+          label: m(msg("New File")),
+          separatorBefore: true,
+          disabled: !intoFolder,
+        },
+        { id: MENU.newFolder, label: m(msg("New Folder")), disabled: !intoFolder },
         // From elsewhere on this computer, through its own file chooser.
         ...(canImport()
           ? [
-              { id: MENU.addFiles, label: "Add Files…", disabled: !intoFolder },
-              { id: MENU.addFolder, label: "Add Folder…", disabled: !intoFolder },
+              { id: MENU.addFiles, label: m(msg("Add Files…")), disabled: !intoFolder },
+              { id: MENU.addFolder, label: m(msg("Add Folder…")), disabled: !intoFolder },
             ]
           : []),
       ];
       const edit: ContextMenuItem[] = [
-        { id: MENU.cut, label: `Cut${items}`, separatorBefore: true, disabled: !allWritable },
+        {
+          id: MENU.cut,
+          label: single ? m(msg("Cut")) : m(msg("Cut {count} Items", { count })),
+          separatorBefore: true,
+          disabled: !allWritable,
+        },
         {
           id: "files:copy-menu",
-          label: "Copy",
+          label: m(msg("Copy", { $context: "submenu of things to copy" })),
           children: [
             { id: MENU.copy, label: what, disabled: !allWritable },
-            { id: MENU.copyPath, label: "Path" },
-            { id: MENU.copyRelativePath, label: "Relative Path" },
+            { id: MENU.copyPath, label: m(msg("Path", { $context: "copy the file path" })) },
+            { id: MENU.copyRelativePath, label: m(msg("Relative Path")) },
             // The panel's own Copy mention, kept under Copy.
-            { id: "copy-mention", label: "Mention" },
+            { id: "copy-mention", label: m(msg("Mention", { $context: "copy an @-mention" })) },
           ],
         },
-        { id: MENU.paste, label: "Paste", disabled: !canPaste },
-        { id: MENU.duplicate, label: `Duplicate${items}`, disabled: !allWritable },
-        ...(single ? [{ id: MENU.rename, label: "Rename…", disabled: !allWritable }] : []),
+        { id: MENU.paste, label: m(msg("Paste")), disabled: !canPaste },
+        {
+          id: MENU.duplicate,
+          label: single ? m(msg("Duplicate")) : m(msg("Duplicate {count} Items", { count })),
+          disabled: !allWritable,
+        },
+        ...(single ? [{ id: MENU.rename, label: m(msg("Rename…")), disabled: !allWritable }] : []),
       ];
       const trash: ContextMenuItem[] = [
         {
           id: MENU.trash,
-          label: single ? `Move to ${trashLabel}` : `Move${items} to ${trashLabel}`,
+          label: single
+            ? m(
+                msg("{os, select, windows {Move to Recycle Bin} other {Move to Trash}}", {
+                  os: trashOs,
+                }),
+              )
+            : m(
+                msg(
+                  "{os, select, windows {Move {count} Items to Recycle Bin} other {Move {count} Items to Trash}}",
+                  { os: trashOs, count },
+                ),
+              ),
           destructive: true,
           separatorBefore: true,
           disabled: !allWritable,
@@ -1034,7 +1101,7 @@ export function useScientFileActions(input: {
         }).then((result) => {
           if (result._tag !== "Success") {
             reportFailure(
-              "Couldn’t open",
+              m(msg("Couldn’t open")),
               result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
             );
           }
@@ -1074,7 +1141,7 @@ export function useScientFileActions(input: {
         if (!canImport()) {
           toastManager.add({
             type: "error",
-            title: "Files can be added only to a project on this computer",
+            title: m(msg("Files can be added only to a project on this computer")),
           });
           return;
         }
@@ -1089,10 +1156,12 @@ export function useScientFileActions(input: {
             <div className="pointer-events-none absolute inset-0 z-10 flex items-end justify-center rounded-md ring-2 ring-primary/60 ring-inset">
               <span className="mb-3 rounded-md bg-popover px-2.5 py-1 text-xs text-popover-foreground shadow-md">
                 {dropTarget.allowed
-                  ? `Copy into ${dropTarget.folder ? baseName(dropTarget.folder) : "the project"}`
+                  ? dropTarget.folder
+                    ? gt("Copy into {folder}", { folder: baseName(dropTarget.folder) })
+                    : gt("Copy into the project")
                   : canImport()
-                    ? "Files can’t change this folder"
-                    : "Files can be added only to a project on this computer"}
+                    ? gt("Files can’t change this folder")
+                    : gt("Files can be added only to a project on this computer")}
               </span>
             </div>
           ) as ReactNode),

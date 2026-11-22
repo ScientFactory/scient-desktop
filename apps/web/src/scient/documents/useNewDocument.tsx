@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
+import { msg, useGT, useMessages } from "gt-react";
 import { ChevronDown } from "lucide-react";
 import {
   type ReactNode,
@@ -15,6 +16,7 @@ import {
 import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import type {
   MarkdownPersistenceLease,
@@ -359,8 +361,13 @@ export function useNewDocument(input: {
       keepName();
       toastManager.add({
         type: "error",
-        title: "The thesis rename needs review.",
-        description: `Files may now be under ${oldFolder} or ${newFolder}. Automatic renaming and compensation stopped. Review the actual paths and retained versions before starting another operation.`,
+        title: m(msg("The thesis rename needs review.")),
+        description: m(
+          msg(
+            "Files may now be under {oldFolder} or {newFolder}. Automatic renaming and compensation stopped. Review the actual paths and retained versions before starting another operation.",
+            { oldFolder, newFolder },
+          ),
+        ),
       });
     };
     const giveUp = async () => {
@@ -375,8 +382,13 @@ export function useNewDocument(input: {
       if (!whole)
         toastManager.add({
           type: "error",
-          title: "The thesis could not be moved back whole.",
-          description: `Its files are now split between ${oldFolder} and ${newFolder}.`,
+          title: m(msg("The thesis could not be moved back whole.")),
+          description: m(
+            msg("Its files are now split between {oldFolder} and {newFolder}.", {
+              oldFolder,
+              newFolder,
+            }),
+          ),
         });
     };
     return settleAfter(
@@ -517,7 +529,7 @@ export function useNewDocument(input: {
         pathHasLeftoverDrafts({ environmentId: from.environmentId, cwd: from.cwd, relativePath }),
     });
     if (!placed) {
-      toastManager.add({ type: "error", title: "The template could not be changed." });
+      toastManager.add({ type: "error", title: m(msg("The template could not be changed.")) });
       return null;
     }
     const release = newDocuments.get(from) ? held.holdForRename() : null;
@@ -557,7 +569,7 @@ export function useNewDocument(input: {
       // Changed meanwhile: it stays whole, with every file it reads.
       toastManager.add({
         type: "info",
-        title: `${from.relativePath} was kept: it changed meanwhile.`,
+        title: m(msg("{path} was kept: it changed meanwhile.", { path: from.relativePath })),
       });
       return to;
     }
@@ -654,12 +666,12 @@ export function useNewDocument(input: {
           if (!restored.complete)
             toastManager.add({
               type: "error",
-              title: "Some of the document's files could not be put back.",
+              title: m(msg("Some of the document's files could not be put back.")),
             });
         };
         if (!synced.complete) {
           await undo();
-          toastManager.add({ type: "error", title: "The template could not be changed." });
+          toastManager.add({ type: "error", title: m(msg("The template could not be changed.")) });
           return null;
         }
         if (next !== current.draftSource && !lease.change(next, current.editVersion)) {
@@ -762,24 +774,26 @@ function LanguageMenu(props: {
   readonly strip: Readonly<Record<string, string>>;
   readonly onLanguage: (language: NewDocumentLanguage) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <Menu>
       <MenuTrigger
         render={
           <button
             type="button"
-            aria-label="Language"
+            aria-label={gt("Language")}
             onMouseDown={(event) => event.preventDefault()}
           />
         }
       >
-        {NEW_DOCUMENT_LANGUAGES.find((entry) => entry.id === props.language)!.name}
+        {messages(NEW_DOCUMENT_LANGUAGES.find((entry) => entry.id === props.language)!.name)}
         <ChevronDown aria-hidden="true" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" sideOffset={4} className="min-w-0" {...props.strip}>
         {NEW_DOCUMENT_LANGUAGES.map((entry) => (
           <MenuItem key={entry.id} onClick={() => props.onLanguage(entry.id)}>
-            {entry.name}
+            {messages(entry.name)}
           </MenuItem>
         ))}
       </MenuPopup>

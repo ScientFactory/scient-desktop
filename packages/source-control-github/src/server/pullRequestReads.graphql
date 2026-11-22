@@ -83,6 +83,16 @@ query PullRequestCore(
       createdAt
       updatedAt
       mergedAt
+      mergeCommit {
+        oid
+      }
+      mergedBy {
+        login
+        avatarUrl
+        ... on User {
+          name
+        }
+      }
       closedAt
       headRefName
       baseRefName
@@ -157,6 +167,7 @@ query PullRequestCore(
         nodes {
           name
           color
+          description
         }
       }
       commits(last: 1) {

@@ -2,6 +2,7 @@ import type { ScientAnalyticsStatus, ScientAnalyticsUiEvent } from "@t3tools/con
 import * as Effect from "effect/Effect";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type { AnalyticsService } from "./AnalyticsService.ts";
+import type { AnalyticsAvailability } from "./ScientAnalytics.ts";
 
 // The server records these operations itself; a UI copy would count them twice.
 const SERVER_OBSERVED_OPERATIONS: ReadonlySet<string> = new Set([
@@ -11,23 +12,30 @@ const SERVER_OBSERVED_OPERATIONS: ReadonlySet<string> = new Set([
   "source-import",
 ]);
 
-/** Fence delayed UI outcomes across consent changes and server restarts.
+// Accounts' browser observations (apps/web/src/scient/analytics/accountBrowserAnalytics.ts) often
+// end long after they began, such as a sign-in window or a copied Google sign-in's lifetime.
+const FENCED_FEATURES: ReadonlySet<string> = new Set([
+  "accounts.google_signin.blocked",
+  "accounts.browser_window",
+  "accounts.browser_import",
+  "accounts.google_copy.checked",
+  "accounts.google_copy.ended",
+]);
+
+/** Fence delayed UI outcomes across server restarts.
  * The random context never reaches the event contract, queue or gateway.
  */
-export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
-  let epoch: number | undefined;
+export function makeAnalyticsUiAdapter(
+  analytics: AnalyticsService["Service"],
+  availability: AnalyticsAvailability,
+) {
   let context: string | undefined;
   const status: Effect.Effect<ScientAnalyticsStatus, never, SecureRandom.SecureRandom> = Effect.gen(
     function* () {
-      const current = yield* analytics.status;
-      const currentEpoch = yield* analytics.collectionEpoch;
-      if (!current.available || current.consent === "off") {
-        epoch = undefined;
-        context = undefined;
-        return current;
-      }
-      if (epoch !== currentEpoch || context === undefined) {
-        epoch = currentEpoch;
+      // Older clients still read a consent level; analytics is always on at the full level.
+      if (!availability.available) return { available: false, consent: "off" };
+      const current = { available: true, consent: "diagnostic" } as const;
+      if (context === undefined) {
         const random = yield* SecureRandom.SecureRandom;
         context = yield* random.uuidV4().pipe(Effect.orElseSucceed(() => undefined));
       }
@@ -44,7 +52,8 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
       event.name === "settings.viewed" ||
       event.name === "usage.viewed" ||
       event.name === "feature.viewed" ||
-      event.name === "usage.availability"
+      event.name === "usage.availability" ||
+      (event.name === "feature.used" && FENCED_FEATURES.has(String(event.properties.feature)))
     ) {
       const current = yield* status;
       if (

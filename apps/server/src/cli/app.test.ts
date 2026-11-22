@@ -14,10 +14,12 @@ import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppContr
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as NetService from "@t3tools/shared/Net";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -84,6 +86,7 @@ const layerCliAuthority = Layer.mergeAll(
     ),
     Layer.provide(VcsProcess.layer),
     Layer.provide(FetchHttpClient.layer),
+    Layer.provide(FeatureFlags.layerTest()),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
     Layer.provide(
@@ -308,6 +311,15 @@ describe("t3 server command safety", () => {
     ),
   );
 
+  it.effect("does not offer auto-bootstrap in serve help, since serve never bootstraps", () =>
+    Effect.gen(function* () {
+      yield* runCli(["serve", "--help"]);
+      const help = (yield* TestConsole.logLines).join("\n");
+      expect(help).toContain("--no-browser");
+      expect(help).not.toContain("--auto-bootstrap-project-from-cwd");
+    }).pipe(Effect.provide(Layer.fresh(TestConsole.layer))),
+  );
+
   it.effect("refuses manual startup over a live server before creating directories", () =>
     withTempDirectory("t3-cli-running-", (root) =>
       Effect.gen(function* () {
@@ -345,7 +357,7 @@ describe("t3 server command safety", () => {
             Effect.flip,
           );
           expect(String(error)).toContain(
-            `A Scient server is already running for ${baseDir} (pid ${child.pid}, http://127.0.0.1:3773). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+            `A Scient server is already running for ${baseDir} (pid ${child.pid}, http://127.0.0.1:3773). To open it, run `,
           );
           expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
           expect(yield* pathExists(newDirectory)).toBe(false);

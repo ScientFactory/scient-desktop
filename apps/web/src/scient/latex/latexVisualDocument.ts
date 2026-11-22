@@ -112,6 +112,8 @@ import {
   LATEX_PAPER_SIZES,
   type LatexVisualLayoutProfile,
 } from "./latexVisualLayout";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 export { latexVisualLayoutProfile, type LatexVisualLayoutProfile } from "./latexVisualLayout";
 
@@ -224,13 +226,14 @@ export function latexVisualBlockSourceEdit(
   return { source, patches: patch ? [patch] : [] };
 }
 
+/** `label` is a `msg()` string: resolve it with `useMessages()` where it is shown. */
 export const LATEX_HEADING_STYLES = [
-  { level: 6, command: "chapter", label: "Chapter" },
-  { level: 1, command: "section", label: "Section" },
-  { level: 2, command: "subsection", label: "Subsection" },
-  { level: 3, command: "subsubsection", label: "Subsubsection" },
-  { level: 4, command: "paragraph", label: "Paragraph heading" },
-  { level: 5, command: "subparagraph", label: "Subparagraph heading" },
+  { level: 6, command: "chapter", label: msg("Chapter") },
+  { level: 1, command: "section", label: msg("Section") },
+  { level: 2, command: "subsection", label: msg("Subsection") },
+  { level: 3, command: "subsubsection", label: msg("Subsubsection") },
+  { level: 4, command: "paragraph", label: msg("Paragraph heading") },
+  { level: 5, command: "subparagraph", label: msg("Subparagraph heading") },
 ] as const;
 
 export interface LatexVisualLayoutUpdate {
@@ -4519,14 +4522,21 @@ export function projectLatexVisualDocument(
           type: "latexRawBlock",
           attrs: {
             raw,
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- a node attribute that is never shown
             label: "Raw LaTeX",
+            // A `msg()` string: the raw block view resolves it where it is shown.
             reason: dynamicSyntax
-              ? "Visual cannot evaluate commands that change TeX syntax or definitions."
+              ? msg("Visual cannot evaluate commands that change TeX syntax or definitions.")
               : environment && setup.declarations.unsupported.has(environment)
-                ? `The definition of ${environment} needs TeX evaluation.`
+                ? msg("The definition of {environment} needs TeX evaluation.", { environment })
                 : environment
-                  ? `Visual does not yet support this ${environment} structure or its nested commands.`
-                  : "This block contains commands or options that Visual cannot safely render. Open Source or PDF to view it.",
+                  ? msg(
+                      "Visual does not yet support this {environment} structure or its nested commands.",
+                      { environment },
+                    )
+                  : msg(
+                      "This block contains commands or options that Visual cannot safely render. Open Source or PDF to view it.",
+                    ),
           },
         },
       id,
@@ -8001,7 +8011,11 @@ export function applyLatexVisualDocumentChange(
   if (addedEnvironments.size || requiredPackages.size || needsDirectionSetup) {
     if (!setupSource || latexDocumentBoundary(setupSource) === null) {
       context?.onMissingRequirement?.(
-        "Choose the root document before inserting content that needs LaTeX packages or declarations.",
+        m(
+          msg(
+            "Choose the root document before inserting content that needs LaTeX packages or declarations.",
+          ),
+        ),
       );
       return null;
     }
@@ -8025,7 +8039,11 @@ export function applyLatexVisualDocumentChange(
     }
     if (preparedSetup !== setupSource && (!root || latexDocumentBoundary(root) === null)) {
       context?.onMissingRequirement?.(
-        "Choose the root document before inserting content that needs LaTeX packages or declarations.",
+        m(
+          msg(
+            "Choose the root document before inserting content that needs LaTeX packages or declarations.",
+          ),
+        ),
       );
       return null;
     }

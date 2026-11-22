@@ -4,6 +4,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
@@ -145,6 +147,29 @@ describe("runProcess", () => {
     }),
   );
 
+  it.effect("reports child startup before delivering cancellation during acquisition", () =>
+    Effect.gen(function* () {
+      let started = false;
+      const spawner = makeSpawner(() =>
+        Effect.withFiber((fiber) =>
+          Effect.sync(() => {
+            fiber.interruptUnsafe();
+            return makeHandle({});
+          }),
+        ),
+      );
+      const result = yield* runWith(spawner)({
+        command: "git",
+        args: ["restore"],
+        onSpawn: () => {
+          started = true;
+        },
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause)).toBe(true);
+      expect(started).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("fails when output exceeds max buffer in default mode", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner(() => Effect.succeed(makeHandle({ stdout: "x".repeat(2048) })));
@@ -263,40 +288,6 @@ describe("runProcess", () => {
       expect(result.code).toBe(0);
     }),
   );
-
-  // SCIENT-FORK:START — binary stdin for checkpoint object transfer.
-  it.effect("writes binary stdin bytes unchanged", () =>
-    Effect.gen(function* () {
-      // Invalid UTF-8 would not survive a round trip through text encoding.
-      const payload = new Uint8Array([0x50, 0x41, 0x43, 0x4b, 0x00, 0xff, 0xfe, 0x80]);
-      const received: Array<number> = [];
-      const stdinWritten = yield* Deferred.make<void>();
-      const spawner = makeSpawner(() =>
-        Effect.succeed(
-          makeHandle({
-            stdout: "",
-            stdin: Sink.forEach((chunk: Uint8Array) => {
-              received.push(...chunk);
-              return received.length >= payload.length
-                ? Deferred.succeed(stdinWritten, undefined)
-                : Effect.void;
-            }),
-            exitCode: Deferred.await(stdinWritten).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-          }),
-        ),
-      );
-
-      const result = yield* runWith(spawner)({
-        command: "fake",
-        args: ["binary-stdin"],
-        stdinBytes: payload,
-      });
-
-      expect(received).toEqual([...payload]);
-      expect(result.code).toBe(0);
-    }),
-  );
-  // SCIENT-FORK:END
 });
 
 describe("isWindowsCommandNotFound", () => {

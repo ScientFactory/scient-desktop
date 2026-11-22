@@ -18,7 +18,6 @@ import { CodexOrchestratorReplayHarness } from "./Adapters/CodexAdapterV2.testki
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -27,6 +26,8 @@ import {
   readProviderReplayTranscript,
 } from "@t3tools/provider-testing/replayTranscript";
 import { PROPOSED_PLAN_PROMPT } from "./testkit/fixtures/shared.ts";
+import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 
 it.live("forks a running Codex turn before Codex reports the turn started", () =>
   Effect.scoped(
@@ -49,9 +50,11 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
       );
       const gate = makeProviderReplayGate(["held-turn-start"]);
       yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
-      const registry = CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript, {
-        replayGate: gate,
-      });
+      const registry = CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
+        // SCIENT-FORK: the recording names its thread after its own title.
+        materializeCodexThreadSetup(transcript, () => "Fork before turn start"),
+        { replayGate: gate },
+      );
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         {
           name: "fork-before-turn-start",
@@ -68,7 +71,6 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;
         const worker = yield* OrchestrationEffectWorkerV2;
-        const forks = yield* ConversationForkService;
         const threadId = ThreadId.make("fork-before-turn-start");
         const forkId = ThreadId.make("fork-before-turn-start-fork");
         const projectId = ProjectId.make("fork-before-turn-start-project");
@@ -153,7 +155,7 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
             projection.providerThreads[0]?.driver === "codex",
         );
         assert.isEmpty(running.providerTurns);
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("fork-before-turn-start-fork"),
           originThreadId: threadId,
@@ -162,7 +164,7 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
           workspaceMode: "local",
         });
         const fork = yield* orchestrator.getThreadProjection(forkId);
-        assert.equal(fork.thread.conversationFork?.status, "ready");
+        assert.equal((yield* conversationForkOf(fork.thread.id))?.status, "ready");
         assert.deepEqual(
           fork.messages.map((message) => message.text),
           [PROPOSED_PLAN_PROMPT],

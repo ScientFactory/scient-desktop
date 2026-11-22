@@ -1,4 +1,6 @@
+import { T } from "gt-react";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { parseUrl } from "@t3tools/shared/url";
 import { ChevronDown, Globe, History, RadioTower } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -53,7 +55,7 @@ export function PreviewEmptyState({
   const groups = groupPreviewServers({ servers, threadId, environmentHttpBaseUrl });
   const relevantServerKeys = new Set(groups.relevant.map(localServerKey));
   const recents = recentEntries
-    .filter((entry) => URL.canParse(entry.url))
+    .filter((entry) => parseUrl(entry.url) !== null)
     .filter((entry) => {
       const key = localUrlKey(entry.url);
       return key === null || !relevantServerKeys.has(key);
@@ -72,10 +74,14 @@ export function PreviewEmptyState({
         <EmptyMedia variant="icon">
           <Globe className="size-4.5 text-muted-foreground" />
         </EmptyMedia>
-        <EmptyTitle>No preview yet</EmptyTitle>
+        <EmptyTitle>
+          <T>No preview yet</T>
+        </EmptyTitle>
         <EmptyDescription>
-          Type a URL above, or run a project action with a Preview URL. Configured local previews
-          appear here when ready.
+          <T>
+            Type a URL above, or run a project action with a Preview URL. Configured local previews
+            appear here when ready.
+          </T>
         </EmptyDescription>
       </Empty>
     );
@@ -89,7 +95,9 @@ export function PreviewEmptyState({
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <RadioTower className="size-4 shrink-0" />
-              <h2 className="font-medium">Local previews</h2>
+              <h2 className="font-medium">
+                <T>Local previews</T>
+              </h2>
             </div>
             <div className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-background">
               {groups.relevant.map((server) => (
@@ -107,11 +115,13 @@ export function PreviewEmptyState({
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <History className="size-4 shrink-0" />
-              <h2 className="font-medium">Recently used</h2>
+              <h2 className="font-medium">
+                <T>Recently used</T>
+              </h2>
               {/* SCIENT-FORK:START — Scient Browser: everything beyond these few. */}
               {onShowHistory ? (
                 <Button className="ms-auto" size="xs" variant="ghost" onClick={onShowHistory}>
-                  See all
+                  <T>See all</T>
                 </Button>
               ) : null}
               {/* SCIENT-FORK:END */}
@@ -138,7 +148,9 @@ export function PreviewEmptyState({
               className="flex w-fit items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <RadioTower className="size-4 shrink-0" />
-              <span>Find another local server</span>
+              <span>
+                <T>Find another local server</T>
+              </span>
               <span className="text-xs tabular-nums">{otherServers.length}</span>
               <ChevronDown
                 className={`size-3.5 transition-transform ${showOtherServers ? "rotate-180" : ""}`}
@@ -157,7 +169,7 @@ export function PreviewEmptyState({
                   ))}
                 </div>
                 <p className="px-1 text-xs text-muted-foreground">
-                  Other browser-ready servers detected in this environment.
+                  <T>Other browser-ready servers detected in this environment.</T>
                 </p>
               </>
             ) : null}

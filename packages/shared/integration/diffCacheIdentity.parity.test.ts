@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { buildPatchCacheKey as buildScopedPatchCacheKey } from "@t3tools/shared/diffCacheKey";
-import { buildPatchCacheKey, fnv1a32 } from "../../../apps/web/src/lib/diffRendering.ts";
+import { buildPatchCacheKey } from "../../../apps/web/src/lib/diffRendering.ts";
 
 function patchWithContent(content: string) {
   return [
@@ -24,9 +24,6 @@ function patchWithContent(content: string) {
 describe("cross-client patch cache identity", () => {
   it("keeps the web default and separates changed content and explicit scopes", () => {
     const patch = patchWithContent("after");
-    expect(fnv1a32("hello")).toBe(1335831723);
-    expect(fnv1a32("hello", 0)).toBe(406904376);
-    expect(fnv1a32("hello", -1, -3)).toBe(30165);
     expect(buildPatchCacheKey(patch)).toBe(buildScopedPatchCacheKey(patch, "diff-panel"));
     expect(buildPatchCacheKey(patch, "")).toBe(buildScopedPatchCacheKey(patch, ""));
     expect(buildPatchCacheKey(patch, "")).not.toBe(buildPatchCacheKey(patch));

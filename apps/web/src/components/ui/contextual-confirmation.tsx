@@ -1,5 +1,6 @@
 "use client";
 
+import { useGT } from "gt-react";
 import type { ReactElement, ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -34,6 +35,7 @@ export function ContextualConfirmation(props: {
   readonly side?: Parameters<typeof PopoverPopup>[0]["side"];
   readonly align?: Parameters<typeof PopoverPopup>[0]["align"];
 }) {
+  const gt = useGT();
   const busy = props.busy ?? false;
   return (
     <Popover
@@ -68,7 +70,7 @@ export function ContextualConfirmation(props: {
                 props.secondaryAction?.onSelect();
               }}
             >
-              {props.secondaryAction?.label ?? "Cancel"}
+              {props.secondaryAction?.label ?? gt("Cancel")}
             </Button>
             <Button
               size="xs"

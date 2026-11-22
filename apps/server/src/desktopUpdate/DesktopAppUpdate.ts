@@ -19,7 +19,8 @@ import * as ServerConfig from "../config.ts";
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 const DESKTOP_UPDATE_TIMEOUT = Duration.minutes(20);
-const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(2);
+// Budget: 90s check admission + 5m native preparation + two 20s saves + 7s backend stop, with margin.
+const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(8);
 
 function desktopUpdateProgressStage(
   state: DesktopUpdateState,
@@ -30,6 +31,7 @@ function desktopUpdateProgressStage(
     case "downloading":
       return "downloading";
     case "downloaded":
+    case "preparing":
       return "installing";
     default:
       return null;
@@ -121,7 +123,11 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
         targetVersion,
       });
       yield* Ref.set(inFlight, false);
-      return { targetVersion, method: "desktop-app" as const, desktopUpdateToken: requestId };
+      return {
+        targetVersion,
+        method: "desktop-app" as const,
+        desktopUpdateToken: report.preparedRequestId ?? requestId,
+      };
     }
     if (report.outcome === "up-to-date") {
       // A switch's host already on the newest build of its track only saved the track.
@@ -133,9 +139,18 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
         `The Scient desktop app on this machine is already up to date on ${report.state.currentVersion}.`,
       );
     }
-    return yield* failWith(
-      report.reason ?? report.state.message ?? "The desktop app update failed.",
-    );
+    const reason = report.reason ?? report.state.message ?? "The desktop app update failed.";
+    const mismatch = report.state.trackMismatch;
+    if (mismatch !== undefined && reason === report.state.message) {
+      return yield* new ServerSelfUpdateError({
+        reason,
+        trackMismatch: {
+          buildChannel: mismatch.buildChannel,
+          savedChannel: report.state.channel,
+        },
+      });
+    }
+    return yield* failWith(reason);
   });
 
   const run: DesktopAppUpdate["Service"]["run"] = Effect.fn("desktopUpdate.desktopAppUpdate.run")(

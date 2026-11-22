@@ -117,6 +117,10 @@ the tab's runtime id decide which window mounts it
 - The holder of an exclusive host lock mounts the webview.
 - Windows that display the tab also hold a shared "shown" lock. A window that
   displays the tab takes over from a host that does not.
+- A window in the background (unfocused or hidden) waits 500 ms before its first
+  claim on a new tab, unless it displays the tab. Every window learns of a new
+  tab, often a background one first, and the window that opened it would take
+  the page back, creating it twice.
 - Other windows that display the tab show **This browser tab is open in another
   window** with **Show here**, which steals the host lock.
 - A shared presence lock (`previewTabPresence.ts`) keeps one window's release

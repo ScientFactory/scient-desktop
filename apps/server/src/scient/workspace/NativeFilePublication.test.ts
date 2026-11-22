@@ -5,15 +5,22 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it, vi } from "@effect/vitest";
+import {
+  NATIVE_CHECK_DEADLINE_MS,
+  NativeCheckDeadlineError,
+} from "@t3tools/shared/scientPublicationArtifact";
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import {
   bindNativeFilePublicationParent,
+  HELPER_RECHECK_MS,
+  HELPER_REFUSAL_RECHECK_MS,
   ensureNativePrivateRetentionDirectory,
   checkNativePrivateRetentionDirectory,
   closeNativeHelperServers,
   invokeNativeHelper,
   isPackagedServerDirectory,
   nativeFilePublicationCapabilities,
+  nativeFilePublicationInternals,
   observedDirectoryBinding,
   withNativeFilePublicationLease,
 } from "./NativeFilePublication.ts";
@@ -383,4 +390,283 @@ describe("the packaged server's own resources", () => {
       false,
     );
   });
+});
+
+describe("a helper candidate's checks", () => {
+  const { checkHelperCandidate } = nativeFilePublicationInternals;
+  const deadline = () => new NativeCheckDeadlineError("permissions");
+  const refusal = () => new Error("Native publication resource hash differs from its receipt.");
+  /** Checks that fail with `outcomes` in turn, then pass. */
+  const scripted = (...outcomes: Array<() => Error>) => {
+    const calls: string[] = [];
+    const step = (stage: string) => async () => {
+      calls.push(stage);
+      const next = outcomes.shift();
+      if (next) throw next();
+    };
+    return { calls, checks: { artifact: step("artifact"), capabilities: step("capabilities") } };
+  };
+
+  it("checks once more when a check's own deadline stopped it", async () => {
+    const { calls, checks } = scripted(deadline);
+    const failures: unknown[] = [];
+    expect(await checkHelperCandidate("/h", (failure) => failures.push(failure), checks)).toBe(
+      true,
+    );
+    expect(calls).toEqual(["artifact", "artifact", "capabilities"]);
+    expect(failures).toMatchObject([{ attempt: 1, stage: "artifact" }]);
+  });
+
+  it.each([
+    ["a refusal", [refusal]],
+    ["a second deadline", [deadline, deadline]],
+    ["a refusal after a deadline", [deadline, refusal]],
+  ])("is refused for good after %s", async (_name, outcomes) => {
+    const { calls, checks } = scripted(...outcomes);
+    const failures: unknown[] = [];
+    expect(await checkHelperCandidate("/h", (failure) => failures.push(failure), checks)).toBe(
+      false,
+    );
+    expect(calls).toHaveLength(outcomes.length);
+    expect(failures).toHaveLength(outcomes.length);
+  });
+
+  it("keeps its answer when the failure report throws", async () => {
+    const { checks } = scripted(refusal);
+    expect(
+      await checkHelperCandidate(
+        "/h",
+        () => {
+          throw new Error("report failed");
+        },
+        checks,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("which helpers are accepted", () => {
+  const { helperAcceptance } = nativeFilePublicationInternals;
+  const path = "/install/file-exchange/helper";
+  /** Checks that settle only when the test says, in the order they were asked; each refusal is the permission check's. */
+  const controlled = () => {
+    const asked: Array<PromiseWithResolvers<string | undefined>> = [];
+    const acceptance = helperAcceptance(
+      (): Promise<{ helper: string | undefined; holdRefusal: boolean }> => {
+        const check = Promise.withResolvers<string | undefined>();
+        asked.push(check);
+        return check.promise.then((helper) => ({ helper, holdRefusal: true }));
+      },
+    );
+    const settle = async (index: number, passes: boolean) => {
+      await expect.poll(() => asked.length).toBeGreaterThan(index);
+      asked[index]!.resolve(passes ? path : undefined);
+    };
+    return { acceptance, asked, settle };
+  };
+  /** Lets every callback already queued run: a check's bookkeeping takes a few promise turns. */
+  const flush = async () => {
+    for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  };
+  /** Whether `promise` has settled once pending callbacks have run. */
+  const settled = async (promise: Promise<unknown>) => {
+    let done = false;
+    void promise.then(() => (done = true));
+    await flush();
+    return done;
+  };
+
+  it("uses a pass at once, checks it again in the background once old, and drops it if that fails", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { acceptance, asked, settle } = controlled();
+      const first = acceptance.helper(path, false);
+      await settle(0, true);
+      expect(await first).toBe(path);
+      now = HELPER_RECHECK_MS - 1;
+      expect(await acceptance.helper(path, false)).toBe(path);
+      expect(acceptance.accepted(path)).toBe(path);
+      expect(asked).toHaveLength(1);
+      now = HELPER_RECHECK_MS;
+      expect(await acceptance.helper(path, false)).toBe(path);
+      expect(asked).toHaveLength(2);
+      // While that check runs, every caller still gets the helper, and no other check starts.
+      expect(await acceptance.helper(path, false)).toBe(path);
+      expect(acceptance.accepted(path)).toBe(path);
+      expect(asked).toHaveLength(2);
+      await settle(1, false);
+      await flush();
+      expect(acceptance.accepted(path)).toBeUndefined();
+      // A refusal stands a minute: callers get no helper and wait for no check.
+      now += HELPER_REFUSAL_RECHECK_MS - 1;
+      expect(await acceptance.helper(path, false)).toBeUndefined();
+      expect(asked).toHaveLength(2);
+      now += 1;
+      const again = acceptance.helper(path, false);
+      await settle(2, true);
+      expect(await again).toBe(path);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("gives the helper to nobody while a check asked because of a failure runs", async () => {
+    const { acceptance, settle } = controlled();
+    const first = acceptance.helper(path, false);
+    await settle(0, true);
+    await first;
+    const revalidation = acceptance.helper(path, true);
+    const ordinary = acceptance.helper(path, false);
+    expect(acceptance.accepted(path)).toBeUndefined();
+    expect(await settled(ordinary)).toBe(false);
+    await settle(1, true);
+    expect(await ordinary).toBe(path);
+    expect(await revalidation).toBe(path);
+    expect(acceptance.accepted(path)).toBe(path);
+  });
+
+  it("starts that check after one already under way, whose pass may predate the failure", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { acceptance, asked, settle } = controlled();
+      const first = acceptance.helper(path, false);
+      await settle(0, true);
+      await first;
+      now = HELPER_RECHECK_MS;
+      expect(acceptance.accepted(path)).toBe(path);
+      await expect.poll(() => asked.length).toBe(2);
+      const revalidation = acceptance.helper(path, true);
+      const ordinary = acceptance.helper(path, false);
+      // A second failure before that check starts shares it.
+      const repeated = acceptance.helper(path, true);
+      expect(acceptance.accepted(path)).toBeUndefined();
+      await settle(1, true);
+      expect(await settled(ordinary)).toBe(false);
+      expect(acceptance.accepted(path)).toBeUndefined();
+      await settle(2, false);
+      expect(await revalidation).toBeUndefined();
+      expect(await repeated).toBeUndefined();
+      expect(await ordinary).toBeUndefined();
+      expect(acceptance.accepted(path)).toBeUndefined();
+      expect(asked).toHaveLength(3);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("checks an accepted helper again when it cannot be launched, and nothing else", async () => {
+    const { acceptance, asked, settle } = controlled();
+    acceptance.launchFailed(path);
+    await flush();
+    expect(asked).toHaveLength(0);
+    const first = acceptance.helper(path, false);
+    await settle(0, true);
+    await first;
+    acceptance.launchFailed(path);
+    expect(acceptance.accepted(path)).toBeUndefined();
+    await settle(1, false);
+    await flush();
+    // No longer accepted, and refused: the next caller gets no helper and starts no check.
+    expect(await acceptance.helper(path, false)).toBeUndefined();
+    expect(asked).toHaveLength(2);
+  });
+});
+
+describe.skipIf(!posix)("a capability inquiry's deadline", () => {
+  // These polls wait on a real shell starting, writing and being reaped, which can take longer
+  // than the poll's default second on a loaded host; the inquiry's own deadline stays faked.
+  const forProcess = { timeout: 10_000 };
+  it("reports its own deadline, not a refusal, once the helper has exited", () =>
+    inScratch("scient-capabilities-deadline-", async (root) => {
+      const slow = NodePath.join(root, "helper-slow");
+      await NodeFSP.writeFile(slow, "#!/bin/sh\nexec sleep 30\n", { mode: 0o700 });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const asked = nativeFilePublicationCapabilities(slow);
+        // The inquiry looks at the helper's file before it launches it and starts the deadline.
+        await expect.poll(() => vi.getTimerCount(), forProcess).toBeGreaterThan(0);
+        vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
+        await expect(asked).rejects.toBeInstanceOf(NativeCheckDeadlineError);
+      } finally {
+        vi.useRealTimers();
+      }
+    }));
+
+  it("keeps too long a reply a refusal when the deadline then ends the helper", async () => {
+    let error: unknown;
+    await inScratch("scient-capabilities-overflow-", async (folder) => {
+      const path = NodePath.join(folder, "helper");
+      const printed = NodePath.join(folder, "printed");
+      await NodeFSP.writeFile(
+        path,
+        `#!/bin/sh\nyes x | head -c 70000\ntouch '${printed}'\nexec sleep 30\n`,
+        { mode: 0o700 },
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const asked = nativeFilePublicationCapabilities(path).catch((cause: unknown) => cause);
+        await expect.poll(() => vi.getTimerCount(), forProcess).toBeGreaterThan(0);
+        // Whatever the helper printed is read before it closes, however the deadline ends it.
+        await expect
+          .poll(
+            () =>
+              NodeFSP.stat(printed).then(
+                () => true,
+                () => false,
+              ),
+            forProcess,
+          )
+          .toBe(true);
+        vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
+        error = await asked;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    expect(error).not.toBeInstanceOf(NativeCheckDeadlineError);
+  });
+
+  it("does not blame the deadline on a helper that had already exited", () =>
+    inScratch("scient-capabilities-exited-", async (folder) => {
+      const path = NodePath.join(folder, "helper");
+      const pidFile = NodePath.join(folder, "pid");
+      // A process it started holds its output open past the deadline.
+      await NodeFSP.writeFile(path, `#!/bin/sh\nsleep 2 &\necho $$ > '${pidFile}'\nexit 0\n`, {
+        mode: 0o700,
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const asked = nativeFilePublicationCapabilities(path).catch((cause: unknown) => cause);
+        await expect
+          .poll(() => NodeFSP.readFile(pidFile, "utf8").catch(() => ""), forProcess)
+          .toMatch(/\d/u);
+        const pid = Number(await NodeFSP.readFile(pidFile, "utf8"));
+        // Reaped: Node has seen it exit.
+        await expect
+          .poll(() => {
+            try {
+              process.kill(pid, 0);
+              return false;
+            } catch {
+              return true;
+            }
+          }, forProcess)
+          .toBe(true);
+        vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
+        expect(await asked).not.toBeInstanceOf(NativeCheckDeadlineError);
+      } finally {
+        vi.useRealTimers();
+      }
+    }));
+
+  it("does not take a helper that died on its own for a deadline", () =>
+    inScratch("scient-capabilities-killed-", async (root) => {
+      const killed = NodePath.join(root, "helper-killed");
+      await NodeFSP.writeFile(killed, "#!/bin/sh\nkill -TERM $$\n", { mode: 0o700 });
+      const error = await nativeFilePublicationCapabilities(killed).catch((cause) => cause);
+      expect(error).not.toBeInstanceOf(NativeCheckDeadlineError);
+      expect(String(error)).toMatch(/signal=SIGTERM/u);
+    }));
 });

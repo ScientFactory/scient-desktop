@@ -2,7 +2,11 @@
  * The agent owns sign-in credentials and storage. Forward pasted answers directly to the isolated
  * attempt process and never retain them in Scient state; its scope owns process lifetime.
  */
-import type { ProviderConnectionAccount, ProviderConnectionMethod } from "@t3tools/contracts";
+import type {
+  ProviderConnectionAccount,
+  ProviderConnectionFailureReason,
+  ProviderConnectionMethod,
+} from "@t3tools/contracts";
 import type { OmpRpcClient } from "effect-omp-rpc/client";
 import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 import type * as Duration from "effect/Duration";
@@ -45,8 +49,16 @@ export interface ScientAgentSignInClient {
 
 const isCommandError = Schema.is(OmpRpcCommandError);
 
-const connectionError = (message: string, cause?: unknown) =>
-  new ProviderConnectionActionError({ message, ...(cause === undefined ? {} : { cause }) });
+const connectionError = (
+  message: string,
+  cause?: unknown,
+  reason?: ProviderConnectionFailureReason,
+) =>
+  new ProviderConnectionActionError({
+    message,
+    ...(cause === undefined ? {} : { cause }),
+    ...(reason === undefined ? {} : { failureReason: reason }),
+  });
 
 const SignInList = Schema.Struct({
   providers: Schema.Array(
@@ -69,6 +81,18 @@ const decodeSignInList = Schema.decodeUnknownOption(SignInList);
 const isAccountId = (id: string) => id.length <= 128 && /^[A-Za-z0-9._-]+$/u.test(id);
 
 /**
+ * Model accounts Scient does not offer through Scient Agent. Neither Antigravity
+ * sign-in finishes from Scient: Oh My Pi refuses the CLI's questions over RPC, and
+ * it pauses the older Google Antigravity sign-in itself. They leave the list, their
+ * models leave the picker, and a sign-in to them is not started.
+ */
+const UNOFFERED_ACCOUNTS: ReadonlySet<string> = new Set(["antigravity-cli", "google-antigravity"]);
+
+/** Whether Scient offers this Scient Agent account, or the account a `account/model` slug names. */
+export const isOfferedScientAgentAccount = (idOrModel: string): boolean =>
+  !UNOFFERED_ACCOUNTS.has(idOrModel.split("/", 1)[0] ?? idOrModel);
+
+/**
  * The agent's sign-in list as Scient shows it. `undefined` when the agent does
  * not describe its entries, so an older build offers no sign-in rather than a
  * list Scient cannot present truthfully.
@@ -84,7 +108,9 @@ export const readScientAgentAccounts = (
       for (const entry of list.value.providers) {
         if (entry.kind === undefined || entry.stored === undefined) return undefined;
         const name = entry.name.trim().slice(0, 128);
-        if (!isAccountId(entry.id) || name.length === 0) continue;
+        if (!isAccountId(entry.id) || !isOfferedScientAgentAccount(entry.id) || name.length === 0) {
+          continue;
+        }
         const email = entry.email?.trim();
         const emails = [
           ...new Set(
@@ -179,7 +205,18 @@ export function makeScientAgentConnectionActions(input: {
     account?: string,
   ): Effect.fn.Return<ProviderConnectionAttempt, ProviderConnectionActionFailure, Scope.Scope> {
     if (method !== SCIENT_AGENT_ACCOUNT_METHOD || account === undefined) {
-      return yield* connectionError("Choose an account from Scient Agent's sign-in list.");
+      return yield* connectionError(
+        "Choose an account from Scient Agent's sign-in list.",
+        undefined,
+        "start_failed",
+      );
+    }
+    if (!isOfferedScientAgentAccount(account)) {
+      return yield* connectionError(
+        "Scient does not offer this account through Scient Agent.",
+        undefined,
+        "start_failed",
+      );
     }
     const scope = yield* Scope.Scope;
     const client = yield* input.open;
@@ -230,6 +267,8 @@ export function makeScientAgentConnectionActions(input: {
               connectionError(
                 instructionsText(client.redact(message)) ??
                   "Scient Agent could not complete the sign in.",
+                undefined,
+                "provider_failed",
               ),
             ),
           ),
@@ -246,7 +285,13 @@ export function makeScientAgentConnectionActions(input: {
       Effect.timeoutOrElse({
         duration: input.firstPromptTimeout ?? FIRST_PROMPT_TIMEOUT,
         orElse: () =>
-          Effect.fail(connectionError("Scient Agent did not begin the sign in. Try again.")),
+          Effect.fail(
+            connectionError(
+              "Scient Agent did not begin the sign in. Try again.",
+              undefined,
+              "no_signin_page",
+            ),
+          ),
       }),
     );
     const cancel = Fiber.interrupt(login).pipe(Effect.asVoid);

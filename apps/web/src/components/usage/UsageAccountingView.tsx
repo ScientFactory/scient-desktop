@@ -6,6 +6,7 @@ import type {
   UsageSummary,
 } from "@t3tools/contracts";
 import { ChartNoAxesCombinedIcon, ChevronDownIcon, CircleAlertIcon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -91,15 +92,19 @@ export function UsageAccountingView({
 }: {
   readonly summaries: readonly UsageSummary[];
 }) {
+  const messages = useMessages();
   const accounting = aggregateAccounting(summaries);
   const [metric, setMetric] = useState<AccountingChartMetric>("spend");
   const [group, setGroup] = useState<AccountingChartGroup>("model");
-  const trend = buildAccountingTrend({
-    rows: accounting.sourceRows,
-    keys: accounting.keys,
-    metric,
-    group,
-  });
+  const trend = buildAccountingTrend(
+    {
+      rows: accounting.sourceRows,
+      keys: accounting.keys,
+      metric,
+      group,
+    },
+    messages,
+  );
 
   return (
     <div className="flex min-w-0 flex-col gap-7">
@@ -118,9 +123,11 @@ export function UsageAccountingView({
             <div className="min-w-0">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="text-sm font-medium text-foreground">Spend over time</h2>
+                  <h2 className="text-sm font-medium text-foreground">
+                    <T>Spend over time</T>
+                  </h2>
                   <p className="text-xs text-muted-foreground">
-                    Authoritative OpenRouter totals by UTC billing day.
+                    <T>Authoritative OpenRouter totals by UTC billing day.</T>
                   </p>
                 </div>
                 <ChartControls
@@ -148,16 +155,17 @@ export function UsageAccountingView({
 }
 
 function AccountingHeader({ accounting }: { readonly accounting: AccountingAggregate }) {
+  const gt = useGT();
   const statusLabel =
     accounting.status === "ok"
-      ? "Synced"
+      ? gt("Synced", { $context: "billing sync status" })
       : accounting.status === "cached"
-        ? "Cached"
+        ? gt("Cached", { $context: "billing sync status" })
         : accounting.status === "partial"
-          ? "Partial"
+          ? gt("Partial", { $context: "billing sync status" })
           : accounting.status === "failed"
-            ? "Unavailable"
-            : "Not connected";
+            ? gt("Unavailable", { $context: "billing sync status" })
+            : gt("Not connected", { $context: "billing sync status" });
   const statusVariant =
     accounting.status === "ok"
       ? "success"
@@ -169,9 +177,11 @@ function AccountingHeader({ accounting }: { readonly accounting: AccountingAggre
   return (
     <section className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
-        <h2 className="text-base font-medium text-foreground">Provider billing</h2>
+        <h2 className="text-base font-medium text-foreground">
+          <T>Provider billing</T>
+        </h2>
         <p className="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-          Provider-reported spend and tokens by API key and model.
+          <T>Provider-reported spend and tokens by API key and model.</T>
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
@@ -188,15 +198,22 @@ function AccountingHeader({ accounting }: { readonly accounting: AccountingAggre
 }
 
 function SourceAlerts({ sources }: { readonly sources: readonly UsageAccountingSourceSummary[] }) {
+  const gt = useGT();
   const issues = sources.filter((source) => source.status !== "ok");
   if (issues.length === 0) return null;
   return (
-    <section className="flex flex-col gap-2" aria-label="Billing synchronization status">
+    <section className="flex flex-col gap-2" aria-label={gt("Billing synchronization status")}>
       {issues.map((source) => (
         <Alert key={source.sourceId} variant={source.status === "failed" ? "error" : "warning"}>
           <CircleAlertIcon aria-hidden />
           <AlertTitle>
-            {source.label}: {source.status === "cached" ? "showing cached data" : source.status}
+            {source.status === "cached"
+              ? gt("{source}: showing cached data", { source: source.label })
+              : source.status === "partial"
+                ? gt("{source}: partial", { source: source.label })
+                : source.status === "failed"
+                  ? gt("{source}: failed", { source: source.label })
+                  : `${source.label}: ${source.status}`}
           </AlertTitle>
           {source.message ? <AlertDescription>{source.message}</AlertDescription> : null}
         </Alert>
@@ -210,23 +227,27 @@ function AccountingEmptyState({
 }: {
   readonly kind: "unconfigured" | "unavailable" | "empty";
 }) {
+  const gt = useGT();
   const content =
     kind === "unconfigured"
       ? {
-          title: "Connect OpenRouter billing",
-          description:
+          title: gt("Connect OpenRouter billing"),
+          description: gt(
             "Add a management key to see provider-reported spend, tokens, requests, API keys, and models.",
+          ),
         }
       : kind === "unavailable"
         ? {
-            title: "Billing data is unavailable",
-            description:
+            title: gt("Billing data is unavailable"),
+            description: gt(
               "Scient could not load OpenRouter analytics and has no cached billing history yet.",
+            ),
           }
         : {
-            title: "No billed activity in this period",
-            description:
+            title: gt("No billed activity in this period"),
+            description: gt(
               "OpenRouter is connected and synchronized. Try a longer date range or verify that the account has activity.",
+            ),
           };
   return (
     <div className="min-h-64 rounded-xl border border-dashed border-border bg-card">
@@ -241,7 +262,7 @@ function AccountingEmptyState({
         {kind === "unconfigured" ? (
           <EmptyContent>
             <Button render={<Link to="/settings/providers" hash="provider-billing" />}>
-              Connect OpenRouter
+              <T>Connect OpenRouter</T>
             </Button>
           </EmptyContent>
         ) : null}
@@ -251,32 +272,38 @@ function AccountingEmptyState({
 }
 
 function AccountingMetrics({ accounting }: { readonly accounting: AccountingAggregate }) {
+  const gt = useGT();
   return (
     <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border lg:grid-cols-4">
       <Metric
-        label="Spend"
+        label={gt("Spend", { $context: "billing metric" })}
         value={formatUsdPrecise(accounting.totals.totalCostUsd)}
-        detail="Selected period"
+        detail={gt("Selected period")}
       />
       <Metric
-        label="Tokens"
+        label={gt("Tokens", { $context: "billing metric" })}
         value={formatTokens(accounting.totals.totalTokens)}
-        detail={`${formatTokens(accounting.totals.promptTokens)} prompt · ${formatTokens(accounting.totals.completionTokens)} completion`}
+        detail={gt("{prompt} prompt · {completion} completion", {
+          prompt: formatTokens(accounting.totals.promptTokens),
+          completion: formatTokens(accounting.totals.completionTokens),
+        })}
       />
       <Metric
-        label="Requests"
+        label={gt("Requests", { $context: "billing metric" })}
         value={formatCount(accounting.totals.requests)}
-        detail="Provider-billed generations"
+        detail={gt("Provider-billed generations")}
       />
       <Metric
-        label="Credits remaining"
+        label={gt("Credits remaining")}
         value={
           accounting.creditsRemainingUsd === null
-            ? "Unknown"
+            ? gt("Unknown", { $context: "credits remaining are not known" })
             : formatUsd(accounting.creditsRemainingUsd)
         }
         detail={
-          accounting.creditsRemainingUsd === null ? "Not reported" : "Current account balance"
+          accounting.creditsRemainingUsd === null
+            ? gt("Not reported")
+            : gt("Current account balance")
         }
       />
     </section>
@@ -314,10 +341,11 @@ function ChartControls({
   readonly onMetricChange: (value: AccountingChartMetric) => void;
   readonly onGroupChange: (value: AccountingChartGroup) => void;
 }) {
+  const gt = useGT();
   return (
     <div className="flex flex-wrap items-center gap-2">
       <ToggleGroup
-        aria-label="Billing chart metric"
+        aria-label={gt("Billing chart metric")}
         size="compact"
         value={[metric]}
         onValueChange={(next) => {
@@ -326,12 +354,18 @@ function ChartControls({
             onMetricChange(value);
         }}
       >
-        <Toggle value="spend">Spend</Toggle>
-        <Toggle value="tokens">Tokens</Toggle>
-        <Toggle value="requests">Requests</Toggle>
+        <Toggle value="spend">
+          <T context="billing metric">Spend</T>
+        </Toggle>
+        <Toggle value="tokens">
+          <T context="billing metric">Tokens</T>
+        </Toggle>
+        <Toggle value="requests">
+          <T context="billing metric">Requests</T>
+        </Toggle>
       </ToggleGroup>
       <ToggleGroup
-        aria-label="Billing chart grouping"
+        aria-label={gt("Billing chart grouping")}
         size="compact"
         value={[group]}
         onValueChange={(next) => {
@@ -339,8 +373,12 @@ function ChartControls({
           if (value === "model" || value === "key") onGroupChange(value);
         }}
       >
-        <Toggle value="model">Models</Toggle>
-        <Toggle value="key">API keys</Toggle>
+        <Toggle value="model">
+          <T context="group billing by model">Models</T>
+        </Toggle>
+        <Toggle value="key">
+          <T context="group billing by API key">API keys</T>
+        </Toggle>
       </ToggleGroup>
     </div>
   );
@@ -353,10 +391,15 @@ function TopModels({
   readonly models: readonly ModelSummary[];
   readonly totalSpend: number;
 }) {
+  const gt = useGT();
   return (
     <section className="min-w-0 xl:border-l xl:border-border xl:pl-8">
-      <h2 className="text-sm font-medium text-foreground">Top models</h2>
-      <p className="text-xs text-muted-foreground">Share of provider-billed spend</p>
+      <h2 className="text-sm font-medium text-foreground">
+        <T>Top models</T>
+      </h2>
+      <p className="text-xs text-muted-foreground">
+        <T>Share of provider-billed spend</T>
+      </p>
       <div className="mt-3 flex flex-col">
         {models.slice(0, 5).map((model, index) => {
           const share = totalSpend <= 0 ? 0 : model.metrics.totalCostUsd / totalSpend;
@@ -388,7 +431,9 @@ function TopModels({
                 />
               </div>
               <div className="mt-1.5 flex justify-between gap-3 text-[10px] text-muted-foreground">
-                <span>{formatTokens(model.metrics.totalTokens)} tokens</span>
+                <span>
+                  {gt("{tokens} tokens", { tokens: formatTokens(model.metrics.totalTokens) })}
+                </span>
                 <span>{(share * 100).toFixed(1)}%</span>
               </div>
             </div>
@@ -404,19 +449,33 @@ function ApiKeyBreakdown({ rows }: { readonly rows: readonly AccountingDisplayRo
   return (
     <section className="min-w-0">
       <div className="mb-3">
-        <h2 className="text-sm font-medium text-foreground">API keys</h2>
+        <h2 className="text-sm font-medium text-foreground">
+          <T>API keys</T>
+        </h2>
         <p className="text-xs text-muted-foreground">
-          Open a key for model, token, and billing-component details.
+          <T>Open a key for model, token, and billing-component details.</T>
         </p>
       </div>
       <div className="scient-content-scrollbar overflow-x-auto">
         <div className="hidden min-w-[58rem] grid-cols-[minmax(11rem,1.35fr)_minmax(5rem,.5fr)_minmax(8rem,.75fr)_repeat(2,minmax(5rem,.5fr))_minmax(8rem,.9fr)_2rem] gap-4 border-b border-border px-1 py-2 text-[11px] text-muted-foreground md:grid">
-          <span>API key</span>
-          <span className="text-right">Spend</span>
-          <span>Budget</span>
-          <span className="text-right">Tokens</span>
-          <span className="text-right">Requests</span>
-          <span>Top model</span>
+          <span>
+            <T>API key</T>
+          </span>
+          <span className="text-right">
+            <T context="billing metric">Spend</T>
+          </span>
+          <span>
+            <T context="API key spending limit">Budget</T>
+          </span>
+          <span className="text-right">
+            <T context="billing metric">Tokens</T>
+          </span>
+          <span className="text-right">
+            <T context="billing metric">Requests</T>
+          </span>
+          <span>
+            <T>Top model</T>
+          </span>
           <span />
         </div>
         {keys.map((entry) => (
@@ -428,6 +487,7 @@ function ApiKeyBreakdown({ rows }: { readonly rows: readonly AccountingDisplayRo
 }
 
 function ApiKeyRow({ entry }: { readonly entry: KeySummary }) {
+  const gt = useGT();
   return (
     <Collapsible>
       <CollapsibleTrigger className="group grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border/60 px-1 py-3 text-left hover:bg-muted/30 md:min-w-[58rem] md:grid-cols-[minmax(11rem,1.35fr)_minmax(5rem,.5fr)_minmax(8rem,.75fr)_repeat(2,minmax(5rem,.5fr))_minmax(8rem,.9fr)_2rem] md:gap-4">
@@ -438,7 +498,9 @@ function ApiKeyRow({ entry }: { readonly entry: KeySummary }) {
             </span>
             {entry.key === null ? null : (
               <Badge variant={entry.key.disabled ? "secondary" : "success"}>
-                {entry.key.disabled ? "Disabled" : "Active"}
+                {entry.key.disabled
+                  ? gt("Disabled", { $context: "API key state" })
+                  : gt("Active", { $context: "API key state" })}
               </Badge>
             )}
           </span>
@@ -455,7 +517,7 @@ function ApiKeyRow({ entry }: { readonly entry: KeySummary }) {
           {formatCount(entry.metrics.requests)}
         </span>
         <span className="hidden min-w-0 truncate text-xs text-muted-foreground md:block">
-          {entry.models[0]?.modelName ?? "Unknown"}
+          {entry.models[0]?.modelName ?? gt("Unknown", { $context: "model name is not known" })}
         </span>
         <ChevronDownIcon
           className="size-3.5 justify-self-end text-muted-foreground transition-transform group-data-panel-open:rotate-180"
@@ -465,10 +527,22 @@ function ApiKeyRow({ entry }: { readonly entry: KeySummary }) {
       <CollapsiblePanel>
         <div className="border-b border-border/60 bg-muted/20 px-1 py-3">
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <Detail label="Prompt" value={formatTokens(entry.metrics.promptTokens)} />
-            <Detail label="Completion" value={formatTokens(entry.metrics.completionTokens)} />
-            <Detail label="Reasoning" value={formatTokens(entry.metrics.reasoningTokens)} />
-            <Detail label="Cached" value={formatTokens(entry.metrics.cachedTokens)} />
+            <Detail
+              label={gt("Prompt", { $context: "prompt tokens" })}
+              value={formatTokens(entry.metrics.promptTokens)}
+            />
+            <Detail
+              label={gt("Completion", { $context: "completion tokens" })}
+              value={formatTokens(entry.metrics.completionTokens)}
+            />
+            <Detail
+              label={gt("Reasoning", { $context: "reasoning tokens" })}
+              value={formatTokens(entry.metrics.reasoningTokens)}
+            />
+            <Detail
+              label={gt("Cached", { $context: "cached tokens" })}
+              value={formatTokens(entry.metrics.cachedTokens)}
+            />
           </div>
           <div className="mt-3 flex flex-col gap-1.5">
             {entry.models.map((model) => (
@@ -499,11 +573,14 @@ function KeyBudget({
   readonly compact?: boolean;
   readonly keyData: UsageAccountingKey | null;
 }) {
+  const gt = useGT();
   const limit = keyData?.limitUsd;
   const remaining = keyData?.limitRemainingUsd;
   if (limit === null || limit === undefined) {
     return compact ? null : (
-      <span className="hidden text-xs text-muted-foreground md:block">No limit</span>
+      <span className="hidden text-xs text-muted-foreground md:block">
+        <T>No limit</T>
+      </span>
     );
   }
 
@@ -517,19 +594,23 @@ function KeyBudget({
   const limitReset = keyData?.limitReset;
   const reset =
     limitReset === "daily"
-      ? "Daily"
+      ? gt("Daily", { $context: "budget resets every day" })
       : limitReset === "weekly"
-        ? "Weekly"
+        ? gt("Weekly", { $context: "budget resets every week" })
         : limitReset === "monthly"
-          ? "Monthly"
-          : "No reset";
+          ? gt("Monthly", { $context: "budget resets every month" })
+          : gt("No reset");
 
   if (compact) {
     return (
       <span className="mt-0.5 block text-[11px] text-muted-foreground md:hidden">
         {boundedRemaining === null
-          ? `${formatUsd(budgetLimit)} limit · ${reset}`
-          : `${formatUsd(boundedRemaining)} left of ${formatUsd(budgetLimit)} · ${reset}`}
+          ? gt("{limit} limit · {reset}", { limit: formatUsd(budgetLimit), reset })
+          : gt("{remaining} left of {limit} · {reset}", {
+              remaining: formatUsd(boundedRemaining),
+              limit: formatUsd(budgetLimit),
+              reset,
+            })}
       </span>
     );
   }
@@ -538,15 +619,20 @@ function KeyBudget({
     <span className="hidden min-w-0 md:block">
       <span className="block truncate text-xs font-medium text-foreground tabular-nums">
         {boundedRemaining === null
-          ? `${formatUsd(budgetLimit)} limit`
-          : `${formatUsd(boundedRemaining)} left`}
+          ? gt("{limit} limit", { limit: formatUsd(budgetLimit) })
+          : gt("{remaining} left", { remaining: formatUsd(boundedRemaining) })}
       </span>
       <span className="mt-0.5 block truncate text-[10px] text-muted-foreground tabular-nums">
-        {boundedRemaining === null ? reset : `of ${formatUsd(budgetLimit)} · ${reset}`}
+        {boundedRemaining === null
+          ? reset
+          : gt("of {limit} · {reset}", { limit: formatUsd(budgetLimit), reset })}
       </span>
       {used === null || budgetLimit === 0 ? null : (
         <span
-          aria-label={`${formatUsd(used)} of ${formatUsd(budgetLimit)} budget used`}
+          aria-label={gt("{used} of {limit} budget used", {
+            used: formatUsd(used),
+            limit: formatUsd(budgetLimit),
+          })}
           aria-valuemax={budgetLimit}
           aria-valuemin={0}
           aria-valuenow={used}
@@ -564,13 +650,14 @@ function KeyBudget({
 }
 
 function CostDetails({ totals }: { readonly totals: UsageAccountingMetrics }) {
+  const gt = useGT();
   const allDetails: ReadonlyArray<readonly [string, number]> = [
-    ["Credits", totals.creditsCostUsd],
+    [gt("Credits", { $context: "billing cost component" }), totals.creditsCostUsd],
     ["BYOK", totals.byokCostUsd],
-    ["Upstream", totals.upstreamCostUsd],
-    ["Cache", totals.cacheCostUsd],
-    ["Data adjustment", totals.dataCostUsd],
-    ["Web", totals.webCostUsd],
+    [gt("Upstream", { $context: "billing cost component" }), totals.upstreamCostUsd],
+    [gt("Cache", { $context: "billing cost component" }), totals.cacheCostUsd],
+    [gt("Data adjustment", { $context: "billing cost component" }), totals.dataCostUsd],
+    [gt("Web", { $context: "billing cost component: web search" }), totals.webCostUsd],
   ];
   const details = allDetails.filter((entry) => entry[1] !== 0);
   if (details.length === 0) return null;
@@ -581,7 +668,7 @@ function CostDetails({ totals }: { readonly totals: UsageAccountingMetrics }) {
           className="size-3.5 transition-transform group-data-panel-open:rotate-180"
           aria-hidden
         />
-        Cost details
+        <T>Cost details</T>
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <div className="mt-3 grid gap-3 rounded-xl border border-border bg-card p-4 sm:grid-cols-3 lg:grid-cols-6">

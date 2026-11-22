@@ -6,12 +6,14 @@ import "~/index.css";
 import { act, render } from "../../../test/render";
 import { SidebarProvider } from "../ui/sidebar";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import type { UpdateEverythingRow } from "./updateEverything.logic";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
     update: null as DesktopUpdateState | null,
     hasUpdates: false,
+    rows: [] as ReadonlyArray<UpdateEverythingRow>,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -35,12 +37,13 @@ vi.mock("../../env", async (importOriginal) => ({
   isElectron: true,
 }));
 vi.mock("./useUpdateEverything", () => ({
+  isHostedByThisApp: () => false,
   useUpdateEverything: () => ({
     hasUpdates: mocks.hasUpdates,
     summary: "Update everything",
     version: null,
     providerCount: 0,
-    rows: [],
+    rows: mocks.rows,
     restarts: [],
     otherServers: [],
     run: vi.fn(),
@@ -52,30 +55,30 @@ vi.mock("./updateEverythingRun", async (importOriginal) => ({
   useUpdateEverythingRun: () => null,
   clearSavedUpdateEverythingResult: vi.fn(),
   saveUpdateEverythingResult: vi.fn(),
-  restartUpdateNow: vi.fn(),
 }));
 vi.mock("../../scient/desktopUpdate/SidebarOtherUpdates", () => ({
   SidebarOtherUpdates: () => null,
 }));
 
+// SCIENT-FORK: offered updates download in the background, so the pill presents a ready one.
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
   return {
     enabled: true,
-    status: "available",
+    status: "downloaded",
     channel: "nightly",
     currentVersion: "0.0.50-nightly.1",
     hostArch: "arm64",
     appArch: "arm64",
     runningUnderArm64Translation: false,
     availableVersion: "0.0.50-nightly.2",
-    downloadedVersion: null,
+    downloadedVersion: "0.0.50-nightly.2",
     releaseNotes,
     omittedReleaseCount: 0,
-    downloadPercent: null,
+    downloadPercent: 100,
     checkedAt: null,
     message: null,
     errorContext: null,
-    canRetry: false,
+    canRetry: true,
   };
 }
 
@@ -83,9 +86,16 @@ const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
   { version: "0.0.50-nightly.2", items: ["Faster sidebar."], totalItems: 1 },
 ];
 
-function setup(update: DesktopUpdateState | null, { hasUpdates = false } = {}) {
+function setup(
+  update: DesktopUpdateState | null,
+  {
+    hasUpdates = false,
+    rows = [],
+  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
+) {
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
+  mocks.rows = rows;
 }
 
 function publish(update: DesktopUpdateState | null) {

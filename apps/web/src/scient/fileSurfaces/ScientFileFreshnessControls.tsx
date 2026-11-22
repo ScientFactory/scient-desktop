@@ -1,11 +1,13 @@
 import type { ProjectFileErrorReason } from "@t3tools/contracts";
 import { AlertTriangle, Check, Info, RefreshCw } from "lucide-react";
 import { documentFailurePlainReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 import * as Cause from "effect/Cause";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Popover, PopoverTrigger, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { staleCopyNotice } from "./fileFailureCopy";
@@ -19,35 +21,47 @@ export type RetainedFileAttention =
   | "outcome_unknown";
 
 /** Terminal mutation notices never imply that retrying an old intent is safe. */
-export function retainedAttentionCopy(attention: RetainedFileAttention) {
+export function retainedAttentionCopy(
+  attention: RetainedFileAttention,
+  resolve: MessageResolver = m,
+) {
   switch (attention) {
     case "recovery_required":
       return {
-        title: "Couldn’t confirm the save",
-        description:
-          "Your text is still here, and Scient kept the earlier versions. Check the file on disk before continuing.",
+        title: resolve(msg("Couldn’t confirm the save")),
+        description: resolve(
+          msg(
+            "Your text is still here, and Scient kept the earlier versions. Check the file on disk before continuing.",
+          ),
+        ),
       };
     case "target_changed":
       return {
-        title: "The file moved or changed while saving",
-        description: "Nothing was saved. Your text is still here.",
+        title: resolve(msg("The file moved or changed while saving")),
+        description: resolve(msg("Nothing was saved. Your text is still here.")),
       };
     case "mutation_unavailable":
       return {
-        title: "Couldn’t save",
-        description: "Nothing was written. Your text is still here.",
+        title: resolve(msg("Couldn’t save")),
+        description: resolve(msg("Nothing was written. Your text is still here.")),
       };
     case "mutation_intent_conflict":
       return {
-        title: "Couldn’t save",
-        description:
-          "A repeated save didn’t match the original, so nothing was written. Your text is still here.",
+        title: resolve(msg("Couldn’t save")),
+        description: resolve(
+          msg(
+            "A repeated save didn’t match the original, so nothing was written. Your text is still here.",
+          ),
+        ),
       };
     case "outcome_unknown":
       return {
-        title: "Not sure the save finished",
-        description:
-          "Your text is still here. Check the file on disk before continuing; don’t repeat the same change blindly.",
+        title: resolve(msg("Not sure the save finished")),
+        description: resolve(
+          msg(
+            "Your text is still here. Check the file on disk before continuing; don’t repeat the same change blindly.",
+          ),
+        ),
       };
   }
 }
@@ -83,18 +97,19 @@ const MAX_STALE_COPY_CHOICES = 2;
 export function ScientFileReloadButton(props: {
   readonly automaticRefreshUnavailable?: boolean;
   readonly isPending: boolean;
-  readonly label?: string;
+  /** The button's name, and its name while automatic updates are paused. */
+  readonly labels?: { readonly reload: string; readonly paused: string };
   readonly onReload: () => void;
   readonly size?: "icon-sm" | "icon-xs";
 }) {
-  const label = props.label ?? "Reload file from disk";
+  const gt = useGT();
   // A reload usually takes a few milliseconds; one short turn shows it happened.
   const [turns, setTurns] = useState(0);
   const actionLabel = props.isPending
-    ? "Reloading file…"
+    ? gt("Reloading file…")
     : props.automaticRefreshUnavailable
-      ? `Automatic updates paused: ${label.toLowerCase()}`
-      : label;
+      ? (props.labels?.paused ?? gt("Automatic updates paused: reload file from disk"))
+      : (props.labels?.reload ?? gt("Reload file from disk"));
   return (
     <Tooltip>
       <TooltipTrigger
@@ -148,13 +163,15 @@ export function ScientFileFreshnessNotices(props: {
   readonly onRetrySave: () => void;
   readonly onResolve: (action: "discard" | "retry") => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const openFile = props.onOpenFile;
   const visibleNotice = props.notice?.relativePath === props.relativePath ? props.notice : null;
   const visibleSaveError =
     props.saveError?.relativePath === props.relativePath ? props.saveError : null;
   const resolutionReady = visibleNotice?.contents !== null;
   const retainedCopy = visibleSaveError?.attention
-    ? retainedAttentionCopy(visibleSaveError.attention)
+    ? retainedAttentionCopy(visibleSaveError.attention, messages)
     : null;
   const evidence = retainedFileEvidence(visibleSaveError?.error);
 
@@ -172,10 +189,12 @@ export function ScientFileFreshnessNotices(props: {
           )}
           <div className="min-w-0 flex-1 leading-snug">
             {visibleNotice.kind === "manual-reload"
-              ? "This file has unsaved edits. Reloading discards them."
+              ? gt("This file has unsaved edits. Reloading discards them.")
               : visibleNotice.kind === "confirm-overwrite"
-                ? "Replace the newer file on disk with your version? A further change on disk is still caught."
-                : "This file changed on disk while you were editing. Nothing was overwritten."}
+                ? gt(
+                    "Replace the newer file on disk with your version? A further change on disk is still caught.",
+                  )
+                : gt("This file changed on disk while you were editing. Nothing was overwritten.")}
           </div>
           {visibleNotice.kind === "external-change" ? (
             <Button
@@ -184,11 +203,11 @@ export function ScientFileFreshnessNotices(props: {
               disabled={!resolutionReady}
               onClick={props.onRequestOverwrite}
             >
-              Use my edits
+              <T>Use my edits</T>
             </Button>
           ) : (
             <Button size="xs" variant="ghost" onClick={props.onCancel}>
-              Cancel
+              <T>Cancel</T>
             </Button>
           )}
           <Button
@@ -199,7 +218,9 @@ export function ScientFileFreshnessNotices(props: {
               props.onResolve(visibleNotice.kind === "confirm-overwrite" ? "retry" : "discard")
             }
           >
-            {visibleNotice.kind === "confirm-overwrite" ? "Overwrite disk" : "Reload from disk"}
+            {visibleNotice.kind === "confirm-overwrite"
+              ? gt("Overwrite disk")
+              : gt("Reload from disk")}
           </Button>
         </div>
       ) : null}
@@ -224,7 +245,7 @@ export function ScientFileFreshnessNotices(props: {
                   title={path}
                   onClick={() => openFile?.(path)}
                 >
-                  Open earlier version
+                  <T>Open earlier version</T>
                 </Button>
               ))}
             </>
@@ -232,16 +253,18 @@ export function ScientFileFreshnessNotices(props: {
             <>
               <p className="min-w-0 flex-1 truncate">
                 <span className="font-medium">
-                  Couldn’t save
                   {documentFailurePlainReason(visibleSaveError.error)
-                    ? `: ${documentFailurePlainReason(visibleSaveError.error)}`
-                    : ""}
-                  .
+                    ? gt("Couldn’t save: {reason}.", {
+                        reason: documentFailurePlainReason(visibleSaveError.error),
+                      })
+                    : gt("Couldn’t save.")}
                 </span>{" "}
-                <span className="text-muted-foreground">Your changes are still here.</span>
+                <span className="text-muted-foreground">
+                  <T>Your changes are still here.</T>
+                </span>
               </p>
               <Button size="xs" variant="ghost" onClick={props.onReload}>
-                Reload…
+                <T>Reload…</T>
               </Button>
               <Button
                 size="xs"
@@ -249,7 +272,7 @@ export function ScientFileFreshnessNotices(props: {
                 disabled={!props.saveRetryReady}
                 onClick={props.onRetrySave}
               >
-                Try again
+                <T>Try again</T>
               </Button>
             </>
           )}
@@ -263,7 +286,7 @@ export function ScientFileFreshnessNotices(props: {
         >
           <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
-            {staleCopyNotice(props.readFailureReason ?? null)}
+            {staleCopyNotice(props.readFailureReason ?? null, messages)}
           </span>
           {props.readFailureReason === "not_found" && openFile
             ? (props.missingFileChoices ?? []).slice(0, MAX_STALE_COPY_CHOICES).map((choice) => (
@@ -272,7 +295,7 @@ export function ScientFileFreshnessNotices(props: {
                   size="xs"
                   variant="outline"
                   className="max-w-48"
-                  title={`Open ${choice}`}
+                  title={gt("Open {path}", { path: choice })}
                   onClick={() => openFile(choice)}
                 >
                   <span className="truncate">{choice}</span>
@@ -286,7 +309,7 @@ export function ScientFileFreshnessNotices(props: {
             aria-busy={props.reloading ?? false}
             onClick={props.onReload}
           >
-            Try again
+            <T>Try again</T>
           </Button>
         </div>
       ) : null}
@@ -307,6 +330,8 @@ export function ScientFileFreshnessStatus(
     readonly sessionAttention?: "conflict" | "failure" | "refresh" | RetainedFileAttention | null;
   },
 ) {
+  const gt = useGT();
+  const messages = useMessages();
   const conflict =
     props.sessionAttention === "conflict" ||
     (props.notice?.relativePath === props.relativePath && props.notice !== null);
@@ -326,24 +351,24 @@ export function ScientFileFreshnessStatus(
     attention === "mutation_unavailable" ||
     attention === "mutation_intent_conflict" ||
     attention === "outcome_unknown"
-      ? retainedAttentionCopy(attention)
+      ? retainedAttentionCopy(attention, messages)
       : null;
   const needsAttention = retainedAttention !== null || conflict || failed || readFailed;
   const retrying = !needsAttention && props.pending && props.retrying === true;
   // The short label is the button's text; the status is its full name.
   const [label, status] = retainedAttention
-    ? ["Not saved", retainedAttention.title]
+    ? [gt("Not saved"), retainedAttention.title]
     : conflict
-      ? ["File changed", "File changed on disk"]
+      ? [gt("File changed"), gt("File changed on disk")]
       : failed
-        ? ["Not saved", "Not saved"]
+        ? [gt("Not saved"), gt("Not saved")]
         : retrying
-          ? ["Retrying…", "Not saved yet, retrying"]
+          ? [gt("Retrying…"), gt("Not saved yet, retrying")]
           : readFailed
-            ? ["Not loaded", "The latest file couldn’t be loaded"]
+            ? [gt("Not loaded"), gt("The latest file couldn’t be loaded")]
             : props.pending
-              ? ["Saving…", "Saving"]
-              : ["Saved", "Saved"];
+              ? [gt("Saving…"), gt("Saving", { $context: "file save status" })]
+              : [gt("Saved"), gt("Saved")];
   return (
     <Popover>
       <PopoverTrigger
@@ -352,7 +377,7 @@ export function ScientFileFreshnessStatus(
             size="xs"
             variant={needsAttention ? "ghost-warning" : "ghost"}
             className="w-24 shrink-0"
-            aria-label={`File status: ${status}`}
+            aria-label={gt("File status: {status}", { status })}
             title={status}
           />
         }
@@ -370,10 +395,12 @@ export function ScientFileFreshnessStatus(
         {status}
       </span>
       <PopoverPopup align="end" width="lg" padding="comfortable">
-        <PopoverTitle>File status</PopoverTitle>
+        <PopoverTitle>
+          <T>File status</T>
+        </PopoverTitle>
         {props.sessionAttention ? (
           <p className="mt-2 text-xs text-muted-foreground">
-            {status}. The notice above the document has the options.
+            {gt("{status}. The notice above the document has the options.", { status })}
           </p>
         ) : needsAttention ? (
           <div className="mt-2 [&>div]:flex-wrap [&>div]:rounded-md [&>div]:border-0 [&>div>span]:whitespace-normal [&>div>span]:overflow-visible">
@@ -382,8 +409,8 @@ export function ScientFileFreshnessStatus(
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">
             {props.pending
-              ? "Your changes are being saved to the project file."
-              : "There are no pending file warnings."}
+              ? gt("Your changes are being saved to the project file.")
+              : gt("There are no pending file warnings.")}
           </p>
         )}
       </PopoverPopup>

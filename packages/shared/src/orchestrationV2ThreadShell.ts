@@ -15,6 +15,9 @@ import {
   idleCompactionOf,
   orchestrationV2RunWorkStartedAt,
   pendingGuestMessageCount,
+  // SCIENT-FORK: thread rooms.
+  roomPeople,
+  roomWaitingCount,
 } from "@t3tools/contracts";
 
 import {
@@ -129,6 +132,7 @@ export function threadShellFromProjection(
     ...(projection.thread.branchPullRequest === undefined
       ? {}
       : { branchPullRequest: projection.thread.branchPullRequest }),
+    ...(projection.thread.issues === undefined ? {} : { issues: projection.thread.issues }),
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
@@ -153,6 +157,8 @@ export function threadShellFromProjection(
       projection.turnItems.some(
         (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
       ),
+    latestRunBackgroundWake:
+      latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     activeRunId: activeRun?.id ?? null,
     blockedOnThreadWait: deriveBlockedOnThreadWait({
       activeRun,
@@ -176,7 +182,12 @@ export function threadShellFromProjection(
             createdAt: pendingRuntimeRequest.createdAt,
             blocking: pendingRuntimeRequest.responseCapability.type !== "message",
           }),
-    pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
+    pendingGuestMessageCount:
+      pendingGuestMessageCount(projection.thread.guestShare) +
+      // SCIENT-FORK: guests' room messages the owner has not seen yet.
+      roomWaitingCount(projection.thread.room),
+    // SCIENT-FORK: who has joined the thread's room, for its sidebar card.
+    roomPeople: roomPeople(projection.thread.room),
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,
@@ -222,7 +233,9 @@ export function threadShellFromProjection(
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
     lastVisitedAt: projection.thread.lastVisitedAt,
+    opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
+    lastTitleRegeneration: projection.thread.lastTitleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
     // SCIENT-FORK: thread filing must survive detail-only archived routes.
@@ -361,6 +374,25 @@ function isSilentRunForShell(
   );
 }
 
+const BACKGROUND_WAKE_SOURCE_KINDS = new Set(["background_task", "command", "monitor"]);
+
+function isBackgroundWakeRunForShell(
+  run: OrchestrationV2ThreadProjection["runs"][number],
+  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
+): boolean {
+  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  return (
+    message?.delegatedCompletion === undefined &&
+    // Only progress wakes; a terminal one ("Command … finished") is the work reporting its end.
+    message?.notification?.outcome === "updated" &&
+    BACKGROUND_WAKE_SOURCE_KINDS.has(message.notification.source.kind) &&
+    // A follow-up the user steered into the wake makes the run theirs.
+    !projection.messages.some(
+      (candidate) => candidate.runId === run.id && candidate.createdBy === "user",
+    )
+  );
+}
+
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
 }
@@ -386,6 +418,7 @@ export function secretRequestAsPendingInput(
     kind: "user_input",
     createdAt: item.startedAt ?? item.updatedAt,
     blocking: true,
+    userOnly: true,
   };
 }
 

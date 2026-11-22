@@ -7,6 +7,14 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+// SCIENT-FORK: Scient Agent compacts idle threads too.
+import { compactsIdleThreads } from "@t3tools/contracts";
+// SCIENT-FORK:START — Scient Agent's five-minute cache compacts when its warming stops.
+import {
+  LATEST_COMPLETED_RUN,
+  scientWarmingStopped,
+} from "./scient-fork/ScientAgentIdleCompaction.ts";
+// SCIENT-FORK:END
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -37,9 +45,13 @@ export const make = Effect.gen(function* () {
       while (true) {
         const current = yield* settings.getSettings;
         const thread = yield* projections.getThread(threadId);
-        const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
-          ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
-          : thread.providerInstanceId === "claudeAgent";
+        // SCIENT-FORK:START
+        const claudeInstance = compactsIdleThreads(
+          Object.hasOwn(current.providerInstances, thread.providerInstanceId)
+            ? current.providerInstances[thread.providerInstanceId]?.driver
+            : thread.providerInstanceId,
+        );
+        // SCIENT-FORK:END
         if (
           !claudeInstance ||
           resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||
@@ -135,7 +147,15 @@ export const make = Effect.gen(function* () {
       Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
         event.type === "run.updated" && event.payload.status === "completed"
           ? FiberMap.run(timers, event.threadId, compactWhenDue(event.threadId, event.payload.id))
-          : Effect.void,
+          : // SCIENT-FORK:START — Scient Agent's idle warming stopped on a warm five-minute cache.
+            scientWarmingStopped(event)
+            ? FiberMap.run(
+                timers,
+                event.threadId,
+                compactWhenDue(event.threadId, LATEST_COMPLETED_RUN),
+              )
+            : // SCIENT-FORK:END
+              Effect.void,
       ),
     );
   });

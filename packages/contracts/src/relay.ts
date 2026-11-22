@@ -352,6 +352,7 @@ export const RelayEnvironmentLinkProofInvalidReason = Schema.Literals([
   "challenge_invalid",
   "origin_not_allowed",
   "endpoint_not_secure",
+  "environment_key_mismatch",
 ]);
 export type RelayEnvironmentLinkProofInvalidReason =
   typeof RelayEnvironmentLinkProofInvalidReason.Type;
@@ -1157,6 +1158,45 @@ const RelayClientGroup = HttpApiGroup.make("client")
   .annotate(OpenApi.Description, "Cloud-user environment links and registered devices.")
   .middleware(RelayClientAuth);
 
+// SCIENT-FORK:START account-deletion — the signed-in user deletes their own account.
+// A fresh Sign in with Apple authorization code from the phone, so the relay can revoke the
+// account's Apple tokens (App Store guideline 5.1.1(v)); Clerk keeps no Apple refresh token.
+export const RelayAppleSignInRevocationRequest = Schema.Struct({
+  authorizationCode: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  clientId: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+});
+export type RelayAppleSignInRevocationRequest = typeof RelayAppleSignInRevocationRequest.Type;
+
+const RelayAccountGroup = HttpApiGroup.make("account")
+  .add(
+    HttpApiEndpoint.post("revokeAppleSignIn", "/v1/me/apple-sign-in-revocations", {
+      headers: RelayBearerRequestHeaders,
+      payload: RelayAppleSignInRevocationRequest,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    })
+      .annotate(OpenApi.Summary, "Revoke the account's Sign in with Apple tokens")
+      .annotate(
+        OpenApi.Description,
+        "Exchanges a fresh Sign in with Apple authorization code and revokes the resulting tokens with Apple, so deleting the account also removes it from the user's Apple ID. The phone calls this just before deleting the account.",
+      ),
+  )
+  .add(
+    HttpApiEndpoint.delete("deleteAccount", "/v1/me", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    })
+      .annotate(OpenApi.Summary, "Delete the signed-in account")
+      .annotate(
+        OpenApi.Description,
+        "Removes the account's linked environments, managed tunnels, device registrations and agent activity, then deletes the Clerk user. Safe to retry after a failure.",
+      ),
+  )
+  .annotate(OpenApi.Description, "The signed-in cloud account.")
+  .middleware(RelayClientAuth);
+// SCIENT-FORK:END account-deletion
+
 export const RelayExchangeDpopAccessTokenEndpoint = HttpApiEndpoint.post(
   "exchangeDpopAccessToken",
   "/v1/client/dpop-token",
@@ -1265,6 +1305,19 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post(
+      "updateLiveActivityPreference",
+      "/v1/environments/:environmentId/live-activity-preference",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: Schema.Struct({
+          cloudUserId: Schema.String,
+          liveActivitiesEnabled: Schema.Boolean,
+        }),
+        success: RelayOkResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ),
     HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
       params: Schema.Struct({ environmentId: EnvironmentId }),
       success: RelayWakeHeldHooksResponse,
@@ -1317,6 +1370,9 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayMetadataGroup,
     RelayMobileGroup,
     RelayClientGroup,
+    // SCIENT-FORK:START account-deletion
+    RelayAccountGroup,
+    // SCIENT-FORK:END account-deletion
     RelayTokenGroup,
     RelayDpopClientGroup,
     RelayServerGroup,

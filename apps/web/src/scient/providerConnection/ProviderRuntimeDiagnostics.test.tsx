@@ -7,6 +7,10 @@ import {
   resolveProviderRuntimeDiagnostics,
 } from "./ProviderRuntimeDiagnostics";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make("codex"),
   driver: ProviderDriverKind.make("codex"),

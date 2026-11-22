@@ -37,9 +37,9 @@ import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { ensureQueuedMessageBudget } from "../QueuedMessageBudget.ts";
-import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { conversationForkOf, forkConversation } from "./ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("acp");
 const modelSelection = { instanceId, model: "fixture" };
@@ -199,7 +199,7 @@ it.live.each(
           yield* importer.ensureTranscript(source);
           assert.equal(offers, 0, "Historical answers confer no execution authority");
           target = ThreadId.make(`${name}-target`);
-          const receipt = yield* (yield* ConversationForkService).dispatch({
+          const receipt = yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make(`${name}-fork`),
             originThreadId: source,
@@ -222,6 +222,9 @@ it.live.each(
           yield* ensureQueuedMessageBudget({
             projection: child,
             message: { ...prompt, id: MessageId.make(`${name}-queued-file`), attachments: [file] },
+            sharedFileIds: (yield* conversationForkOf(target))!.attachmentCopies.map(
+              (copy) => copy.target.id,
+            ),
           });
           yield* orchestrator.dispatch({
             type: "thread.delete",
@@ -258,9 +261,15 @@ it.live.each(
             createdBy: "user",
             creationSource: "web",
           });
+          // The session writes the request and the run writes its item, so wait for both.
           const waiting = yield* waitFor(source, (projection) =>
             projection.runtimeRequests.some(
-              (request) => request.kind === "user_input" && request.status === "pending",
+              (request) =>
+                request.kind === "user_input" &&
+                request.status === "pending" &&
+                projection.turnItems.some(
+                  (item) => item.type === "user_input_request" && item.requestId === request.id,
+                ),
             ),
           );
           const request = waiting.runtimeRequests.find(

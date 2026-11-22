@@ -8,6 +8,9 @@ import { latexSourceRevealRange } from "./latexSourceRevealRange";
 import { useMarkdownPersistenceLease } from "../markdownEditor/persistence/useMarkdownPersistenceLease";
 import { resolveLatexCitationSource } from "./latexVisualSelection";
 import { sourcePositionFromPointerEvent } from "./latexSourceNavigation";
+import { useLatexSourceCitationOpen, type LatexCitationOpener } from "./useLatexCitationOpener";
+import { msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 
 export interface LatexVisualSourceReveal {
   readonly path: string;
@@ -39,8 +42,12 @@ export function LatexVisualSourcePane(
   > & {
     reveal: LatexVisualSourceReveal;
     onNavigateVisual?: ((source: string, line: number) => void) | undefined;
+    /** Opens a citation's source on Command-click (Control-click); null when it cannot. */
+    citationOpener: LatexCitationOpener | null;
   },
 ) {
+  const gt = useGT();
+  const { citationOpener, ...surfaceProps } = props;
   const { environmentId, cwd, reveal } = props;
   const query = useProjectFileQuery(environmentId, cwd, reveal.path);
   const target = { environmentId, cwd, relativePath: reveal.path };
@@ -111,6 +118,10 @@ export function LatexVisualSourcePane(
   const dismissNavigation = () => {
     if (!reveal.citation) setDismissedRequest(reveal.requestId);
   };
+  const sourceCitation = useLatexSourceCitationOpen(
+    citationOpener,
+    () => lease?.getSnapshot().draftSource ?? source,
+  );
   const warned = useRef<number | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts an imperative warning toast when a citation reveal cannot be located in the current source
   useEffect(() => {
@@ -119,15 +130,23 @@ export function LatexVisualSourcePane(
     warned.current = reveal.requestId;
     toastManager.add({
       type: "warning",
-      title: "The quoted source has changed",
-      description:
-        "Showing its recorded source line. The saved quote is unchanged; its exact location could not be verified.",
+      title: m(msg("The quoted source has changed")),
+      description: m(
+        msg(
+          "Showing its recorded source line. The saved quote is unchanged; its exact location could not be verified.",
+        ),
+      ),
     });
   }, [source, reveal, range]);
   return (
     <div
       className="relative flex min-h-0 flex-1 flex-col"
-      onPointerDownCapture={dismissNavigation}
+      onPointerDownCapture={(event) => {
+        dismissNavigation();
+        sourceCitation.onPointerDown(event);
+      }}
+      onMouseDownCapture={sourceCitation.onMouseDown}
+      onClickCapture={sourceCitation.onClick}
       onKeyDownCapture={dismissNavigation}
       onDoubleClickCapture={(event) => {
         const position = sourcePositionFromPointerEvent(event);
@@ -138,7 +157,7 @@ export function LatexVisualSourcePane(
     >
       {lease ? (
         <MarkdownSourceSurface
-          {...props}
+          {...surfaceProps}
           persistence={lease}
           relativePath={reveal.path}
           revealRequestId={reveal.requestId}
@@ -167,7 +186,8 @@ export function LatexVisualSourcePane(
         />
       ) : (
         <div role="status" className="p-3 text-sm text-muted-foreground">
-          {query.error ?? (admissionError ? "Could not open the source file." : "Opening source…")}
+          {query.error ??
+            (admissionError ? gt("Could not open the source file.") : gt("Opening source…"))}
         </div>
       )}
     </div>

@@ -13,6 +13,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makeOwnedProcessTree } from "@t3tools/shared/scientOwnedProcessTree";
 import type { ModelConnectionReadiness } from "@t3tools/contracts";
 import type { OmpRpcModel } from "effect-omp-rpc/schema";
 
@@ -24,6 +26,10 @@ import {
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import type { OmpModelRefreshError } from "./OmpModel.ts";
+import {
+  SCIENT_CONNECTOR_LOAD_MODE_ENV,
+  scientConnectorLoadMode,
+} from "../scient/ScientAgentToolLoading.ts";
 import {
   canonicalOmpExecutablePath,
   OmpExecutableGate,
@@ -39,6 +45,15 @@ export const ompUserDetail = (target: OmpTarget, detail: string): string =>
 /** What the version probe reports when the executable itself is absent. */
 export const ompNotInstalledDetail = (target: OmpTarget): string =>
   `${target.name} is not installed or its executable could not be found.`;
+export const ompVersionCheckFailedDetail = (target: OmpTarget): string =>
+  `${target.name} version verification failed.`;
+export const ompStartFailedDetail = (target: OmpTarget): string =>
+  `Failed to start ${target.name}.`;
+/**
+ * A cold start of the agent's single large executable can take several seconds on Windows while
+ * antivirus scans it, and the periodic status check runs this probe again whenever its cache expires.
+ */
+const OMP_VERSION_PROBE_TIMEOUT = "20 seconds";
 // rpc-ui, not rpc: only it gives the agent its `ask` tool, and the UI requests it sends are the same.
 export const OMP_RPC_ARGS = ["--mode", "rpc-ui", "--approval-mode", "yolo"] as const;
 
@@ -64,6 +79,10 @@ export const OMP_ISOLATED_ARGS = [
 
 /** How long a closed-stdin child gets to exit on its own before it is killed. */
 const OMP_SHUTDOWN_GRACE = "2 seconds";
+// The agent's own tree: first look shortly after start, then at this interval.
+const OMP_TREE_FIRST_SAMPLE = "1 second";
+const OMP_TREE_SAMPLE_INTERVAL = "10 seconds";
+const OMP_TREE_REAP_GRACE = "1 second";
 /** The native kill implementation can await exit after its signal timers expire. */
 const OMP_SHUTDOWN_KILL_DEADLINE = "3 seconds";
 /**
@@ -485,7 +504,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
       }),
     )
     .pipe(
-      Effect.timeout("4 seconds"),
+      Effect.timeout(OMP_VERSION_PROBE_TIMEOUT),
       Effect.mapError((cause) =>
         isProtocolError(cause)
           ? cause
@@ -495,16 +514,22 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
               detail:
                 Option.isNone(binaryInfo) && isCommandMissingCause(cause)
                   ? ompNotInstalledDetail(target)
-                  : `${target.name} version verification failed.`,
+                  : ompVersionCheckFailedDetail(target),
               cause,
             }),
       ),
     );
+  env[SCIENT_CONNECTOR_LOAD_MODE_ENV] = scientConnectorLoadMode(target, {
+    version,
+    runtimeVersion,
+  });
   if (target.driverKind === "scient") {
     delete env.SCIENT_AGENT_ENABLE_SOURCES;
     // Scient shows pages in its own browser, so the agent opens no system browser beside it.
     env.SCIENT_AGENT_HOST_PAGES = "1";
-    if (supportsScientClaudePlugins(version)) env.SCIENT_AGENT_ENABLE_SOURCES = "claude-plugins";
+    // A build without Codex plugin discovery ignores the id it does not know.
+    if (supportsScientClaudePlugins(version))
+      env.SCIENT_AGENT_ENABLE_SOURCES = "claude-plugins,codex-plugins";
   }
   const command = yield* resolveSpawnCommand(
     resolvedBinary,
@@ -532,9 +557,25 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     .pipe(
       Effect.provideService(Scope.Scope, scope),
       Effect.mapError(
-        (cause) => new OmpRpcProtocolError({ detail: `Failed to start ${target.name}.`, cause }),
+        (cause) => new OmpRpcProtocolError({ detail: ompStartFailedDetail(target), cause }),
       ),
     );
+  // Stopping signals the agent's process group; tools it started in groups of their own
+  // (detached shells, setsid builds) would outlive it, so its tree is sampled while it runs and
+  // what is left is stopped after it. Windows' taskkill /T already ends the whole tree.
+  const ownedTree =
+    (yield* HostProcess.Platform) === "win32" ? undefined : makeOwnedProcessTree(Number(child.pid));
+  if (ownedTree !== undefined) {
+    yield* Effect.sleep(OMP_TREE_FIRST_SAMPLE).pipe(
+      Effect.andThen(
+        ownedTree.sample.pipe(
+          Effect.andThen(Effect.sleep(OMP_TREE_SAMPLE_INTERVAL)),
+          Effect.forever,
+        ),
+      ),
+      Effect.forkIn(scope),
+    );
+  }
   const stderrTail = yield* Ref.make(emptyOmpStderrTail);
   const stderrDecoder = new TextDecoder("utf-8", { fatal: false });
   // Each chunk is redacted as it arrives, before anything is truncated.
@@ -573,6 +614,15 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     if (grace._tag === "None") {
       const killed = yield* child.exitCode.pipe(Effect.timeout("3 seconds"), Effect.option);
       code = killed._tag === "Some" ? Number(killed.value) : null;
+    }
+    if (ownedTree !== undefined) {
+      const { unverified } = yield* ownedTree.reap(OMP_TREE_REAP_GRACE);
+      if (unverified > 0) {
+        yield* Effect.logWarning(
+          `${target.name} processes may still be running: the process table was unreadable`,
+          { unverified },
+        );
+      }
     }
     return {
       code,

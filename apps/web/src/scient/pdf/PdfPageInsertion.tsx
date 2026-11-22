@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import { CirclePlus, FilePlus2, Files } from "lucide-react";
 import {
@@ -18,6 +19,7 @@ export function PdfPageInsertion(props: {
   disabled: boolean;
   ensureReady: () => Promise<boolean>;
 }) {
+  const gt = useGT();
   const anchor = useRef<HTMLButtonElement>(null),
     picker = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<{ name: string; pages: readonly PdfEditPage[] } | null>(null);
@@ -57,7 +59,9 @@ export function PdfPageInsertion(props: {
               className="scient-pdf-page-plus"
               disabled={props.disabled}
               aria-label={
-                props.boundary ? `Insert after page ${props.boundary}` : "Insert before first page"
+                props.boundary
+                  ? gt("Insert after page {boundary}", { boundary: props.boundary })
+                  : gt("Insert before first page")
               }
             />
           }
@@ -73,10 +77,10 @@ export function PdfPageInsertion(props: {
               });
             }}
           >
-            <FilePlus2 /> Blank page
+            <FilePlus2 /> <T>Blank page</T>
           </DropdownMenuItem>
           <DropdownMenuItem disabled={props.disabled} onClick={() => picker.current?.click()}>
-            <Files /> From PDF…
+            <Files /> <T>From PDF…</T>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -137,7 +141,9 @@ export function PdfPageInsertion(props: {
                 });
               }}
             >
-              <strong>From PDF</strong>
+              <strong>
+                <T>From PDF</T>
+              </strong>
               <span className="scient-pdf-import-name">{file.name}</span>
               <div className="scient-pdf-import-scope">
                 <label>
@@ -146,8 +152,8 @@ export function PdfPageInsertion(props: {
                     name="pdf-pages"
                     checked={all}
                     onChange={() => setAll(true)}
-                  />{" "}
-                  All pages
+                  />
+                  <T> All pages</T>
                 </label>
                 <label>
                   <input
@@ -155,14 +161,14 @@ export function PdfPageInsertion(props: {
                     name="pdf-pages"
                     checked={!all}
                     onChange={() => setAll(false)}
-                  />{" "}
-                  Range
+                  />
+                  <T> Range</T>
                 </label>
               </div>
               {!all ? (
                 <input
                   className="scient-pdf-import-range"
-                  aria-label="Pages to insert"
+                  aria-label={gt("Pages to insert")}
                   placeholder="1, 3–5"
                   value={range}
                   onChange={(event) => setRange(event.target.value)}
@@ -170,10 +176,10 @@ export function PdfPageInsertion(props: {
               ) : null}
               <div className="scient-pdf-insert-actions">
                 <Button type="button" size="xs" variant="ghost" onClick={cancel}>
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
                 <Button type="submit" size="xs" variant="outline" disabled={props.disabled}>
-                  Insert
+                  <T context="verb, inserts pages">Insert</T>
                 </Button>
               </div>
             </form>

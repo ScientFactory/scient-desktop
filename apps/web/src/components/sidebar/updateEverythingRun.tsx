@@ -1,11 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
-import { serverUpdateStateAtom } from "@t3tools/client-runtime/state/server";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
+import {
+  nudgeReconnectDuringUpdateRestart,
+  serverUpdateStateAtom,
+} from "@t3tools/client-runtime/state/server";
+import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
 
 import { APP_VERSION } from "~/branding";
+import { environmentCatalog } from "~/connection/catalog";
+import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { desktopUpdateStateAtom } from "~/state/desktopUpdate";
 import { serverEnvironment } from "~/state/server";
@@ -67,6 +76,13 @@ export function settleUpdateRunMachine(
   );
 }
 
+function runsVersion(config: ServerConfig | null, targetVersion: string): boolean {
+  return (
+    config !== null &&
+    resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null
+  );
+}
+
 // SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
 const qualifiedUpdateRunServersAtom = Atom.make<ReadonlyArray<ServerUpdateTarget>>([]).pipe(
   Atom.withEquality(Equal.equals),
@@ -99,17 +115,33 @@ export function retryFailedUpdateRunServers(
         ? [{ target: machine.server, providerFailure: machine.providerFailure }]
         : [],
   );
+  const pending: typeof confirmed = [];
+  for (const entry of confirmed) {
+    // The host rejects a same-version update; a server that came back on the target is done.
+    if (
+      runsVersion(
+        appAtomRegistry.get(serverEnvironment.configValueAtom(entry.target.environmentId)),
+        entry.target.targetVersion,
+      )
+    ) {
+      settleUpdateRunMachine(entry.target.environmentId, entry.providerFailure, {
+        serverUpdated: true,
+      });
+    } else {
+      pending.push(entry);
+    }
+  }
   // SCIENT-FORK:START — a retry keeps its confirmed version and mechanism, takes the current
   // flags, and never sends a target that is no longer qualified. A withdrawn target settles
   // as failed with its confirmed target, so Retry returns once it is eligible again.
   const eligible = new Map(
     currentConfirmedServerTargets(
-      confirmed.map(({ target }) => target),
+      pending.map(({ target }) => target),
       appAtomRegistry.get(qualifiedUpdateRunServersAtom),
     ).map((target) => [target.environmentId, target]),
   );
   const withdrawn = new Set(
-    confirmed.flatMap(({ target }) =>
+    pending.flatMap(({ target }) =>
       eligible.has(target.environmentId) ? [] : [target.environmentId],
     ),
   );
@@ -120,7 +152,7 @@ export function retryFailedUpdateRunServers(
         : machine,
     );
   }
-  const failed = confirmed.flatMap(({ target, providerFailure }) => {
+  const failed = pending.flatMap(({ target, providerFailure }) => {
     const current = eligible.get(target.environmentId);
     return current === undefined ? [] : [{ target: current, providerFailure }];
   });
@@ -133,7 +165,7 @@ export function retryFailedUpdateRunServers(
       ? { ...machine, result: null, failure: null, startedAt }
       : machine,
   );
-  for (const { target, providerFailure } of failed) {
+  for (const { target, providerFailure } of failed /* SCIENT-FORK: eligible targets */) {
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
         target.environmentId,
@@ -141,7 +173,7 @@ export function retryFailedUpdateRunServers(
           ? providerFailure
           : outcome.status === "failed"
             ? outcome.message
-            : "Could not start the update",
+            : m(msg("Could not start the update")),
         { serverUpdated: outcome.status === "updated" },
       ),
     );
@@ -202,12 +234,6 @@ export function waitForUpdateRestart(delayMs: number): Promise<boolean> {
 export function postponeUpdateRestart(): void {
   decideRestart?.(false);
 }
-
-// SCIENT-FORK:START — the Restart pill under the countdown restarts now.
-export function restartUpdateNow(): void {
-  decideRestart?.(true);
-}
-// SCIENT-FORK:END
 
 const SAVED_RESULT_KEY = "t3code:update-everything-result:v1";
 const SAVED_RESULT_MAX_AGE_MS = 10 * 60 * 1000;
@@ -341,12 +367,13 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      stopReconnectNudge();
       queueMicrotask(() => unsubscribe());
       appAtomRegistry.set(stateAtom, { status: "idle" });
       releaseState();
       settleUpdateRunMachine(server.environmentId, failure);
       if (failure === null) updatedServers += 1;
-      else failures.push(`${server.label}: ${failure}`);
+      else failures.push(m(msg("{machine}: {failure}", { machine: server.label, failure })));
       remaining -= 1;
       if (remaining === 0) {
         showUpdateEverythingResult({
@@ -359,18 +386,29 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       }
     };
     const timer = setTimeout(
-      () => settle(`Not back after ${HANDOFF_TIMEOUT_MS / 60_000} minutes`),
+      () =>
+        settle(
+          m(msg("Not back after {minutes} minutes", { minutes: HANDOFF_TIMEOUT_MS / 60_000 })),
+        ),
       server.startedAt + HANDOFF_TIMEOUT_MS - Date.now(),
+    );
+    const stopReconnectNudge = Effect.runCallback(
+      nudgeReconnectDuringUpdateRestart({
+        stateChanges: AtomRegistry.toStream(
+          appAtomRegistry,
+          environmentCatalog.stateAtom(server.environmentId),
+        ).pipe(
+          Stream.map((state) => AsyncResult.getOrElse(state, () => AVAILABLE_CONNECTION_STATE)),
+        ),
+        retryNow: environmentCatalog.retryNow
+          .run(appAtomRegistry, server.environmentId)
+          .pipe(Effect.ignoreCause),
+      }),
     );
     const unsubscribe = appAtomRegistry.subscribe(
       serverEnvironment.configValueAtom(server.environmentId),
       (config) => {
-        if (
-          config !== null &&
-          resolveVersionMismatch(config.environment.serverVersion, server.targetVersion) === null
-        ) {
-          settle(null);
-        }
+        if (runsVersion(config, server.targetVersion)) settle(null);
       },
       { immediate: true },
     );
@@ -397,8 +435,13 @@ export function startDesktopUpdateLaunchNotice(): () => void {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Update did not apply",
-          description: `Scient is still on ${APP_VERSION}. Install ${notAppliedVersion} again from the update button.`,
+          title: m(msg("Update did not apply")),
+          description: m(
+            msg("Scient is still on {current}. Install {version} again from the update button.", {
+              current: APP_VERSION,
+              version: notAppliedVersion,
+            }),
+          ),
         }),
       );
     },

@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { StoreTitle } from "./StoreTitle";
 import { ControlsMenu } from "./AccountControls";
 import { MenuItem } from "~/components/ui/menu";
@@ -20,11 +21,11 @@ import { useAccountCommand, usePasswordStorePermission } from "./useAccounts";
 const cliStoreNames = { bitwarden: "Bitwarden", "proton-pass": "Proton Pass" };
 const STATUS_WORDS: Readonly<Record<CliPasswordStatus["state"], string | undefined>> = {
   "not-connected": undefined,
-  "not-installed": "Not installed",
-  unauthenticated: "Signed out in its app",
+  "not-installed": msg("Not installed"),
+  unauthenticated: msg("Signed out in its app"),
   locked: undefined,
   unlocked: undefined,
-  unavailable: "Needs attention",
+  unavailable: msg("Needs attention"),
 };
 export function CliPasswordStoreRow({
   store,
@@ -43,6 +44,8 @@ export function CliPasswordStoreRow({
   const [password, setPassword] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   const act = async (action: "connect" | "status" | "disconnect") => {
     if (!canWrite || !permitted || busy) return;
     setBusy(true);
@@ -67,10 +70,10 @@ export function CliPasswordStoreRow({
             domain={store === "bitwarden" ? "bitwarden.com" : "proton.me"}
             status={
               connected
-                ? ["Connected", current?.email].filter(Boolean).join(" · ")
+                ? [gt("Connected"), current?.email].filter(Boolean).join(" · ")
                 : state === "locked"
-                  ? ["Locked", current?.email].filter(Boolean).join(" · ")
-                  : STATUS_WORDS[state]
+                  ? [gt("Locked"), current?.email].filter(Boolean).join(" · ")
+                  : STATUS_WORDS[state] && messages(STATUS_WORDS[state])
             }
           />
         }
@@ -87,7 +90,7 @@ export function CliPasswordStoreRow({
                 )
               }
             >
-              Install
+              <T>Install</T>
             </Button>
           ) : connected ? (
             <ControlsMenu disabled={!canWrite || !permitted || busy}>
@@ -98,7 +101,7 @@ export function CliPasswordStoreRow({
                   void act("disconnect");
                 }}
               >
-                Disconnect
+                <T>Disconnect</T>
               </MenuItem>
             </ControlsMenu>
           ) : expanded ? null : (
@@ -111,7 +114,7 @@ export function CliPasswordStoreRow({
                 void act("status");
               }}
             >
-              Connect
+              <T>Connect</T>
             </Button>
           )
         }
@@ -120,15 +123,21 @@ export function CliPasswordStoreRow({
         <div className="grid gap-3 px-4 pb-4 text-sm">
           <p>
             {store === "bitwarden"
-              ? "Install bw, then run bw login in your terminal. For Vaultwarden, run bw config server with your server URL before logging in. Unlock here with your master password once."
-              : "Install pass-cli and run pass-cli login (and session unlock, if needed) in your terminal, then connect."}
+              ? gt(
+                  "Install {cli}, then run {login} in your terminal. For Vaultwarden, run {config} with your server URL before logging in. Unlock here with your master password once.",
+                  { cli: "bw", login: "bw login", config: "bw config server" },
+                )
+              : gt(
+                  "Install {cli} and run {login} (and {unlock}, if needed) in your terminal, then connect.",
+                  { cli: "pass-cli", login: "pass-cli login", unlock: "session unlock" },
+                )}
           </p>
           {store === "bitwarden" ? (
             <Input
-              aria-label="Bitwarden master password"
+              aria-label={gt("Bitwarden master password")}
               type="password"
               autoComplete="off"
-              placeholder="Master password (once)"
+              placeholder={gt("Master password (once)")}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
@@ -140,7 +149,7 @@ export function CliPasswordStoreRow({
               disabled={!canWrite || !permitted || busy}
               onClick={() => void act("connect")}
             >
-              {store === "bitwarden" ? "Unlock" : "Connect"}
+              {store === "bitwarden" ? gt("Unlock") : gt("Connect")}
             </Button>
             <Button
               size="xs"
@@ -151,7 +160,7 @@ export function CliPasswordStoreRow({
                 setPassword("");
               }}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           </div>
         </div>
@@ -177,6 +186,7 @@ export function CliPasswordPicker({
   const [field, setField] = useState("password");
   const [connection, setConnection] = useState("");
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
   const pick = (index: string, nextField: string) => {
     setSelected(index);
     setField(nextField);
@@ -197,7 +207,7 @@ export function CliPasswordPicker({
     <div className="grid gap-2">
       <div className="flex gap-2">
         <Input
-          aria-label={`${cliStoreNames[store]} search`}
+          aria-label={gt("{store} search", { store: cliStoreNames[store] })}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -216,15 +226,15 @@ export function CliPasswordPicker({
             setBusy(false);
           }}
         >
-          Search items
+          <T>Search items</T>
         </Button>
       </div>
       <NativeSelect
-        aria-label={`${cliStoreNames[store]} item`}
+        aria-label={gt("{store} item", { store: cliStoreNames[store] })}
         value={selected}
         onChange={(event) => pick(event.target.value, field)}
       >
-        <option value="">Choose an item…</option>
+        <option value="">{gt("Choose an item…")}</option>
         {items.map((item, index) => (
           <option key={`${item.vaultId ?? ""}:${item.itemId}`} value={String(index)}>
             {item.name}
@@ -232,7 +242,7 @@ export function CliPasswordPicker({
         ))}
       </NativeSelect>
       <NativeSelect
-        aria-label={`${cliStoreNames[store]} field`}
+        aria-label={gt("{store} field", { store: cliStoreNames[store] })}
         value={field}
         onChange={(event) => pick(selected, event.target.value)}
       >
@@ -251,8 +261,8 @@ export function CliPasswordPicker({
       </NativeSelect>
       {store === "proton-pass" ? (
         <Input
-          aria-label="Proton Pass custom field"
-          placeholder="Custom field name"
+          aria-label={gt("Proton Pass custom field")}
+          placeholder={gt("Custom field name")}
           value={field}
           onChange={(event) => pick(selected, event.target.value)}
         />

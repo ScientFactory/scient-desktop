@@ -15,6 +15,7 @@ import { useAssetUrlState } from "~/assets/assetUrls";
 import type { AssetResource } from "@t3tools/contracts";
 import { uploadLatexImage } from "./imageUpload";
 import { latexFigureSource } from "./figureSource";
+import { T, useGT } from "gt-react";
 
 export function LatexFigureInsertDialog(props: {
   open: boolean;
@@ -50,10 +51,14 @@ export function LatexFigureInsertDialog(props: {
         data-dock-command-scope="latex"
       >
         <DialogHeader>
-          <DialogTitle>Insert a figure</DialogTitle>
+          <DialogTitle>
+            <T>Insert a figure</T>
+          </DialogTitle>
           <DialogDescription>
-            Choose a project image or import one. Add an optional caption and preview it before
-            inserting.
+            <T>
+              Choose a project image or import one. Add an optional caption and preview it before
+              inserting.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -80,6 +85,7 @@ export function LatexFigureInsertDialog(props: {
 function FigurePicker(
   props: Parameters<typeof LatexFigureInsertDialog>[0] & { onBusyChange: (busy: boolean) => void },
 ) {
+  const gt = useGT();
   const files = useProjectEntriesQuery(props.environmentId, props.cwd);
   const [query, setQuery] = useState("");
   const [path, setPath] = useState("");
@@ -143,7 +149,7 @@ function FigurePicker(
         props.onBusyChange(false);
         if (live.current) {
           setPendingUpload(false);
-          setError("Could not import the image. Use a PNG or JPEG under 20 MB.");
+          setError(gt("Could not import the image. Use a PNG or JPEG under 20 MB."));
         }
         return;
       }
@@ -168,7 +174,7 @@ function FigurePicker(
       }}
     >
       <label className="scient-writing-field">
-        Import from computer
+        <T>Import from computer</T>
         <input
           type="file"
           accept="image/png,image/jpeg"
@@ -185,8 +191,8 @@ function FigurePicker(
         className="scient-writing-search"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="Find a PNG, JPEG, or PDF image…"
-        aria-label="Find project image"
+        placeholder={gt("Find a PNG, JPEG, or PDF image…")}
+        aria-label={gt("Find project image")}
       />
       <div className="scient-writing-choices">
         {images
@@ -211,15 +217,19 @@ function FigurePicker(
         {images.length === 0 ? (
           <p>
             {files.isPending
-              ? "Loading images…"
-              : "Add an image to your project folder, then refresh this list."}
+              ? gt("Loading images…")
+              : gt("Add an image to your project folder, then refresh this list.")}
           </p>
         ) : null}
       </div>
       {files.error ? <p role="alert">{files.error}</p> : null}
-      {files.data?.truncated ? <p>Some project files aren’t listed.</p> : null}
+      {files.data?.truncated ? (
+        <p>
+          <T>Some project files aren’t listed.</T>
+        </p>
+      ) : null}
       <button type="button" onClick={files.refresh}>
-        Refresh images
+        <T>Refresh images</T>
       </button>
       {preview && (localFile || !/\.pdf$/iu.test(path)) && (
         <div className="scient-latex-insert-image-preview">
@@ -229,22 +239,22 @@ function FigurePicker(
       {localFile && <p>{localFile.name}</p>}
       {error && <p role="alert">{error}</p>}
       <label className="scient-writing-field">
-        Caption
+        <T>Caption</T>
         <input
           value={caption}
           onChange={(event) => setCaption(event.target.value)}
-          placeholder="Describe the figure"
+          placeholder={gt("Describe the figure")}
         />
       </label>
       <label className="scient-writing-field">
-        Width
+        <T>Width</T>
         <LatexSelect
           value={width}
           onValueChange={(value) => setWidth(Number(value))}
-          aria-label="Figure width"
+          aria-label={gt("Figure width")}
           options={[25, 50, 75, 80, 100].map((value) => ({
             value: String(value),
-            label: `${value}% of text width`,
+            label: gt("{value}% of text width", { value }),
           }))}
         />
       </label>
@@ -254,10 +264,10 @@ function FigurePicker(
         disabled={pendingUpload}
         onClick={() => props.onOpenChange(false)}
       >
-        Cancel
+        <T>Cancel</T>
       </Button>
       <button className="scient-writing-primary" type="submit" disabled={!valid || pendingUpload}>
-        {pendingUpload ? "Importing image…" : "Insert figure"}
+        {pendingUpload ? gt("Importing image…") : gt("Insert figure")}
       </button>
     </form>
   );

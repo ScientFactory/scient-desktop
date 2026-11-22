@@ -130,7 +130,7 @@ the single-coordinator consumer defect.
 node_modules/.bin/vp test run packages/contracts/src/orchestrationV2SubagentPresentation.test.ts packages/client-runtime/src/state/historicalSubagentRuntime.test.ts packages/client-runtime/src/state/subagentRuntime.test.ts apps/server/src/orchestration-v2/Adapters/SubagentPresentation.test.ts apps/server/src/orchestration-v2/Adapters/NativeSessionAdapterV2.test.ts apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts --maxWorkers 1
 node_modules/.bin/vp test run apps/web/src/components/chat/MessagesTimeline.test.tsx apps/web/src/components/AgentsPanel.test.tsx apps/web/src/components/RightPanelTabs.attention.test.tsx --maxWorkers 1
 node_modules/.bin/vp test run apps/server/src/orchestration-v2/RunExecutionService.test.ts apps/server/src/orchestration-v2/testkit/ClaudeWorkflowRuntime.integration.test.ts apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts packages/client-runtime/src/state/historicalSubagentRuntime.test.ts apps/web/src/components/AgentsPanel.test.tsx --maxWorkers 1 --testTimeout 30000 -t 'workflow|routes inert'
-node_modules/.bin/vp test run apps/server/src/server.test.ts --maxWorkers 1 -t 'preserves native workflow phases'
+node_modules/.bin/vp test run apps/server/src/server.orchestration.test.ts --maxWorkers 1 -t 'preserves native workflow phases'
 ```
 
 Compiler requalification and integrated visual/manual acceptance belong to the final

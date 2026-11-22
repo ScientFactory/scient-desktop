@@ -27,6 +27,7 @@ const clientSettings: ClientSettings = {
   browserDefaultAppearance: "dark",
   browserRecordingFrameRate: 60,
   browserLinkTarget: "app",
+  sideThreadOpenTarget: "main",
   browserAutoShowFloatingPreview: false,
   browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
   browserDefaultProfileId: "work",
@@ -121,7 +122,7 @@ const withClientSettings = <A, E, R>(
       prefix: "t3-desktop-client-settings-test-",
     });
     return yield* effect.pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("DesktopClientSettings", () => {
   it.effect("saves through a symlinked client settings file without replacing the link", () =>
@@ -316,7 +317,7 @@ describe("DesktopClientSettings", () => {
         assert.deepEqual(persisted, Option.some(yield* decodeClientSettingsJson("{}")));
         assert.isTrue(Option.isSome(persisted));
         if (Option.isSome(persisted)) {
-          assert.equal(persisted.value.fontSizeInterface, 17);
+          assert.equal(persisted.value.fontSizeInterface, 15);
           assert.equal(persisted.value.showSkillsInSlashMenu, false);
         }
       }),
@@ -340,6 +341,78 @@ describe("DesktopClientSettings", () => {
         assert.equal(Option.getOrThrow(yield* settings.get).appearanceContrast, 130);
       }),
     ),
+  );
+
+  it.effect(
+    "returns the old default dictation engine to auto once, then keeps a later choice",
+    () =>
+      withClientSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopClientSettings.DesktopClientSettings;
+          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            environment.clientSettingsPath,
+            '{"voiceDictationEngine":"local"}\n',
+          );
+          yield* fileSystem.writeFileString(
+            `${environment.stateDir}/client-settings-resets`,
+            "1\n",
+          );
+          assert.equal(Option.getOrThrow(yield* settings.get).voiceDictationEngine, "auto");
+
+          yield* settings.set({ ...clientSettings, voiceDictationEngine: "local" });
+          assert.equal(Option.getOrThrow(yield* settings.get).voiceDictationEngine, "local");
+        }),
+      ),
+  );
+
+  it.effect("keeps ChatGPT dictation chosen before the engine reset", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          '{"voiceDictationEngine":"chatgpt"}\n',
+        );
+        assert.equal(Option.getOrThrow(yield* settings.get).voiceDictationEngine, "chatgpt");
+      }),
+    ),
+  );
+
+  it.effect(
+    "returns font sizes saved before the size reset to the defaults once, then keeps a later choice",
+    () =>
+      withClientSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopClientSettings.DesktopClientSettings;
+          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            environment.clientSettingsPath,
+            '{"fontSizeInterface":17,"fontSizePrompt":18,"fontSizeCode":15,"fontSizeTerminal":12}\n',
+          );
+          yield* fileSystem.writeFileString(
+            `${environment.stateDir}/client-settings-resets`,
+            "2\n",
+          );
+          const reset = Option.getOrThrow(yield* settings.get);
+          assert.equal(reset.fontSizeInterface, 15);
+          assert.equal(reset.fontSizePrompt, 16);
+          assert.equal(reset.fontSizeCode, 14);
+          assert.equal(reset.fontSizeTerminal, 14);
+
+          yield* settings.set({ ...clientSettings, fontSizeInterface: 17, fontSizeCode: 16 });
+          const kept = Option.getOrThrow(yield* settings.get);
+          assert.equal(kept.fontSizeInterface, 17);
+          assert.equal(kept.fontSizeCode, 16);
+        }),
+      ),
   );
   // SCIENT-FORK:END restored-behavior-guards
 });

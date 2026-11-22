@@ -3,6 +3,7 @@ import { useEditorState } from "@tiptap/react";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
 import { MenuRadioGroup } from "~/components/ui/menu";
 import { DockCommandRadioItem, DockMenu } from "../writing/dockChrome";
+import { useGT } from "gt-react";
 
 /** Conversion choices use definitions already available in this document. */
 export function LatexStatementTypeControl(props: {
@@ -11,6 +12,7 @@ export function LatexStatementTypeControl(props: {
   disabled: boolean;
   onChange: (environment: string) => void;
 }) {
+  const gt = useGT();
   const declarations = useEditorState({
     editor: props.editor,
     selector: ({ editor }) => latexEquationReferencesKey.getState(editor.state)?.environments ?? [],
@@ -25,7 +27,7 @@ export function LatexStatementTypeControl(props: {
     });
   return (
     <DockMenu
-      label="Scientific statement type"
+      label={gt("Scientific statement type")}
       commandScope="latex"
       disabled={props.disabled || options.length === 1}
       chevron

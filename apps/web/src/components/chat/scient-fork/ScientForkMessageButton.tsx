@@ -1,15 +1,18 @@
+import { useGT } from "gt-react";
 import { SplitIcon } from "lucide-react";
 
 import { Button } from "../../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 
 export function ScientForkMessageButton({
-  label = "Fork conversation from this response",
+  label: givenLabel,
   onFork,
 }: {
   readonly label?: string;
   readonly onFork: () => void;
 }) {
+  const gt = useGT();
+  const label = givenLabel ?? gt("Fork conversation from this response");
   return (
     <Tooltip>
       <TooltipTrigger

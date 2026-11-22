@@ -377,9 +377,28 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
     readonly plugins?: ProviderNativeInventory;
     readonly mcpServers?: ProviderNativeInventory;
   }>({});
-  const publishMachine = (field: "plugins" | "mcpServers", report: ProviderNativeInventory) =>
-    Ref.update(latestMachineRef, (latest) => ({ ...latest, [field]: report })).pipe(
-      Effect.andThen(PubSub.publish(reportsPubSub, report)),
+  // SCIENT-FORK:START — the ChatGPT apps of Codex's account join its MCP server listing.
+  const accountAppRows = yield* Ref.make<ReadonlyArray<ServerProviderMcpServer>>([]);
+  const withAccountApps = (report: ProviderNativeInventory) =>
+    report.mcpServers === undefined
+      ? Effect.succeed(report)
+      : Ref.get(accountAppRows).pipe(
+          Effect.map((apps) => ({
+            ...report,
+            mcpServers: [
+              ...report.mcpServers!.filter((server) => server.scope !== "chatgpt"),
+              ...apps,
+            ],
+          })),
+        );
+  // SCIENT-FORK:END
+  const publishMachine = (field: "plugins" | "mcpServers", given: ProviderNativeInventory) =>
+    withAccountApps(given).pipe(
+      Effect.flatMap((report) =>
+        Ref.update(latestMachineRef, (latest) => ({ ...latest, [field]: report })).pipe(
+          Effect.andThen(PubSub.publish(reportsPubSub, report)),
+        ),
+      ),
       Effect.asVoid,
     );
   // Subscribing before reading the latest values means none is missed; a
@@ -636,9 +655,30 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       readonly force: boolean;
       readonly connectionsOnly?: boolean | undefined;
     }) {
-      if (!connectionsOnly) yield* store.search({ refresh: force, limit: 1 });
-      const listing = yield* listPlugins(undefined, force || connectionsOnly === true);
-      yield* publishMachine("plugins", listing);
+      // SCIENT-FORK:START — Codex reaches every app its ChatGPT account connected, not only its plugins'.
+      // Read beside the plugin listing, which can take most of its time limit on a cold Codex.
+      const accountApps = store.accountApps(force || connectionsOnly === true).pipe(
+        Effect.flatMap((apps) =>
+          Effect.gen(function* () {
+            yield* Ref.set(accountAppRows, apps);
+            // Before the first server listing the apps wait for it; it carries them.
+            const latest = (yield* Ref.get(latestMachineRef)).mcpServers?.mcpServers;
+            if (latest !== undefined)
+              yield* publishMachine("mcpServers", {
+                mcpServers: latest,
+                sequence: yield* nextInventoryReadSequence,
+              });
+          }),
+        ),
+        Effect.ignore,
+      );
+      const plugins = Effect.gen(function* () {
+        if (!connectionsOnly) yield* store.search({ refresh: force, limit: 1 });
+        const listing = yield* listPlugins(undefined, force || connectionsOnly === true);
+        yield* publishMachine("plugins", listing);
+      });
+      yield* Effect.all([plugins, accountApps], { concurrency: "unbounded", discard: true });
+      // SCIENT-FORK:END
     }),
     listPlugins: ({ cwd }) => listPlugins(cwd),
     listPluginRoots: ({ cwd, fresh }) => listPluginRoots(cwd, fresh === true),

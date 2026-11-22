@@ -8,6 +8,9 @@ import type {
   UsageSummary,
   UsageTokenTotals,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export const EMPTY_ACCOUNTING_METRICS: UsageAccountingMetrics = {
   requests: 0,
@@ -262,13 +265,16 @@ function metricValue(metrics: UsageAccountingMetrics, metric: AccountingChartMet
   }
 }
 
-export function buildAccountingTrend(input: {
-  readonly rows: readonly UsageAccountingRow[];
-  readonly keys: ReadonlyMap<string, UsageAccountingKey>;
-  readonly metric: AccountingChartMetric;
-  readonly group: AccountingChartGroup;
-  readonly maxSeries?: number;
-}): AccountingTrend {
+export function buildAccountingTrend(
+  input: {
+    readonly rows: readonly UsageAccountingRow[];
+    readonly keys: ReadonlyMap<string, UsageAccountingKey>;
+    readonly metric: AccountingChartMetric;
+    readonly group: AccountingChartGroup;
+    readonly maxSeries?: number;
+  },
+  resolve: MessageResolver = m,
+): AccountingTrend {
   const periods = [...new Set(input.rows.map((row) => row.day))].toSorted();
   const totals = new Map<string, number>();
   const values = new Map<string, Map<string, number>>();
@@ -304,7 +310,7 @@ export function buildAccountingTrend(input: {
     const hiddenIds = new Set(hidden.map(([id]) => id));
     series.push({
       id: "__other__",
-      label: "Other",
+      label: resolve(msg("Other", { $context: "chart series of the remaining models or keys" })),
       values: periods.map((period) =>
         input.rows.reduce((sum, row) => {
           const id = input.group === "model" ? row.model : row.keyId;

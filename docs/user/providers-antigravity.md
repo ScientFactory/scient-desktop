@@ -93,12 +93,25 @@ Linux, and x64 and ARM64 Windows. Intel macOS is not yet an approved target for
 Scient-managed ACP installation; existing legacy `agy` installations remain usable there, or the
 Mac can connect to a supported remote environment.
 
+On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
+variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
+path; keep `localharness_external.exe` beside that executable.
+
+On those targets Scient installs Google's Antigravity CLI (`agy`), which serves
+ACP itself and runs the plugins you added to Antigravity in your Scient chats.
+If Scient cannot reach its release list before the first install, it installs
+the older paired ACP runtime instead, which offers only your plugins' skills.
+
 Scient's update catalog treats official ACP and legacy `agy` as separate
 release families. When a newer ACP release has passed download, archive,
 native-startup, activation, and removal qualification on its supported target,
 **Update Antigravity** appears for managed ACP installations. An update keeps
 the previous generation available while active sessions finish. It never
 mutates a system or custom installation.
+
+A managed installation of the paired runtime is offered the CLI as its update.
+The CLI keeps its own sign-in, so with a Google account you sign in to Google
+once more after updating.
 
 **Repair Antigravity** stages and validates a complete replacement before it
 touches a damaged managed generation. A failed download or verification leaves
@@ -115,9 +128,10 @@ Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
 
-Before a conversation starts, desktop/web can update an older saved Gemini family
-selection to its matching available reasoning variant. Existing conversations are
-not switched automatically. If the matching variant is unavailable, select an
+Before a conversation starts, desktop/web can update an older saved Gemini
+selection, including a default model, to the model and thinking level the agent
+lists now: a saved `gemini-3.8-flash-high` shows as Gemini 3.8 Flash with High
+thinking. Existing conversations are not switched automatically. If the matching variant is unavailable, select an
 available model rather than reinstalling the provider.
 Use Antigravity's native `/plan` command for planning. Tool approvals follow [Permission modes](./permission-modes.md).
 Questions with fixed choices still need one of the offered answers, even in
@@ -126,6 +140,11 @@ Questions with fixed choices still need one of the offered answers, even in
 The model picker also refreshes when a running session reports new model choices.
 Models available in other Antigravity apps may not be available through the ACP agent.
 
+On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
+Antigravity. Antigravity cannot rewind its own conversation, so the next turn
+starts a fresh Antigravity session and Scient sends it the kept conversation,
+without the turns you removed.
+
 For supported Gemini variants, choose the model once and use **Reasoning** to
 select an available level. On mobile, open **Model and reasoning settings**.
 Changing the level selects Google's corresponding model variant; it does not
@@ -133,8 +152,10 @@ change your account or installation. Saved favorites keep their exact model
 and reasoning level, so their labels still include the level.
 
 Skills for every project go in `~/.gemini/config/skills` or
-`~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
-so a skill there only appears when the project itself is your home directory.
+`~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`
+on its own; to share a folder like that one, list it in `~/.gemini/config/skills.json`
+(or a project's `.agents/skills.json`), and Scient shows the skills it declares,
+honoring `inherits`, `include_only`, and `exclude`.
 
 Antigravity creates empty `.gemini/skills` and `.agents/skills` folders in the
 workspace when a session starts. Git does not track empty folders, so they never
@@ -179,6 +200,31 @@ stays active while its parent turn runs, then becomes idle; launch errors remain
 visible. Google does not expose individual child status, names, models, usage,
 or reply ownership through ACP. A batch is not a separate controllable thread,
 and its launch description is not a child result.
+
+## Sign in to a plugin
+
+When an Antigravity plugin such as Gmail needs you to sign in, its failed call adds a notice with
+**Sign in to Gmail**. Choose it to open Google's sign-in page in your browser and approve access;
+the running agent receives the approval itself. Then ask the agent to try again. The notice shows
+**Signed in** once the plugin's next call works, or after you choose **I've signed in**.
+
+The sign-in page works only while the agent that asked for it is still running, for up to ten
+minutes, and only from the Scient desktop app on the computer that runs the agent. If the notice
+says to ask the agent to try again, send a message so the plugin asks for a new sign-in. Scient
+keeps sign-in links out of the conversation, and never reads or stores the plugin's credentials.
+Only Google's plugins that sign in through their own command offer the button for now. Signing in
+needs permission to manage providers.
+
+## Run a native goal
+
+When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
+objective. Antigravity keeps working until it completes the goal or you cancel it.
+If your runtime does not offer `/goal`, update Antigravity in provider settings
+when an update is offered, then refresh provider status.
+
+Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
+before starting more work. Ordinary follow-ups wait until the running turn ends.
+Scient does not support Antigravity goal status, pause, resume, or clear commands.
 
 ## Accounts, disabling, and removal
 

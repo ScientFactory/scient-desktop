@@ -1,5 +1,6 @@
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import type * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -9,11 +10,10 @@ import * as Path from "effect/Path";
 // SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
 import * as PubSub from "effect/PubSub";
 // SCIENT-FORK:END
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-// SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
 import * as Stream from "effect/Stream";
-// SCIENT-FORK:END
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -70,7 +70,14 @@ import {
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
-import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import {
+  resolveClaudeModelCatalog,
+  scopeClaudeUpgradeMessageToChannel,
+} from "../ClaudeModelCatalog.ts";
+import {
+  makeClaudeCodeModelRoutes,
+  resolveClaudeModelSettingsKey,
+} from "../ClaudeCodeModelRoutes.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderInstance,
@@ -246,6 +253,26 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       );
     };
     // SCIENT-FORK:END
+    // The SDK's user source is the host's home, not a custom one; same rule as the adapter.
+    const customHome =
+      effectiveConfig.homePath.trim().length > 0 ||
+      processEnv.CLAUDE_CONFIG_DIR !== (yield* HostProcess.Environment).CLAUDE_CONFIG_DIR;
+    // Only a successful probe records routes, so a failed one never sends turns back to slugs
+    // the backend rejects.
+    const modelRoutes = yield* makeClaudeCodeModelRoutes(
+      (cwd) =>
+        resolveClaudeModelSettingsKey(
+          customHome ? ["project", "local"] : ["user", "project", "local"],
+          cwd,
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      serverConfig.stateDir,
+    );
+    // Retain reports until the registry subscribes; end its listener on teardown.
+    const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
+    yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -257,14 +284,16 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
         enabled,
         config: effectiveConfig,
       },
-      // SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
       {
         scopedLimitNames,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
-        onNativeInventory: (inventory) => publishInventory(inventory),
+        onSessionInit: (cwd) => Queue.offer(workspaceRescans, cwd).pipe(Effect.asVoid),
         modelCatalog,
+        routeModelCatalog: modelRoutes.route,
+        // SCIENT-FORK:START — live-session provider-native inventory.
+        onNativeInventory: (inventory) => publishInventory(inventory),
+        // SCIENT-FORK:END
       },
-      // SCIENT-FORK:END
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -280,6 +309,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       effectiveConfig,
       effectiveProcessEnv,
       modelCatalog,
+      modelRoutes.route,
     );
     const voiceTranscriptCorrection = yield* makeClaudeVoiceTranscriptCorrection(
       effectiveConfig,
@@ -365,7 +395,12 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
               })),
             ),
           ),
-          Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, capabilities)),
+          Effect.tap(({ capabilities }) =>
+            Ref.set(lastGoodCapabilities, capabilities).pipe(
+              Effect.andThen(modelRoutes.record(capabilities.models ?? [])),
+            ),
+          ),
+          Effect.ensuring(modelRoutes.settle),
           Effect.catch((error) =>
             Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
               Effect.flatMap((capabilities) =>
@@ -443,6 +478,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
             Ref.get(lastGoodCapabilities).pipe(
               Effect.map((account) => ({
                 ...provider,
+                pluginHomes: { claude: configDir },
                 accountAppsAvailable:
                   provider.auth.status === "authenticated" &&
                   account?.apiProvider === "firstParty" &&
@@ -454,6 +490,8 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
           Effect.map(stampIdentity),
         ),
       ),
+      // Disabled, failed version checks and interruption never reach the probe.
+      Effect.ensuring(modelRoutes.settle),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
@@ -478,6 +516,13 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
             enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
               enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
             }),
+          ),
+          Effect.flatMap((enrichedSnapshot) =>
+            modelCatalog.pipe(
+              Effect.map((catalog) =>
+                scopeClaudeUpgradeMessageToChannel(catalog, enrichedSnapshot),
+              ),
+            ),
           ),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
@@ -521,9 +566,15 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = Effect.fn(
       "ClaudeDriver.consumeResetCredit",
     )(
-      function* () {
+      function* (creditId) {
         const current = yield* snapshot.getSnapshot;
-        const grantId = current.usageLimits?.resetCredits?.nextCreditId;
+        const credits = current.usageLimits?.resetCredits;
+        const grantId =
+          creditId === undefined
+            ? credits?.nextCreditId
+            : credits?.options?.some((option) => option.creditId === creditId)
+              ? creditId
+              : undefined;
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(
@@ -555,25 +606,24 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
           }),
       ),
       Effect.tap((outcome) =>
-        Effect.gen(function* () {
-          const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-          yield* Cache.invalidateAll(capabilitiesProbeCache);
-          const refreshed = yield* snapshot.refresh;
-          const after = refreshed.usageLimits?.checkedAt;
-          if (
-            outcome === "reset" &&
-            (after === undefined ||
-              after === before ||
-              refreshed.usageLimits?.unavailable?.reason === "probeFailed")
-          ) {
-            return yield* new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail:
-                "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
-            });
-          }
-        }),
+        ResetCreditCoordinator.refreshAfterRedemption({
+          outcome,
+          getSnapshot: snapshot.getSnapshot,
+          refresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+            Effect.andThen(snapshot.refresh),
+          ),
+        }).pipe(
+          Effect.filterOrFail(
+            (confirmed) => confirmed,
+            () =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail:
+                  "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
+              }),
+          ),
+        ),
       ),
     );
 
@@ -589,6 +639,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       enabled,
       snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+      workspaceRescans: Stream.fromQueue(workspaceRescans),
       snapshotForCwd: (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

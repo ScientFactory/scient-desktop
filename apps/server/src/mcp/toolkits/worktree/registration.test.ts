@@ -17,24 +17,32 @@ import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
+import { EnvironmentThemeService } from "../../../environmentTheme.ts";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as WorkspaceBindingResolver from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingResolutionError } from "../../../scient/projectScope/WorkspaceBinding.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as GitManager from "../../../git/GitManager.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import * as IssueService from "../../../issue/IssueService.ts";
+import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+// SCIENT-FORK: the custom models agent tools test models through their agents.
+import * as ProviderInstanceRegistry from "../../../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -60,6 +68,7 @@ import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import * as TaskFolders from "../../../workspace/TaskFolders.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -70,6 +79,9 @@ const StubServicesLive = Layer.mergeAll(
   AccountsTestkit.layer,
   // SCIENT-FORK:END
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
+  // T3's pull request tools read the checkout through GitManager.
+  Layer.mock(GitManager.GitManager)({}),
+  Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(ProviderSessionManagerV2)({
     resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),
   }),
@@ -85,7 +97,8 @@ const StubServicesLive = Layer.mergeAll(
       ),
   }),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
-  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+  // Every MCP request asks which thread it serves, to list forge tools only where they work.
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
@@ -94,6 +107,9 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+  Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(IssueService.IssueService)({}),
+  Layer.mock(ThreadIssueService.ThreadIssueService)({}),
   ServerSettings.layerTest({ linkedEnvironmentsEnabled: true }),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
@@ -103,6 +119,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(AssetSigner.AssetSigner)({}),
+  Layer.mock(WorkspacePreviewRevisions.WorkspacePreviewRevisions)({}),
   layerRepositories,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
@@ -114,6 +131,9 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(LatexBuildService.LatexBuildService)({}),
   Layer.mock(OverleafSync.OverleafSync)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
+  // SCIENT-FORK: the custom models agent tools test models through their agents.
+  Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
@@ -228,9 +248,16 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      // The credential holds worktree, orchestration and preview: only the device
-      // tools, whose every call needs a grant it lacks, are not listed.
-      const unlisted = new Set(McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name));
+      // The credential holds worktree, orchestration and preview: only the device and
+      // issue tools, whose every call needs a grant it lacks, are not listed.
+      // Device tools need their grant, and only a deferring client lists tool_search.
+      // The background wait is listed only for providers that can hold a thread on one.
+      const unlisted = new Set([
+        ...McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name),
+        ...McpHttpServer.hostMcpToolGrants.issues.map((tool) => tool.name),
+        "tool_search",
+        "scient_background_wait",
+      ]);
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
       expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,

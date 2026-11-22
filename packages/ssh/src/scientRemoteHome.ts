@@ -324,12 +324,14 @@ NODE
 export const migrateRemoteScientHome = Effect.fn("ssh/scientRemoteHome.migrate")(function* (
   target: DesktopSshEnvironmentTarget,
   stateKey: string,
+  /** The launch's own remote command, so the copy reads the same login profiles. */
+  remoteCommandArgs: ReadonlyArray<string>,
   nodeEnvScript: string,
   input?: SshAuth.SshAuthOptions,
 ) {
   yield* Effect.logInfo("ssh.remoteServer.scientHomeMigration.start", { stateKey });
   yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
+    remoteCommandArgs,
     stdin: buildRemoteScientHomeMigrationScript(nodeEnvScript),
     timeoutMs: REMOTE_SCIENT_HOME_MIGRATION_TIMEOUT_MS,
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),

@@ -603,7 +603,7 @@
       }
     },
     "muse": {
-      "contractRevision": 1,
+      "contractRevision": 2,
       "channel": "stable",
       "version": "1.4.7-R6101.1",
       "artifacts": {

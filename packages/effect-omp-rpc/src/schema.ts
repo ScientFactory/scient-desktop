@@ -154,6 +154,10 @@ export const OmpPromptError = Schema.Struct({
   retryable: Schema.Boolean,
   /** `cost_cap`: the session reached its spending cap and no request was sent. */
   code: maybeString,
+  /** Epoch ms at which the provider said the usage limit resets; older agents never send it. */
+  resetAt: maybeNumber,
+  /** The agent's error classifier labels (`auth-failed`, `transient`, ...); older agents never send it. */
+  kinds: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OmpPromptError = typeof OmpPromptError.Type;
 
@@ -236,6 +240,13 @@ export const OmpRpcEvent = Schema.Struct({
   to: maybeString,
   reason: maybeString,
   usage: maybeUnknown,
+  // SCIENT-FORK: Scient Agent's confirmed prompt-cache entry, for idle compaction.
+  promptCache: maybeUnknown,
+  // SCIENT-FORK:START — the agent's stop time, independent of delivery latency.
+  stoppedAt: maybeNumber,
+  // SCIENT-FORK:END
+  // SCIENT-FORK: goal_updated carries the goal the thread shows.
+  goal: maybeUnknown,
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
@@ -283,6 +294,8 @@ export const OmpMessageEndEvent = Schema.Struct({
   type: Schema.Literal("message_end"),
   messageId: maybeString,
   message: OmpAgentMessage,
+  // SCIENT-FORK: Scient Agent's confirmed prompt-cache entry, for idle compaction.
+  promptCache: maybeUnknown,
 });
 export type OmpMessageEndEvent = typeof OmpMessageEndEvent.Type;
 
@@ -538,6 +551,9 @@ export type OmpSubagentFrame = typeof OmpSubagentFrame.Type;
 const OmpLifecycleEvent = Schema.Struct({
   type: Schema.Literals([
     "cache_warming_end",
+    // SCIENT-FORK:START — Scient Agent's warming stopped; its promptCache times idle compaction.
+    "cache_warming_stopped",
+    // SCIENT-FORK:END
     "auto_compaction_start",
     "auto_compaction_end",
     "manual_compaction_start",
@@ -590,6 +606,12 @@ const OmpLifecycleEvent = Schema.Struct({
   result: maybeUnknown,
   /** thinking_level_changed: the effective level; absent when the model has none. */
   thinkingLevel: maybeString,
+  // SCIENT-FORK: goal_updated carries the goal the thread shows.
+  goal: maybeUnknown,
+  // SCIENT-FORK:START — cache_warming_stopped: the entry warming left, which times idle compaction.
+  promptCache: maybeUnknown,
+  stoppedAt: maybeNumber,
+  // SCIENT-FORK:END
 });
 export type OmpLifecycleEvent = typeof OmpLifecycleEvent.Type;
 

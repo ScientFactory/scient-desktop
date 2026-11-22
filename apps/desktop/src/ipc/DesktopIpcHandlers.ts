@@ -19,6 +19,7 @@ import {
   uploadOpenedConversationFile,
 } from "../scient/conversationImport/openedConversationFiles.ts";
 // SCIENT-FORK:END
+import { startFileDrag } from "./methods/fileDrag.ts";
 import * as Effect from "effect/Effect";
 
 // SCIENT-FORK:START — keep the computer awake while threads work.
@@ -26,6 +27,11 @@ import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
+import {
+  appleSpeechAvailable,
+  appleSpeechPrepare,
+  appleSpeechTranscribe,
+} from "./methods/appleSpeech.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import { getConnectionCatalog, setConnectionCatalog } from "./methods/connectionCatalog.ts";
@@ -71,9 +77,11 @@ import {
   installRelayTelemetryEnabled,
   getSystemLocale,
   getPreferredSystemLanguages,
+  getPrimaryPasteEnabled,
   getWindowFullscreenState,
   openExternal,
   readMedia,
+  restartAudioService,
   openSystemSettings,
   checkSystemPermission,
   pasteAsText,
@@ -81,6 +89,7 @@ import {
   probeRemoteEditors,
   revealWindow,
   pickFolder,
+  toLocalBackendPath,
   pickProjectFavicon,
   pickThemeFiles,
   setTheme,
@@ -101,10 +110,17 @@ import {
   setSnapShotAnimationDestination,
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
+// SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+import { readLibraryPageMethod } from "../scient/sources/libraryPage.ts";
+// SCIENT-FORK:END
 import * as PreviewIpc from "./methods/preview.ts";
 import * as VoiceIpc from "./methods/voice.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import * as WebLinksIpc from "./methods/webLinks.ts";
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+import * as RestartReadinessIpc from "./methods/restartReadiness.ts";
+import * as UpdateSaveIpc from "./methods/updateSave.ts";
+// SCIENT-FORK:END
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 import {
   getCliCommandState,
@@ -127,6 +143,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   // SCIENT-FORK:START — spelling dictionaries follow the language being written.
   yield* ipc.handle(noteSpellingSample);
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+  yield* ipc.handle(readLibraryPageMethod);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — conversation files the OS opened with Scient.
   yield* ipc.handle(takeOpenedConversationFiles);
   yield* ipc.handle(uploadOpenedConversationFile);
@@ -136,11 +155,17 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
   yield* ipc.handle(WebLinksIpc.setReady);
+  // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+  yield* ipc.handle(RestartReadinessIpc.getToken);
+  yield* ipc.handle(RestartReadinessIpc.reportReady);
+  yield* ipc.handle(UpdateSaveIpc.complete);
+  // SCIENT-FORK:END
 
   yield* ipc.handleSync(getAppBranding);
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
+  yield* ipc.handleSync(getPrimaryPasteEnabled);
   yield* ipc.handleSync(getWindowFullscreenState);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
@@ -148,6 +173,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getHostEnvironmentId);
   yield* ipc.handle(getLocalEnvironmentBearerToken);
 
+  yield* ipc.handle(startFileDrag);
+  yield* ipc.handle(restartAudioService);
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(getConnectionCatalog);
@@ -185,6 +212,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setWslOnly);
 
   yield* ipc.handle(pickFolder);
+  yield* ipc.handle(toLocalBackendPath);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(saveAssetCopy);
   yield* ipc.handle(savePdfBytesCopy);
@@ -200,6 +228,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(cancelProviderAuthCallback);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
+  yield* ipc.handle(appleSpeechAvailable);
+  yield* ipc.handle(appleSpeechPrepare);
+  yield* ipc.handle(appleSpeechTranscribe);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(reloadMainWindow);
   yield* ipc.handle(revealWindow);

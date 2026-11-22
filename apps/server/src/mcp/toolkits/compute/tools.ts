@@ -420,6 +420,136 @@ const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, operation("notebook.run"));
 
+const ResultPath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096));
+
+export const ComputeToolResultSummary = Schema.Struct({
+  revision: Schema.String,
+  script: Schema.String,
+  finishedAt: Schema.String,
+  /** `observed` (Python) lists the project files the script was seen reading. */
+  inputTracking: Schema.String,
+  inputs: Schema.Array(Schema.String),
+  /** What changed since this revision ran, e.g. `input changed: data/cohort.csv`. Empty if nothing Scient checks has. */
+  outOfDate: Schema.Array(Schema.String),
+});
+
+export const ComputeToolResultValue = Schema.Struct({
+  output: Schema.String,
+  pointer: Schema.String,
+  value: Schema.String,
+  /** Paste this into a Markdown manuscript as is. */
+  markdown: Schema.String,
+});
+
+const ScientResultsRunTool = Tool.make("scient_results_run", {
+  description:
+    'Run a saved script from scratch and publish what it writes to $SCIENT_RESULTS_DIR as a result revision: a JSON file of values formatted as they should read (e.g. {"hr": "0.72"}) and .png/.jpg/.svg figures. Returns the values with the Markdown that cites each.',
+  parameters: Schema.Struct({
+    path: ResultPath.annotate({ description: "The script, relative to the project root." }),
+    waitSeconds: Schema.optional(WaitSeconds),
+  }),
+  success: Schema.Struct({
+    status: Schema.Literals(["published", "failed", "running"]),
+    message: Schema.optional(Schema.String),
+    revision: Schema.optional(ComputeToolResultSummary),
+    values: Schema.optional(Schema.Array(ComputeToolResultValue)),
+    figures: Schema.optional(Schema.Array(Schema.String)),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Run a script and publish its results")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, operation("compute.results.run"));
+
+const ScientResultsListTool = Tool.make("scient_results_list", {
+  description:
+    "Linked results in this project: each script's newest revision, what changed since it ran, and its values with their Markdown.",
+  parameters: EmptyToolInput,
+  success: Schema.Struct({
+    scripts: Schema.Array(
+      Schema.Struct({
+        latest: ComputeToolResultSummary,
+        revisions: Schema.Int,
+        values: Schema.Array(ComputeToolResultValue),
+        figures: Schema.Array(Schema.String),
+        tables: Schema.Array(Schema.String),
+      }),
+    ),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "List linked results")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("compute.results.list"));
+
+const ScientResultsMarkdownTool = Tool.make("scient_results_markdown", {
+  description:
+    "Text that cites one result: a value by JSON Pointer, a figure or a CSV table. For a .tex paper Scient writes results/<script>/ files and also returns preamble lines. Insert it with your file tools.",
+  parameters: Schema.Struct({
+    document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
+    revision: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(64)),
+    output: ResultPath.annotate({ description: "The file in the revision, e.g. values.json." }),
+    pointer: Schema.optional(
+      Schema.String.check(Schema.isMaxLength(4096)).annotate({
+        description: "JSON Pointer of a value, e.g. /cohort/n. Omit for a figure.",
+      }),
+    ),
+    alt: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
+  }),
+  success: Schema.Struct({
+    markdown: Schema.String,
+    preamble: Schema.optional(Schema.Array(Schema.String)),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Markdown for a linked result")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("compute.results.markdown"));
+
+const ScientResultsCheckTool = Tool.make("scient_results_check", {
+  description:
+    "Check the linked results in a manuscript, or the result files a .tex paper includes: out of date, a newer run, or edited.",
+  parameters: Schema.Struct({
+    document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
+  }),
+  success: Schema.Struct({
+    results: Schema.Array(
+      Schema.Struct({
+        line: Schema.Int,
+        kind: Schema.Literals(["value", "figure", "table", "file"]),
+        shown: Schema.String,
+        /** current, newer-run, out-of-date, edited, missing or no-record. */
+        state: Schema.String,
+        revision: Schema.String,
+        value: Schema.NullOr(Schema.String),
+        newerRevision: Schema.NullOr(Schema.String),
+        newerValue: Schema.NullOr(Schema.String),
+        outOfDate: Schema.Array(Schema.String),
+      }),
+    ),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Check linked results in a manuscript")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("compute.results.check"));
+
 export const ScientComputeToolkit = Toolkit.make(
   ScientComputeRunTool,
   ScientComputeOutputTool,
@@ -432,4 +562,8 @@ export const ScientComputeToolkit = Toolkit.make(
   ScientNotebookReadTool,
   ScientNotebookEditTool,
   ScientNotebookRunTool,
+  ScientResultsRunTool,
+  ScientResultsListTool,
+  ScientResultsMarkdownTool,
+  ScientResultsCheckTool,
 );

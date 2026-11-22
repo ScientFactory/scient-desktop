@@ -30,6 +30,54 @@ describe("identity events", () => {
     expect(wire("install.account_observed", { ...event!.properties })).toBeNull();
   });
 
+  it("sends a custom endpoint's host, port, scheme and source, never a link", () => {
+    const event = normalizeInheritedEvent(
+      "install.account_observed",
+      {
+        provider: "claudeAgent",
+        accountType: "customEndpoint",
+        endpointHost: "Proxy.Example",
+        endpointPort: 8443,
+        endpointScheme: "https",
+        endpointSource: "claude-settings",
+      },
+      context,
+    );
+    expect(event?.properties).toMatchObject({
+      endpointHost: "proxy.example",
+      endpointPort: 8443,
+      endpointScheme: "https",
+      endpointSource: "claude-settings",
+    });
+    expect(wire("install.account_observed", { ...event!.properties })).toBeNull();
+    expect(
+      normalizeInheritedEvent(
+        "install.account_observed",
+        {
+          provider: "claudeAgent",
+          accountType: "customEndpoint",
+          endpointHost: "gateway.example.",
+        },
+        context,
+      )?.properties,
+    ).toMatchObject({ endpointHost: "gateway.example" });
+
+    const unsafe = normalizeInheritedEvent(
+      "install.account_observed",
+      {
+        provider: "claudeAgent",
+        accountType: "customEndpoint",
+        endpointHost: "https://user:secret@proxy.example/v1",
+        endpointPort: 70_000,
+        endpointScheme: "ftp",
+        endpointSource: "registry",
+      },
+      context,
+    );
+    for (const key of ["endpointHost", "endpointPort", "endpointScheme", "endpointSource"])
+      expect(unsafe?.properties).not.toHaveProperty(key);
+  });
+
   it("keeps rejecting email addresses everywhere else", () => {
     expect(wire("provider.turn.completed", { email: "ada@uni.edu" })).toContain("Private");
     expect(wire("install.profile_observed", { email: "ada@uni.edu" })).toContain("Private");

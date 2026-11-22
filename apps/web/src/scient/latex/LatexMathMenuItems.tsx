@@ -3,6 +3,7 @@ import { MenuRadioGroup, MenuRadioItemIndicator, MenuSeparator } from "~/compone
 import { LatexMatrixSizeMenu } from "./LatexMatrixSizeMenu";
 import { LatexBracketsMenu } from "./LatexBracketsMenu";
 import type { MatrixEnvironment } from "../math/input/matrix";
+import { T, useGT } from "gt-react";
 
 export const LATEX_CASES_TEMPLATE = "\\begin{cases}{} & {}\\\\{} & {}\\end{cases}";
 
@@ -32,13 +33,14 @@ export function LatexMathMenuItems({
   onBrackets: (tex: string) => void;
   onSymbols: () => void;
 }) {
+  const gt = useGT();
   return (
     <>
       <MenuRadioGroup value={placement}>
         {(
           [
-            ["inline-math", "Inline math"],
-            ["equation", "Display math"],
+            ["inline-math", gt("Inline math")],
+            ["equation", gt("Display math")],
           ] as const
         ).map(([value, label]) => (
           <DockCommandRadioItem
@@ -47,7 +49,7 @@ export function LatexMathMenuItems({
             disabled={disabled || protectedSource || (value === "equation" && !displayAvailable)}
             title={
               value === "equation" && !displayAvailable
-                ? "This container supports inline math."
+                ? gt("This container supports inline math.")
                 : undefined
             }
             onClick={() => {
@@ -64,9 +66,9 @@ export function LatexMathMenuItems({
       <DockCommandItem
         disabled={disabled || protectedSource || !displayAvailable}
         onClick={onAligned}
-        title={!displayAvailable ? "This container supports inline math." : undefined}
+        title={!displayAvailable ? gt("This container supports inline math.") : undefined}
       >
-        Aligned equations
+        <T>Aligned equations</T>
       </DockCommandItem>
       <MenuSeparator />
       <LatexBracketsMenu disabled={disabled} onInsert={onBrackets} />
@@ -78,10 +80,10 @@ export function LatexMathMenuItems({
         onInsert={onInsert}
       />
       <DockCommandItem disabled={disabled} onClick={() => onInsert(LATEX_CASES_TEMPLATE)}>
-        Cases
+        <T context="LaTeX cases environment">Cases</T>
       </DockCommandItem>
       <DockCommandItem disabled={disabled} onClick={onSymbols}>
-        Symbols
+        <T>Symbols</T>
       </DockCommandItem>
     </>
   );

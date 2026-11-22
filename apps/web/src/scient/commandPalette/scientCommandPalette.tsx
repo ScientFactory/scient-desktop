@@ -4,6 +4,7 @@ import {
   getFilesystemBrowsePath,
 } from "@t3tools/client-runtime/state/filesystem";
 import type { EnvironmentId, FilesystemBrowseResult } from "@t3tools/contracts";
+import { msg, useGT } from "gt-react";
 import { FolderPlusIcon } from "lucide-react";
 import {
   type ComponentProps,
@@ -27,6 +28,7 @@ import {
 import type { CommandPaletteContent } from "~/components/CommandPaletteContent";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useProjectFolderDrop } from "~/hooks/useProjectFolderDrop";
+import { m } from "~/i18n/messages";
 import { useScientProjectInitialization } from "~/hooks/useScientProjectInitialization";
 import { ensureBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
 import { isFilesystemBrowseQuery } from "@t3tools/client-runtime/state/projects";
@@ -94,12 +96,13 @@ export function useScientCommandPaletteProjectInitialization(open: boolean) {
  * thread gets started.
  */
 export function useScientNewThreadAddProjectItem(openAddProjectFlow: () => void) {
+  const gt = useGT();
   const projectSnapshotsReady = useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
   const newThreadAddProjectItem: CommandPaletteActionItem = {
     kind: "action",
     value: "action:new-thread-in:add-project",
     searchTerms: ["add project", "new project", "folder", "clone", "repository"],
-    title: "Add project",
+    title: gt("Add project"),
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     run: async () => {
@@ -127,8 +130,8 @@ export function notifyScientProjectStillSyncing(): void {
   toastManager.add(
     stackedThreadToast({
       type: "warning",
-      title: "Project added but still syncing",
-      description: "The project is saved. Select it again after it appears in the sidebar.",
+      title: m(msg("Project added but still syncing")),
+      description: m(msg("The project is saved. Select it again after it appears in the sidebar.")),
     }),
   );
 }

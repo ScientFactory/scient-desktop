@@ -35,6 +35,13 @@ shown as unpriced rather than guessed.
 Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
 the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
+The server keeps scanned usage history for 92 days by default. Claude Code deletes its own
+transcripts after 30 days, so for older Claude usage this history is the only record left. To keep
+it longer, set `usageHistoryRetentionDays` in `~/.scient-next/userdata/settings.json` to a number of days
+such as `365`, or to `"unlimited"`. Usage views still show at most 90 days. Lowering the value
+prunes older history on the next refresh, and raising it again does not bring pruned history back.
+While `settings.json` cannot be read, nothing is pruned.
+
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including Scient-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on
 the server to read a different data directory; comma-separated paths read multiple directories.
@@ -199,20 +206,50 @@ Grok reports the remaining subscription allowance and reset time for its current
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
+Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
+Until then it shows no limits. Readings are not kept across a server restart.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
+
+## Subscription quota fallback
+
+For a new turn that needs a quota fallback and the explicit resume-after-limit action,
+Scient first tries your explicitly configured fallback, including another account of the
+same provider, a custom model, or an API connection you chose. A saved fallback remains
+eligible when only the default list hides it; explicitly hiding it in your provider
+settings disables it as a fallback. The model must be available, enabled for the project,
+able to generate text, and not out of quota. Saved aliases use the underlying model's limits.
+
+If that fallback cannot be used, Scient considers eligible subscription accounts connected
+inside Scient Agent in this order: **OpenAI → Anthropic →
+Antigravity → Muse Code**, using each subscription's
+[preferred model](./providers.md#model-visibility-and-subscription-defaults), not catalog order.
+It skips hidden or unavailable models, signed-out accounts, exhausted quota, and models
+the provider reports as unsuitable for text generation.
+
+This automatic chain also applies when the limited thread uses a standalone provider;
+standalone providers are destinations only when explicitly configured as the fallback.
+Automatic candidates never silently route work to a metered API account. If no eligible
+subscription choice remains, choose a model or account explicitly or wait for quota to refill.
+Resuming a limited conversation remains an explicit action; the policy does not silently
+resume it or rewrite its saved model. Subscription defaults also leave existing threads,
+explicit selections, and your global default unchanged.
 
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
 environment that will connect to the hub and enter its URL and management key.
 
-The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
+The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear under **Usage → Limits**;
+accounts for other providers are not read. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
 This connection supplies usage information; configure
-the provider separately to send agent requests through the hub. Remove the hub from the same
-settings section when you no longer need it.
+the provider separately to send agent requests through the hub. A thread uses the hub's limits and
+reset times only when its provider's endpoint has the same address as the hub, for example
+`http://127.0.0.1:8317` for both. Remove the hub from the same settings section when you no longer
+need it.
 
 If a directly connected provider reports limits for the same provider and email, its row replaces
 the hub copy and retains details such as banked reset credits. The hub remains visible when the

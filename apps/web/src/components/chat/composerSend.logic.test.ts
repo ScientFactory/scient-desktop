@@ -1,11 +1,13 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
+import type { ComposerThreadDraftState } from "../../composerDraftStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
+  composerDraftContentChanged,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -15,6 +17,46 @@ const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");
 const localThread = threadContextRecord(scopeThreadRef(local, ThreadId.make("a")), "Local");
 const remoteThread = threadContextRecord(scopeThreadRef(remote, ThreadId.make("b")), "Remote");
+
+it("detects draft edits during upload preparation without treating upload metadata as an edit", () => {
+  const draft: ComposerThreadDraftState = {
+    prompt: "before",
+    images: [],
+    files: [
+      {
+        type: "file",
+        id: "file",
+        name: "a.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 1,
+        file: null,
+      },
+    ],
+    nonPersistedImageIds: [],
+    persistedAttachments: [],
+    terminalContexts: [],
+    previewAnnotations: [],
+    reviewComments: [],
+    threadContexts: [],
+    environmentContexts: [],
+    replyTo: null,
+    modelSelectionByProvider: {},
+    activeProvider: null,
+    runtimeMode: null,
+    interactionMode: null,
+  };
+  expect(
+    composerDraftContentChanged(draft, {
+      ...draft,
+      files: [{ ...draft.files[0]!, uploadedAttachmentId: "upload", uploadEnvironmentId: local }],
+    }),
+  ).toBe(false);
+  expect(composerDraftContentChanged(draft, { ...draft, prompt: "after" })).toBe(true);
+  expect(composerDraftContentChanged(draft, { ...draft, files: [] })).toBe(true);
+  expect(composerDraftContentChanged(draft, { ...draft, threadContexts: [localThread] })).toBe(
+    true,
+  );
+});
 
 describe("referencedThreadContexts", () => {
   it("keeps only the attached threads the prompt still links", () => {
@@ -31,9 +73,7 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: true,
         threadContexts: [localThread, remoteThread],
-        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
-        candidateEnvironments: [],
-        // SCIENT-FORK:END
+        candidateEnvironmentIds: [],
       }).title,
     ).toBe("Checking machine resources");
   });
@@ -43,9 +83,7 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: false,
         threadContexts: [localThread, remoteThread],
-        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
-        candidateEnvironments: [{ environmentId: local }, { environmentId: remote }],
-        // SCIENT-FORK:END
+        candidateEnvironmentIds: [local, remote],
       }).description,
     ).toMatch(/No machine can read every attached thread/);
   });
@@ -55,9 +93,7 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: false,
         threadContexts: [localThread],
-        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
-        candidateEnvironments: [{ environmentId: remote }, { environmentId: local }],
-        // SCIENT-FORK:END
+        candidateEnvironmentIds: [remote, local],
       }).description,
     ).toMatch(/No eligible machine has available resources/);
   });

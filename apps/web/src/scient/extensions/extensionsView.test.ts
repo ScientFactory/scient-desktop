@@ -2,6 +2,7 @@ import { validateCuratedAddress } from "./extensionsView";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  audienceLabel,
   audienceReaches,
   connectorActions,
   connectorFacts,
@@ -9,6 +10,7 @@ import {
   audienceSupport,
   collectProviderExtensionGroups,
   providerExtensionAudience,
+  providerStoreAudience,
   worksWithCardAgents,
 } from "./extensionsView";
 
@@ -24,7 +26,10 @@ const plugin = { id: "test", name: "test", enabled: true, source: "local" as con
 
 describe("extension audiences", () => {
   it("keeps account apps with their owning instance and explains other agents", () => {
-    const audience = providerExtensionAudience(codex, { ...plugin, source: "remote" });
+    const audience = providerExtensionAudience(codex, { ...plugin, source: "remote" }, [
+      codex,
+      claude,
+    ]);
     expect(audienceReaches(audience, codex)).toBe(true);
     expect(audienceReaches(audience, provider("codex", "second"))).toBe(false);
     expect(audienceSupport(audience, [codex, claude], [])[1]).toMatchObject({
@@ -32,8 +37,11 @@ describe("extension audiences", () => {
       reason: "Uses Codex's own ChatGPT account",
     });
     expect(
-      providerExtensionAudience(claude, { name: "mail", status: "needs-auth", scope: "claudeai" })
-        .layer,
+      providerExtensionAudience(
+        claude,
+        { name: "mail", status: "needs-auth", scope: "claudeai" },
+        [],
+      ).layer,
     ).toBe("agent");
     // "Codex only" lists Codex alone; Scient connectors still explain every agent.
     const support = audienceSupport(audience, [codex, claude], []);
@@ -55,22 +63,59 @@ describe("extension audiences", () => {
     expect(groups).toHaveLength(2);
     expect(groups[0]?.plugins).toHaveLength(1);
     expect(groups[0]?.mcpServers).toEqual([]);
-    expect(audienceReaches(providerExtensionAudience(claude, plugin), codex)).toBe(false);
+    expect(audienceReaches(providerExtensionAudience(claude, plugin, []), codex)).toBe(false);
+  });
+
+  it("lets a Scient Agent that loads Codex's plugins reach them, except OpenAI's host-coupled ones", () => {
+    const loads = { ...scient, usesCodexPlugins: true };
+    const installed = { ...plugin, id: "linear@openai-curated", marketplace: "OpenAI Curated" };
+    const bundled = { ...plugin, id: "browser@openai-bundled", marketplace: "OpenAI Bundled" };
+
+    const reached = providerExtensionAudience(codex, installed, [codex, loads]);
+    expect(reached).toEqual({ layer: "codex", ownerInstanceId: codex.instanceId });
+    expect(audienceLabel(reached)).toBe("Works with Codex and Scient Agent");
+    expect(
+      [codex, provider("codex", "second"), loads, scient, claude].map((agent) =>
+        audienceReaches(reached, agent),
+      ),
+    ).toEqual([true, false, true, false, false]);
+    expect(audienceSupport(reached, [loads, scient], [])[1]).toMatchObject({
+      status: "unsupported",
+      reason: "Uses Codex’s plugin format",
+    });
+
+    // OpenAI's bundled plugins, and every plugin while no Scient Agent loads Codex's, stay Codex's.
+    for (const audience of [
+      providerExtensionAudience(codex, bundled, [codex, loads]),
+      providerExtensionAudience(codex, installed, [codex, scient]),
+      providerStoreAudience(codex, "codex", [codex, loads], "messages@openai-bundled"),
+      providerStoreAudience(codex, "codex", [codex, scient], "linear@openai-curated"),
+    ]) {
+      expect(audienceLabel(audience)).toBe("Codex only");
+      expect(audienceReaches(audience, loads)).toBe(false);
+    }
+    expect(providerStoreAudience(codex, "codex", [codex, loads], "linear@openai-curated")).toEqual(
+      reached,
+    );
   });
 });
 
 it("keeps standalone Claude MCP servers private and retains a Scient-owned shared plugin when source sharing is off", () => {
-  const manual = providerExtensionAudience(claude, {
-    name: "private",
-    scope: "user",
-    status: "unknown",
-  });
+  const manual = providerExtensionAudience(
+    claude,
+    {
+      name: "private",
+      scope: "user",
+      status: "unknown",
+    },
+    [],
+  );
   expect(manual.layer).toBe("agent");
   expect(audienceReaches(manual, scient)).toBe(false);
   const own = { ...scient, usesClaudePlugins: false, version: "0.1.2" };
-  const shared = providerExtensionAudience(own, { ...plugin, marketplace: "official" });
+  const shared = providerExtensionAudience(own, { ...plugin, marketplace: "official" }, []);
   expect(audienceReaches(shared, own)).toBe(true);
-  expect(audienceReaches(providerExtensionAudience(claude, plugin), own)).toBe(false);
+  expect(audienceReaches(providerExtensionAudience(claude, plugin, []), own)).toBe(false);
 });
 
 it("offers sign-in only when the grant is needed and keeps account connector identity intact", () => {
@@ -103,14 +148,26 @@ it("drops the catalog's access words from a connector once its sign-in works", (
     categories: [],
   } satisfies Parameters<typeof connectorFacts>[0];
   const borrowed = { type: "source-control", host: "github.com", account: "octo" } as const;
-  expect(connectorFacts(entry, { status: "connected", auth: borrowed })).toEqual([
+  const url = "https://api.githubcopilot.com/mcp/";
+  expect(connectorFacts(entry, { status: "connected", auth: borrowed, url })).toEqual([
+    ["Host", "api.githubcopilot.com"],
     ["Hosting", "Official"],
     ["Access", "Signed in as octo"],
   ]);
   expect(
-    connectorFacts(entry, { status: "connected", auth: { type: "oauth", usesOwnClient: false } }),
-  ).toEqual([["Hosting", "Official"]]);
-  expect(connectorFacts(entry, { status: "needs-credential", auth: borrowed })).toEqual([
+    connectorFacts(entry, {
+      status: "connected",
+      auth: { type: "oauth", usesOwnClient: false },
+      url,
+    }),
+  ).toEqual([
+    ["Host", "api.githubcopilot.com"],
+    ["Hosting", "Official"],
+  ]);
+  // A connector that runs here has no host to name.
+  expect(
+    connectorFacts(entry, { status: "needs-credential", auth: borrowed, url, local: {} }),
+  ).toEqual([
     ["Hosting", "Official"],
     ["Access", "Account needed"],
   ]);

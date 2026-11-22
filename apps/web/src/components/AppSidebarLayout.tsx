@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
@@ -17,7 +18,7 @@ import { installThreadUndoShortcut } from "../hooks/threadUndoShortcut";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
-  resolveShortcutCommand,
+  isSidebarToggleShortcut,
   shortcutLabelForCommand,
 } from "../keybindings";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -26,7 +27,9 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+// SCIENT-FORK:START — the toggle centres over the collapsed icon rail.
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
+// SCIENT-FORK:END
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -36,6 +39,13 @@ import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
+// SCIENT-FORK:START — Scient's icon rail stays at the window's edge while the sidebar is collapsed,
+// and widens the sidebar's minimum by its own width.
+import {
+  CollapsedSidebarNavRail,
+  useSidebarMinimumWidthWithRail,
+} from "../scient/sidebar/SidebarNavRail";
+// SCIENT-FORK:END
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -52,6 +62,7 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
+  useMobileSidebarSheetMounted,
   useSidebar,
   useSidebarVisibility,
 } from "./ui/sidebar";
@@ -112,11 +123,10 @@ function readInitialThreadSidebarWidth(): number {
   try {
     return resolveInitialThreadSidebarWidth(
       getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite),
-      window.innerWidth,
     );
   } catch (error) {
     console.error("Could not read persisted thread sidebar width.", error);
-    return resolveInitialThreadSidebarWidth(null, window.innerWidth);
+    return resolveInitialThreadSidebarWidth(null);
   }
 }
 
@@ -263,10 +273,19 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
 }
 
 function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
+  const gt = useGT();
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
+  // SCIENT-FORK:START — the toggle centres over the collapsed icon rail (sidebarNavRail.css).
+  const { toggleSidebar, open, isMobile } = useSidebar();
+  const overCollapsedRail =
+    useClientSettings((settings) => settings.sidebarNavRailEnabled) &&
+    showSidebar &&
+    !open &&
+    !isMobile;
+  // SCIENT-FORK:END
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
@@ -296,8 +315,14 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         return;
       }
       if (
-        resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } }) !==
-        "sidebar.toggle"
+        !isSidebarToggleShortcut(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            previewFocus: isPreviewFocused(),
+            ...readRoutePanelsOpen(router),
+            usagePageOpen,
+          },
+        })
       )
         return;
 
@@ -314,7 +339,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
     };
-  }, [keybindings, showSidebar, toggleSidebar, usagePageOpen]);
+  }, [keybindings, router, showSidebar, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.
@@ -328,9 +353,12 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       ref={appShellCommandsRef}
       className={cn(
         "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
-        isMobile && mobileSheetMounted && "hidden",
+        mobileSidebarSheetMounted && "hidden",
       )}
       data-sidebar-control=""
+      // SCIENT-FORK:START
+      data-over-rail={overCollapsedRail || undefined}
+      // SCIENT-FORK:END
     >
       {showSidebar ? (
         <Tooltip>
@@ -343,7 +371,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
                   isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
                 )}
                 {...(stageBackdropVariant ? { stage: stageBackdropVariant } : {})}
-                aria-label="Toggle main sidebar"
+                aria-label={gt("Toggle main sidebar")}
                 data-stage-variant={
                   isSidebarVisible && stageBackdropVariant ? stageBackdropVariant : undefined
                 }
@@ -351,7 +379,9 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
             }
           />
           <TooltipPopup side="bottom">
-            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+            {shortcutLabel
+              ? gt("Toggle main sidebar ({shortcut})", { shortcut: shortcutLabel })
+              : gt("Toggle main sidebar")}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -366,7 +396,8 @@ export function AppSidebarLayout({
   children: ReactNode;
   showSidebar?: boolean;
 }) {
-  const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
+  const gt = useGT();
+  const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Threads"));
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
@@ -381,7 +412,11 @@ export function AppSidebarLayout({
   // A clamped drag may not change width, so viewport changes need a separate subscription.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const [brandWidth, setBrandWidth] = useState(0);
-  const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);
+  // SCIENT-FORK:START — with the icon rail on, the sidebar's minimum leaves the thread list room.
+  const sidebarMinimumWidth = useSidebarMinimumWidthWithRail(
+    resolveThreadSidebarMinimumWidth(brandWidth),
+  );
+  // SCIENT-FORK:END
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth, sidebarMinimumWidth);
   const resetSidebarWidth = () => {
     try {
@@ -389,7 +424,7 @@ export function AppSidebarLayout({
     } catch (error) {
       console.error("Could not clear persisted thread sidebar width.", error);
     }
-    setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
+    setSidebarWidth(resolveInitialThreadSidebarWidth(null));
   };
   const isWindowFullscreen = useSyncExternalStore(
     subscribeToWindowFullscreen,
@@ -423,7 +458,7 @@ export function AppSidebarLayout({
               data-app-sidebar=""
               {...sidebarArea}
               role="navigation"
-              aria-label="Threads"
+              aria-label={gt("Threads")}
               resizable={{
                 maxWidth: sidebarMaximumWidth,
                 minWidth: sidebarMinimumWidth,
@@ -440,6 +475,9 @@ export function AppSidebarLayout({
             </Sidebar>
           </>
         ) : null}
+        {/* SCIENT-FORK:START */}
+        {showSidebar ? <CollapsedSidebarNavRail /> : null}
+        {/* SCIENT-FORK:END */}
         {children}
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />

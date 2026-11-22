@@ -6,7 +6,6 @@ import * as NodeZlib from "node:zlib";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
-import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
@@ -22,11 +21,16 @@ import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { scientPdfAssets } from "./scripts/scientPdfAssets";
+import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
+import { formatAppDisplayName, resolveWebAppStageLabel } from "./src/branding.logic";
 // SCIENT-FORK:START — balance CI's fixed three web shards using recorded file durations.
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — opt-in CI attribution of browser page and socket loss.
+import { browserProvider } from "./src/testUtils/browserLifecycleDiagnostics";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — opt-in CI-like CPU throttle for local browser runs.
 import { applyCpuThrottle } from "./test/scientCpuThrottle";
@@ -67,12 +71,10 @@ const configuredRelayTracingToken = SCIENT_DESKTOP_IDENTITY.outboundTelemetryEna
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredReleaseChannel =
   process.env.T3CODE_BUILT_DEV === "1" ? "dev" : process.env.VITE_RELEASE_CHANNEL?.trim() || "";
-const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 const configuredDesktopUpdateRepository =
   process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
   process.env.GITHUB_REPOSITORY?.trim() ||
   "";
-const configuredFeatureSecrets = process.env.T3CODE_FEATURE_SECRETS?.trim() || "";
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -94,6 +96,11 @@ const builtDev = process.env.T3CODE_BUILT_DEV === "1";
 
 const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
+
+// Bundled dev and `build --watch` pass Rolldown `exclude` but not Vite's default `ignored`, so
+// they watch node_modules. Those files are pnpm-store hardlinks shared by every worktree, so each
+// `vp i` or worktree removal elsewhere rebuilds every long-running server and leaks native memory.
+const rolldownWatchExclude = [/[\\/]node_modules[\\/]/];
 
 const buildSourcemap: boolean | "hidden" =
   sourcemapEnv === "0" || sourcemapEnv === "false"
@@ -119,12 +126,14 @@ const unitTestProject = {
     setupFiles: [
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",
+      "../../packages/shared/src/testing/gitEnv.ts",
     ],
   },
 } satisfies TestProjectInlineConfiguration;
 
-// Hash checkout paths to ports 61000-64999; Vitest's fixed port collides under inherited strictPort.
-const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
+// Hash checkout paths to ports 20000-23999; Vitest's fixed port collides under inherited strictPort.
+// Stay below ephemeral ranges: Windows reserves Hyper-V/WSL blocks there and EACCES is not skipped.
+const browserTestApiPort = 20_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
 
 const browserTestProject = {
   extends: true,
@@ -145,7 +154,7 @@ const browserTestProject = {
       "fast-xml-parser",
       "entities",
       "dompurify",
-      "heic-to/next",
+      "heic-to/csp",
       "jszip",
       "pdfjs-dist",
       "sql.js",
@@ -177,7 +186,9 @@ const browserTestProject = {
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright(),
+      // SCIENT-FORK:START — Playwright, plus lifecycle records when CI opts in.
+      provider: browserProvider(),
+      // SCIENT-FORK:END
       instances: [{ browser: "chromium" }],
       screenshotFailures: false,
       commands: {
@@ -293,6 +304,46 @@ function chunkCycleGuardPlugin(): Plugin {
   };
 }
 
+// Bundled dev never evicts emitted files from memory (vitejs/vite#23781), so hashed names keep
+// a copy of every changed chunk from every rebuild. Fixed names overwrite the previous copy.
+function bundledDevStableNamesPlugin(): Plugin {
+  return {
+    name: "t3code:bundled-dev-stable-names",
+    apply: "serve",
+    outputOptions: (options) => ({
+      ...options,
+      chunkFileNames: "assets/[name].js",
+      assetFileNames: "assets/[name][extname]",
+    }),
+  };
+}
+
+// Stamps index.html's title with the name branding.ts resolves once the app
+// loads, so a tab opens on the right channel instead of flashing another's.
+// Desktop swaps in its injected branding from an inline script in index.html.
+function bootstrapTitlePlugin(): Plugin {
+  let development = false;
+  return {
+    name: "t3code:bootstrap-title",
+    configResolved(config) {
+      // The same flag Vite exposes to the app as import.meta.env.DEV.
+      development = !config.isProduction;
+    },
+    transformIndexHtml(html) {
+      const stageLabel = resolveWebAppStageLabel({
+        hostedAppChannel: configuredHostedAppChannel,
+        development,
+      });
+      const title = formatAppDisplayName({
+        // SCIENT-FORK: the boot title names Scient, not T3 Code.
+        baseName: SCIENT_DESKTOP_IDENTITY.baseName,
+        stageLabel,
+      });
+      return html.replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`);
+    },
+  };
+}
+
 // Allow Tailnet hosts for sharing; Tailscale-controlled DNS prevents attacker rebinding.
 const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .split(",")
@@ -300,7 +351,14 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
+  // `vp dev` and `--built` dev pair this client with a server run from source, which reports the
+  // manifest version. Only a production build is paired with a packed server.
+  const configuredAppVersion =
+    process.env.APP_VERSION?.trim() ||
+    (command === "build" && !builtDev
+      ? resolveTaggedSourceVersion(`${import.meta.dirname}/../..`, pkg.version)
+      : pkg.version);
   return {
     run: {
       tasks: {
@@ -313,6 +371,7 @@ export default defineConfig(({ mode }) => {
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      bootstrapTitlePlugin(),
       scientPdfAssets(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
@@ -331,6 +390,7 @@ export default defineConfig(({ mode }) => {
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
       warmBundledDevPlugin(),
+      bundledDev ? bundledDevStableNamesPlugin() : undefined,
     ],
     optimizeDeps: {
       // Keep the barrel, icon factory and icons together: splitting only the
@@ -377,11 +437,20 @@ export default defineConfig(({ mode }) => {
               "@base-ui/react/radio",
               "@base-ui/react/radio-group",
               "@base-ui/react/scroll-area",
+              "@base-ui/react/separator",
               "@base-ui/react/toggle",
               "@base-ui/react/toggle-group",
               "@daypicker/react",
+              "@dnd-kit/core",
+              "@dnd-kit/modifiers",
+              "@dnd-kit/utilities",
               "@pierre/diffs/utils/parsePatchFiles",
               "@pierre/trees",
+              "@pierre/trees/react",
+              "shiki/core",
+              "shiki/engine/oniguruma",
+              "shiki/langs/mermaid.mjs",
+              "shiki/wasm",
               "effect/reactivity/AsyncResult",
               "heic-to/csp",
               "@scientfactory/conversation > mdast-util-from-markdown",
@@ -417,18 +486,11 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY": JSON.stringify(
         configuredDesktopUpdateRepository,
       ),
-      "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
     },
     resolve: {
       tsconfigPaths: true,
-      alias: {
-        "@betteroffice/fonts-cjk": new URL(
-          "./src/components/files/office/fonts-cjk.ts",
-          import.meta.url,
-        ).pathname,
-      },
       dedupe: ["react", "react-dom"],
     },
     experimental: {
@@ -446,6 +508,7 @@ export default defineConfig(({ mode }) => {
         // can hold their test page behind unrelated transforms and time it out.
         clientFiles: mode === "test" ? [] : ["./src/main.tsx"],
       },
+      watch: { exclude: rolldownWatchExclude },
       ...(devProxyTarget
         ? {
             // Share prefixes with the backend catch-all so the proxy and 404 lists cannot drift.
@@ -481,6 +544,7 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: buildSourcemap,
+      ...(builtDev ? { watch: { exclude: rolldownWatchExclude } } : {}),
       // SCIENT-FORK:START — the standalone document page the desktop prints
       // for PDF export ships beside the app entry.
       rolldownOptions: {

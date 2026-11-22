@@ -1,5 +1,6 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEffectEvent } from "react";
+import { T, useGT, Var } from "gt-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -13,11 +14,12 @@ import { readLocalApi } from "~/localApi";
 import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import { editorCompositions } from "../editorFlush/editorComposition";
 import { Button } from "~/components/ui/button";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownCitationActions } from "./MarkdownCitationActions";
 import type { MarkdownCitationSource, MarkdownCiteHandler } from "./markdownCitation";
+import { MarkdownResults, type MarkdownResultsHandle } from "../results/MarkdownResults";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
 import { showScientMarkdownFootnoteContextMenu } from "./footnoteContextMenu";
@@ -50,6 +52,12 @@ import {
   type MarkdownPersistenceLease,
 } from "./persistence/markdownPersistenceRegistry";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
+import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
+import { markdownQuote } from "../annotations/quoteFormat";
+import type { LibraryCitationCandidate } from "../sources/libraryCitations";
+import type { ScientMarkdownCitationOpenRequest } from "./prosemirror/citationOpenRequest";
+
+const EMPTY_LIBRARY_CITATIONS: ReadonlyArray<LibraryCitationCandidate> = [];
 
 const CHROME_BLOCK_SHORTCUTS = [
   ["moveBlockUp", "move-up"],
@@ -86,6 +94,9 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
+  /** Library sources offered after `[@`. */
+  readonly libraryCitations?: ReadonlyArray<LibraryCitationCandidate>;
+  readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
   readonly onWikiLinkSelected?: (path: string) => void;
@@ -105,6 +116,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
 }
 
 function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfaceProps) {
+  const gt = useGT();
   const imageInputRef = useRef<HTMLInputElement>(null);
   const bindingsRef = useRef(props);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps bindingsRef holding the latest props for imperative callbacks
@@ -170,6 +182,17 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   });
   const readBindings = useStableCallback(() => bindingsRef.current);
   const selectImage = useStableCallback(() => imageInputRef.current?.click());
+  const resultsRef = useRef<MarkdownResultsHandle | null>(null);
+  const registerResults = useStableCallback((handle: MarkdownResultsHandle) => {
+    resultsRef.current = handle;
+    return () => {
+      if (resultsRef.current === handle) resultsRef.current = null;
+    };
+  });
+  const openResult = useStableCallback((href: string, anchor: HTMLElement, position?: number) =>
+    resultsRef.current?.openCard(href, anchor, position),
+  );
+  const selectResult = useStableCallback(() => resultsRef.current?.openPicker());
   const [controller] = useState(
     () =>
       new ScientMarkdownEditorView({
@@ -229,6 +252,13 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             }
           : {}),
         wikiLinkTargetExists: (target) => readBindings().wikiLinkTargetExists?.(target) ?? null,
+        onOpenCitation: (request) => readBindings().onOpenCitation?.(request) ?? false,
+        ...(props.citationSource
+          ? {
+              onOpenResult: openResult,
+              selectResult,
+            }
+          : {}),
         showLinkContextMenu: async (request) => {
           const api = readLocalApi();
           if (!api) return null;
@@ -264,6 +294,21 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   useLayoutEffect(() => {
     controllerRef.current = controller;
   });
+  useDocumentQuoteTarget(
+    props.citationSource
+      ? {
+          environmentId: props.citationSource.environmentId,
+          root: props.citationSource.cwd,
+          label: props.citationSource.path.split("/").at(-1) ?? props.citationSource.path,
+          element: () => controller.view?.dom ?? null,
+          insert: (quote) => controller.insertQuotation(markdownQuote(quote)),
+        }
+      : null,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the loaded Library to the imperative editor controller
+  useLayoutEffect(() => {
+    controller.setLibraryCitations(props.libraryCitations ?? EMPTY_LIBRARY_CITATIONS);
+  }, [controller, props.libraryCitations]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers an external-projection handler on the persistence lease until unmount
   useLayoutEffect(
@@ -471,7 +516,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
           className="hidden"
           type="file"
           accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
-          aria-label="Choose image for Markdown document"
+          aria-label={gt("Choose image for Markdown document")}
           multiple
           onChange={(event) => {
             [...(event.currentTarget.files ?? [])].forEach((file) =>
@@ -479,6 +524,15 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             );
             event.currentTarget.value = "";
           }}
+        />
+      ) : null}
+      {props.citationSource ? (
+        <MarkdownResults
+          controller={controller}
+          environmentId={props.citationSource.environmentId}
+          cwd={props.citationSource.cwd}
+          documentPath={props.citationSource.path}
+          register={registerResults}
         />
       ) : null}
       <div className="scient-markdown-rich-pane">
@@ -497,22 +551,26 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
         />
         {retainedInput && !canEditPendingInput ? (
           <div role="status" className="px-3 py-2 text-sm">
-            This document has unfinished input in another open editor. Return there to correct or
-            undo it before editing here.
+            <T>
+              This document has unfinished input in another open editor. Return there to correct or
+              undo it before editing here.
+            </T>
           </div>
         ) : null}
         {pendingWriteback && canEditPendingInput ? (
           <div role="status" className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
             <span>
-              {pendingWriteback.message} Your input remains open here. Correct it or undo the
-              change. It is not saved or protected against an app restart.
+              <T>
+                <Var>{pendingWriteback.message}</Var> Your input remains open here. Correct it or
+                undo the change. It is not saved or protected against an app restart.
+              </T>
             </span>
             <Button
               size="xs"
               variant="ghost"
               onClick={() => controller.executeKeyboardCommand("markdown.undo")}
             >
-              Undo
+              <T context="button, undoes the last change">Undo</T>
             </Button>
             <Button
               size="xs"
@@ -520,11 +578,11 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
               onClick={() =>
                 void writeTextToClipboard(
                   JSON.stringify(pendingWriteback.document.toJSON(), null, 2),
-                  "pending document input",
+                  namedClipboardTarget("pending document input"),
                 )
               }
             >
-              Copy recovery data
+              <T>Copy recovery data</T>
             </Button>
           </div>
         ) : null}

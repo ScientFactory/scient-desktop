@@ -4,7 +4,6 @@ import {
   // SCIENT-FORK:START
   WS_METHODS,
   ProjectWriteFileError,
-  ProjectReadFileError,
   type ProjectWriteFileInput,
   type ProjectWriteFileResult,
   type ProjectRenameFileResult,
@@ -14,6 +13,7 @@ import {
   AuthFilesystemWriteScope,
   // SCIENT-FORK:END
   ProjectId,
+  ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ThreadId,
@@ -54,6 +54,8 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { EnvironmentProject } from "./models.ts";
 import { createProjectEnvironmentAtoms } from "./projectCommands.ts";
+// SCIENT-FORK: ordered-read and mutation lanes start commands before awaiting them.
+import { runAtomCommand } from "./runtime.ts";
 const decodeReadFileInput = Schema.decodeUnknownSync(ProjectReadFileInput);
 const decodeReadFileResult = Schema.decodeUnknownSync(ProjectReadFileResult);
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -90,7 +92,10 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
   const metadataRequests: string[][] = [];
   const file = { byteLength: 5, path: "/repo/foo" };
   const fileEvents = yield* Queue.unbounded<ProjectFileWatchEvent>();
-  const readResponse = { wait: Effect.void as Effect.Effect<void>, missing: false };
+  const readResponse = {
+    wait: Effect.void as Effect.Effect<void, ProjectReadFileError>,
+    missing: false,
+  };
   const supervisor = EnvironmentSupervisor.of({
     // SCIENT-FORK:END
     target: new BearerConnectionTarget({
@@ -209,7 +214,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
       // SCIENT-FORK:END
     }),
   );
-  const openScratch = Effect.promise(() =>
+  const openScratch = Effect.exit(
     commands.openScratch.run(registry, { environmentId: ENVIRONMENT_ID, input: {} }),
   );
   // SCIENT-FORK:START
@@ -227,6 +232,110 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
 });
 
 describe("writeFile metadata", () => {
+  it.effect("retires a saved overlay after an equal read succeeds, preserving newer drafts", () =>
+    Effect.gen(function* () {
+      const h = yield* makeMetadataHarness();
+      const target = { environmentId: ENVIRONMENT_ID, cwd: "/repo", relativePath: "foo" };
+      const query = h.commands.readFile({
+        environmentId: ENVIRONMENT_ID,
+        input: { cwd: target.cwd, relativePath: target.relativePath },
+      });
+      h.registry.mount(query);
+      const read = () => AtomRegistry.getResult(h.registry, query, { suspendOnWaiting: true });
+      const original = yield* read();
+      const overlay = h.commands.optimisticFile(target);
+      h.registry.mount(overlay);
+      const saved = { ...original, contents: "saved" };
+      h.registry.set(overlay, { data: saved, saved: true, confirmingQuery: query });
+      h.readResponse.wait = Effect.fail(
+        new ProjectReadFileError({
+          cwd: "/repo",
+          relativePath: "foo",
+          failure: "operation_failed",
+        }),
+      );
+      h.registry.refresh(query);
+      yield* Effect.exit(read());
+      expect(h.registry.get(overlay)?.data.contents).toBe("saved");
+
+      h.readResponse.wait = Effect.void;
+      h.registry.refresh(query);
+      const refreshed = yield* read();
+      // The production query shares equal file values across this failed confirmation.
+      expect(refreshed).toBe(original);
+      expect(h.registry.get(overlay)).toBeNull();
+
+      h.registry.set(overlay, { data: { ...saved, contents: "newer draft" }, saved: false });
+      h.registry.refresh(query);
+      yield* read();
+      expect(h.registry.get(overlay)?.data.contents).toBe("newer draft");
+    }),
+  );
+
+  it.effect.each([true, false])(
+    "keeps a saved overlay when an older read uses different allowMissing options (confirmation: %s)",
+    (allowMissing) =>
+      Effect.gen(function* () {
+        const h = yield* makeMetadataHarness();
+        const target = { environmentId: ENVIRONMENT_ID, cwd: "/repo", relativePath: "foo" };
+        const query = h.commands.readFile({
+          environmentId: ENVIRONMENT_ID,
+          input: {
+            cwd: target.cwd,
+            relativePath: target.relativePath,
+            ...(allowMissing ? { allowMissing: true } : {}),
+          },
+        });
+        const otherQuery = h.commands.readFile({
+          environmentId: ENVIRONMENT_ID,
+          input: {
+            cwd: target.cwd,
+            relativePath: target.relativePath,
+            ...(!allowMissing ? { allowMissing: true } : {}),
+          },
+        });
+        const read = (atom: typeof query) =>
+          AtomRegistry.getResult(h.registry, atom, { suspendOnWaiting: true });
+        h.registry.mount(query);
+        const original = yield* read(query);
+        const overlay = h.commands.optimisticFile(target);
+        h.registry.mount(overlay);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        h.readResponse.wait = Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        h.registry.mount(otherQuery);
+        const olderRead = yield* read(otherQuery).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        h.registry.set(overlay, {
+          data: { ...original, contents: "saved" },
+          saved: true,
+          confirmingQuery: query,
+        });
+        h.readResponse.wait = Effect.fail(
+          new ProjectReadFileError({
+            cwd: target.cwd,
+            relativePath: target.relativePath,
+            failure: "operation_failed",
+          }),
+        );
+        h.registry.refresh(query);
+        yield* Effect.exit(read(query));
+        expect(h.registry.get(overlay)?.data.contents).toBe("saved");
+
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(olderRead);
+        expect(h.registry.get(overlay)?.data.contents).toBe("saved");
+        expect(Option.getOrNull(AsyncResult.value(h.registry.get(query)))).toBe(original);
+
+        h.readResponse.wait = Effect.void;
+        h.registry.refresh(query);
+        expect(yield* read(query)).toBe(original);
+        expect(h.registry.get(overlay)).toBeNull();
+      }),
+  );
+
   it.effect("preserves optional read results without seeding metadata for an absent file", () =>
     Effect.gen(function* () {
       // SCIENT-FORK:START
@@ -258,7 +367,7 @@ describe("writeFile metadata", () => {
         yield* AtomRegistry.getResult(h.registry, metadata, { suspendOnWaiting: true }),
       ).toBeNull();
       expect(h.metadataRequests).toEqual([["/repo/foo"]]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   // SCIENT-FORK:START
@@ -312,7 +421,7 @@ describe("writeFile metadata", () => {
         { suspendOnWaiting: true },
       ).pipe(Effect.forkChild);
       yield* Deferred.await(started);
-      const write = yield* Effect.promise(() =>
+      const write = yield* Effect.exit(
         h.commands.writeFile.run(h.registry, {
           environmentId: ENVIRONMENT_ID,
           input: { cwd: "/repo", relativePath: "foo", contents: "new" },
@@ -325,7 +434,7 @@ describe("writeFile metadata", () => {
       h.registry.refresh(metadata);
       expect(yield* readMetadata()).toEqual({ kind: "file", byteLength: 10 });
       expect(h.metadataRequests).toHaveLength(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("refreshes retained canonical and original paths after an aliased write", () =>
@@ -349,7 +458,7 @@ describe("writeFile metadata", () => {
         { kind: "file", byteLength: 5 },
         { kind: "file", byteLength: 5 },
       ]);
-      const result = yield* Effect.promise(() =>
+      const result = yield* Effect.exit(
         h.commands.writeFile.run(h.registry, {
           environmentId: ENVIRONMENT_ID,
           input: { cwd: "/repo", relativePath: "./foo", contents: "new" },
@@ -366,7 +475,7 @@ describe("writeFile metadata", () => {
         "/repo/foo",
         "/repo/./foo",
       ]);
-    }).pipe(Effect.scoped),
+    }),
   );
   // SCIENT-FORK:START
 
@@ -392,7 +501,7 @@ describe("writeFile metadata", () => {
         yield* AtomRegistry.getResult(h.registry, destination, { suspendOnWaiting: true }),
       ).toBeNull();
 
-      const renamed = yield* Effect.promise(() =>
+      const renamed = yield* Effect.exit(
         h.commands.renameFile.run(h.registry, {
           environmentId: ENVIRONMENT_ID,
           input: {
@@ -467,7 +576,7 @@ describe("openScratch", () => {
       registry.set(storedProject, PROJECT);
       const result = yield* Fiber.join(opening);
       expect(result).toMatchObject({ _tag: "Success", value: PROJECT });
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 // SCIENT-FORK:START
@@ -627,12 +736,10 @@ describe("ordered project file commands", () => {
             mutationId: "owned-rename",
           },
         };
-        const lostRename = yield* Effect.promise(() => commands.renameFile.run(registry, rename));
+        const lostRename = yield* Effect.exit(commands.renameFile.run(registry, rename));
         expect(lostRename._tag).toBe("Failure");
         expect(files).toEqual(new Set(["other.md", "renamed.md"]));
-        expect(
-          yield* Effect.promise(() => commands.renameFile.run(registry, rename)),
-        ).toMatchObject({
+        expect(yield* Effect.exit(commands.renameFile.run(registry, rename))).toMatchObject({
           _tag: "Success",
           value: { revision: "rename-1", mutationId: "owned-rename" },
         });
@@ -647,18 +754,16 @@ describe("ordered project file commands", () => {
             mutationId: "owned-delete",
           },
         };
-        const lostDelete = yield* Effect.promise(() => commands.deleteFile.run(registry, remove));
+        const lostDelete = yield* Effect.exit(commands.deleteFile.run(registry, remove));
         expect(lostDelete._tag).toBe("Failure");
         expect(files).toEqual(new Set(["other.md"]));
-        expect(
-          yield* Effect.promise(() => commands.deleteFile.run(registry, remove)),
-        ).toMatchObject({
+        expect(yield* Effect.exit(commands.deleteFile.run(registry, remove))).toMatchObject({
           _tag: "Success",
           value: { relativePath: "renamed.md", mutationId: "owned-delete" },
         });
         expect(deletePublications).toBe(1);
 
-        const generatedRename = yield* Effect.promise(() =>
+        const generatedRename = yield* Effect.exit(
           commands.renameFile.run(registry, {
             ...target,
             input: {
@@ -668,7 +773,7 @@ describe("ordered project file commands", () => {
             },
           }),
         );
-        const generatedDelete = yield* Effect.promise(() =>
+        const generatedDelete = yield* Effect.exit(
           commands.deleteFile.run(registry, {
             ...target,
             input: { ...target.input, relativePath: "final.md", expectedRevision: "rename-2" },
@@ -717,24 +822,20 @@ describe("ordered project file commands", () => {
           ...target,
           input: { ...target.input, contents: "saved", mutationId: "owned-write" },
         };
-        const lost = yield* Effect.promise(() => commands.writeFile.run(registry, owned));
+        const lost = yield* Effect.exit(commands.writeFile.run(registry, owned));
         expect(lost._tag).toBe("Failure");
         if (lost._tag === "Failure") expect(Cause.squash(lost.cause)).toBe(disconnected);
         expect(diskContents).toBe("saved");
         expect(publications).toBe(1);
-        expect(yield* Effect.promise(() => commands.writeFile.run(registry, owned))).toMatchObject({
+        expect(yield* Effect.exit(commands.writeFile.run(registry, owned))).toMatchObject({
           _tag: "Success",
           value: { revision: "revision-1", mutationId: "owned-write" },
         });
         expect(publications).toBe(1);
 
         const input: ProjectWriteFileInput = { ...target.input, contents: "saved" };
-        const first = yield* Effect.promise(() =>
-          commands.writeFile.run(registry, { ...target, input }),
-        );
-        const second = yield* Effect.promise(() =>
-          commands.writeFile.run(registry, { ...target, input }),
-        );
+        const first = yield* Effect.exit(commands.writeFile.run(registry, { ...target, input }));
+        const second = yield* Effect.exit(commands.writeFile.run(registry, { ...target, input }));
         expect(first).toMatchObject({ _tag: "Success", value: { revision: "revision-2" } });
         expect(second).toMatchObject({ _tag: "Success", value: { revision: "revision-3" } });
         if (first._tag === "Success" && second._tag === "Success") {
@@ -800,23 +901,40 @@ describe("ordered project file commands", () => {
       try {
         const pendingMutation =
           mutation === "write"
-            ? commands.writeFile.run(registry, {
-                ...target,
-                input: { ...target.input, contents: "saved" },
-              })
+            ? runAtomCommand(
+                registry,
+                commands.writeFile,
+                {
+                  ...target,
+                  input: { ...target.input, contents: "saved" },
+                },
+                { reportFailure: false },
+              )
             : mutation === "rename"
-              ? commands.renameFile.run(registry, {
-                  ...target,
-                  input: { ...target.input, destinationRelativePath: "renamed.md" },
-                })
-              : commands.deleteFile.run(registry, {
-                  ...target,
-                  input: { ...target.input, expectedRevision: "revision-original" },
-                });
+              ? runAtomCommand(
+                  registry,
+                  commands.renameFile,
+                  {
+                    ...target,
+                    input: { ...target.input, destinationRelativePath: "renamed.md" },
+                  },
+                  { reportFailure: false },
+                )
+              : runAtomCommand(
+                  registry,
+                  commands.deleteFile,
+                  {
+                    ...target,
+                    input: { ...target.input, expectedRevision: "revision-original" },
+                  },
+                  { reportFailure: false },
+                );
         yield* Effect.promise(() => entered.promise);
-        const read = commands.readFileOrdered.run(registry, target);
+        const read = runAtomCommand(registry, commands.readFileOrdered, target, {
+          reportFailure: false,
+        });
         // A different path makes progress while the same-file read stays queued.
-        yield* Effect.promise(() =>
+        yield* Effect.exit(
           commands.readFileOrdered.run(registry, {
             ...target,
             input: { ...target.input, relativePath: "other.md" },
@@ -863,21 +981,36 @@ describe("ordered project file commands", () => {
           }),
       });
       try {
-        const write = commands.writeFile.run(registry, {
-          ...target,
-          input: { ...target.input, contents: "saved" },
-        });
+        const write = runAtomCommand(
+          registry,
+          commands.writeFile,
+          {
+            ...target,
+            input: { ...target.input, contents: "saved" },
+          },
+          { reportFailure: false },
+        );
         yield* Effect.promise(() => entered.promise);
         yield* Effect.promise(() =>
           Promise.all([
-            commands.readFileOrdered.run(registry, {
-              ...target,
-              input: { ...target.input, cwd: "/another-workspace" },
-            }),
-            commands.readFileOrdered.run(registry, {
-              ...target,
-              environmentId: EnvironmentId.make("another-environment"),
-            }),
+            runAtomCommand(
+              registry,
+              commands.readFileOrdered,
+              {
+                ...target,
+                input: { ...target.input, cwd: "/another-workspace" },
+              },
+              { reportFailure: false },
+            ),
+            runAtomCommand(
+              registry,
+              commands.readFileOrdered,
+              {
+                ...target,
+                environmentId: EnvironmentId.make("another-environment"),
+              },
+              { reportFailure: false },
+            ),
           ]),
         );
         expect(reads).toEqual(["/another-workspace", "/workspace"]);
@@ -994,7 +1127,7 @@ describe("ordered project file commands", () => {
             }),
         });
         try {
-          const failed = yield* Effect.promise(() =>
+          const failed = yield* Effect.exit(
             commands.writeFile.run(registry, {
               ...target,
               input: { ...target.input, contents: "draft", mutationId: "owned-write" },
@@ -1011,21 +1144,19 @@ describe("ordered project file commands", () => {
               retainedPaths: attention.retainedPaths,
             });
           }
-          yield* Effect.promise(() =>
+          yield* Effect.exit(
             commands.discardFileVersion.run(registry, {
               ...target,
               input: { ...target.input, versionId: "version-1" },
             }),
           );
-          expect(
-            yield* Effect.promise(() => commands.listFileVersions.run(registry, target)),
-          ).toMatchObject({
-            _tag: "Success",
-            value: { versions: [], attention },
-          });
-          const reviewed = yield* Effect.promise(() =>
-            commands.readFileOrdered.run(registry, target),
+          expect(yield* Effect.exit(commands.listFileVersions.run(registry, target))).toMatchObject(
+            {
+              _tag: "Success",
+              value: { versions: [], attention },
+            },
           );
+          const reviewed = yield* Effect.exit(commands.readFileOrdered.run(registry, target));
           if (currentRevision === null) {
             expect(reviewed._tag).toBe("Failure");
             if (reviewed._tag === "Failure")
@@ -1046,18 +1177,25 @@ describe("ordered project file commands", () => {
           expect(attemptedWrites).toBe(1);
           events.length = 0;
 
-          const resolution = commands.resolveFileMutation.run(registry, {
-            ...target,
-            input: {
-              ...target.input,
-              recoveryId: "recovery-1",
-              currentRevision,
-              choice: "accept-current",
+          const resolution = runAtomCommand(
+            registry,
+            commands.resolveFileMutation,
+            {
+              ...target,
+              input: {
+                ...target.input,
+                recoveryId: "recovery-1",
+                currentRevision,
+                choice: "accept-current",
+              },
             },
-          });
+            { reportFailure: false },
+          );
           yield* Effect.promise(() => entered.promise);
-          const confirmation = commands.readFileOrdered.run(registry, target);
-          yield* Effect.promise(() =>
+          const confirmation = runAtomCommand(registry, commands.readFileOrdered, target, {
+            reportFailure: false,
+          });
+          yield* Effect.exit(
             commands.readFileOrdered.run(registry, {
               ...target,
               input: { ...target.input, relativePath: "other.md" },

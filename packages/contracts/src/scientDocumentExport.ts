@@ -6,6 +6,7 @@ import {
   BROWSER_PDF_EXPORT_MAX_BASE64_LENGTH,
   BrowserPdfExportSourceSignals,
 } from "./browserPdfExport.ts";
+import { isSignedAssetPath } from "./scient/signedAssetPath.ts";
 import { isTrimmedUnadvertised } from "./scientToolSchemas.ts";
 import {
   DocumentAsset,
@@ -187,6 +188,7 @@ export const ScientDocumentPageRenderRequest = Schema.Struct({
     Schema.isTrimmed(),
     Schema.isNonEmpty(),
     Schema.isMaxLength(32_768),
+    isSignedAssetPath(),
   ),
   expected: ScientDocumentPageExpectation,
 });
@@ -302,10 +304,10 @@ const ProjectDocumentPath = Schema.String.check(
 /** Agent export of a project document to an explicit project output. */
 export const ScientDocumentExportInput = Schema.Struct({
   sourcePath: ProjectDocumentPath.annotate({
-    description: "Project-relative .md or .markdown file.",
+    description: "A .md or .markdown file in the project, relative or absolute.",
   }),
   outputPath: ProjectDocumentPath.annotate({
-    description: "Project-relative .pdf path. An existing file is replaced.",
+    description: "A .pdf path in the project. An existing file is replaced.",
   }),
 });
 export type ScientDocumentExportInput = typeof ScientDocumentExportInput.Type;

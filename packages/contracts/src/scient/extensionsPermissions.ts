@@ -11,6 +11,8 @@ export const SCIENT_EXTENSION_GUARDED_RPC_SCOPES = {
   [methods.extensionsConnectorTest]: AuthSettingsWriteScope,
   [methods.extensionsConnectorInspectLocal]: AuthSettingsWriteScope,
   [methods.extensionsConnectorImportable]: AuthSettingsWriteScope,
+  [methods.extensionsConnectorUndo]: AuthSettingsWriteScope,
+  [methods.extensionsConnectorExport]: AuthSettingsWriteScope,
   [methods.extensionsPluginInstall]: AuthSettingsWriteScope,
   [methods.extensionsPluginRemove]: AuthSettingsWriteScope,
   [methods.extensionsPluginSetEnabled]: AuthSettingsWriteScope,

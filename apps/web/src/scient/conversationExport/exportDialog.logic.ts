@@ -6,12 +6,16 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { ConversationExportFormatRegistration } from "./formatRegistry";
 
 /** Shown briefly above the Include switch the user just enabled. */
-export const INCLUDE_CAUTION = "May include file paths, commands and their output.";
-export const RUNNING_TURN_WARNING = "The current turn is still running; it will be left out.";
-const UNAVAILABLE_REASON = "Not available on this Scient.";
+/** A `msg()` string: resolve it where it shows. */
+export const INCLUDE_CAUTION = msg("May include file paths, commands and their output.");
+export const RUNNING_TURN_WARNING = msg("The current turn is still running; it will be left out.");
+const UNAVAILABLE_REASON = msg("Not available on this Scient.");
 
 /** Everything the user chooses. Built fresh for every dialog, so nothing carries over. */
 export interface ExportDialogState {
@@ -30,11 +34,15 @@ export function exportFormatAvailability(
   format: ConversationExportFormat,
   preparation: ScientConversationExportPreparation,
   registrations: ReadonlyArray<ConversationExportFormatRegistration>,
+  resolve: MessageResolver = m,
 ): ExportFormatAvailability {
   const registration = registrations.find((entry) => entry.format === format);
   const capability = preparation.formats.find((entry) => entry.format === format);
   if (registration === undefined || capability?.available !== true) {
-    return { available: false, reason: capability?.unavailableReason ?? UNAVAILABLE_REASON };
+    return {
+      available: false,
+      reason: capability?.unavailableReason ?? resolve(UNAVAILABLE_REASON),
+    };
   }
   return registration.clientAvailability?.() ?? { available: true };
 }
@@ -72,8 +80,9 @@ export function offeredVariant(
 
 export function exportDialogWarnings(
   preparation: ScientConversationExportPreparation,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<string> {
-  return preparation.runningTurnOmitted ? [RUNNING_TURN_WARNING] : [];
+  return preparation.runningTurnOmitted ? [resolve(RUNNING_TURN_WARNING)] : [];
 }
 
 /** The primary button's label for the current choices. */
@@ -81,14 +90,15 @@ export function exportSaveLabel(
   state: ExportDialogState,
   preparation: ScientConversationExportPreparation,
   registrations: ReadonlyArray<ConversationExportFormatRegistration>,
+  resolve: MessageResolver = m,
 ): string {
   const registration = selectedRegistration(state, registrations);
   const variant = offeredVariant(state, preparation, registrations);
   const value = state.variant ?? variant?.defaultValue;
-  return (
+  return resolve(
     variant?.choices.find((choice) => choice.value === value)?.saveLabel ??
-    registration?.saveLabel ??
-    "Save"
+      registration?.saveLabel ??
+      msg("Save", { $context: "button that saves the exported file" }),
   );
 }
 

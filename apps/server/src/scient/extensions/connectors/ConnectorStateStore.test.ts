@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -172,6 +173,52 @@ describe("GitHub removal", () => {
       expect(
         (yield* (yield* makeConnectorStateStore(directory)).read).githubFromSourceControlDeclined,
       ).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("connector agent state compatibility", () => {
+  it.live.each([false, true])(
+    "round-trips agent choices with the compatible format (restricted=%s)",
+    (restricted) =>
+      Effect.gen(function* () {
+        const directory = yield* seededDirectory(
+          JSON.stringify({ formatVersion: 2, connectors: [] }),
+        );
+        const store = yield* makeConnectorStateStore(directory);
+        const saved = restricted
+          ? { ...record, agents: [ProviderInstanceId.make("codex")] }
+          : record;
+        yield* store.update((current) =>
+          Effect.succeed([undefined, { ...current, connectors: [saved] }] as const),
+        );
+        expect(JSON.parse(yield* stateText(directory)).formatVersion).toBe(restricted ? 3 : 2);
+        const reloaded = yield* (yield* makeConnectorStateStore(directory)).read;
+        expect(reloaded.writable).toBe(true);
+        expect(reloaded.connectors).toEqual([saved]);
+        if (restricted) {
+          yield* store.update((current) =>
+            Effect.succeed([undefined, { ...current, connectors: [record] }] as const),
+          );
+          expect(JSON.parse(yield* stateText(directory)).formatVersion).toBe(2);
+        }
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("decodes a v3 file and retains removed-instance ids and Source Control preferences", () =>
+    Effect.gen(function* () {
+      const saved = { ...record, agents: [ProviderInstanceId.make("removed-agent")] };
+      const directory = yield* seededDirectory(
+        JSON.stringify({
+          formatVersion: 3,
+          connectors: [saved],
+          githubFromSourceControlDeclined: true,
+        }),
+      );
+      const loaded = yield* (yield* makeConnectorStateStore(directory)).read;
+      expect(loaded.writable).toBe(true);
+      expect(loaded.connectors).toEqual([saved]);
+      expect(loaded.githubFromSourceControlDeclined).toBe(true);
     }).pipe(Effect.scoped),
   );
 });

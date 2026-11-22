@@ -46,6 +46,7 @@ import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
+import * as ThreadViewers from "../ThreadViewers.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
@@ -58,6 +59,7 @@ import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegis
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
@@ -72,6 +74,8 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
+import * as TaskFolderStore from "../../workspace/TaskFolderStore.ts";
 // SCIENT-FORK:START — replay workspaces resolve like production, never to the checkout.
 import * as ScientReplayWorkspacePolicy from "../scient-fork/ReplayWorkspacePolicy.testkit.ts";
 // SCIENT-FORK:END
@@ -247,6 +251,9 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
     readonly managedPolicy?: ManagedPolicyDocument;
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -305,6 +312,9 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     readonly contextHandoffPolicy?: "scient" | "byte";
     readonly managedPolicy?: ManagedPolicyDocument;
     readonly replayGate?: ProviderReplayGate;
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -354,10 +364,6 @@ export function layerWithRegistry<Error>(
     readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
     /** Observe or gate the real canonical writer without replacing its SQL transaction. */
     readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
-    /** Observe real projection reads without replacing their SQL implementation. */
-    readonly decorateProjectionStore?: (
-      store: ProjectionStore.ProjectionStoreV2Shape,
-    ) => ProjectionStore.ProjectionStoreV2Shape;
     /** Gate actual Git capture without replacing publication or admission. */
     readonly decorateForkCheckpointBaseline?: (
       baseline: ScientForkCheckpointBaselineShape,
@@ -398,7 +404,15 @@ export function layerWithRegistry<Error>(
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
+    /** Lets a test hold a projection read open to order concurrent dispatches. */
+    readonly wrapProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
+    /** The instances the ingestor reads snapshots from, such as an endpoint behind a hub. */
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -417,6 +431,7 @@ export function layerWithRegistry<Error>(
   | ProjectStore.ProjectStoreV2
   | McpProviderSessions.McpProviderSessions
   | CommandOutputRecorder.CommandOutputRecorder
+  | ThreadCommandExecutor.ThreadCommandExecutor
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -474,23 +489,27 @@ export function layerWithRegistry<Error>(
       ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
       : Layer.empty,
   );
+  const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  const wrapProjectionStore = options.wrapProjectionStore;
   const layerProjectionStore =
-    options.decorateProjectionStore === undefined
+    wrapProjectionStore === undefined
       ? ProjectionStore.layer
       : Layer.effect(
           ProjectionStore.ProjectionStoreV2,
-          Effect.map(ProjectionStore.ProjectionStoreV2, options.decorateProjectionStore),
+          Effect.gen(function* () {
+            return wrapProjectionStore(yield* ProjectionStore.ProjectionStoreV2);
+          }),
         ).pipe(Layer.provide(ProjectionStore.layer));
   const layerStores = Layer.mergeAll(
     EventStore.layer,
     layerProjectionStore,
     ProjectStore.layer,
     CommandReceiptStore.layer,
-    EffectOutbox.layer,
+    layerEffectOutboxProvided,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const actualEventSink = EventSink.layerFromStores.pipe(
-    Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+    Layer.provide(Layer.mergeAll(layerStores, layerDatabase, ThreadViewers.layer)),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
@@ -514,9 +533,9 @@ export function layerWithRegistry<Error>(
   const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          getInstance: () => Effect.undefined,
-        }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)(
+          options.providerInstances ?? { getInstance: () => Effect.undefined },
+        ),
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -538,7 +557,16 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerCheckpointStore,
+        IdAllocator.layer,
+        WorkspaceFolders.layer.pipe(
+          Layer.provide(layerStores),
+          Layer.provide(TaskFolderStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
   );
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
@@ -581,6 +609,7 @@ export function layerWithRegistry<Error>(
         options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
         layerStores,
+        ProviderInstallationGate.layer,
       ),
     ),
   );
@@ -598,7 +627,7 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
-      ),
+      ).pipe(Layer.provideMerge(ThreadCommandExecutor.layer)),
     ),
   );
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
@@ -622,7 +651,13 @@ export function layerWithRegistry<Error>(
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, layerServerConfig),
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        McpAppModelContext.layerEmpty,
+        layerStores,
+        layerProviderSessionManagerProvided,
+        layerServerConfig,
+      ),
     ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -663,50 +698,6 @@ export function layerWithRegistry<Error>(
       }),
     }),
   );
-  const layerOrchestratorProvided = Orchestrator.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerServerConfig,
-        layerCheckpointServiceProvided,
-        CommandPolicy.layer,
-        layerContextHandoffServiceProvided,
-        layerPersistence,
-        layerProvidedRegistry,
-        layerContinuationRequests,
-        layerRuntime,
-        layerProviderSessionManagerProvided,
-        layerProviderSwitchServiceProvided,
-        layerRunExecutionServiceProvided,
-        layerServerSettings,
-        ThreadForkService.layer,
-      ),
-    ),
-  );
-  const layerThreadManagementProvided = Layer.unwrap(
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      return Layer.mock(ThreadManagementService.ThreadManagementService)({
-        dispatch: orchestrator.dispatch,
-        getThreadRecords: orchestrator.getThreadRecords,
-        getThreadProjection: orchestrator.getThreadProjection,
-        recoverDelegatedTask: orchestrator.recoverDelegatedTask,
-        delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
-        ...options.threads,
-      });
-    }),
-  ).pipe(Layer.provide(layerOrchestratorProvided));
-  const layerContinuationWorkerProvided =
-    options.runContinuationWorker === true
-      ? ProviderContinuationService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              layerContinuationRequests,
-              layerThreadManagementProvided,
-              IdAllocator.layer,
-            ),
-          ),
-        )
-      : Layer.empty;
   const conversationForkProvided = ConversationForks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -727,6 +718,54 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(layerCheckpointStore, layerServerConfig, VcsProcess.layer, layerDatabase),
     ),
   );
+  const layerOrchestratorProvided = Orchestrator.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerServerConfig,
+        layerCheckpointServiceProvided,
+        CommandPolicy.layer,
+        layerContextHandoffServiceProvided,
+        layerPersistence,
+        layerProvidedRegistry,
+        layerContinuationRequests,
+        layerRuntime,
+        layerProviderSessionManagerProvided,
+        layerProviderSwitchServiceProvided,
+        layerRunExecutionServiceProvided,
+        layerServerSettings,
+        TaskFolderStore.layer.pipe(Layer.provide(layerDatabase)),
+        ThreadForkService.layer,
+        conversationForkProvided,
+      ),
+    ),
+  );
+  const layerThreadManagementProvided = Layer.unwrap(
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return Layer.mock(ThreadManagementService.ThreadManagementService)({
+        dispatch: orchestrator.dispatch,
+        getThreadRecords: orchestrator.getThreadRecords,
+        getThreadProjection: orchestrator.getThreadProjection,
+        recoverDelegatedTask: orchestrator.recoverDelegatedTask,
+        cancelDelegatedTask: orchestrator.cancelDelegatedTask,
+        delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
+        streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
+        ...options.threads,
+      });
+    }),
+  ).pipe(Layer.provide(layerOrchestratorProvided));
+  const layerContinuationWorkerProvided =
+    options.runContinuationWorker === true
+      ? ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerContinuationRequests,
+              layerThreadManagementProvided,
+              IdAllocator.layer,
+            ),
+          ),
+        )
+      : Layer.empty;
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -758,6 +797,7 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         layerThreadManagementProvided,
         conversationForkProvided,
+        layerStores,
       ),
     ),
   );
@@ -774,6 +814,7 @@ export function layerWithRegistry<Error>(
     layerServerConfig,
     conversationForkProvided,
     layerStores,
+    layerEffectOutboxProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerProviderTurnStartServiceProvided,
@@ -788,7 +829,8 @@ export function layerWithRegistry<Error>(
         (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(layerServerConfig)),
       ),
     ),
-    Layer.provide(layerThreadCommandExecutor),
+    // SCIENT-FORK: one step below the runtime, so its layers see the executor it also exports.
+    Layer.provideMerge(layerThreadCommandExecutor),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(options.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );

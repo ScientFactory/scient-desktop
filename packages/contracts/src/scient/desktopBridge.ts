@@ -20,6 +20,7 @@ import type {
 } from "../scientDocumentExport.ts";
 import type { ClientSettings } from "../settings.ts";
 import type { DesktopAccountsBridge } from "./desktopAccountsBridge.ts";
+import type { DesktopFeedbackBridge } from "./feedback.ts";
 import type { DesktopVoiceBridge } from "./desktopVoiceBridge.ts";
 import type { KeepAwakeChoice, KeepAwakeState } from "../scientKeepAwake.ts";
 
@@ -32,6 +33,24 @@ export type DesktopPdfBytesCopyRequest = PdfBytesCopyRequestType;
 
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
+  /** Local restart measurement; absent when no matching update restart is pending. */
+  getRestartReadinessToken?: () => Promise<{
+    readonly attemptId: string;
+    readonly launchId: string;
+  } | null>;
+  reportWorkspaceReady?: (input: {
+    readonly attemptId: string;
+    readonly launchId: string;
+    readonly projectRestored: boolean;
+  }) => Promise<boolean>;
+  onPrepareUpdateSave?: (
+    listener: (input: { readonly requestId: string; readonly lockForRestart: boolean }) => void,
+  ) => () => void;
+  onReleaseUpdateSave?: (listener: (requestId: string) => void) => () => void;
+  completeUpdateSave?: (input: {
+    readonly requestId: string;
+    readonly saved: boolean;
+  }) => Promise<boolean>;
   /** Scient: reads the keep-awake state, after applying a thread's choice when one is given. */
   keepAwake?: (choice?: KeepAwakeChoice) => Promise<KeepAwakeState>;
   /**
@@ -84,6 +103,8 @@ export interface ScientDesktopBridge {
   voice?: DesktopVoiceBridge;
   /** Scient Accounts: browser profile details, sign-in capture and fill. Desktop only. */
   accounts?: DesktopAccountsBridge;
+  /** Scient: feedback and problem reports to the Scient team. Desktop only. */
+  feedback?: DesktopFeedbackBridge;
   /**
    * Scient: opens another full app window. `route` is an app path such as
    * `/<environmentId>/<threadId>`; `atCursor` opens the window under the pointer

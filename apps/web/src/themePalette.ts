@@ -1,9 +1,10 @@
 import { pipe } from "effect/Function";
-import type { EnvironmentTheme } from "@t3tools/contracts";
+import { THEME_CSS_MAX_LENGTH, type EnvironmentTheme } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
 import "culori/css";
 import { converter, parse } from "culori/fn";
 import {
@@ -29,7 +30,10 @@ import {
   type ContextChipAccentKind,
 } from "./lib/contextChipAccents";
 
+import { m } from "./i18n/messages";
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
+import { applyThemeBackground } from "./themeBackground";
+import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
@@ -45,26 +49,59 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
 /**
- * The reviewed stock light palette for the web and desktop clients. Mobile
- * keeps the shared T3 Code palette until its default appearance is reviewed
- * independently.
+ * The reviewed stock palettes for the web and desktop clients. Canvas, surfaces, the user
+ * bubble, text, secondary text and terminal text match what index.css paints: a neutral near-black (near-white
+ * in dark) with a neutral grey. Other roles keep the shared palette. Mobile keeps the shared
+ * T3 Code palette until its default appearance is reviewed independently.
  */
 const T3_CODE_WEB_LIGHT_THEME_COLORS: ThemeColors = {
   ...T3_CODE_LIGHT_THEME_COLORS,
+  toolbarForeground: "#191919",
+  toolbarControlForeground: "#191919",
+  text: "#191919",
+  textMuted: "#666666",
   focus: "#0160cc",
   accent: "#0160cc",
+  secondaryForeground: "#191919",
+  mutedForeground: "#666666",
+  secondaryLabel: "#666666",
   error: "#e72b2b",
   errorForeground: "#d60e1a",
   errorSurface: "#faebeb",
   update: "#0160cc",
   updateForeground: "#0160cc",
   updateSurface: "#dee9f6",
+  messageSurface: "#efeff0",
+  messageForeground: "#191919",
   messageAction: "#0160cc",
   messageActionHover: "#0154b4",
+  codeForeground: "#191919",
+  sidebarForeground: "#191919",
+  sidebarMutedForeground: "#666666",
+  terminalForeground: "#191919",
+};
+
+const T3_CODE_WEB_DARK_THEME_COLORS: ThemeColors = {
+  ...T3_CODE_DARK_THEME_COLORS,
+  canvas: "#000000",
+  toolbarForeground: "#efefef",
+  toolbarControlForeground: "#efefef",
+  text: "#efefef",
+  textMuted: "#9c9c9c",
+  secondaryForeground: "#efefef",
+  mutedForeground: "#9c9c9c",
+  secondaryLabel: "#9c9c9c",
+  messageSurface: "#1e1e1e",
+  messageForeground: "#efefef",
+  codeForeground: "#efefef",
+  sidebarForeground: "#efefef",
+  sidebarMutedForeground: "#9c9c9c",
+  terminalForeground: "#efefef",
 };
 
 export const ThemePreference = Schema.String;
@@ -84,6 +121,7 @@ export type ThemeFile = Readonly<{
   variants?: ThemeVariantOverrides;
   collection?: ThemeCollection;
   managed?: boolean;
+  css?: string;
 }>;
 
 const customThemeListeners = new Set<() => void>();
@@ -137,6 +175,10 @@ function isThemeId(value: unknown): value is string {
 
 function isThemeLabel(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
+}
+
+function isThemeCss(value: unknown): value is string {
+  return typeof value === "string" && value.length <= THEME_CSS_MAX_LENGTH;
 }
 
 function parseThemeCollection(value: unknown): ThemeCollection | undefined {
@@ -203,6 +245,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(isThemeCss(value.css) && value.css.length > 0 ? { css: value.css } : {}),
   };
 }
 
@@ -306,6 +349,7 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
     theme.variants === undefined
       ? { managed: true }
       : {}),
+    ...(theme.css ? { css: theme.css } : {}),
   };
 }
 
@@ -333,20 +377,44 @@ export function publishedThemeDefinitions(
 
 // Every reconnect snapshot delivers a fresh but usually identical array; keeping the
 // previous one skips regenerating palettes and repainting the document for it.
-const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => {
+const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> | null => {
   const next = get(themeServerEnvironmentThemesAtom);
-  const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme>>());
+  const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme> | null>());
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
+function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
+    );
+    return Array.isArray(parsed) ? parseStoredThemes(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
- * The environment's palettes are not saved: they are republished by the server
- * on every change and would go stale the moment the machine's theme moved on.
- * Kept alive because theme lookups read it outside React on every repaint.
+ * Falls back to the last published set while the server connects, so boot and the
+ * first render paint the selected palette. Kept alive because theme lookups read it
+ * outside React on every repaint.
  */
-export const environmentThemeDefinitionsAtom = Atom.make((get) =>
-  publishedThemeDefinitions(get(publishedThemesAtom)),
-).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+export const environmentThemeDefinitionsAtom = Atom.make((get) => {
+  const published = get(publishedThemesAtom);
+  const definitions =
+    published === null ? readStoredEnvironmentThemes() : publishedThemeDefinitions(published);
+  const previous = Option.getOrNull(get.self<ReadonlyArray<ThemeDefinition>>());
+  return previous !== null && Equal.equals(previous, definitions) ? previous : definitions;
+}).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+
+export function storePublishedEnvironmentThemes(definitions: ReadonlyArray<ThemeDefinition>) {
+  if (appAtomRegistry.get(publishedThemesAtom) === null) return;
+  try {
+    window.localStorage.setItem(ENVIRONMENT_THEMES_STORAGE_KEY, JSON.stringify(definitions));
+  } catch {
+    // Without the stored copy the next launch paints stock colors until connect.
+  }
+}
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
@@ -398,7 +466,9 @@ const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
 };
 
 function normalizeThemeId(themeId: string): string {
-  return LEGACY_THEME_ID_ALIASES[themeId] ?? themeId;
+  return Object.hasOwn(LEGACY_THEME_ID_ALIASES, themeId)
+    ? (LEGACY_THEME_ID_ALIASES[themeId] ?? themeId)
+    : themeId;
 }
 
 export function canonicalThemePreference(theme: string): string {
@@ -415,23 +485,9 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors({
-      ...T3_CODE_DARK_THEME_COLORS,
-      canvas: "#000000",
-    }));
+    return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_WEB_DARK_THEME_COLORS));
   }
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_WEB_LIGHT_THEME_COLORS));
-}
-
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
-const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
-  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
-};
-
-/** The standard theme as index.css paints it, for solves that measure the page. */
-export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
 }
 
 type ThemeRgbColor = {
@@ -529,7 +585,11 @@ function decodeThemeColors(colors: ThemeColors): ThemeColors {
       const color = toCanonicalThemeColor(colors[role]);
       if (!color) {
         throw new Error(
-          `The color for "${role}" must be a literal CSS color such as oklch(0.62 0.2 280).`,
+          m(
+            msg('The color for "{role}" must be a literal CSS color such as oklch(0.62 0.2 280).', {
+              role,
+            }),
+          ),
         );
       }
       return [role, color];
@@ -1277,8 +1337,17 @@ export class ThemeLibraryStorageError extends Schema.TaggedError<ThemeLibrarySto
   },
 ) {
   override get message(): string {
-    const direction = this.operation === "read" ? "from" : "to";
-    return `Failed to ${this.operation} the theme library ${direction} ${this.storageKey}.`;
+    return this.operation === "read"
+      ? m(
+          msg("Failed to read the theme library from {storageKey}.", {
+            storageKey: this.storageKey,
+          }),
+        )
+      : m(
+          msg("Failed to write the theme library to {storageKey}.", {
+            storageKey: this.storageKey,
+          }),
+        );
   }
 }
 
@@ -1340,14 +1409,16 @@ function storedThemeHasCollectionId(storedTheme: unknown, collectionId: string):
 
 export function installCustomTheme(theme: ThemeDefinition): ThemeDefinition {
   if (RESERVED_THEME_IDS.has(theme.id)) {
-    throw new Error(`The theme id "${theme.id}" is reserved.`);
+    throw new Error(m(msg('The theme id "{id}" is reserved.', { id: theme.id })));
   }
   const library = getWritableCustomThemeLibrary();
   if (
     BUILT_IN_THEME_DEFINITIONS.some((existing) => existing.id === theme.id) ||
     library.storedThemes.some((storedTheme) => storedThemeHasId(storedTheme, theme.id))
   ) {
-    throw new Error(`A theme named "${theme.label}" is already installed.`);
+    throw new Error(
+      m(msg('A theme named "{label}" is already installed.', { label: theme.label })),
+    );
   }
   const canonicalTheme = canonicalizeThemeDefinition(theme);
   const themes = [...library.themes, canonicalTheme];
@@ -1357,14 +1428,14 @@ export function installCustomTheme(theme: ThemeDefinition): ThemeDefinition {
 
 export function updateCustomTheme(theme: ThemeDefinition): ThemeDefinition {
   if (RESERVED_THEME_IDS.has(theme.id)) {
-    throw new Error(`The theme id "${theme.id}" is reserved.`);
+    throw new Error(m(msg('The theme id "{id}" is reserved.', { id: theme.id })));
   }
 
   const library = getWritableCustomThemeLibrary();
   const themes = library.themes;
   const themeIndex = themes.findIndex((existing) => existing.id === theme.id);
   if (themeIndex === -1) {
-    throw new Error(`The theme "${theme.label}" is not installed.`);
+    throw new Error(m(msg('The theme "{label}" is not installed.', { label: theme.label })));
   }
 
   const canonicalTheme = canonicalizeThemeDefinition(theme);
@@ -1390,14 +1461,14 @@ export function replaceCustomThemeCollection(
   themes: ReadonlyArray<ThemeDefinition>,
   options?: { expectedCollection?: ReadonlyArray<ThemeDefinition> },
 ): ReadonlyArray<ThemeDefinition> {
-  if (themes.length === 0) throw new Error("A theme collection cannot be empty.");
+  if (themes.length === 0) throw new Error(m(msg("A theme collection cannot be empty.")));
 
   const validated = themes.map((theme) => parseStoredTheme(theme));
   if (
     validated.some((theme) => theme === null || theme.collection?.id !== collectionId) ||
     new Set(validated.map((theme) => theme?.id)).size !== validated.length
   ) {
-    throw new Error("That theme collection is invalid.");
+    throw new Error(m(msg("That theme collection is invalid.")));
   }
   const replacement = validated as ThemeDefinition[];
   const library = readWritableCustomThemeLibrary();
@@ -1407,7 +1478,9 @@ export function replaceCustomThemeCollection(
     options?.expectedCollection &&
     JSON.stringify(currentCollection) !== JSON.stringify(options.expectedCollection)
   ) {
-    throw new Error("Your installed themes changed while this package was downloading. Try again.");
+    throw new Error(
+      m(msg("Your installed themes changed while this package was downloading. Try again.")),
+    );
   }
   const occupiedIds = new Set(BUILT_IN_THEME_DEFINITIONS.map((theme) => theme.id));
   for (const storedTheme of library.storedThemes) {
@@ -1423,7 +1496,9 @@ export function replaceCustomThemeCollection(
     (theme) => RESERVED_THEME_IDS.has(theme.id) || occupiedIds.has(theme.id),
   );
   if (conflictingTheme) {
-    throw new Error(`A theme named "${conflictingTheme.label}" is already installed.`);
+    throw new Error(
+      m(msg('A theme named "{label}" is already installed.', { label: conflictingTheme.label })),
+    );
   }
 
   const nextStoredThemes: unknown[] = [];
@@ -1464,68 +1539,105 @@ export function removeCustomThemes(themeIds: ReadonlyArray<string>): void {
 }
 
 function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
-  if (!isRecord(value)) throw new Error("Theme colors must be objects.");
+  if (!isRecord(value)) throw new Error(m(msg("Theme colors must be objects.")));
 
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
     if (!THEME_COLOR_ROLE_SET.has(role)) {
-      throw new Error(`"${role}" is not a supported theme color role.`);
+      throw new Error(m(msg('"{role}" is not a supported theme color role.', { role })));
     }
     const normalized = toCanonicalThemeColor(color);
     if (!normalized) {
       throw new Error(
-        `The color for "${role}" must be a literal CSS color such as oklch(0.62 0.2 280).`,
+        m(
+          msg('The color for "{role}" must be a literal CSS color such as oklch(0.62 0.2 280).', {
+            role,
+          }),
+        ),
       );
     }
     overrides[role as ThemeColorRole] = normalized;
   }
   if (Object.keys(overrides).length === 0) {
-    throw new Error("Add at least one color role to the theme file.");
+    throw new Error(m(msg("Add at least one color role to the theme file.")));
   }
   return overrides;
 }
 
+function parseThemeSeedColor(name: string, value: unknown): string {
+  if (typeof value !== "string" || !toCanonicalThemeColor(value)) {
+    throw new Error(m(msg("The theme''s \"{name}\" must be a literal CSS color.", { name })));
+  }
+  return value;
+}
+
 export function parseThemeFile(value: unknown): ThemeDefinition {
   if (!isRecord(value)) {
-    throw new Error("Theme files must contain a JSON object.");
+    throw new Error(m(msg("Theme files must contain a JSON object.")));
   }
   if (value.version !== THEME_FILE_VERSION) {
-    throw new Error(`This theme file uses an unsupported version. Expected ${THEME_FILE_VERSION}.`);
+    throw new Error(
+      m(
+        msg("This theme file uses an unsupported version. Expected {version}.", {
+          version: THEME_FILE_VERSION,
+        }),
+      ),
+    );
   }
 
   const name = value.name;
   const appearance = value.appearance;
   const rawColors = value.colors;
-  if (!isThemeLabel(name)) throw new Error("Theme files need a name (48 characters or fewer).");
+  if (!isThemeLabel(name))
+    throw new Error(m(msg("Theme files need a name (48 characters or fewer).")));
   if (!isThemeAppearance(appearance)) {
-    throw new Error('Theme files need an appearance of "light" or "dark".');
+    throw new Error(m(msg('Theme files need an appearance of "light" or "dark".')));
   }
-  if (!isRecord(rawColors)) throw new Error("Theme files need a colors object.");
+  if (!isRecord(rawColors)) throw new Error(m(msg("Theme files need a colors object.")));
 
   const id = value.id === undefined ? themeIdFromName(name) : value.id;
   if (!isThemeId(id)) {
-    throw new Error("Theme ids may only contain lowercase letters, numbers, and hyphens.");
+    throw new Error(m(msg("Theme ids may only contain lowercase letters, numbers, and hyphens.")));
   }
   if (RESERVED_THEME_IDS.has(id)) {
-    throw new Error(`The theme id "${id}" is reserved.`);
+    throw new Error(m(msg('The theme id "{id}" is reserved.', { id })));
   }
 
   const overrides = parseThemeColorOverrides(rawColors);
   const collection = parseThemeCollection(value.collection);
   if (value.collection !== undefined && !collection) {
-    throw new Error("Theme collections need a valid id and label.");
+    throw new Error(m(msg("Theme collections need a valid id and label.")));
   }
 
-  const fallback = getDefaultThemeColors(appearance);
+  if (value.css !== undefined && !isThemeCss(value.css)) {
+    throw new Error(
+      m(msg("Theme CSS must be text of {max} characters or fewer.", { max: THEME_CSS_MAX_LENGTH })),
+    );
+  }
+
+  const fallback =
+    value.canvas !== undefined && value.accent !== undefined
+      ? createVividThemeColors(
+          appearance,
+          parseThemeSeedColor("canvas", value.canvas),
+          parseThemeSeedColor("accent", value.accent),
+        )
+      : getDefaultThemeColors(appearance);
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   if (value.variants !== undefined) {
-    if (!isRecord(value.variants)) throw new Error("Theme variants must be an object.");
+    if (!isRecord(value.variants)) throw new Error(m(msg("Theme variants must be an object.")));
     for (const [variantAppearance, variantColors] of Object.entries(value.variants)) {
       if (!isThemeAppearance(variantAppearance)) {
-        throw new Error('Theme variants may only be named "light" or "dark".');
+        throw new Error(m(msg('Theme variants may only be named "light" or "dark".')));
       }
       if (variantAppearance === appearance) {
-        throw new Error(`Theme variants must not repeat the base appearance "${appearance}".`);
+        throw new Error(
+          m(
+            msg('Theme variants must not repeat the base appearance "{appearance}".', {
+              appearance,
+            }),
+          ),
+        );
       }
       const variantFallback = getDefaultThemeColors(variantAppearance);
       variants[variantAppearance] = {
@@ -1543,7 +1655,21 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(value.css ? { css: value.css } : {}),
   };
+}
+
+/** A copy of `theme` under `name` and the id it derives. The collection stays behind. */
+export function renameTheme(theme: ThemeDefinition, name: string): ThemeDefinition {
+  return parseThemeFile({
+    version: THEME_FILE_VERSION,
+    name,
+    appearance: theme.appearance,
+    colors: theme.colors,
+    ...(theme.variants ? { variants: theme.variants } : {}),
+    ...(theme.managed ? { managed: true } : {}),
+    ...(theme.css ? { css: theme.css } : {}),
+  });
 }
 
 export function serializeThemeFile(theme: ThemeDefinition): string {
@@ -1557,6 +1683,7 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     ...(canonicalTheme.variants ? { variants: canonicalTheme.variants } : {}),
     ...(canonicalTheme.collection ? { collection: canonicalTheme.collection } : {}),
     ...(canonicalTheme.managed ? { managed: true } : {}),
+    ...(canonicalTheme.css ? { css: canonicalTheme.css } : {}),
   };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
@@ -1632,7 +1759,11 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 export const THEME_PREVIEW_ID = "__preview";
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
-export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
+export function applyThemeColorPreview(
+  colors: ThemeColors,
+  appearance: ThemeAppearance,
+  css?: string,
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (!root?.style) return;
@@ -1643,6 +1774,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
   applyContextChipVariables(root, colors);
+  applyThemeCss(css);
   setThemePreviewAppearance(appearance);
 }
 
@@ -1654,6 +1786,8 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
 
   setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
+  applyThemeCss(palette?.css);
+  applyThemeBackground(palette?.id);
 
   if (palette) {
     root.dataset.themeId = palette.id;
@@ -1670,7 +1804,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
-  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
+  applyContextChipVariables(root, getStandardThemeColors(appearance ?? "light"));
 }
 
 export function resolveThemeAppearance(

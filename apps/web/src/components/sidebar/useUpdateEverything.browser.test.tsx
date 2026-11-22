@@ -181,7 +181,6 @@ vi.mock("./updateEverythingRun", async (importOriginal) => {
         () => {},
         () => {},
       ),
-    waitForUpdateRestart: async () => false,
     publishQualifiedUpdateRunServers: original.publishQualifiedUpdateRunServers,
   };
 });
@@ -875,6 +874,49 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
 // SCIENT-FORK:END
 
 // SCIENT-FORK:START — a server is not restarted while its machine updates a provider.
+// SCIENT-FORK:START — this app restarts at the end of a pass only while nothing here works.
+describe("this app's restart at the end of a pass", () => {
+  async function runPass(_fixture: _Fixture, localWorkBlocksRestart: () => boolean) {
+    testState.environments = [];
+    const installLocal = vi.fn(async () => true);
+    await act(async () => {
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+      await _fixture.root0.rerender(<Probe _fixture={_fixture} version="0.6.30" />);
+    });
+    await act(async () => {
+      await _fixture.current!.run({
+        downloadLocal: async () => true,
+        installLocal,
+        localWorkBlocksRestart,
+      });
+    });
+    return installLocal;
+  }
+
+  it("restarts at once when nothing here is working", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const installLocal = await runPass(_fixture, () => false);
+    expect(installLocal).toHaveBeenCalledTimes(1);
+    expect(testState.showResult).not.toHaveBeenCalled();
+  });
+
+  it("leaves Restart to the user while something here is working", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const installLocal = await runPass(_fixture, () => true);
+    expect(installLocal).not.toHaveBeenCalled();
+    expect(testState.showResult).toHaveBeenCalledTimes(1);
+  });
+});
+// SCIENT-FORK:END
+
 describe("servers on machines still updating providers", () => {
   const updatingProvider = {
     instanceId: "codex",

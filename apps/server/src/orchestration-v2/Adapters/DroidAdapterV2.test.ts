@@ -201,6 +201,16 @@ const harness = Effect.fnUntraced(function* (
   const rejectedAuthentication: string[] = [];
   const continuations =
     yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+  // An event is recorded inside its decoded batch, and a Steer is refused until that ends.
+  let openBatches = 0;
+  const batchWaiters = new Set<() => void>();
+  const trackBatch = (phase: "begin" | "end" | "failed") =>
+    Effect.sync(() => {
+      openBatches = Math.max(0, openBatches + (phase === "begin" ? 1 : -1));
+      if (openBatches > 0) return;
+      for (const wake of batchWaiters) wake();
+      batchWaiters.clear();
+    });
   const adapter = yield* makeDroidAdapterV2({
     instanceId,
     settings: yield* decodeDroidSettings({
@@ -228,6 +238,14 @@ const harness = Effect.fnUntraced(function* (
         ...input,
         // Teardown sleeps this whole grace after SIGTERM (1 s by default).
         processGroupTerminationGrace: "100 millis",
+        ...(input.onDecodedBatch === undefined
+          ? {}
+          : {
+              onDecodedBatch: (phase) =>
+                phase === "begin"
+                  ? trackBatch(phase).pipe(Effect.andThen(input.onDecodedBatch!(phase)))
+                  : input.onDecodedBatch!(phase).pipe(Effect.ensuring(trackBatch(phase))),
+            }),
         ...(scenario?.settleTimeout === undefined
           ? {}
           : { configOptionSettleTimeout: scenario.settleTimeout }),
@@ -460,6 +478,13 @@ const harness = Effect.fnUntraced(function* (
     writeBlocked,
     releaseWrite,
     signal: (value: string) => fs.writeFileString(controlPath, value),
+    /** Waits until no decoded batch is open, such as the one that carried a recorded event. */
+    batchesClosed: Effect.callback<void>((resume) => {
+      if (openBatches === 0) return resume(Effect.void);
+      const wake = () => resume(Effect.void);
+      batchWaiters.add(wake);
+      return Effect.sync(() => batchWaiters.delete(wake));
+    }),
     useProviderThread: (next: OrchestrationV2ProviderThread) => {
       providerThread = next;
     },
@@ -1376,6 +1401,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
             event.turnItem.nativeItemRef?.nativeId === "check" &&
             event.turnItem.status === "completed",
         );
+        yield* h.batchesClosed;
         const running = h.recorded.findLast(
           (event) =>
             event.type === "provider_turn.updated" && event.providerTurn.status === "running",
@@ -1391,6 +1417,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
         assert.isUndefined(yield* reserve);
         yield* TestClock.adjust("41 seconds");
         assert.equal((yield* h.terminal).status, "completed");
+        yield* h.batchesClosed;
         const lease = yield* reserve;
         if (lease === undefined) return yield* Effect.die("Droid was not ready for a Steer");
         assert.isTrue(
@@ -1411,6 +1438,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
           const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
           yield* h.send(1, "full-access");
           assert.equal((yield* h.terminal).status, "completed");
+          yield* h.batchesClosed;
           const first = h.recorded.find((event) => event.type === "provider_turn.updated");
           if (first?.type !== "provider_turn.updated") return yield* Effect.die("Missing the turn");
           const reserve = h.runtime.reserveDroidSteer!({
@@ -1425,7 +1453,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
               (event) =>
                 event.type === "provider_thread.updated" &&
                 event.providerThread.nativeMetadata?.title === title,
-            );
+            ).pipe(Effect.andThen(h.batchesClosed));
           // Its run stays open for the held Steer, so no follow-up run can take this work.
           yield* h.signal("finished");
           yield* handled("finished");
@@ -1469,6 +1497,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
         );
         yield* h.send(2, "full-access");
         assert.equal((yield* h.terminal).status, "completed");
+        yield* h.batchesClosed;
         const second = h.recorded.findLast(
           (event) =>
             event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
@@ -1713,6 +1742,33 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
           assert.deepEqual(h.rejectedAuthentication, ["401 Invalid API key"]);
         }),
       ),
+  );
+
+  it.effect("classifies Droid's turn-end reason and keeps its session id out of the failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const error = {
+          code: -32603,
+          message: "Internal error: Agent turn ended: model_usage_exhausted",
+          data: { sessionId: "fixture-native-session", reason: "model_usage_exhausted" },
+        };
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) { fail(message, ${encodeJson(error)}); }`,
+        });
+        yield* h.send(1, "full-access");
+        const terminal = yield* h.terminal;
+        assert.equal(terminal.status, "failed");
+        if (terminal.status === "failed") {
+          assert.deepEqual(terminal.failure, {
+            class: "usage_limit",
+            message: "Your Droid usage limit for this model is used up.",
+            code: "model_usage_exhausted",
+            retryable: true,
+          });
+        }
+        assert.notInclude(JSON.stringify(h.recorded), "fixture-native-session");
+      }),
+    ),
   );
 
   it.effect("does not blame Factory for a custom model selected as Droid's native default", () =>
@@ -3183,8 +3239,11 @@ it.layer(testLayer, { excludeTestServices: true })(
               `
         const normalPrompt = onPrompt;
         onPrompt = message => {if (state.prompts > 1 || fs.existsSync(__CONTROL_PATH__)) return normalPrompt(message);
+          let finished = false;
+          const finish = () => {if (finished || !fs.existsSync(__CONTROL_PATH__)) return; finished = true; watcher.close(); normalPrompt(message);};
+          const watcher = fs.watch(".", finish);
           update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Held active prompt."}});
-          const watcher = fs.watch(".", () => {if (!fs.existsSync(__CONTROL_PATH__)) return; watcher.close(); normalPrompt(message);});
+          finish();
         };
       `;
             const h = yield* harness(false, false, false, undefined, {

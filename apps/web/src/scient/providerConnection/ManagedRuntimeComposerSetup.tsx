@@ -1,5 +1,7 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import type {
   EnvironmentId,
+  ProviderConnectionAccount,
   ProviderManagedRuntimeAction,
   ServerProvider,
 } from "@t3tools/contracts";
@@ -35,6 +37,7 @@ import {
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
+  runtimeDownloadPercent,
 } from "./providerConnectionPresentation";
 import {
   externalProviderUpdate,
@@ -44,15 +47,24 @@ import {
   startReviewedProviderRuntimeAction,
 } from "./providerLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m } from "~/i18n/messages";
 
 type Pending = "install" | "repair" | "update" | "external-update" | "cancel";
 
-const WORKING_VERBS = {
-  install: "Installing",
-  repair: "Repairing",
-  update: "Updating",
-  remove: "Removing",
+const WORKING_TITLES = {
+  install: msg("Installing {provider}"),
+  repair: msg("Repairing {provider}"),
+  update: msg("Updating {provider}"),
+  remove: msg("Removing {provider}"),
 } satisfies Record<ProviderManagedRuntimeAction, string>;
+
+const ACTION_FAILURES = {
+  install: msg("Scient could not install {provider}."),
+  repair: msg("Scient could not repair {provider}."),
+  update: msg("Scient could not update {provider}."),
+  "external-update": msg("Scient could not update {provider}."),
+  cancel: msg("Scient could not cancel {provider} setup."),
+} satisfies Record<Pending, string>;
 
 /**
  * Composer setup for providers whose only Scient-owned lifecycle is a managed
@@ -69,11 +81,15 @@ export function ManagedRuntimeComposerSetup(props: {
   readonly modelSetupHint: string;
   readonly renderModelSetupAction?: (appearance: "setup-action" | "setup-secondary") => ReactNode;
   readonly provider: ServerProvider;
+  /** The selected model's account, whose sign-in ended: Reconnect signs in to it again. */
+  readonly signedOutAccount?: ProviderConnectionAccount | undefined;
 }) {
   const overlay = useContext(ModelPickerOverlayContext);
   const ownsOverlay = overlay?.instanceId === props.provider.instanceId;
   const [pending, setPending] = useState<Pending | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   const name = props.displayName;
   const runtime = props.provider.connection?.runtime;
   const operation = runtime?.operation ?? null;
@@ -99,12 +115,7 @@ export function ManagedRuntimeComposerSetup(props: {
         }
       } catch (cause) {
         setLocalError(
-          providerLifecycleFailureMessage(
-            cause,
-            next === "cancel"
-              ? `Scient could not cancel ${name} setup.`
-              : `Scient could not ${next === "external-update" ? "update" : next} ${name}.`,
-          ),
+          providerLifecycleFailureMessage(cause, m(ACTION_FAILURES[next], { provider: name })),
         );
       }
     } catch (cause) {
@@ -152,7 +163,7 @@ export function ManagedRuntimeComposerSetup(props: {
   if (ownsOverlay) {
     return (
       <AssistedSetupFrame>
-        <AssistedSetupStatus icon={null} title="Connect models" body={props.modelSetupHint} />
+        <AssistedSetupStatus icon={null} title={gt("Connect models")} body={props.modelSetupHint} />
         {connectModels("setup-action")}
       </AssistedSetupFrame>
     );
@@ -161,18 +172,28 @@ export function ManagedRuntimeComposerSetup(props: {
   if (active || pending === "install" || pending === "repair" || pending === "update") {
     const action: ProviderManagedRuntimeAction =
       active?.action ?? (pending === "repair" || pending === "update" ? pending : "install");
+    const percent = runtimeDownloadPercent(active);
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={localError ?? active?.message ?? `Preparing ${name}…`}
+          body={
+            localError ??
+            (active?.background
+              ? gt("Downloading in the background. You can use another agent meanwhile.")
+              : (active?.message ?? gt("Preparing {provider}…", { provider: name })))
+          }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           role={localError ? "alert" : "status"}
-          title={`${WORKING_VERBS[action]} ${name}`}
+          title={`${
+            active?.background
+              ? gt("Getting {provider} ready", { provider: name })
+              : messages(WORKING_TITLES[action], { provider: name })
+          }${percent === null ? "" : ` · ${percent}%`}`}
         />
         {active ? (
           <AssistedSetupActions>
             <Button
-              aria-label={cancelRuntimeActionLabel(name, action)}
+              aria-label={cancelRuntimeActionLabel(name, action, messages)}
               disabled={pending === "cancel"}
               onClick={() => void run("cancel")}
               size="sm"
@@ -184,7 +205,7 @@ export function ManagedRuntimeComposerSetup(props: {
               ) : (
                 <XIcon aria-hidden />
               )}
-              Cancel
+              <T>Cancel</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -209,16 +230,18 @@ export function ManagedRuntimeComposerSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={localError ?? managedRuntimeRepairMessage(props.provider, name)}
+          body={
+            localError ?? managedRuntimeRepairMessage(props.provider, name, undefined, messages)
+          }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title={`${name} needs repair`}
+          title={gt("{provider} needs repair", { provider: name })}
         />
         {runtime?.actions.includes("repair")
           ? primaryAction(
               "repair",
-              `Repair ${name}`,
-              `Repair ${name}`,
+              gt("Repair {provider}", { provider: name }),
+              gt("Repair {provider}", { provider: name }),
               <RefreshCwIcon aria-hidden />,
             )
           : null}
@@ -230,15 +253,18 @@ export function ManagedRuntimeComposerSetup(props: {
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const error = localError ?? failedRuntimeOperationMessage(operation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
-    const computer = providerRuntimeComputerLabel(props.provider);
+    const computer = providerRuntimeComputerLabel(props.provider, messages);
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             error ??
             (canInstall
-              ? `${name} is not installed on ${computer}.`
-              : `Assisted installation is not available for ${computer}. You can use an existing ${name} installation.`)
+              ? gt("{provider} is not installed on {computer}.", { provider: name, computer })
+              : gt(
+                  "Assisted installation is not available for {computer}. You can use an existing {provider} installation.",
+                  { provider: name, computer },
+                ))
           }
           icon={
             error ? (
@@ -248,17 +274,40 @@ export function ManagedRuntimeComposerSetup(props: {
             )
           }
           role={error ? "alert" : undefined}
-          title={error ? `${name} installation couldn’t finish` : `Install ${name}`}
+          title={
+            error
+              ? gt("{provider} installation couldn’t finish", { provider: name })
+              : gt("Install {provider}", { provider: name })
+          }
         />
         {canInstall
           ? primaryAction(
               "install",
-              error ? "Retry installation" : "Install",
-              error ? `Retry installation of ${name}` : `Install ${name}`,
+              error
+                ? gt("Retry installation")
+                : gt("Install", { $context: "verb, install the provider" }),
+              error
+                ? gt("Retry installation of {provider}", { provider: name })
+                : gt("Install {provider}", { provider: name }),
               error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />,
             )
           : null}
         {error ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
+      </AssistedSetupFrame>
+    );
+  }
+
+  if (props.signedOutAccount) {
+    const account = props.signedOutAccount.name;
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupStatus
+          body={gt("Sign in to {account} again to keep using its models.", { account })}
+          icon={<TriangleAlertIcon className="size-5 text-warning" />}
+          role="alert"
+          title={gt("{account} is signed out", { account })}
+        />
+        {connectModels("setup-action")}
       </AssistedSetupFrame>
     );
   }
@@ -269,7 +318,9 @@ export function ManagedRuntimeComposerSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={failed ? (props.provider.message ?? "Refresh to try again.") : props.modelSetupHint}
+          body={
+            failed ? (props.provider.message ?? gt("Refresh to try again.")) : props.modelSetupHint
+          }
           icon={
             failed ? (
               <TriangleAlertIcon className="size-5 text-warning" />
@@ -278,7 +329,11 @@ export function ManagedRuntimeComposerSetup(props: {
             )
           }
           role={failed ? "alert" : undefined}
-          title={failed ? `Could not load ${name} models` : "Connect a model provider"}
+          title={
+            failed
+              ? gt("Could not load {provider} models", { provider: name })
+              : gt("Connect a model provider")
+          }
         />
         {connectModels("setup-action")}
         {failed ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
@@ -317,11 +372,18 @@ export function ManagedRuntimeComposerSetup(props: {
       <AssistedSetupStatus
         body={
           managed
-            ? `Using Scient-managed ${name}${versionSuffix}.`
-            : `Using ${name}${versionSuffix} installed on ${providerRuntimeComputerLabel(props.provider)}.`
+            ? gt("Using Scient-managed {provider}{version}.", {
+                provider: name,
+                version: versionSuffix,
+              })
+            : gt("Using {provider}{version} installed on {computer}.", {
+                provider: name,
+                version: versionSuffix,
+                computer: providerRuntimeComputerLabel(props.provider, messages),
+              })
         }
         icon={<CheckCircle2Icon className="size-5 text-success" />}
-        title={`${name} is ready`}
+        title={gt("{provider} is ready", { provider: name })}
       />
       {connectModels("setup-action")}
     </AssistedSetupFrame>

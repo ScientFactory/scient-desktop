@@ -8,6 +8,7 @@ import type {
   ScientLatexUnusableToolchain,
 } from "@t3tools/contracts";
 import { Download, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
+import { useGT, useMessages } from "gt-react";
 
 import { latexSetupCardModel } from "./latexToolchainSetupModel";
 import type { LatexDocumentCompiler } from "./latexCompiler";
@@ -26,15 +27,20 @@ export function LatexToolchainSetupCard(props: {
   readonly onInstall: () => void;
 }) {
   const { canInstallManaged, managedInstall, installRequesting, toolchainMissing } = props;
-  const model = latexSetupCardModel({
-    canInstallManaged,
-    install: managedInstall,
-    requesting: installRequesting,
-    toolchainMissing,
-    requiredCompiler: props.requiredCompiler ?? null,
-    downloadBytes: props.downloadBytes ?? null,
-    unusableToolchain: props.unusableToolchain ?? null,
-  });
+  const gt = useGT();
+  const messages = useMessages();
+  const model = latexSetupCardModel(
+    {
+      canInstallManaged,
+      install: managedInstall,
+      requesting: installRequesting,
+      toolchainMissing,
+      requiredCompiler: props.requiredCompiler ?? null,
+      downloadBytes: props.downloadBytes ?? null,
+      unusableToolchain: props.unusableToolchain ?? null,
+    },
+    messages,
+  );
 
   return (
     <div className="scient-latex-placeholder scient-latex-tools-notice" aria-live="polite">
@@ -59,7 +65,7 @@ export function LatexToolchainSetupCard(props: {
         <div
           className="scient-latex-progress"
           role="progressbar"
-          aria-label="TinyTeX installation progress"
+          aria-label={gt("TinyTeX installation progress")}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={model.progressPercent}

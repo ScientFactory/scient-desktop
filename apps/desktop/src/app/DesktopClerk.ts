@@ -23,8 +23,12 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
+import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
+// SCIENT-FORK:START clerk-sign-in-return
+import { createClerkBridgeWithSignInReturn } from "./ClerkSignInReturn.ts";
+// SCIENT-FORK:END clerk-sign-in-return
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -121,6 +125,11 @@ export const make = Effect.gen(function* () {
     yield* electronApp.quit;
     return yield* Effect.interrupt;
   }
+  // Chromium opens these caches at the first event-loop turn, before ready.
+  yield* DesktopUserData.clearStaleGpuCaches({
+    userDataPath,
+    electronVersion: process.versions.electron,
+  });
 
   const pendingSecondInstances: Array<readonly string[]> = [];
   let handleSecondInstance = (argv: readonly string[]) => {
@@ -142,7 +151,17 @@ export const make = Effect.gen(function* () {
   yield* Effect.acquireRelease(
     Effect.try({
       try: () =>
-        createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
+        // SCIENT-FORK:START clerk-sign-in-return
+        createClerkBridgeWithSignInReturn(
+          () =>
+            createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
+          {
+            scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+            host: ElectronProtocol.DESKTOP_HOST,
+            isDevelopment: environment.isDevelopment,
+          },
+        ),
+      // SCIENT-FORK:END clerk-sign-in-return
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
@@ -181,11 +200,12 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* electronApp.whenReady;
             yield* Effect.tryPromise({
-              try: () =>
+              try: (signal) =>
                 receiveCodexAuthCallback(
                   request.authorizationUrl,
                   (url) => runPromise(shell.openExternal(url)),
                   (callbackUrl) => codexAuthDeliveryUrl(request, callbackUrl),
+                  signal,
                 ),
               catch: () =>
                 new CodexAuthCallbackError({

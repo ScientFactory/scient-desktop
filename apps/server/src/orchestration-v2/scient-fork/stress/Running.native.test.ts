@@ -37,15 +37,20 @@ import { makeReplayServerConfig } from "../../testkit/ProviderReplayHarness.ts";
 import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layerFromAdaptersEffect } from "../../ProviderAdapterRegistry.ts";
-import { DEFAULT_CODEX_SETTINGS } from "../../Adapters/CodexAdapterV2.replay.testkit.ts";
+import {
+  codexReplayPreamble,
+  DEFAULT_CODEX_SETTINGS,
+  makeCodexReplayTurn,
+  withConfigReads,
+} from "../../Adapters/CodexAdapterV2.replay.testkit.ts";
 import * as CodexAdapterV2 from "../../Adapters/CodexAdapterV2.ts";
 import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
-import { ConversationForkService } from "../ConversationForkService.ts";
-import { codexReplayPreamble, makeCodexReplayTurn } from "./codexReplayFixture.ts";
 import { runtimeOptions } from "./stressHarness.ts";
+import * as PortScanner from "../../../preview/PortScanner.ts";
+import { forkConversation } from "../../testkit/ConversationForkCommand.ts";
 
 // A provider turn's terminal event lands before the run's final write, which
 // enqueues its checkpoint effect; drain only once the run has left `running`.
@@ -159,10 +164,14 @@ it.live.each([false, true])(
             },
           ],
         });
-        const driver = yield* CodexReplay.makeReplayDriver(transcript, {
-          beforeEmitInbound: (entry) =>
-            Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
-        });
+        // Every turn/start follows the adapter's config/read, and the first names the thread.
+        const driver = yield* CodexReplay.makeReplayDriver(
+          withConfigReads(transcript, { threadName: "Stress" }),
+          {
+            beforeEmitInbound: (entry) =>
+              Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
+          },
+        );
         const received = yield* Effect.forEach(chunks, () => Deferred.make<void>());
         let receipts = 0;
         const factory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
@@ -207,6 +216,7 @@ it.live.each([false, true])(
         ).pipe(
           Layer.provide(
             Layer.mergeAll(
+              PortScanner.layerTest,
               factory,
               Layer.succeed(ServerConfig, config),
               allocatorLayer,
@@ -305,7 +315,7 @@ it.live.each([false, true])(
             assert.isTrue(yield* Effect.promise(() => gate.waitForReached(`cut-${cut}`)));
             if (cut > 0) yield* Deferred.await(received[cut - 1]!);
             const newThreadId = ThreadId.make(`running-cut-${cut}`);
-            yield* (yield* ConversationForkService).dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make(`running-cut-${cut}`),
               originThreadId: threadId,

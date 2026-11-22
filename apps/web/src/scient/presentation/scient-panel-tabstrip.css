@@ -14,7 +14,7 @@
    itself, as an open tab is. */
 [data-scient-tabstrip] [data-active-tab="false"]:hover,
 [data-scient-tabstrip] > button:hover,
-[data-scient-tabstrip] [aria-label="Scroll panel tabs"] button:not(:disabled):hover {
+[data-scient-tabstrip] [data-panel-tabs-scroll] button:not(:disabled):hover {
   background-color: color-mix(in srgb, var(--background) 65%, transparent);
 }
 

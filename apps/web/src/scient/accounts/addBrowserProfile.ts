@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   BROWSER_PROFILE_MAX_COUNT,
   BrowserProfileId,
@@ -38,14 +39,17 @@ export async function addBrowserProfile(environmentId: EnvironmentId): Promise<s
     };
   });
   if (!added) return null;
-  await accountsState.updateProfile
-    .run(appAtomRegistry, {
+  await runAtomCommand(
+    appAtomRegistry,
+    accountsState.updateProfile,
+    {
       environmentId,
       input: {
         profileId: BrowserProfileId.make(id),
         madeInScient: DateTime.formatIso(DateTime.nowUnsafe()),
       },
-    })
-    .catch(() => undefined);
+    },
+    { reportFailure: false },
+  ).catch(() => undefined);
   return id;
 }

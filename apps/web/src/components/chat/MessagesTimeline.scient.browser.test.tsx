@@ -118,7 +118,6 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     contentInsetEndAdjustment: 0,
     emptyPlaceholderInset: 0,
     onIsAtEndChange: () => {},
-    onManualNavigation: () => {},
   };
 }
 function message(
@@ -241,8 +240,11 @@ describe("MessagesTimeline activity announcements", () => {
   it("keeps one announcer from the empty view into the first turn", async () => {
     const props = baseProps();
     await using screen = await render(<MessagesTimeline {...props} timelineEntries={[]} />);
-    const region = screen.container.querySelector<HTMLElement>('[aria-live="polite"].sr-only')!;
-    expect(region).not.toBeNull();
+    // The status region follows the messages-and-steps one.
+    const statusRegion = () =>
+      [...screen.container.querySelectorAll<HTMLElement>('[aria-live="polite"].sr-only')].at(-1);
+    const region = statusRegion()!;
+    expect(region).not.toBeUndefined();
     expect(region.textContent).toBe("");
     const running = {
       ...props,
@@ -250,7 +252,7 @@ describe("MessagesTimeline activity announcements", () => {
       announcedRun: { runId: RunId.make("first-announced-run"), status: "running" as const },
     };
     await screen.rerender(<MessagesTimeline {...running} timelineEntries={[]} />);
-    expect(screen.container.querySelector('[aria-live="polite"].sr-only')).toBe(region);
+    expect(statusRegion()).toBe(region);
     await expect.element(region).toHaveTextContent("Working");
     await screen.rerender(
       <MessagesTimeline
@@ -505,6 +507,11 @@ describe("MessagesTimeline Scient messages", () => {
         onForkAssistantMessage,
       },
     );
+    // One Fork action, under Scient's label rather than upstream's "Fork from this response".
+    expect(
+      screen.container.querySelectorAll('[aria-label="Fork conversation from this response"]'),
+    ).toHaveLength(1);
+    expect(screen.container.querySelector('[aria-label="Fork from this response"]')).toBeNull();
     // Scient fork V2 receives the message, not a client-chosen run boundary.
     await click(screen.button("Fork conversation from this response"));
     expect(onForkAssistantMessage).toHaveBeenCalledExactlyOnceWith("assistant-1");

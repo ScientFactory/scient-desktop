@@ -8,19 +8,97 @@ Companion feature: **Accounts** (see [Secrets integration](#secrets-integration)
 One place where a user sees and manages everything that extends what Scient and
 its agents can do, regardless of who owns it:
 
-| Layer                                                   | Owner                                | Who can use it                                     |
-| ------------------------------------------------------- | ------------------------------------ | -------------------------------------------------- |
-| Scient connectors and Scient plugins                    | Scient                               | All agents, subject to connector transport support |
-| Claude Code-format shared plugins                       | The installing agent's plugin system | Claude Code and Scient Agent                       |
-| Account apps: Codex store apps and claude.ai connectors | The provider account                 | Codex only or Claude only                          |
+| Layer                                                                 | Owner                                | Who can use it                                              |
+| --------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------- |
+| Scient connectors and Scient plugins                                  | Scient                               | All agents, subject to connector transport support          |
+| Claude Code-format shared plugins                                     | The installing agent's plugin system | Claude Code and Scient Agent                                |
+| Account apps: Codex store apps, ChatGPT apps and claude.ai connectors | The provider account                 | Codex, Scient Agent or Claude, each through its own sign-in |
+| Codex plugins (skills and MCP servers)                                | Codex's plugin system                | Codex, and Scient Agent when its build loads them           |
 
-Discover prefers Scient's connector where the curated catalog's `agentStores`
-mapping identifies the same service in an agent store. Google's account apps
-remain in the account layer; Scient does not add Google's official MCP servers.
+Discover prefers Scient's connector where it is the same service as an agent
+store's entry (`storeMatches`: the curated catalog's `agentStores` mapping, or a
+matching name or website). The store shelves and category store lists hide those
+entries. Google's account apps remain in the account layer; Scient does not add
+Google's official MCP servers.
+
+A service several agents' stores list (Stripe in Claude's, Codex's and
+Antigravity's) is one row on a category page, in the first store's section
+(`areStoreTwins`: the same name once case and punctuation go, and the same site
+domain when both entries give a website). Its store page adds **Your agents**
+(`StoreEntryAgents`): the twins become one service's store routes, so each
+agent's row adds its own store's copy.
+
+**Account services** (`apps/web/src/scient/extensions/accountServices.ts`) are
+services Scient lists once and connects to every agent from one page, whichever
+way each agent reaches them. Gmail, Google Calendar, Google Drive, Outlook Email,
+Outlook Calendar, Microsoft Teams, SharePoint, Zoom, Figma and Readwise map to a
+ChatGPT app id and a claude.ai connector name; iMessage, Telegram and Boltz have
+no account app and name
+store entries instead (`stores.claude`, a Claude Code `<plugin>@<marketplace>`
+id; `stores.codex`, a Codex app-server plugin id). Each shows as one row, in
+Discover's categories and search and, once any agent has its account app, in
+Installed. Every other ChatGPT app an agent reports is a service too
+(`accountServicesFrom`), installed when an agent holds a row for it or reaches
+it through its account (`installedAccountServices`). A store plugin an agent
+added stays in Installed as that agent's plugin.
+
+`accountServiceRoutes` gives each agent one route: its account app when the
+service has one for that agent, else the service's plugin from that agent's
+store, else none. Each route's state comes from the agent's own inventory:
+
+- Scient Agent: its `chatgpt` server rows (`chatgpt`), or Claude's plugins it
+  loads (`claude-store`; a version that cannot load them is `update`).
+- Claude: its `claudeai` rows (`claude`), or its installed plugins (`claude-store`).
+- Codex: its plugins' apps (`chatgpt`), or its installed plugins (`codex-store`). A
+  Scient Agent signed in to the same ChatGPT email also speaks for Codex's apps,
+  since apps belong to the account.
+
+Account app routes are `connected` or a step away (`connect`, `sign-in`).
+Store routes are `add`, `added` or `off`, never `connected`: a plugin's own
+sign-in, if any, happens in chat and is not visible here. A route without an
+inventory yet is `checking`. "Works with" lists the agents that have the service
+(connected or added), with the step each other agent still needs.
+`nextAccountServiceStep` picks the next route for the Discover row's **+**:
+ChatGPT's page first, since one ChatGPT connection serves Codex and Scient
+Agent, then a Claude store plugin, which one install gives Claude and Scient
+Agent, then the rest. An `add` installs in place through `useStoreInstall`, the
+store pages' own install, so a Claude plugin for Scient Agent goes into a Claude
+instance.
+
+Links are never guessed. ChatGPT pages are built exactly as Codex builds its
+install links (`chatgpt.com/apps/<name with each other character as ->/<app id>`).
+claude.ai links come only from `claudeConnectors.json`: each connector's "Add to
+Claude" address (`claude.ai/directory/<id>`) from Anthropic's public directory,
+refreshed with `node scripts/generate-claude-connectors.mjs`. A ChatGPT app with
+no claude.ai connector of the same name (or an alias, such as Outlook to
+Microsoft 365) gets no Claude route at all. Returning, or adding a plugin,
+refreshes the agents' inventories. The provider sections no longer repeat these
+services' rows, and the store shelves and a category's store list hide a store
+entry that is one of them (`isAccountServiceStoreEntry`). Adding a service is a
+data change in that file.
 
 The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
 before the UI updates. The UI never predicts success.
+
+## Agent tool loading
+
+Scient Agent 0.1.4 and later on OMP 18.18 or later, and stock OMP 18.18 and later,
+keep a small Scient core loaded: Compute, paper retrieval, messaging, HTML rendering,
+thread inspection and management, delegation, secrets and skill discovery. Other Scient
+and connector tools remain callable through `xd://` devices. Older runtimes receive
+all schemas directly. The bridge passes service ownership metadata so runtimes with
+grouped catalogs can list a service once and expose its individual tools on demand.
+Each service's description is the first line of its MCP server's `instructions`. Scient's
+own server sends `SCIENT_MCP_INSTRUCTIONS`, which Codex also shows for its namespace.
+
+Pi's `tool_search` finds only tools that are not loaded yet. On completion gateways the
+bridge loads every schema, so its guidance says that loaded tools are called directly
+and that an empty search does not mean a capability is missing.
+
+Custom-model connections to OpenRouter carry Scient's app headers (`HTTP-Referer`,
+`X-OpenRouter-Title`). OMP adds its own headers only for its built-in `openrouter`
+provider.
 
 ## Product surface
 
@@ -37,8 +115,11 @@ access.
   curated matches, then registry matches as they arrive (see
   [Discover](#discover-curated-catalog-and-mcp-registry)). A slow or failing
   registry never holds back the other rows.
-- **Category** (`/settings/extensions/category/<category>`) — every curated
-  entry in one category.
+- **Category** (`/settings/extensions/category/<category>`) — every browsable
+  curated entry in one category, the account services in it, and the agents'
+  store entries for it. Browsing (Discover home and category pages) lists only
+  servers run by the service or by Anthropic for it (`listedWhenBrowsing`);
+  community servers and MCP Registry listings are reached only by searching.
 - **All MCP servers** (`/settings/extensions/all`) — the MCP Registry, paged,
   with its own search; curated servers appear here in their curated shape.
 - **Add your own** — one button in the top bar of Discover and Installed (and a
@@ -48,19 +129,26 @@ access.
   `https://` address (handed to the URL form), or **Run a command…** (connectors tab only). The
   import list leaves out servers that cannot start here (program not found, or
   Codex `env_vars` that are neither in the environment nor keys).
-- **Installed** (`/settings/extensions/installed`) — Connected services,
-  Scient plugins, then one
-  **From <agent>** section per provider instance with its plugins and MCP
-  servers. A **Works with** filter narrows every section to what one provider
-  instance can use. Provider sections show six entries with a header toggle to
-  show the rest.
+- **Installed** (`/settings/extensions/installed`) — one **Yours** table:
+  Scient's connectors and installed bundles, account apps (one row per service,
+  naming every agent that has it), then each agent's plugins and own MCP
+  servers; **Built into Scient** follows. Each thing is one row: a plugin two
+  agents share, a server that belongs to a plugin or stands behind a listed
+  app, and Codex's `codex_apps` gateway add none. Type is Connector, App,
+  Plugin, MCP server or Built in. A **Works with** filter narrows the table to
+  what one of the person's agents can use, honouring a connector's chosen
+  agents. The table shows 24 rows with a header toggle to show the rest.
 - **Detail pages** (`/settings/extensions/item/…`) — one per connector, catalog
   or registry entry, Scient plugin, provider plugin and provider MCP server. The
   header carries the entry's identity and its primary action (Add, Remove,
   Uninstall, or who manages it). Below it, cards:
   - **Connection** (connectors) — status with Sign in or Reconnect, Test, the
-    Use with agents switch, and Available in (all projects or selected
-    projects).
+    Use with agents switch, Agents (all agents or selected agents) and
+    Projects (all projects or selected projects). A connector's
+    optional `agents` list is stored on its record; delivery skips other agents
+    with `agent-deselected`, and the proxy re-checks the session's agent on
+    every request. Discover's **+** asks for the agents first when more than one
+    takes connectors.
   - **Tools** (connectors) — listed only on request ("See tools" runs Test);
     the result belongs to the connector's current sign-in generation and is
     discarded when it changes.
@@ -402,6 +490,17 @@ become `_`, a leading digit gains a `_` prefix, and a name that is too long or
 already taken becomes its first 55 characters plus `_` and 8 hex digits of
 SHA-256(`<server>\0<tool>`). Calls use the original tool name.
 
+Scient Agent 0.1.4 with OMP 18.18.0 or newer registers connector tools as
+discoverable `xd://` devices. Native `read` lists their schemas and `write`
+calls them; Scient's own tools, including discovery and turn controls, stay
+essential. Desktop gates this on the executable's verified `--runtime-info`,
+then passes the mode to the extension through `SCIENT_AGENT_CONNECTOR_LOAD_MODE`.
+Earlier versions and external OMP keep all tools essential. Custom tools were
+already discoverable in Scient Agent 0.1.0; the later gate also requires the
+mounted-tool restoration fixes for revived subagents. Runtime settings can
+still expose discoverable tools top-level (`tools.xdev: false`) or inline their
+documentation (`tools.xdevDocs: inline`), increasing request cost.
+
 Reserved server names: `scient`, `t3-code`, `t3_code`, `t3code`. Connector names
 are `[a-z0-9_-]{1,48}`, unique, and suffixed `_2`, `_3` on collision. Planning
 skips a connector whose name the provider instance last reported as one of its
@@ -527,6 +626,173 @@ The record keeps `url` as `scient-local:<connectorId>` (unique, never fetched). 
 Scient versions cannot decode `source.type: "local"`, so they preserve such records
 verbatim instead of treating them as remote connectors.
 
+### Agent-made connectors
+
+Agents build, fix and improve local connectors with three tools in the Accounts toolkit
+(`LocalConnectorAuthoring`), next to `scient_connector_setup` and the tools for any connector
+(below):
+
+- `scient_connector_copy` writes an installed connector's folder, or the template from the
+  built-in `connector-authoring` skill, into `connectors/<slug>/` of the calling thread's folder.
+  Scient does the writing, so sandboxed agents can edit the result. A taken name gets the next
+  free one (`name-2`). A `connectors` folder that is a link, or a target whose real path leaves
+  the thread's folder, is refused. For an installed connector it also returns the status,
+  `lastError` and the log tail.
+- `scient_connector_check` starts a folder's manifest outside any record, with the launcher
+  installed connectors use. It can borrow an installed connector's settings, keys and sign-in, or
+  use a named sign-in. It lists the tools, runs the sample `calls`, and stops the program. Missing
+  keys or a missing sign-in are reported, and the program still starts. A malformed Scient `_meta`
+  block is a problem, never a silent default.
+- `scient_connector_save` checks again, then either adds the folder as the user's own connector
+  (owned, on, all projects) or swaps it into an existing one. A vendor's bundle (`owned: false`)
+  becomes the user's own copy (`forkedFrom`). Settings, keys and the sign-in link are kept, and
+  the connector restarts.
+
+**Package code.** Copying an npm or PyPI package connector (a generated `npx -y pkg@v` or
+`uvx pkg==v` manifest) also brings its code in (`PackageSource`), with the tool that runs it:
+`npm install` puts the package in `package/` and its dependencies in `node_modules/`;
+`uv pip install --no-deps --target` puts a PyPI package (with its `.dist-info`) in `package/`,
+its `Requires-Dist` go to `pyproject.toml` (`package = false`), and `server.py` calls its console
+script. The manifest is rewritten to run from the folder with the same arguments and setup:
+`node` on Scient's own Node, or `uv run --project`. `.venv` and `__pycache__` are left out of
+copies, saves and exports, since uv makes them again and a moved `.venv` no longer runs. The
+copy's `source` says where to edit, or why the code isn't there (no npm or uv). Measured:
+`@mcp-z/mcp-gmail` 2.3.3 is 4,465 files and 49 MB with its dependencies, inside the
+20,000-file and 200 MB folder limits; `mcp-server-fetch` is 25 files. A copied command that runs
+a script outside its folder names that script in `source`.
+
+**Any connector.** Three more tools (`ConnectorAgentControl`) work on hosted and local
+connectors alike through the calls the Extensions page makes:
+
+- `scient_connector_list {query?}`: each connector's server name, kind (hosted or local), on or
+  off, status (`ready`, `needs-setup`, `needs-sign-in`, `error`, `off`), last error (one line)
+  and what is missing. With `query`, up to 10 Discover entries (Scient's picks, then the
+  Registry) with whether an agent can add each, or why not.
+- `scient_connector_add {from}`: a Discover or Registry name, an https MCP address, or a
+  `.mcpb`/`.zip` path, through `connectors.add` (on, all projects), then the connector test for
+  its tools, using what the chat's project may use. A hosted entry that needs an API key or the
+  user's own OAuth app asks for it in the private secret card, as `scient_connector_setup` does:
+  the key becomes an Accounts key bound to the connector, the app's client ID and secret go to
+  the connector; nothing passes through the chat. Entries that need an address or GitHub's
+  Source Control account are refused with that reason. A local add records `changedBy: agent`.
+- `scient_connector_control {connector, action}`: `on`/`off` and `restart` through
+  `connectors.update`; `sign-in` for a hosted OAuth connector starts `startSignIn` with Scient's
+  own loopback origin and opens the authorization page as the user's own tab in the chat's
+  browser (no agent holds it, so there is nothing to take over), or returns the link when the
+  chat has no browser. A local connector's sign-in points
+  at `scient_account_sign_in` with its linked account. Removing stays the user's.
+
+`scient_connector_check {connector, calls?}` without a folder runs `connectors.test` on the
+installed connector, hosted ones too, with the chat's project, so a sign-in or key scoped to another
+project counts as missing, and makes the `calls` through the same client. A connector reaches a
+provider session only when the session starts, so this is how an agent uses one it added or saved
+in the same chat; the add, save and `on` messages say so. Both checks pass every returned field (tool names, descriptions,
+parameter schemas, call results, errors, logs) through `ConnectorRedaction.redactText` with the
+program's keys (however short) and session cookies, in any encoding; a cut never shows part of
+a credential, because the word it splits is left out.
+
+**History.** `FolderHistory`, shared with personal skills, swaps a folder in one step, with
+rollback, and keeps 10 entries per connector, fewer when they pass 100 MB together (the newest
+always stays, never with a gap), in
+`<stateDir>/connector-history/<connectorId>/` (`created`, `replaced`, `removed`; a removal keeps
+the record so it can come back). `extensions.connectors.undo` restores the newest entry.
+Undoing a connector's creation is not offered, because Remove keeps a copy and has its own Undo.
+Undo links the sign-in again for the manifest it restores. Save, Undo, remove, copy and export
+of one connector, and setup through `connectors.update`, take a per-connector lock, so they
+never interleave.
+Summaries carry `changedBy`, `updatedAt`, `forkedFrom` and whether Undo is possible.
+`extensions.connectors.export` returns a local connector as `.mcpb`.
+
+**Logs.** `ConnectorLogs` keeps the last 16 KB of each local connector's stderr in
+`<stateDir>/connector-logs/<connectorId>.log`, across restarts, with keys and cookies removed.
+It is deleted with the connector.
+
+**Studying a site.** `preview_network` lists a tab's recent requests and shows one request's
+headers and bodies. Its masking is defence in depth, not the boundary, because an agent can
+already run `preview_evaluate` in the same tab. What it guarantees: no value Scient knows is
+secret for the tab, of 4 characters or more, appears in any URL, header or body it returns.
+Those values are the tab's cookies for the listed addresses, the Cookie, Authorization and
+Set-Cookie values of its kept requests, and its password fields. Each request keeps the values
+learned when it was recorded, and a listing covers exactly the requests it returns. Each value
+is searched for as written raw, percent- or form-encoded, JSON-escaped, as HTML references
+(decimal, hex or any named one), and as standard or URL-safe base64 at each alignment, with no
+minimum length. The output is searched for these forms and never decoded. Values of 1 to 3
+characters are not hidden: hiding "en" or "1" everywhere would garble pages and protect nothing.
+Best effort: values named like secrets, and unknown token-looking values, are hidden by parsing
+HTML and XML (with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings
+or `data-` attributes, one level deep). A format Scient cannot parse is left out.
+
+Bodies are read from the browser only through the tab's own CDP session, never with
+Playwright's `response.body()`, which may fetch the address again in full when a body comes back
+as no text. The session counts each request's decoded bytes (`Network.dataReceived`, final at
+`loadingFinished`); the page's own numbers are never used. Only the main frame's answers are
+matched: a subframe in its own process or a service worker is counted on another session.
+Playwright reports a dedicated worker's answers as the main frame's, and its bytes are counted on
+the worker's own session: once a page has had a dedicated worker, all its bodies are left out.
+Only requests the session saw from their start have a count, and a count still loading is never
+dropped to make room. As an answer arrives, the requests with its method, address and status are
+pinned; once they settle, those that failed before any answer (a page cancelling a request and
+asking again) are dropped, and exactly one must remain: it is then the answer's own. Its count is settled once the
+answer finishes and kept with the request, and the body is read by that request's id with
+`Network.getResponseBody`, which answers with exactly that body (empty is empty) or an error. Only documents and XHR/fetch answers are read: the browser keeps those as received, while a script, style or image comes from its cache, which a later load of the address can replace with a larger body.
+None, or more than one, and the body is left out. Text comes back as UTF-8, up to 3 bytes per
+counted byte, so every read reserves and is capped at 3 × its count, within 24 MB at once, the
+same for bodies read as they arrive and for an agent's request. A left-out GET body's note,
+masked like any other output, names the rule that left it out and tells the agent to fetch it in
+the page with `preview_evaluate`, streaming and stopping at 1 MiB; other methods are never
+repeated. Headers named like secrets are hidden, except the HTTP/2 pseudo-headers `:authority`,
+`:method`, `:scheme`, `:status` and `:protocol`; `:path` is masked as the URL is.
+
+The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
+to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with
+a note. Known values are found by one Aho-Corasick automaton per written form, so the work does
+not depend on how long the values are. Each masking call also has a fixed budget of 32 million
+character comparisons; past it the body is left out as too costly to mask, never shown unmasked.
+Reading the tab's cookies and password fields waits at most 300 ms and is reused for 3 seconds,
+and an empty list returns at once.
+
+### Signed-in connectors
+
+A manifest's `_meta["com.scientfactory.scient"].signIn: { site }` (https, or `http://localhost`
+and `http://127.0.0.1`) means the program needs the user signed in to that site. Setup and
+`scient_connector_setup` link an Accounts website sign-in for the site (`local.signIn`), or list
+it as missing. At each start, `connectorSessions` reads the site's current cookies from the
+sign-in's browser profile in a hidden tab, writes them as owner-only files under
+`<secretsDir>/connector-sessions/<connectorId>/`, and passes these environment variables:
+
+- `SCIENT_SIGN_IN_SITE`
+- `SCIENT_SIGN_IN_COOKIES` (JSON)
+- `SCIENT_SIGN_IN_COOKIES_TXT` (Netscape)
+- `SCIENT_SIGN_IN_USER_AGENT`
+
+The program never gets the password. Every response event is checked against the connector's
+current credentials, so cookies from a new sign-in during a call are covered too, and earlier
+values stay. Keys are redacted from 16 characters wherever they appear. Cookie values are
+redacted from 6 characters, but only as whole tokens, so ordinary output is never mangled. Base64 of
+either is redacted too, and for cookies the whole-token test is applied after decoding. Every exchange checks the sign-in again: whether it exists, covers the site,
+is on, has global agent access and is in the project's scope. If not, the running copies stop and
+the session files are deleted. A university's own sign-in service stays in the browser.
+
+**Expiry.** A tool result whose text starts with `SCIENT_SIGN_IN_EXPIRED` makes the process host:
+
+1. Let the session's other calls finish on the old process, for up to 30 s.
+2. Sign in again (`guardedSignIn` with the unattended `connector` caller: saved password and
+   authenticator code; at most once per 2 minutes per sign-in).
+3. Use a newer session the profile already holds, if there is one.
+4. Rewrite the files and start a fresh process inside the same agent session, replaying the
+   handshake.
+5. Retry only the calls that reported expiry, once.
+
+A call cut off by the swap returns an "outcome unknown" error and is never replayed. If the
+session ends while it waits (the agent closes it, the program exits, the sign-in is revoked), no
+new process starts. When the
+site needs the person, the agent is told to sign in, and the connector shows Needs sign-in with a
+Sign in button.
+
+**Development candidates** can trust a local test site's certificate: the desktop app reads SPKI
+hashes from `server-browser/dev-trusted-spki.txt` in its own state folder, only when
+`VITE_DEV_SERVER_URL` is set and the app is not packaged.
+
 ### Receipts
 
 ```ts
@@ -584,19 +850,109 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   and uninstall are re-read and verified. Foreign Claude installs are read-only
   from this section. No configuration, environment, or credentials from an MCP
   definition are projected into the UI.
+- **Scient Agent's ChatGPT apps**: the apps its own ChatGPT sign-in has
+  connected, from `apps --json` through the same executable, root and gate.
+  The command runs only when `--runtime-info` lists it in `hostCommands`; an
+  older agent would read the word as a prompt. Rows carry scope `chatgpt`,
+  the tool count and the app's `chatgpt.com/apps/<slug>/<id>` page, and read
+  "Scient Agent only" with the reason "Uses Scient Agent's own ChatGPT account".
+  A signed-out agent reports none. The agent calls ChatGPT's apps server
+  (`chatgpt.com/backend-api/ps/mcp`, the one the Codex apps use) itself; Scient
+  never holds the token. Conversations, and not title or other one-off runs,
+  start with `SCIENT_AGENT_CHATGPT_APPS=all`: the agent then registers every
+  connected app's tools as discoverable `<app>__<tool>` tools under `xd://`,
+  leaving out ChatGPT's own `connector_openai_*` features. **Add more on
+  ChatGPT** opens `chatgpt.com/apps`. When the same service is also a delivered
+  Scient connector, the agent currently receives both.
+
+### Sign-in from a chat notice
+
+- **MCP servers (Codex, Claude)**: upstream's notice sign-in (`provider.mcpSignIn.*`).
+  `complete` without a callback address waits up to five minutes for Codex's
+  `mcpServer/oauthLogin/completed`, which Codex sends when a browser on its
+  computer reached its own callback page; the dialog starts that wait when it
+  opens the page, only on a connection the desktop app proves is on the agent's
+  computer, and keeps the paste field for every setup. Claude reports no
+  finished sign-in, so without an address it succeeds only when the server
+  already shows as connected. A finished or already-valid sign-in refreshes the
+  provider instance, so this section stops showing needs-sign-in.
+- **Codex homes**: chat and this inventory start app-servers of the same
+  instance with the same `CODEX_HOME`, the instance's effective (shadow) home, so
+  a chat sign-in is visible here. Read from Scient's code; Codex's own storage was
+  not checked against its source. Codex keeps MCP OAuth credentials in the OS
+  keyring by default, which does not depend on the home; with file storage they
+  live in `CODEX_HOME/.credentials.json`, which a shadow home links to the shared
+  home only if the file existed when the shadow home was built. Two instances
+  sharing a home can then disagree until each signs in.
+- **Antigravity plugins** (`scient/antigravity/pluginSignIn.ts`,
+  `pluginAuthManifest.ts`): a plugin's failed tool call prints a
+  `<plugin-card catalog-id="…">` and a sign-in link whose loopback redirect the
+  running agy process serves. Every URL whose `redirect_uri` is loopback is
+  scrubbed from tool snapshots and from every streamed channel before anything
+  projects it, whether or not a notice follows, together with the `state` and
+  `code_challenge` of any challenge seen. A stream holds a possible partial URL,
+  secret or card (bounded) until that stream ends: a tool's output with its call,
+  a reply or thought at the prompt's end, never at another tool's update. A challenge needs exactly one
+  well-formed card and one URL in the tool's result, never in its input; streamed
+  output counts once its call ends. It earns a notice only from a plain shell run
+  (no pipes, chaining, redirection or substitution) of a CLI that the installed
+  plugin's `auth.json` lists under `providers.*.clis`, read bounded from
+  `~/.gemini/config/plugins/<slug>/`, whose `plugin.json` name equals the card's
+  `catalog-id`, and whose `oauth2.authorizeUrl` and `oauth2.clientId` match the
+  page's origin, path and `client_id`. The command name is the same evidence
+  agy itself uses to hand the plugin its Google token (`delivery: env` for the
+  bare CLI), so a different program by that name already gets the token from
+  agy; the action adds no reach beyond it. The page must also be HTTPS with no
+  userinfo or fragment, one `state`, and one `redirect_uri` that is HTTP loopback
+  with a port of 1024 or above and path `/callback`. Partner plugins that sign in
+  through MCP OAuth declare no CLI, so they get no button until their challenge
+  is captured. The page stays server-side for ten minutes, bound to the session,
+  the agent process (an exit or replacement retires it) and the thread that
+  showed the notice; a newer challenge for the plugin replaces it. A
+  model-repeated card on its own line is dropped while the attempt is live.
+  `scient.pluginSignIn.open` (providers-manage grant) returns the page only on a
+  click from a connection the desktop app proves is on the agent's computer
+  (`scient/sameHost.ts`); the next successful run of one of the plugin's CLIs
+  raises a signed-in notice.
 
 ### Shared plugins source
 
-Scient Agent always uses Claude Code's plugins; there is no desktop switch. The
-ordinary Scient Agent process factory and plugin commands inject
-`SCIENT_AGENT_ENABLE_SOURCES=claude-plugins` once runtime identity proves
-Scient Agent 0.1.3 or newer. Identity checks precede injection. The agent
-unions this source with its own enabled sources for discovery; its
-`disabledProviders` remains controlling. No settings overlay replaces arrays.
-The desktop inventory checks that switch through `config get … --json` and
-honors Claude's user/project/local plugin enablement layers.
+Scient Agent always uses Claude Code's plugins, and Codex's when its build can;
+there is no desktop switch. The ordinary Scient Agent process factory and
+plugin commands inject `SCIENT_AGENT_ENABLE_SOURCES=claude-plugins,codex-plugins`
+once runtime identity proves Scient Agent 0.1.3 or newer; a build without Codex
+plugin discovery ignores the id it does not know. Identity checks precede
+injection. The agent unions these sources with its own enabled sources for
+discovery; its `disabledProviders` remains controlling. No settings overlay
+replaces arrays. The desktop inventory checks that switch through `config get …
+--json` and honors Claude's user/project/local plugin enablement layers.
 
-The source home is `CLAUDE_CONFIG_DIR`, resolved on the server host, or the
+The `codex-plugins` source loads the skills and MCP servers of the Codex plugins
+installed and enabled in `~/.codex/config.toml`, except OpenAI's host-coupled
+ones. Each check of an enabled, installed Scient Agent reads `--runtime-info`
+once (`scientAgentCapabilities`): `hostCommands` containing `apps` means it runs
+ChatGPT apps, and `enableSources` containing `codex-plugins`, unless the agent's
+`disabledProviders` names it, sets the provider's `usesCodexPlugins`. A failed
+read keeps what the same build last reported.
+
+Plugins reach an agent only through the home it reads. Claude instances report
+`pluginHomes.claude` (their resolved Claude home); Scient Agent reports
+`pluginHomes.claude` (its `CLAUDE_CONFIG_DIR` or `~/.claude`) and, while it loads
+Codex's plugins, `pluginHomes.codex` (its `CODEX_HOME`, expanded like Codex's own
+home and passed on resolved, or `~/.codex`); Codex instances report their shared
+home as `pluginHomes.codex`. A Claude Code plugin's
+`shared` audience and a Codex plugin's `codex` audience carry the owner's
+`pluginHome`, and reach only agents reading the same home (an unknown home on
+either side counts as the same). `storeInstallTarget` sends Scient Agent's Add
+for a Claude Code plugin to the Claude instance reading its home, else to Scient
+Agent's own installer, and for a Codex plugin to the Codex instance whose home it
+reads; with no such Codex, Scient Agent gets no Codex route. Plugins from the
+`openai-bundled` marketplace (by their `<name>@openai-bundled` id), where all of
+OpenAI's host-coupled plugins live, stay Codex only; this under-claims bundled
+plugins that would load. A Codex store entry built on a ChatGPT app keeps the
+app's account audience.
+
+Claude plugins' source home is `CLAUDE_CONFIG_DIR`, resolved on the server host, or the
 server user's `.claude` directory. It is not a union of every configured Claude
 profile. Existing sessions may need the agent's normal reload/restart procedure
 before newly installed hooks or modules become active.
@@ -648,6 +1004,56 @@ limited to 64 KiB, checked for PNG/JPEG/WebP signatures, converted to
 `ExtensionIconDataUri`, and cached (256 entries, one hour). A page's icon work
 has a five-second budget; a slow icon leaves the usual fallback tile. Signed
 logo URLs never reach the renderer.
+
+### Antigravity Marketplace
+
+An Antigravity instance whose resolved runtime is the agy CLI exposes Google's
+two public catalogs (`antigravity-plugins-official` and
+`antigravity-plugins-partners`, fixed `www.gstatic.com` feeds, no sign-in).
+Each feed is fetched without redirects, capped at 4 MiB, schema-decoded and
+cached for ten minutes; a failed feed is a `sourceFailures` entry while the
+other stays listed. Partner entries carry `publisherType: "third-party"` and
+show a developer notice before Add. Discover categories come from a reviewed
+per-plugin map, then the feed's own category and keywords.
+
+Add first runs agy's own `agy plugin install <name>@<catalog>`, which records
+the catalog as the plugin's `source`, keeps it updated and refuses a folder
+another source holds (verified on agy 1.5.12). It needs agy's own sign-in, not
+Scient's per-instance profile. Whatever the command reported, Scient then reads
+agy's raw list: the name listed with that catalog as `source` is an Add, any
+other copy of the name is refused, and only an absent name falls back. The
+fallback downloads the entry's gstatic archive (64 MiB cap), checks the feed's
+SHA-256 before opening it, unpacks it without links, special files, escaping or
+colliding names, keeps executable bits, checks `plugin.json`'s name and version,
+re-reads agy's raw list as the last step before `agy plugin install
+<staging-dir>` (which replaces a same-name folder), and runs it with a minimal
+environment. A receipt in `<stateDir>/antigravity-plugins/receipts.json` records
+name, catalog, version, source, digest, folder and the installed copy's identity
+(folder device, inode, birth time and `plugin.json` digest), written only when
+that digest equals the staged one and the folder was born after the install
+began (where the system records birth times). agy has no no-replace directory
+install, so a same-name install by another program in the moment between that
+last list and the install can still be replaced; the named route has no such
+window. Writes to one plugin folder, its receipts
+included, take one permit shared by every instance using that folder.
+
+An installed copy is the catalog entry when agy's `source` names the catalog or
+a receipt matches that exact copy; it then carries the entry's id and Marketplace
+Remove acts on it. A copy with no recorded origin (`source` null or
+`antigravity`) whose `plugin.json` has the same name and the catalog's
+repository, author or description shows as added but keeps its own
+`antigravity:<name>` id, so only Installed removes it. Installed state,
+enable/disable and Remove use `agy plugin list --json`, `enable|disable` and
+`uninstall`. A catalog outage keeps Installed and Remove; an unreadable listing
+pauses Add and Remove. A paired-harness instance lists the catalogs with Add disabled and says why.
+
+Live check (agy 1.5.12, 2026-11-22): a plugin MCP server that needs a sign-in
+(Canva's) does not load in `agy acp` or `agy -p`, which log "Not reloading plugin
+MCP servers: cannot get the signed-in user"; agy signs those in only in its
+interactive `/plugin` manager, which Scient cannot drive. Skills and CLI plugins
+that sign in through `auth.json` (Google's) work in Scient chats. An installed
+plugin listing MCP servers therefore says where its connection signs in, and its
+service row does not claim the connection works.
 
 `providerPlugins.act` accepts `install` (entry id, with an optional source
 instance for shared stores), `add-official-store`, and the existing lifecycle
@@ -802,8 +1208,10 @@ rejected with a named reason.
 **Curated catalog.** `apps/server/src/scient/extensions/discover/curatedCatalog.ts`
 lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
-a short description, categories (`featured`, `research`, `data`, `code`,
-`writing`, `communication`, `design`), a website, the MCP Registry entry when
+a short description, categories (`most-used`, then `papers`, `biology`,
+`code`, `data`, `physics-math`, `files`, `communication`, `projects`,
+`figures`, `chemistry`, `earth`, `social-science`, in that home-page order),
+a website, the MCP Registry entry when
 the registry publishes that exact remote, and a bundled icon. Every
 URL is verified live before it is added (a POST `initialize` answered 200 with
 an initialize result, or 401 with `WWW-Authenticate`); the verification date
@@ -813,7 +1221,7 @@ named `scient.curated/<id>` with the verification date as its version; clients
 install it by URL.
 
 `extensions.discover.catalog` returns the non-empty categories in that order,
-each with up to 6 preview entries (entries whose first non-featured category is
+each with up to 6 preview entries (entries whose first category other than `most-used` is
 the section come first, then the rest, in catalog order) and its `total`.
 `extensions.discover.search` takes a required `scope`, so local results never
 wait on the network:
@@ -874,10 +1282,17 @@ unresolved templates whose scheme is not a literal non-https one; a remote
 `requiresInput` when it has a required header or an unresolved URL variable;
 `installable` = at least one such remote without required input, or else a
 `localPackage`: the first npm or PyPI stdio package whose arguments all have fixed
-values or defaults (runtime arguments are not supported), with its declared
-environment variables. Otherwise `unsupportedReason` explains why: other local
-packages (for example OCI images or remote `.mcpb` files), required configuration,
-non-https endpoints, or another transport (for example legacy SSE).
+values or defaults, with its declared environment variables, or a `localBundle`: an
+`mcpb` package with an https address and `fileSha256`. Runtime arguments are allowed
+only when Scient applies them already (`-y`/`--yes` for npx, passed once). A bundle is
+added through the `registry-bundle` target: downloaded under the connector egress rules (public
+https only, each redirect checked, 200 MB at most), kept only if
+its SHA-256 matches, then unpacked like a picked `.mcpb`. Otherwise `unsupportedReason`
+says why, from the first package when there is one: Docker (OCI), a registry Scient
+doesn't run (NuGet, Cargo), another transport, runner options it doesn't pass, or a
+required argument without a value; else required configuration, non-https endpoints,
+or another remote transport (for example legacy SSE). The entry's page offers "Make
+with an agent" for entries that can't be added.
 
 ## Secrets integration
 
@@ -979,8 +1394,8 @@ when they add it) is unset, and Source Control connectors move between
 `connected` and `needs-credential` without touching enablement or availability.
 
 Scient for GitHub (client ID `Iv23lieBEtqTwH75xtnk`, device flow, no secret) is
-the default app sign-in on every server; `T3CODE_GITHUB_APP_CLIENT_ID` overrides
-it, and an empty value turns it off. Device sign-in from the add dialog shows
+the default app sign-in on every server; the `github_app_client_id` entry of
+`T3CODE_FEATURE_FLAGS` replaces it with another app. Device sign-in from the add dialog shows
 the code and opens `github.com/login/device` in Scient's browser. A token remains
 available. Only user-added URLs expose custom OAuth client settings.
 

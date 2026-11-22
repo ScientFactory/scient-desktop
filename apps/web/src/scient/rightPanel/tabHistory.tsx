@@ -1,5 +1,6 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, type ReactNode } from "react";
 import { create } from "zustand";
@@ -386,16 +387,6 @@ export function renameInTabHistory(
   );
 }
 
-/** How many steps Back and Forward hold for a tab. */
-export function tabHistoryDepth(threadRef: ScopedThreadRef, surfaceId: string) {
-  const history =
-    useTabHistoryStore.getState().byThreadKey[scopedThreadKey(threadRef)] ?? EMPTY_HISTORY;
-  return {
-    back: history.back[surfaceId]?.length ?? 0,
-    forward: history.forward[surfaceId]?.length ?? 0,
-  };
-}
-
 /** ← and → for a file tab, always shown as in a browser, greyed out with nowhere to go. */
 export function TabHistoryButtons(props: {
   readonly className?: string;
@@ -410,6 +401,7 @@ export function TabHistoryButtons(props: {
   const canGoForward = useTabHistoryStore(
     (state) => (state.byThreadKey[threadKey]?.forward[props.surfaceId ?? ""]?.length ?? 0) > 0,
   );
+  const gt = useGT();
   if (!props.surfaceId) return null;
   const surfaceId = props.surfaceId;
   const backKey = shortcutLabelForCommand(props.keybindings, "navigation.back");
@@ -444,14 +436,14 @@ export function TabHistoryButtons(props: {
   return (
     <div className={cn("flex shrink-0 items-center", props.className)}>
       {button(
-        "Back",
+        gt("Back", { $context: "button, goes to the previous file in this tab" }),
         backKey,
         canGoBack,
         () => goBackInTab(props.threadRef, surfaceId),
         <ArrowLeft aria-hidden className="scient-quiet-icon size-4" />,
       )}
       {button(
-        "Forward",
+        gt("Forward", { $context: "button, goes to the next file in this tab" }),
         forwardKey,
         canGoForward,
         () => goForwardInTab(props.threadRef, surfaceId),

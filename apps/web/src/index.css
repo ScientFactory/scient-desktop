@@ -4,6 +4,7 @@
 @import "./scient/typography/profile.css";
 @import "./scient/presentation/scient-content-scrollbar.css";
 @import "./scient/presentation/scient-trace.css";
+@import "./scient/presentation/scient-reasoning-trace.css";
 
 /* SCIENT-FORK:START — tests, fixtures and docs never render in the app, so their
    class names must not reach production CSS. CI skips desktop packaging for
@@ -165,8 +166,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --appearance-contrast-target: white;
-    --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-    --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+    /* Keeps the idle thumb above 3:1 (WCAG 1.4.11) on #000; 35% renders as gray 89, just under. */
+    --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+    --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
     --glass-blur: 16px;
     --glass-saturation: 1.08;
   }
@@ -239,7 +241,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     linear-gradient(
       to top,
       transparent 0 var(--chat-composer-attachment-overlap),
-      rgb(0 0 0 / 18%) var(--chat-composer-attachment-overlap),
+      var(--chat-composer-attached-seam, rgb(0 0 0 / 18%)) var(--chat-composer-attachment-overlap),
       transparent calc(var(--chat-composer-attachment-overlap) + 10px)
     );
   --color-zinc-25: oklch(99.2% 0 0);
@@ -689,7 +691,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @utility live-activity-focus-aligned {
   width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
-  margin-left: var(--live-activity-focus-width);
+  margin-inline-start: var(--live-activity-focus-width);
 }
 /* SCIENT-FORK:START — one readable live sweep, on the current activity only, and the
    line-by-line reveal of a streaming answer. */
@@ -1164,23 +1166,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --toolbar-control-foreground: var(--foreground);
   --toolbar-control-hover: var(--accent);
   --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
-  --foreground: var(--color-zinc-900);
+  /* SCIENT-FORK:START — neutral stock text (scient/typography): near-black text and a neutral
+     grey for secondary text; placeholders and muted icons keep the quieter zinc grey. */
+  --foreground: #191919;
   --card: var(--color-white);
-  --card-foreground: var(--color-zinc-900);
+  --card-foreground: var(--foreground);
   --popover: var(--color-white);
-  --popover-foreground: var(--color-zinc-800);
+  --popover-foreground: var(--foreground);
   --primary: oklch(0.509119 0.184173 257.541);
   --primary-foreground: var(--color-white);
   --secondary: var(--color-zinc-50);
-  --secondary-foreground: var(--color-zinc-800);
+  --secondary-foreground: var(--foreground);
   --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
-  --placeholder: var(--muted-foreground);
+  --muted-foreground: #666666;
+  --placeholder: var(--color-zinc-500);
   --secondary-label: var(--muted-foreground);
-  --icon-muted: var(--muted-foreground);
+  --icon-muted: var(--color-zinc-500);
   /* One step past the accent, so a user turn stands off the near-white canvas. */
-  --message-surface: color-mix(in srgb, var(--color-zinc-200) 55%, var(--color-zinc-100));
+  --message-surface: #efeff0;
   --message-foreground: var(--foreground);
+  /* SCIENT-FORK:END */
   --message-action: var(--primary);
   --message-action-foreground: var(--primary-foreground);
   --message-action-hover: oklch(0.464689 0.166392 257.308);
@@ -1246,17 +1251,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
        states provide separation without milky gray fills. */
     --background: #000;
     --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --foreground: var(--color-neutral-100);
+    /* SCIENT-FORK:START — neutral stock text (scient/typography). */
+    --foreground: #efefef;
     --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
+    --card-foreground: var(--foreground);
     --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
+    --popover-foreground: var(--foreground);
     --primary: oklch(0.571 0.21 264);
     --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
     --secondary: --alpha(var(--color-white) / 3%);
-    --secondary-foreground: var(--color-neutral-100);
+    --secondary-foreground: var(--foreground);
     --muted: --alpha(var(--color-white) / 3%);
-    --muted-foreground: var(--color-neutral-400);
+    --muted-foreground: #9c9c9c;
+    --placeholder: var(--color-neutral-400);
+    --icon-muted: var(--color-neutral-400);
+    /* SCIENT-FORK:END */
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
     /* A user turn sits above the composer tone, level with the selected sidebar row. */
@@ -1289,18 +1298,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    surfaces. */
 [data-app-sidebar] {
   --background: var(--color-zinc-25);
-  --foreground: var(--color-zinc-900);
+  /* SCIENT-FORK:START — neutral stock text (scient/typography). */
+  --foreground: #191919;
   --card: var(--color-white);
-  --card-foreground: var(--color-zinc-900);
+  --card-foreground: var(--foreground);
   --accent: var(--color-zinc-100);
   --accent-foreground: var(--color-zinc-900);
   --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
+  --muted-foreground: #666666;
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
   --sidebar: var(--color-zinc-50);
-  --sidebar-foreground: var(--color-zinc-900);
-  --sidebar-muted-foreground: var(--color-zinc-500);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  /* SCIENT-FORK:END */
   --sidebar-control-surface: var(--color-zinc-100);
   --sidebar-row-hover: var(--color-zinc-25);
   --sidebar-row-active: var(--color-white);
@@ -1310,13 +1321,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --background: #000;
-    --foreground: #f1f3f7;
+    /* SCIENT-FORK:START — neutral stock text (scient/typography). */
+    --foreground: #efefef;
     --card: #000;
     --card-foreground: var(--foreground);
     --accent: #191a1d;
     --accent-foreground: #f7f9ff;
     --muted: #0a0a0a;
-    --muted-foreground: #a3a3a3;
+    --muted-foreground: #9c9c9c;
+    /* SCIENT-FORK:END */
     --border: rgb(255 255 255 / 8%);
     --input: rgb(255 255 255 / 18%);
     --sidebar: var(--card);
@@ -1948,6 +1961,26 @@ code {
   --scient-font-size-code-label: var(--scient-font-size-markdown-marker);
   font-size: var(--scient-font-size-markdown-body);
 }
+
+/* Chat reads at the Interface size (scient-font-size-chat-body); the rich editor keeps the
+   markdown body size. H1–H3 and code keep their own sizes; H4–H6 follow the body. Nested
+   `text-sm` keeps its 1.25rem line. */
+.chat-markdown {
+  --scient-font-size-markdown-body: var(--scient-font-size-chat-body);
+  --text-sm--line-height: 1.25;
+}
+
+/* Agent replies read tighter than Tailwind's relaxed leading (1.625). A ratio keeps the
+   spacing proportional to the Interface size; headings keep their own 1.3. `:where()` keeps
+   these at `.chat-markdown` weight so theme CSS can still override them. */
+:where(.scient-reply-prose).chat-markdown {
+  line-height: 1.55;
+}
+
+/* Inline code and its colour swatches would otherwise push a line taller than its neighbours. */
+:where(.scient-reply-prose).chat-markdown :where(:not(pre) > code) {
+  line-height: 1.2;
+}
 /* SCIENT-FORK:END */
 
 .chat-markdown > :first-child {
@@ -2019,13 +2052,11 @@ code {
   list-style-type: disc;
 }
 
-/* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
-   ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   widest marker has multiple characters so it isn't clipped by list-style-position:
-   outside painting the marker past the padding box. Reset it here too so a
-   nested ol without its own widened marker doesn't inherit the outer one. */
+/* Outside markers paint past the padding box, so the gutter must fit `0. `,
+   measured per font in appearanceFonts. ChatMarkdown widens it inline for
+   multi-digit markers; setting it here stops a nested ol inheriting that. */
 :is(.chat-markdown, .composer-tiptap) ol {
-  --list-gutter: 1.25rem;
+  --list-gutter: max(1.25rem, var(--list-marker-sans, 0px));
   padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
@@ -2098,6 +2129,18 @@ code {
   list-style-type: lower-roman;
 }
 
+.chat-markdown.user-message-markdown ol {
+  list-style-type: decimal;
+}
+
+/* Spaces a user typed at the start of a line, which Markdown would otherwise drop. pre-wrap, not
+   pre, so an indent wider than the bubble wraps instead of pushing the line's text out of view.
+   Not selectable, so a selection, a drag or a copy carries the text as it did before. */
+.chat-markdown.user-message-markdown [data-leading-whitespace] {
+  white-space: pre-wrap;
+  user-select: none;
+}
+
 .chat-markdown li + li {
   margin-top: 0.25rem;
 }
@@ -2121,6 +2164,25 @@ code {
 
 .chat-markdown a {
   text-decoration: none;
+}
+
+/* Triple-click selection stops at block-level boxes, flex items included, so file chips in
+   prose stay inline-level down to the icon and label. */
+.chat-markdown-file-link {
+  display: inline-block;
+  overflow-x: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-markdown-file-link > :is(svg, img) {
+  display: inline;
+  margin-inline-end: 0.2em;
+  vertical-align: -0.125em;
+}
+
+.chat-markdown-file-link > [data-slot="context-chip-label"] {
+  display: inline;
 }
 
 /* File links and context chips own their color and focus ring. */
@@ -2228,9 +2290,16 @@ code {
   /* SCIENT-FORK:END */
 }
 
-.chat-markdown strong {
-  font-weight: 700;
+.chat-markdown.user-message-markdown :not(pre) > code {
+  background: color-mix(in srgb, var(--contrast-message-foreground) 10%, transparent);
+  color: var(--contrast-message-foreground);
 }
+
+/* SCIENT-FORK:START — chat bold 650 (scient/typography; upstream: 700). */
+.chat-markdown :is(strong, b) {
+  font-weight: 650;
+}
+/* SCIENT-FORK:END */
 
 .chat-markdown pre {
   max-width: 100%;
@@ -2290,6 +2359,18 @@ code {
   & :is(pre, pre *) {
     color: inherit !important;
   }
+}
+
+/* Sent messages color prose with the message foreground, which is not chosen
+   for the code surface, so their plain-text fences keep the global foreground. */
+.chat-markdown.user-message-markdown
+  .chat-markdown-codeblock:is(
+    [data-language="text" i],
+    [data-language="txt" i],
+    [data-language="plain" i],
+    [data-language="plaintext" i]
+  ) {
+  color: var(--contrast-foreground) !important;
 }
 
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
@@ -2412,12 +2493,14 @@ code {
   color: var(--code-foreground);
 }
 
-/* Pierre's find panel and match highlights read these. */
-.diff-render-surface {
+/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens.
+   The top inset clears the 32px sticky file header and its line counts. */
+.diff-render-surface > [data-search-panel] {
   --diffs-search-panel-bg: var(--popover);
   --diffs-search-panel-fg: var(--popover-foreground);
-  --diffs-search-panel-accent: var(--primary);
-  --diffs-search-panel-font: var(--font-sans);
+  --diffs-search-panel-modified: var(--primary);
+  --diffs-header-font-fallback: var(--font-sans);
+  --diffs-search-panel-inset-top: 40px;
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
@@ -2584,6 +2667,16 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   position: relative;
 }
 
+/* Tiptap's injected base CSS disables ligatures; match sent messages.
+   Chromium reshapes edited text from a reused prefix that assumes two
+   characters of context, so long contextual runs (Fira Code's dots) vanish.
+   Any non-zero word-spacing makes it reshape the whole run instead. */
+.composer-tiptap.ProseMirror {
+  font-variant-ligatures: normal;
+  font-feature-settings: normal;
+  word-spacing: 0.01px;
+}
+
 .composer-tiptap p {
   margin: 0;
 }
@@ -2727,8 +2820,20 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   }
 }
 
-/* A workspace area with no control of its own takes F6 focus itself; keep that visible. */
+/* A workspace area with no control of its own takes F6 focus itself; keep that visible.
+   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press.
+   The conversation's timeline takes it instead, and its top fade mask would hide its own ring. */
 [data-workspace-area]:focus-visible {
+  outline: none;
+}
+[data-workspace-keyboard-focus]:focus,
+[data-workspace-area="conversation"]:has(
+  .messages-timeline-scroll[data-workspace-keyboard-focus]:focus
+) {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
+}
+
+.messages-timeline-scroll:focus-visible {
+  outline: none;
 }

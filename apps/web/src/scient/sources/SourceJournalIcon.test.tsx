@@ -1,8 +1,12 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
-import { SourceJournalIcon, sourceJournalIconInternals } from "./SourceJournalIcon";
+import { SourceJournalCover, SourceJournalIcon } from "./SourceJournalIcon";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const record = {
   formatVersion: 1 as const,
@@ -30,27 +34,43 @@ const record = {
   importedAt: "2026-08-13T00:00:00.000Z",
 };
 
-describe("SourceJournalIcon", () => {
-  it("does not request journal enrichment without a journal identity", () => {
-    expect(
-      sourceJournalIconInternals.canResolveJournalIcon({ ...record, containerTitle: null }),
-    ).toBe(false);
-    expect(sourceJournalIconInternals.canResolveJournalIcon(record)).toBe(true);
-  });
+it("shows the publisher's icon in the first render, named in its tooltip", () => {
+  const markup = renderToStaticMarkup(
+    <SourceJournalIcon
+      record={{ ...record, identifiers: [{ scheme: "doi", value: "10.1136/bmj.n71" }] }}
+    />,
+  );
+  expect(markup).toContain("<img");
+  expect(markup).toMatch(/bmj[^"]*\.png/u);
+  expect(markup).not.toContain('data-testid="source-generic-icon"');
+});
+
+// regression: PubMed imports link to pubmed.gov, which says nothing about the journal
+it("shows the type's icon, never PubMed's, when only a PubMed link is known", () => {
+  const markup = renderToStaticMarkup(
+    <SourceJournalIcon
+      record={{
+        ...record,
+        identifiers: [{ scheme: "pmid", value: "32098899" }],
+        url: "https://pubmed.ncbi.nlm.nih.gov/32098899/",
+      }}
+    />,
+  );
+  expect(markup).toContain('data-testid="source-generic-icon"');
+  expect(markup).not.toContain("<img");
 });
 
 // regression: 4e05b272c1 feat(sources): complete reference intake workflows
-it("renders the book immediately and does not wait for journal lookup", () => {
+it("renders no cover and asks the environment for nothing before the card is shown", () => {
   const resolveIcon = vi.fn(async () => null);
   const markup = renderToStaticMarkup(
-    <SourceJournalIcon
+    <SourceJournalCover
       environmentId={EnvironmentId.make("environment-test")}
       root="/project"
       record={record}
       resolveIcon={resolveIcon}
     />,
   );
-  expect(markup).toContain('data-testid="source-generic-icon"');
   expect(markup).not.toContain("<img");
   expect(resolveIcon).not.toHaveBeenCalled();
 });

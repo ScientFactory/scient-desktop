@@ -9,11 +9,14 @@ import type {
   ServerProviderMcpServer,
   ServerProviderPlugin,
   ProviderStoreApp,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { actOnProviderPlugin } from "./extensionsState";
 import { Button } from "../../components/ui/button";
@@ -29,22 +32,28 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
+import {
+  fixConnectorPrompt,
+  improveConnectorPrompt,
+  useConnectorAgentChat,
+} from "./connectorAgentChat";
 import { ActionError, SignInBlockedNotice } from "./ExtensionsFeedback";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
+import { AddForAgents } from "./AgentPicker";
 import {
   providerExtensionAudience,
+  providerServerConnectLabel,
   providerServerDisplayName,
   connectorActions,
   connectorStatusText,
   entryName,
   entryNeedsSetup,
-  connectorFacts,
-  entryFacts,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
   TEST_OUTCOME_LABELS,
+  connectorAudience,
 } from "./extensionsView";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
@@ -87,6 +96,11 @@ function useOpenExtension() {
           to: "/settings/extensions/item/provider/$instanceId/server/$serverName",
           params: { instanceId: target.instanceId, serverName: target.serverName },
         });
+      case "account":
+        return void navigate({
+          to: "/settings/extensions/item/account/$serviceId",
+          params: { serviceId: target.serviceId },
+        });
     }
   };
 }
@@ -100,23 +114,30 @@ export function ActionFeedback({
   readonly waitingForSignIn?: boolean;
   readonly testResult?: ConnectorTestResult | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <>
       <ActionError message={feedback.error} />
       <SignInBlockedNotice url={feedback.blockedSignInUrl} />
       {waitingForSignIn && feedback.blockedSignInUrl === null ? (
         <p className="text-xs text-muted-foreground">
-          Finish signing in in your browser. This updates when the service confirms.
+          <T>Finish signing in in your browser. This updates when the service confirms.</T>
         </p>
       ) : null}
       {testResult ? (
         <p role="status" className="text-xs text-muted-foreground">
-          {TEST_OUTCOME_LABELS[testResult.outcome]}
           {testResult.outcome === "ok"
-            ? ` · ${testResult.tools.length} ${testResult.tools.length === 1 ? "tool" : "tools"}`
+            ? gt("{outcome} · {count, plural, one {{count} tool} other {{count} tools}}", {
+                outcome: messages(TEST_OUTCOME_LABELS[testResult.outcome]),
+                count: testResult.tools.length,
+              })
             : testResult.message
-              ? ` · ${testResult.message}`
-              : ""}
+              ? gt("{outcome} · {message}", {
+                  outcome: messages(TEST_OUTCOME_LABELS[testResult.outcome]),
+                  message: testResult.message,
+                })
+              : messages(TEST_OUTCOME_LABELS[testResult.outcome])}
         </p>
       ) : null}
     </>
@@ -137,16 +158,27 @@ function ItemMenu({
   readonly target: ExtensionTarget | null;
   readonly children?: ReactNode;
 }) {
+  const gt = useGT();
   const open = useOpenExtension();
   return (
     <Menu>
       <MenuTrigger
-        render={<Button size="icon-sm" variant="ghost-muted" aria-label={`More for ${name}`} />}
+        render={
+          <Button
+            size="icon-sm"
+            variant="ghost-muted"
+            aria-label={gt("More for {name}", { name })}
+          />
+        }
       >
         <EllipsisIcon aria-hidden />
       </MenuTrigger>
       <MenuPopup align="end">
-        {target ? <MenuItem onClick={() => open(target)}>Open</MenuItem> : null}
+        {target ? (
+          <MenuItem onClick={() => open(target)}>
+            {gt("Open", { $context: "verb, opens an extension's page" })}
+          </MenuItem>
+        ) : null}
         {target && children ? <MenuSeparator /> : null}
         {children}
       </MenuPopup>
@@ -162,27 +194,31 @@ function ConnectorMenuItems({
   readonly connector: ConnectorSummary;
   readonly actions: ConnectorActionsState;
 }) {
+  const gt = useGT();
   const allowed = connectorActions(connector);
   return (
     <>
       <MenuItem disabled={actions.locked || !allowed.canTest} onClick={() => void actions.test()}>
-        Test
+        {gt("Test", { $context: "verb, tests a connector" })}
       </MenuItem>
       {connector.auth.type === "oauth" ? (
         <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
-          {connector.status === "connected" ? "Sign in again" : "Sign in"}
+          {connector.status === "connected" ? gt("Sign in again") : gt("Sign in")}
         </MenuItem>
       ) : null}
       <MenuItem
         disabled={actions.locked}
         onClick={() => void actions.setEnabled(!connector.enabled)}
       >
-        {connector.enabled ? "Turn off" : "Turn on"}
+        {connector.enabled ? gt("Turn off") : gt("Turn on")}
       </MenuItem>
       {connector.local !== undefined ? (
         <MenuItem disabled={actions.locked} onClick={() => void actions.restart()}>
-          Restart
+          <T>Restart</T>
         </MenuItem>
+      ) : null}
+      {connector.local !== undefined ? (
+        <LocalConnectorMenuItems connector={connector} actions={actions} />
       ) : null}
       <MenuSeparator />
       <MenuItem
@@ -190,7 +226,61 @@ function ConnectorMenuItems({
         disabled={actions.locked}
         onClick={() => void actions.remove()}
       >
-        Remove
+        <T>Remove</T>
+      </MenuItem>
+    </>
+  );
+}
+
+/** Problem text an agent fixing the connector starts from: its folder problem, then its error. */
+export function connectorProblem(connector: ConnectorSummary): string | undefined {
+  return connector.local?.problem ?? connector.lastError;
+}
+
+/** A local connector's agent chats, Undo and Export; shared by its row and its page. */
+export function LocalConnectorMenuItems({
+  connector,
+  actions,
+}: {
+  readonly connector: ConnectorSummary;
+  readonly actions: ConnectorActionsState;
+}) {
+  const { environmentId } = useExtensionsEnvironment();
+  const startChat = useConnectorAgentChat(environmentId);
+  const problem = connectorProblem(connector);
+  return (
+    <>
+      {startChat !== undefined && problem !== undefined ? (
+        <MenuItem
+          onClick={() =>
+            void startChat(
+              fixConnectorPrompt(connector.displayName, connector.serverName, problem),
+              "fix",
+            )
+          }
+        >
+          <T>Fix with an agent</T>
+        </MenuItem>
+      ) : null}
+      {startChat !== undefined ? (
+        <MenuItem
+          onClick={() =>
+            void startChat(
+              improveConnectorPrompt(connector.displayName, connector.serverName),
+              "improve",
+            )
+          }
+        >
+          <T>Improve with an agent</T>
+        </MenuItem>
+      ) : null}
+      {connector.local?.canUndo ? (
+        <MenuItem disabled={actions.locked} onClick={() => void actions.undo()}>
+          <T>Undo last change</T>
+        </MenuItem>
+      ) : null}
+      <MenuItem disabled={actions.locked} onClick={() => void actions.exportBundle()}>
+        <T>Export</T>
       </MenuItem>
     </>
   );
@@ -204,12 +294,15 @@ export function ConnectorItem({
   /** The registry or curated entry it came from, for its icon and tagline. */
   readonly entry?: DiscoverEntry | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const actions = useConnectorActions(connector);
   const target: ExtensionTarget = { kind: "connector", connectorId: connector.connectorId };
   return (
     <ExtensionRow
       target={target}
       name={entry ? entryName(entry) : connector.displayName}
+      audience={connectorAudience(connector)}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
       tagline={
         (entry ? entryTagline(entry) : undefined) ??
@@ -217,10 +310,11 @@ export function ConnectorItem({
         connector.local?.commandLine ??
         connector.url
       }
-      facts={connectorFacts(entry, connector)
-        .map(([, value]) => value)
-        .join(" · ")}
-      status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
+      status={
+        actions.busy === "sign-in"
+          ? gt("Opening sign-in…")
+          : connectorStatusText(connector, messages)
+      }
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
           <ConnectorMenuItems connector={connector} actions={actions} />
@@ -254,8 +348,12 @@ export function EntryItem({ entry }: { readonly entry: DiscoverEntry }) {
 }
 
 function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
+  const gt = useGT();
   const { environmentId, callbackOrigin } = useExtensionsEnvironment();
-  const [showToken, setShowToken] = useState(false);
+  // The add form, with the agents chosen for it (none chosen: every agent).
+  const [setup, setSetup] = useState<{
+    readonly agents?: ReadonlyArray<ProviderInstanceId>;
+  } | null>(null);
   const actions = useAddEntry(entry);
   const open = useOpenExtension();
   const target: ExtensionTarget = { kind: "server", name: entry.name };
@@ -267,27 +365,38 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
         name={name}
         iconUrl={entry.iconUrl}
         tagline={entryTagline(entry)}
-        facts={entryFacts(entry)
-          .map(([, value]) => value)
-          .join(" · ")}
-        status={actions.busy === "add" ? "Adding…" : null}
+        status={actions.busy === "add" ? gt("Adding…") : null}
         trailing={
           entry.installedConnectorId === undefined ? (
-            <Button
-              size="icon-sm"
-              variant="ghost-muted"
-              aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
-              disabled={actions.canAdd && actions.locked}
-              onClick={() =>
-                entryNeedsSetup(entry)
-                  ? setShowToken(true)
-                  : actions.canAdd
-                    ? void actions.add()
-                    : open(target)
-              }
-            >
-              <PlusIcon aria-hidden />
-            </Button>
+            actions.canAdd || entryNeedsSetup(entry) ? (
+              <AddForAgents
+                name={name}
+                disabled={actions.locked}
+                onAdd={(agents) =>
+                  entryNeedsSetup(entry)
+                    ? setSetup(agents === undefined ? {} : { agents })
+                    : void actions.add(agents)
+                }
+                trigger={
+                  <Button
+                    size="icon-sm"
+                    variant="ghost-muted"
+                    aria-label={gt("Add {name}", { name })}
+                  >
+                    <PlusIcon aria-hidden />
+                  </Button>
+                }
+              />
+            ) : (
+              <Button
+                size="icon-sm"
+                variant="ghost-muted"
+                aria-label={gt("Why {name} can't be added", { name })}
+                onClick={() => open(target)}
+              >
+                <PlusIcon aria-hidden />
+              </Button>
+            )
           ) : null
         }
         feedback={
@@ -296,13 +405,16 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
           ) : null
         }
       />
-      {showToken ? (
+      {setup ? (
         <AddConnectorDialog
           open
-          onOpenChange={setShowToken}
+          onOpenChange={(next) => {
+            if (!next) setSetup(null);
+          }}
           environmentId={environmentId}
           callbackOrigin={callbackOrigin}
           entry={entry}
+          agents={setup.agents}
         />
       ) : null}
     </>
@@ -316,6 +428,7 @@ function PluginMenuItems({
   readonly plugin: ScientPluginSummary;
   readonly actions: PluginActionsState;
 }) {
+  const gt = useGT();
   if (!plugin.canSetEnabled && !plugin.canRemove) return null;
   return (
     <>
@@ -324,7 +437,7 @@ function PluginMenuItems({
           disabled={actions.locked}
           onClick={() => void actions.setEnabled(!plugin.enabled)}
         >
-          {plugin.enabled ? "Turn off" : "Turn on"}
+          {plugin.enabled ? gt("Turn off") : gt("Turn on")}
         </MenuItem>
       ) : null}
       {plugin.canRemove ? (
@@ -333,7 +446,7 @@ function PluginMenuItems({
           disabled={actions.locked}
           onClick={() => void actions.remove()}
         >
-          Remove
+          <T>Remove</T>
         </MenuItem>
       ) : null}
     </>
@@ -341,6 +454,7 @@ function PluginMenuItems({
 }
 
 export function PluginItem({ plugin }: { readonly plugin: ScientPluginSummary }) {
+  const gt = useGT();
   const actions = usePluginActions(plugin);
   const target: ExtensionTarget = { kind: "plugin", pluginId: plugin.pluginId };
   return (
@@ -349,7 +463,12 @@ export function PluginItem({ plugin }: { readonly plugin: ScientPluginSummary })
       name={plugin.displayName}
       glyph={pluginGlyph(plugin)}
       tagline={plugin.description}
-      status={plugin.origin === "bundle" && !plugin.enabled ? "Off" : null}
+      type={plugin.origin === "built-in" ? undefined : gt("Plugin")}
+      status={
+        plugin.origin === "bundle" && !plugin.enabled
+          ? gt("Off", { $context: "connector status, turned off" })
+          : null
+      }
       trailing={
         <ItemMenu name={plugin.displayName} target={target}>
           <PluginMenuItems plugin={plugin} actions={actions} />
@@ -373,13 +492,16 @@ export function ProviderPluginItem({
   readonly plugin: ServerProviderPlugin;
   readonly workspace: string | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderPluginActions(provider, label, plugin, workspace);
   const keyState = usePluginKeys({
     instanceId: provider.instanceId,
     pluginId: plugin.id,
     ...(workspace ? { cwd: workspace } : {}),
   });
-  const keyStatus = pluginKeyStatusLabel(keyState.data, provider);
+  const keyStatus = pluginKeyStatusLabel(keyState.data, provider, messages);
   const name = plugin.displayName ?? plugin.name;
   const target: ExtensionTarget = {
     kind: "provider-plugin",
@@ -391,21 +513,19 @@ export function ProviderPluginItem({
     <ExtensionRow
       target={target}
       name={name}
-      audience={providerExtensionAudience(provider, plugin)}
-      tagline={[plugin.description, plugin.sourceLabel ?? `${label} plugin`]
-        .filter(Boolean)
-        .join(" · ")}
+      audience={providerExtensionAudience(provider, plugin, providers)}
+      tagline={plugin.description}
       status={
         !plugin.enabled
-          ? "Off"
+          ? gt("Off", { $context: "connector status, turned off" })
           : keyStatus
             ? keyStatus
             : plugin.apps?.length
               ? plugin.apps.some((app) => !app.enabled)
-                ? "Disabled in Codex"
+                ? gt("Disabled in Codex")
                 : plugin.apps.every((app) => app.connected)
-                  ? "Connected"
-                  : "Needs sign-in"
+                  ? gt("Connected")
+                  : gt("Needs sign-in")
               : null
       }
       trailing={
@@ -415,7 +535,7 @@ export function ProviderPluginItem({
               disabled={actions.locked}
               onClick={() => void actions.setEnabled(!plugin.enabled)}
             >
-              {plugin.enabled ? "Turn off" : "Turn on"}
+              {plugin.enabled ? gt("Turn off") : gt("Turn on")}
             </MenuItem>
           ) : null}
           {plugin.canUninstall === true ? (
@@ -424,7 +544,7 @@ export function ProviderPluginItem({
               disabled={actions.locked}
               onClick={() => void actions.uninstall()}
             >
-              Uninstall
+              <T>Uninstall</T>
             </MenuItem>
           ) : null}
         </ItemMenu>
@@ -436,15 +556,17 @@ export function ProviderPluginItem({
   );
 }
 
-export function mcpServerSummary(server: ServerProviderMcpServer): string {
-  return [
-    server.toolCount === undefined
-      ? null
-      : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`,
-    server.pluginId ? `from ${server.pluginId}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+export function mcpServerSummary(
+  server: ServerProviderMcpServer,
+  resolve: MessageResolver = m,
+): string | undefined {
+  return server.toolCount === undefined
+    ? undefined
+    : resolve(
+        msg("{count, plural, one {{count} tool} other {{count} tools}}", {
+          count: server.toolCount,
+        }),
+      );
 }
 
 export function ProviderServerItem({
@@ -456,7 +578,11 @@ export function ProviderServerItem({
   readonly label: string;
   readonly server: ServerProviderMcpServer;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderServerActions(provider, label, server);
+  const statusText = MCP_SERVER_STATUS_TEXT[server.status];
   const target: ExtensionTarget = {
     kind: "provider-server",
     instanceId: provider.instanceId,
@@ -466,14 +592,20 @@ export function ProviderServerItem({
     <ExtensionRow
       target={target}
       name={providerServerDisplayName(server)}
-      audience={providerExtensionAudience(provider, server)}
-      tagline={server.error ?? mcpServerSummary(server)}
-      status={MCP_SERVER_STATUS_TEXT[server.status]}
+      audience={providerExtensionAudience(provider, server, providers)}
+      // An app the agent has through its own account, not a server it runs.
+      type={
+        server.scope === "chatgpt" || server.scope === "claudeai"
+          ? gt("App", { $context: "a ChatGPT app" })
+          : undefined
+      }
+      tagline={server.error ?? mcpServerSummary(server, messages)}
+      status={statusText === null ? null : messages(statusText)}
       trailing={
         <ItemMenu name={server.name} target={target}>
           {server.canStartSignIn === true || server.connectUrl ? (
             <MenuItem disabled={actions.locked} onClick={() => void actions.signIn()}>
-              {server.connectUrl ? "Connect on claude.ai" : "Sign in"}
+              {providerServerConnectLabel(server, messages) ?? gt("Sign in")}
             </MenuItem>
           ) : null}
         </ItemMenu>
@@ -498,6 +630,7 @@ export function ProviderAppConnect({
   readonly disabled?: boolean;
   readonly onConnectionChange?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   const { environmentId } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin);
   const waiting = useRef(false);
@@ -532,7 +665,7 @@ export function ProviderAppConnect({
           )
         }
       >
-        Connect {app.name}
+        {gt("Connect in ChatGPT")}
       </Button>
       <ActionFeedback feedback={lock.feedback} />
     </>

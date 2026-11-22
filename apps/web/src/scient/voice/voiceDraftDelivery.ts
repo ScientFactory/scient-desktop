@@ -4,8 +4,15 @@
 
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore.ts";
+import {
+  isQueuedRunEditDraftId,
+  useComposerDraftStore,
+  type ComposerThreadTarget,
+} from "../../composerDraftStore.ts";
+import { msg } from "gt-react";
+
 import { stackedThreadToast, toastManager } from "../../components/ui/toast.tsx";
+import { m } from "../../i18n/messages.ts";
 import { buildVoiceDraftReplacement } from "./voiceComposerInsert.ts";
 
 export interface VoiceDraftOrigin {
@@ -63,8 +70,15 @@ export function appendVoiceTranscriptToStoredDraft(
 ): boolean {
   const store = useComposerDraftStore.getState();
   // A closed new-thread draft has no session; writing would leave an orphan no
-  // route can show. Server threads keep their own draft key.
-  if (typeof target === "string" && store.getDraftSession(target) === null) return false;
+  // route can show. Server threads keep their own draft key. A queued-message edit
+  // takes the transcript while its draft is still open.
+  if (
+    typeof target === "string" &&
+    (isQueuedRunEditDraftId(target)
+      ? store.getComposerDraft(target) === null
+      : store.getDraftSession(target) === null)
+  )
+    return false;
   const current = store.getComposerDraft(target)?.prompt ?? "";
   store.setPrompt(target, buildVoiceDraftReplacement(current, text).replacement);
   return true;
@@ -76,45 +90,49 @@ export interface VoiceDraftDeliveryDependencies {
   readonly notify: (notice: VoiceDraftNotice) => void;
 }
 
-function quotedTitle(origin: VoiceDraftOrigin): string {
-  return origin.title ? `“${origin.title}”` : "its draft";
-}
-
 function showVoiceDraftNotice(notice: VoiceDraftNotice): void {
   if (notice.kind === "unavailable") {
     toastManager.add(
       stackedThreadToast({
         type: "warning",
-        title: "Transcript not saved",
-        description: "Its draft was closed.",
+        title: m(msg("Transcript not saved")),
+        description: m(msg("Its draft was closed.")),
         actionProps: {
-          children: "Copy transcript",
+          children: m(msg("Copy transcript")),
           onClick: () => void navigator.clipboard?.writeText(notice.text),
         },
       }),
     );
     return;
   }
-  const open = { children: "Open", onClick: notice.origin.open };
+  const open = {
+    children: m(msg("Open", { $context: "verb, opens the draft" })),
+    onClick: notice.origin.open,
+  };
+  const title = notice.origin.title;
   toastManager.add(
     stackedThreadToast(
       notice.kind === "failed"
         ? {
             type: "error",
-            title: "Voice transcription failed",
+            title: m(msg("Voice transcription failed")),
             description: notice.message,
             actionProps: open,
           }
         : notice.kind === "not-sent"
           ? {
               type: "info",
-              title: `Transcript saved to ${quotedTitle(notice.origin)}`,
-              description: "Message not sent.",
+              title: title
+                ? m(msg("Transcript saved to “{title}”", { title }))
+                : m(msg("Transcript saved to its draft")),
+              description: m(msg("Message not sent.")),
               actionProps: open,
             }
           : {
               type: "info",
-              title: `Transcript added to ${quotedTitle(notice.origin)}`,
+              title: title
+                ? m(msg("Transcript added to “{title}”", { title }))
+                : m(msg("Transcript added to its draft")),
               actionProps: open,
             },
     ),

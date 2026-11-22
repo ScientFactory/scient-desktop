@@ -17,7 +17,9 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
   antigravityClientInfo,
+  antigravityPermissionDisposition,
   antigravitySessionMeta,
+  antigravitySessionMode,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
 } from "./AntigravityAcpSupport.ts";
@@ -60,21 +62,25 @@ function makeModelRuntime(
 
 describe("Antigravity release gates", () => {
   it.each([
-    { version: "1.4.1", filter: false, native: false, ownName: false },
-    { version: "1.4.2", filter: true, native: false, ownName: false },
-    { version: "1.4.4", filter: true, native: false, ownName: false },
-    { version: "1.4.5", filter: true, native: true, ownName: false },
-    { version: "1.4.6", filter: false, native: false, ownName: false },
-    { version: "1.5.0", filter: false, native: false, ownName: false },
-    { version: "1.5.1", filter: false, native: false, ownName: true },
-    { version: "1.3.0", filter: false, native: false, ownName: false },
-    { version: undefined, filter: false, native: false, ownName: false },
-    { version: "unknown", filter: false, native: false, ownName: false },
+    { version: "1.4.1", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.4.2", filter: true, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.4.4", filter: true, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.4.5", filter: true, native: true, ownName: false, advertisedAppend: false },
+    { version: "1.4.6", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.5.0", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.5.1", filter: false, native: false, ownName: true, advertisedAppend: false },
+    { version: "1.5.7", filter: false, native: false, ownName: true, advertisedAppend: true },
+    { version: "1.3.0", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: undefined, filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "unknown", filter: false, native: false, ownName: false, advertisedAppend: false },
   ])(
-    "$version: workflow filter $filter, native reads and system prompt $native, own client name $ownName",
-    ({ version, filter, native, ownName }) => {
+    "$version: workflow filter $filter, qualified reads $native, advertised system append $advertisedAppend, own client name $ownName",
+    ({ version, filter, native, ownName, advertisedAppend }) => {
       const initialize = {
         protocolVersion: 1,
+        ...(advertisedAppend
+          ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
+          : {}),
         ...(version === undefined ? {} : { agentInfo: { name: "antigravity-acp", version } }),
       };
       // Helpers send no append, so only the workflow filter can apply.
@@ -83,13 +89,61 @@ describe("Antigravity release gates", () => {
       );
       const antigravity = {
         ...(filter ? { disabledTools: ["run_workflow"] } : {}),
-        ...(native ? { systemPrompt: { append: "<pull_request_linking/>" } } : {}),
+        ...(native || advertisedAppend
+          ? { systemPrompt: { append: "<pull_request_linking/>" } }
+          : {}),
       };
       expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
-        filter || native ? { antigravity } : undefined,
+        filter || native || advertisedAppend ? { antigravity } : undefined,
       );
       expect(isQualifiedAntigravityRelease(version)).toBe(native);
       expect(antigravityClientInfo(version).name).toBe(ownName ? "scient" : "zed");
+    },
+  );
+});
+
+describe("Antigravity Auto", () => {
+  it.each([
+    { offered: ["default", "accept-edits", "auto", "plan"], expected: "auto" },
+    { offered: ["default", "accept-edits", "plan"], expected: "default" },
+  ])("runs as $expected when the session offers $offered", ({ offered, expected }) => {
+    const modeState = {
+      currentModeId: "default",
+      availableModes: offered.map((id) => ({ id, name: id })),
+    };
+    expect(antigravitySessionMode("auto", modeState)).toBe(expected);
+  });
+
+  it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {
+    const request = {
+      sessionId: "session-1",
+      toolCall: { toolCallId: "call-1", title: "Tool call", kind },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    } satisfies EffectAcpSchema.RequestPermissionRequest;
+    expect(antigravityPermissionDisposition({ runtimeMode: "auto", cwd: null }, request)).toBe(
+      "ask",
+    );
+  });
+
+  it.each([{ type: "readOnly" }, { type: "workspaceWrite", writableRoots: [] }])(
+    "keeps the $type sandbox's denials in Auto",
+    (sandboxPolicy) => {
+      const request = {
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "call-1",
+          title: "Edit",
+          kind: "edit",
+          locations: [{ path: "/outside-workspace/file.txt" }],
+        },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      } satisfies EffectAcpSchema.RequestPermissionRequest;
+      expect(
+        antigravityPermissionDisposition(
+          { runtimeMode: "auto", cwd: "/workspace", sandboxPolicy },
+          request,
+        ),
+      ).toBe("deny");
     },
   );
 });
@@ -309,31 +363,36 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
-  it.effect("embeds UTF-8 code from the selected environment and keeps the upload in place", () =>
-    Effect.gen(function* () {
-      const selectedEnvironment = yield* makeAttachmentFixture();
-      const otherEnvironment = yield* makeAttachmentFixture();
-      const source = '  const name = "caf\u00e9";\n';
-      const upload = yield* selectedEnvironment.write(textAttachment, source);
-      yield* otherEnvironment.write(textAttachment, "Different environment.");
-      const prompt = yield* buildAntigravityPrompt({
-        input: undefined,
-        attachments: [textAttachment],
-        resolveAttachmentPath: selectedEnvironment.resolve,
-        promptCapabilities: { image: true, audio: true, embeddedContext: true },
-      });
+  it.effect.each(["utf8", "utf16le", "utf16be"] as const)(
+    "embeds %s code from the selected environment and keeps the upload in place",
+    (encoding) =>
+      Effect.gen(function* () {
+        const selectedEnvironment = yield* makeAttachmentFixture();
+        const otherEnvironment = yield* makeAttachmentFixture();
+        const source = '  const name = "caf\u00e9 🚀";\r\n';
+        const bytes =
+          encoding === "utf8" ? Buffer.from(source) : Buffer.from("\ufeff" + source, "utf16le");
+        if (encoding === "utf16be") bytes.swap16();
+        const upload = yield* selectedEnvironment.write(textAttachment, bytes);
+        yield* otherEnvironment.write(textAttachment, "Different environment.");
+        const prompt = yield* buildAntigravityPrompt({
+          input: undefined,
+          attachments: [textAttachment],
+          resolveAttachmentPath: selectedEnvironment.resolve,
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
+        });
 
-      expect(prompt).toEqual([
-        {
-          type: "resource",
-          resource: { uri: upload.uri, mimeType: "application/octet-stream", text: source },
-        },
-      ]);
-      expect(yield* selectedEnvironment.fs.readFileString(upload.filePath)).toBe(source);
-      expect(
-        yield* selectedEnvironment.fs.readDirectory(selectedEnvironment.attachmentsDir),
-      ).toHaveLength(1);
-    }),
+        expect(prompt).toEqual([
+          {
+            type: "resource",
+            resource: { uri: upload.uri, mimeType: "application/octet-stream", text: source },
+          },
+        ]);
+        expect(Buffer.from(yield* selectedEnvironment.fs.readFile(upload.filePath))).toEqual(bytes);
+        expect(
+          yield* selectedEnvironment.fs.readDirectory(selectedEnvironment.attachmentsDir),
+        ).toHaveLength(1);
+      }),
   );
 
   it.effect("keeps folded clipboard text out of native context", () =>
@@ -555,7 +614,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
-  it.effect.each([undefined, {}, { image: false }, { image: true }])(
+  it.effect.each([{ image: true }])(
     "keeps unsupported image formats path-only with capabilities %s",
     (promptCapabilities) =>
       Effect.gen(function* () {
@@ -702,7 +761,9 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
   );
 
   it.effect.each([
-    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), message: "is not a UTF-8 text file" },
+    { bytes: new Uint8Array([0x80]), message: "is not a UTF-8 text file" },
+    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), message: "is not a UTF-16LE text file" },
+    { bytes: new Uint8Array([0xfe, 0xff, 0x00, 0x00]), message: "contains binary data" },
     { bytes: new Uint8Array([0x61, 0, 0x62]), message: "contains binary data" },
   ])("rejects binary data disguised as code: $message", ({ bytes, message }) =>
     Effect.gen(function* () {

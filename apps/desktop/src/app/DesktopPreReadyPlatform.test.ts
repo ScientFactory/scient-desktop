@@ -16,6 +16,7 @@ const {
   copyFileSyncMock,
   execFileSyncMock,
   readFileSyncMock,
+  symlinkSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -27,6 +28,7 @@ const {
   copyFileSyncMock: vi.fn(),
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
+  symlinkSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -51,6 +53,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
+  symlinkSync: symlinkSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -72,6 +75,7 @@ describe("DesktopPreReadyPlatform", () => {
     copyFileSyncMock.mockReset();
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
+    symlinkSyncMock.mockReset();
   });
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
@@ -135,16 +139,23 @@ describe("DesktopPreReadyPlatform", () => {
     let desktopName = "t3code.desktop";
     let desktopEntry = previousEntry;
     let iconInstalled = false;
-    copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-      // SCIENT-FORK:START desktop-state-isolation
-      iconInstalled = destination === "/xdg/icons/scient.desktop.png";
+    const iconSource = "/tmp/.mount_T3/resources/app.asar/apps/desktop/prod-resources/icon.png";
+    // SCIENT-FORK:START desktop-state-isolation
+    const iconPath = "/xdg/icons/scient.desktop.png";
+    // SCIENT-FORK:END desktop-state-isolation
+    const iconBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === iconSource) return iconBytes;
+      return "{}";
     });
     setDesktopNameMock.mockImplementation((name: string) => {
       desktopName = name;
     });
-    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-      if (path === "/xdg/applications/scient.desktop") desktopEntry = contents;
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      // SCIENT-FORK:START desktop-state-isolation
+      if (path === "/xdg/applications/scient.desktop") desktopEntry = String(contents);
       // SCIENT-FORK:END desktop-state-isolation
+      if (path === iconPath) iconInstalled = Buffer.compare(Buffer.from(contents), iconBytes) === 0;
     });
 
     return Effect.scoped(
@@ -177,18 +188,24 @@ describe("DesktopPreReadyPlatform", () => {
         );
         assert.include(identity.desktopEntry ?? "", "Icon=/xdg/icons/scient.desktop.png");
         // SCIENT-FORK:END desktop-state-isolation
-        assert.isTrue(identity.iconInstalled);
+        assert.equal(
+          copyFileSyncMock.mock.calls.length,
+          0,
+          "icon must not be copied out of the app bundle",
+        );
+        assert.isTrue(identity.iconInstalled, "icon must be written from the bundled bytes");
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
   // SCIENT-FORK:START desktop-state-isolation
   // regression: 7733bc839e fix(desktop): make Linux URL handlers discoverable with the app icon
-  it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
+  it.effect("still prepares the portal entry when the bundled icon cannot be read", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
     getSwitchValueMock.mockReturnValue("");
-    copyFileSyncMock.mockImplementation(() => {
-      throw new Error("missing bundled icon");
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path.endsWith("/prod-resources/icon.png")) throw new Error("missing bundled icon");
+      return "{}";
     });
     return Effect.gen(function* () {
       yield* DesktopPreReadyPlatform.make;
@@ -209,6 +226,48 @@ describe("DesktopPreReadyPlatform", () => {
     );
   });
   // SCIENT-FORK:END desktop-state-isolation
+
+  it.effect.each([
+    { relaunchedByUpdater: "true", restored: true },
+    { relaunchedByUpdater: "", restored: false },
+  ])(
+    "restores the versioned AppImage path an update removed (updater relaunch: $relaunchedByUpdater)",
+    ({ relaunchedByUpdater, restored }) => {
+      vi.stubEnv("VITE_DEV_SERVER_URL", "");
+      getSwitchValueMock.mockReturnValue("");
+      // SCIENT-FORK: Scient's desktop entry.
+      const entryPath = "/xdg/applications/scient.desktop";
+      const files = new Map([[entryPath, "Exec=/Applications/T3-Code-0.1.8-x86_64.AppImage %U\n"]]);
+      readFileSyncMock.mockImplementation((path: string) => files.get(path) ?? "{}");
+      writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+        files.set(path, String(contents));
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            DesktopPreReadyPlatform.layer.pipe(
+              Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+              Layer.provide(
+                DesktopConfig.layerTest({
+                  XDG_DATA_HOME: "/xdg",
+                  APPIMAGE: "/Applications/T3-Code-x86_64.AppImage",
+                  APPIMAGE_SILENT_INSTALL: relaunchedByUpdater,
+                }),
+              ),
+            ),
+          );
+          assert.deepEqual(
+            symlinkSyncMock.mock.calls,
+            restored
+              ? [["T3-Code-x86_64.AppImage", "/Applications/T3-Code-0.1.8-x86_64.AppImage"]]
+              : [],
+          );
+          assert.include(files.get(entryPath), "Exec=/Applications/T3-Code-x86_64.AppImage %U");
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+    },
+  );
 
   it.effect("points the early portal entry at a configured distribution launcher", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
@@ -288,7 +347,11 @@ describe("DesktopPreReadyPlatform", () => {
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
-        assert.equal(appendSwitchMock.mock.calls.length, 0);
+        // SCIENT-FORK:START — outside Linux, the only switch turns off soft-navigation detection.
+        assert.deepEqual(appendSwitchMock.mock.calls, [
+          ["disable-features", "SoftNavigationDetection"],
+        ]);
+        // SCIENT-FORK:END
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );

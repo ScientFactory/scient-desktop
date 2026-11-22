@@ -1,8 +1,8 @@
 /**
  * Scient's optional per-instance seams on `ProviderInstance`: voice transcript
- * correction, native skill activation, native plugin management, assisted
- * account connection and app-managed runtime actions. Drivers that leave them
- * absent keep pure T3 behaviour.
+ * correction, dictation through the provider's own account, native skill
+ * activation, native plugin management, assisted account connection and
+ * app-managed runtime actions. Drivers that leave them absent keep pure T3 behaviour.
  */
 import type {
   ExtensionPluginContents,
@@ -13,8 +13,10 @@ import type {
   ProviderStorePage,
   ProviderStoreSearchInput,
   ProviderAuthorizationUrlKind,
+  ProviderConnectionFailureReason,
   ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
+  ProviderRuntimeOperation,
   ProviderRuntimeOperationStatus,
   ProviderRuntimePlan,
   ProviderRuntimeSummary,
@@ -22,7 +24,9 @@ import type {
   ServerProviderPlugin,
   VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
+  ChatGptDictationError,
 } from "@t3tools/contracts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
@@ -34,6 +38,33 @@ export interface ProviderVoiceTranscriptCorrection {
     readonly language?: VoiceTranscriptionLanguage;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<{ readonly text: string }, VoiceTranscriptCorrectionError>;
+}
+
+/** Dictation through the provider's own sign-in, such as Scient Agent's or Codex's ChatGPT account. */
+export interface ProviderVoiceDictation {
+  readonly dictate: (input: {
+    /** A 16-bit mono WAV recording. */
+    readonly wav: Uint8Array;
+    readonly language?: VoiceTranscriptionLanguage | undefined;
+  }) => Effect.Effect<{ readonly text: string }, ChatGptDictationError>;
+}
+
+/** A voice call in an agent process of the provider's own, apart from any conversation's session. */
+export interface ProviderLiveVoiceHost {
+  /**
+   * Starts the call's agent for the caller's scope. Undefined from an agent too old to take
+   * reports, whose calls run in the conversation's own session instead.
+   */
+  readonly openCall: Effect.Effect<
+    ProviderLiveVoiceCall | undefined,
+    ProviderAdapter.ScientLiveVoiceFailure,
+    Scope.Scope
+  >;
+}
+
+export interface ProviderLiveVoiceCall extends ProviderAdapter.ScientLiveVoiceRuntime {
+  /** The delegated request's progress, or with `final` its answer, for the voice to speak. */
+  readonly report: (text: string, final: boolean) => Effect.Effect<void>;
 }
 
 export interface ProviderSkillActionFailure {
@@ -223,6 +254,8 @@ export interface ProviderConnectionActionFailure {
   readonly signInMayBeRemoved?: boolean | undefined;
   /** The provider accepted the sign-in; the failure came while finishing its setup. */
   readonly afterSignIn?: boolean | undefined;
+  /** Why a sign-in failed, set where the failure is known. */
+  readonly failureReason?: ProviderConnectionFailureReason | undefined;
 }
 
 export interface ProviderConnectionAttempt {
@@ -258,6 +291,12 @@ export interface ProviderConnectionAttempt {
     | undefined;
   readonly waitForCompletion: Effect.Effect<void, ProviderConnectionActionFailure>;
   readonly cancel: Effect.Effect<void, ProviderConnectionActionFailure>;
+  /**
+   * Offered only where the provider's own account check is authoritative: a fresh
+   * check finding the account connected finishes the flow even while the provider's
+   * process still runs. Stops that process; the manager's final verification still decides.
+   */
+  readonly finishWhenAccountConnected?: Effect.Effect<void> | undefined;
 }
 
 /**
@@ -297,6 +336,7 @@ export interface ProviderManagedRuntimeProgress {
   readonly totalBytes?: number | undefined;
   readonly waitingForIdle?: boolean | undefined;
   readonly retrying?: boolean | undefined;
+  readonly download?: ProviderRuntimeOperation["download"] | undefined;
 }
 
 export interface ProviderManagedRuntimeActions {

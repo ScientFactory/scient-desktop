@@ -275,6 +275,12 @@ export interface AccountsServiceShape {
     input: AccountMatchSignInInput,
   ) => Effect.Effect<AccountMatchSignInResult, AccountsError>;
 
+  /**
+   * Saved values a share must never carry: passwords, tokens, keys and one-time-code seeds stored
+   * in Scient or as custom-model keys. Server-side only; external password managers are not asked.
+   */
+  readonly redactionValues?: Effect.Effect<ReadonlyArray<Redacted.Redacted<string>>>;
+
   /** Lock-free authorization epoch. Undefined while the state needs initialization. */
   readonly bindingRevision?: Effect.Effect<number | undefined>;
   readonly recordBoundDenial?: (

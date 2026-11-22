@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import * as ProcessRunner from "../../processRunner.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as ServerConfig from "../../config.ts";
@@ -30,6 +31,8 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsDrivers = yield* VcsDriverRegistry.VcsDriverRegistry;
   const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  // The project identity keys an SSH alias by the host it points at; evidence must agree.
+  const processRunner = yield* Effect.serviceOption(ProcessRunner.ProcessRunner);
 
   const inspect: WorkspaceBindingEvidence["Service"]["inspect"] = Effect.fn(
     "WorkspaceBindingEvidence.inspect",
@@ -157,16 +160,27 @@ const make = Effect.gen(function* () {
           operation: "inspect-repository-output",
           kind: "repository-inspection-failed",
         });
+      // Binding evidence reads only `git remote -v`, not the gh repo set-default marker.
       const remote = RepositoryIdentityResolver.pickPrimaryRemote(
         RepositoryIdentityResolver.parseRemoteFetchUrls(remotes.stdout),
+        "",
       );
-      const identity = remote
-        ? RepositoryIdentityResolver.buildRepositoryIdentity({
-            ...remote,
-            originUrl: undefined,
-            rootPath,
-          })
-        : null;
+      const keyUrl =
+        remote === null || Option.isNone(processRunner)
+          ? remote?.remoteUrl
+          : yield* RepositoryIdentityResolver.sshResolvedRemoteUrl(remote.remoteUrl).pipe(
+              Effect.provideService(ProcessRunner.ProcessRunner, processRunner.value),
+            );
+      const identity =
+        remote && keyUrl !== undefined
+          ? RepositoryIdentityResolver.buildRepositoryIdentity({
+              ...remote,
+              keyUrl,
+              originUrl: undefined,
+              originKeyUrl: undefined,
+              rootPath,
+            })
+          : null;
       return {
         worktreeIdentity: { kind: "git" as const, rootPath, metadataPath },
         repositoryIdentity: identity

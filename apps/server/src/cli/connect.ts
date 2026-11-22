@@ -1,9 +1,7 @@
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
-  type AuthEnvironmentScope,
   type EnvironmentConnectReachability,
-  EnvironmentHttpApi,
   formatConnectReachable,
   type RelayClientInstallProgressEvent,
   type RelayClientInstallProgressStage,
@@ -30,7 +28,6 @@ import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
@@ -42,10 +39,12 @@ import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";
 import { filterRelayResponse } from "../cloud/relayResponse.ts";
 import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
@@ -53,9 +52,14 @@ import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  readLiveServerRuntimeState,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand } from "./invocation.ts";
+import * as RunningServer from "./runningServer.ts";
+import { resolveCliCommand, resolveHostCliHint } from "./invocation.ts";
 import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
@@ -185,7 +189,18 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
   }
 }
 
-function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: boolean }): string {
+function formatCloudStatus(
+  status: CloudCliStatus,
+  commands: {
+    readonly link: string;
+    readonly serviceStatus: string;
+    // SCIENT-FORK:START — Scient's offline hint starts the server in the foreground.
+    readonly serve: string;
+    readonly status: string;
+    // SCIENT-FORK:END
+  },
+  options?: { readonly json?: boolean },
+): string {
   if (options?.json) {
     return JSON.stringify(status, null, 2);
   }
@@ -197,37 +212,47 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : status.desired && status.authenticated
         ? "pending server startup"
         : "not provisioned";
-  const nextStep = !status.authenticated
-    ? "Run `scient connect link` to authorize and enable Scient Connect."
-    : status.revoked
-      ? "Run `scient connect link` to link this environment again."
-      : !status.desired
-        ? "Run `scient connect link` to enable Scient Connect."
-        : !status.linked
-          ? "Start Scient to provision the environment link and launch its managed tunnel."
-          : undefined;
+  const publishOnly = status.desired && status.linkMode === "publish_only";
+  // An app-made link needs no CLI credential once provisioned.
+  const nextStep =
+    status.desired && status.linked && !status.revoked
+      ? undefined
+      : !status.authenticated
+        ? `Run \`${commands.link}\` to authorize and enable Scient Connect.`
+        : status.revoked
+          ? `Run \`${commands.link}\` to link this environment again.`
+          : !status.desired
+            ? `Run \`${commands.link}\` to enable Scient Connect.`
+            : publishOnly
+              ? "Start Scient to provision the environment link."
+              : "Start Scient to provision the environment link and launch its managed tunnel.";
 
   return [
     "Scient Connect",
-    `  Exposure: ${status.desired ? "enabled" : "disabled"}`,
+    `  Exposure: ${publishOnly ? "publish-only" : status.desired ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired || status.linkMode !== "managed"
+    ...(!status.desired
       ? []
-      : status.reachability === null
+      : publishOnly
         ? [
             "",
-            "No running server answered, so reachability was not checked. Start Scient (the desktop app or `scient serve`), then run `scient connect status` again.",
+            "This link only publishes agent activity. Remote access through Scient Connect is off, so other devices need their own route to this machine, such as LAN or Tailscale.",
           ]
-        : status.reachability.status === "reachable"
+        : status.reachability === null
           ? [
               "",
-              `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+              `No running server answered, so reachability was not checked. Start Scient (the desktop app or \`${commands.serve}\`), then run \`${commands.status}\` again.`,
             ]
-          : ["", formatReachabilityFailure(status.reachability)]),
+          : status.reachability.status === "reachable"
+            ? [
+                "",
+                `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+              ]
+            : ["", formatReachabilityFailure(status.reachability)]),
     ...(nextStep ? ["", `Next: ${nextStep}`] : []),
   ].join("\n");
 }
@@ -286,21 +311,6 @@ export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_clie
   },
 );
 
-const withCloudCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  scope: AuthEnvironmentScope,
-  run: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.acquireUseRelease(
-    environmentAuth.issueSession({
-      scopes: [scope],
-      subject: "cloud-cli",
-      label: "scient connect cli",
-    }),
-    (issued) => run(issued.token),
-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-  );
-
 type LiveCloudActionResult =
   | { readonly status: "not-running" }
   | { readonly status: "server-gone" }
@@ -318,17 +328,11 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
     return { status: "server-gone" } satisfies LiveCloudActionResult;
   }
 
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const result = yield* Effect.exit(
-    withCloudCliSessionToken(environmentAuth, AuthRelayWriteScope, (token) =>
-      HttpApiClient.make(EnvironmentHttpApi, {
-        baseUrl: runtimeState.value.origin,
-      }).pipe(
-        Effect.flatMap((client) =>
-          client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
-        ),
-        Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
-      ),
+    RunningServer.serverClient(runtimeState.value.origin, [AuthRelayWriteScope]).pipe(
+      Effect.flatMap((client) => client.connect.unlink({ headers: {} })),
+      Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
+      Effect.scoped,
     ),
   );
   return Exit.isSuccess(result)
@@ -344,17 +348,14 @@ const CLOUD_CLI_REACHABILITY_RETRY = Duration.seconds(5);
 /** Asks the running server to check T3 Connect now. `null` when no server answers. */
 const checkLiveReachability = Effect.fn("cloud.cli.check_live_reachability")(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(runtimeState)) return null;
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
-    HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
-      Effect.flatMap((client) =>
-        client.connect.checkReachability({ headers: { authorization: `Bearer ${token}` } }),
-      ),
-      Effect.timeout(CLOUD_CLI_REACHABILITY_TIMEOUT),
-    ),
-  ).pipe(Effect.orElseSucceed(() => null));
+  return yield* RunningServer.serverClient(runtimeState.value.origin, [AuthRelayReadScope]).pipe(
+    Effect.flatMap((client) => client.connect.checkReachability({ headers: {} })),
+    Effect.timeout(CLOUD_CLI_REACHABILITY_TIMEOUT),
+    Effect.scoped,
+    Effect.orElseSucceed(() => null),
+  );
 });
 
 function formatAlertBox(text: string): string {
@@ -686,8 +687,10 @@ const connectStatusCommand = Command.make("status", {
         const relayClient = yield* RelayClient.RelayClient;
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         const [
-          desired,
-          authenticated,
+          cliDesired,
+          managedTunnel,
+          cliAuthenticated,
+          relayCredential,
           cloudUserId,
           relayUrl,
           publishAgentActivity,
@@ -697,7 +700,9 @@ const connectStatusCommand = Command.make("status", {
         ] = yield* Effect.all(
           [
             CliState.readCliDesiredCloudLink,
+            secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
             tokens.hasCredential,
+            secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
             secrets.get(CLOUD_LINKED_USER_ID),
             secrets.get(RELAY_URL_SECRET),
             secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
@@ -707,6 +712,10 @@ const connectStatusCommand = Command.make("status", {
           ],
           { concurrency: "unbounded" },
         );
+        // A link made in the desktop, web, or mobile app saves the tunnel config but no CLI marker.
+        const desired = cliDesired || Option.isSome(managedTunnel);
+        // Such a link authorizes the environment with its relay credential, not a CLI sign-in.
+        const authenticated = cliAuthenticated || Option.isSome(relayCredential);
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
           desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
@@ -724,7 +733,15 @@ const connectStatusCommand = Command.make("status", {
           linkMode,
           reachability,
         };
-        yield* Console.log(formatCloudStatus(status, { json: flags.json }));
+        const commands = {
+          link: yield* resolveHostCliHint("connect link", flags.baseDir),
+          serviceStatus: yield* resolveHostCliHint("service status", flags.baseDir),
+          // SCIENT-FORK:START
+          serve: yield* resolveHostCliHint("serve", flags.baseDir),
+          status: yield* resolveHostCliHint("connect status", flags.baseDir),
+          // SCIENT-FORK:END
+        };
+        yield* Console.log(formatCloudStatus(status, commands, { json: flags.json }));
       }),
       {
         quietLogs: flags.json,
@@ -774,8 +791,9 @@ const connectPublishCommand = Command.make("publish", {
         }
 
         if (!(yield* tokens.hasCredential)) {
+          const loginCommand = yield* resolveHostCliHint("connect login", flags.baseDir);
           yield* Console.log(
-            "Run `scient connect login` first so this environment can be authorized to publish.",
+            `Run \`${loginCommand}\` first so this environment can be authorized to publish.`,
           );
           return;
         }

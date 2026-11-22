@@ -4,15 +4,19 @@ import {
   type ProviderManagedRuntimeAction,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { msg, useMessages } from "gt-react";
 
 import {
   hasInstallableCompatibilityRemedy,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isManagedRuntimeBypassed,
+  isUserFacingRuntimeFailure,
   isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
 } from "./providerConnectionPresentation";
+import { m, type MessageResolver } from "~/i18n/messages";
+
 import { hasExternalProviderUpdate } from "./providerLifecycleActions";
 import { useProviderSignInStartingHere } from "./providerSignInStarting";
 
@@ -86,10 +90,10 @@ const NO_ACTION = {
 } as const;
 
 const RUNTIME_ACTION_LABELS = {
-  install: "Installing",
-  update: "Updating",
-  repair: "Repairing",
-  remove: "Removing",
+  install: msg("Installing", { $context: "provider status" }),
+  update: msg("Updating", { $context: "provider status" }),
+  repair: msg("Repairing", { $context: "provider status" }),
+  remove: msg("Removing", { $context: "provider status" }),
 } satisfies Record<ProviderManagedRuntimeAction, string>;
 
 /**
@@ -105,34 +109,39 @@ export function useProviderSettingsLifecyclePresentation(
     environmentId,
     instanceId: provider?.instanceId ?? ("" as ServerProvider["instanceId"]),
   });
+  const resolve = useMessages();
   return providerSettingsLifecyclePresentation(provider, displayName, {
     startingHere: provider !== undefined && startingHere,
+    resolve,
   });
 }
 
 export function providerSettingsLifecyclePresentation(
   provider: ServerProvider | undefined,
   displayName: string,
-  options: { readonly startingHere?: boolean } = {},
+  options: { readonly startingHere?: boolean; readonly resolve?: MessageResolver } = {},
 ): ProviderSettingsLifecyclePresentation {
+  const r = options.resolve ?? m;
   if (!provider) {
     return {
       kind: "checking",
       statusLabel: null,
-      detail: "Checking installation and sign-in status…",
+      detail: r(msg("Checking installation and sign-in status…")),
       ...NO_ACTION,
       busy: true,
     };
   }
   const runtimeOperation = provider.connection?.runtime?.operation ?? null;
   if (runtimeOperation && isActiveProviderRuntimeOperation(runtimeOperation)) {
-    const label = runtimeOperation.waitingForIdle
-      ? "Waiting"
-      : runtimeOperation.retrying
-        ? "Retrying"
-        : runtimeOperation.status === "verifying" || runtimeOperation.status === "testing"
-          ? "Verifying"
-          : RUNTIME_ACTION_LABELS[runtimeOperation.action];
+    const label = r(
+      runtimeOperation.waitingForIdle
+        ? msg("Waiting", { $context: "provider status" })
+        : runtimeOperation.retrying
+          ? msg("Retrying", { $context: "provider status" })
+          : runtimeOperation.status === "verifying" || runtimeOperation.status === "testing"
+            ? msg("Verifying", { $context: "provider status" })
+            : RUNTIME_ACTION_LABELS[runtimeOperation.action],
+    );
     const { downloadedBytes, totalBytes } = runtimeOperation;
     const downloadPercent =
       runtimeOperation.status === "downloading" &&
@@ -156,9 +165,12 @@ export function providerSettingsLifecyclePresentation(
   if (!provider.enabled) {
     return {
       kind: "disabled",
-      statusLabel: "Disabled",
-      detail: "Hidden from new conversations.",
-      ...action({ kind: "manage", label: "Manage" }),
+      statusLabel: r(msg("Disabled", { $context: "provider status" })),
+      detail: r(msg("Hidden from new conversations.")),
+      ...action({
+        kind: "manage",
+        label: r(msg("Manage", { $context: "verb, provider settings button" })),
+      }),
       busy: false,
     };
   }
@@ -171,12 +183,15 @@ export function providerSettingsLifecyclePresentation(
       busy: true,
     };
   }
-  if (runtimeOperation?.status === "failed") {
+  if (runtimeOperation && isUserFacingRuntimeFailure(runtimeOperation)) {
     return {
       kind: "failed",
-      statusLabel: "Setup failed",
+      statusLabel: r(msg("Setup failed", { $context: "provider status" })),
       detail: runtimeOperation.message,
-      ...action({ kind: "manage", label: "Failed" }),
+      ...action({
+        kind: "manage",
+        label: r(msg("Failed", { $context: "provider settings button after a failed setup" })),
+      }),
       busy: false,
     };
   }
@@ -187,16 +202,23 @@ export function providerSettingsLifecyclePresentation(
     const canInstall = provider.connection?.runtime?.actions.includes("install") ?? false;
     return {
       kind: "not-installed",
-      statusLabel: "Not installed",
+      statusLabel: r(msg("Not installed", { $context: "provider status" })),
       detail:
         provider.driver === "codex"
-          ? "Install Codex to connect your ChatGPT account."
+          ? r(msg("Install Codex to connect your ChatGPT account."))
           : provider.driver === "pi"
-            ? "Install Pi, then configure its model providers."
-            : `Install ${displayName} to connect your account.`,
+            ? r(msg("Install Pi, then configure its model providers."))
+            : r(msg("Install {provider} to connect your account.", { provider: displayName })),
       ...(canInstall
-        ? action({ kind: "runtime", label: "Install", runtimeAction: "install" })
-        : action({ kind: "manage", label: "Manage" })),
+        ? action({
+            kind: "runtime",
+            label: r(msg("Install", { $context: "verb, provider settings button" })),
+            runtimeAction: "install",
+          })
+        : action({
+            kind: "manage",
+            label: r(msg("Manage", { $context: "verb, provider settings button" })),
+          })),
       busy: false,
     };
   }
@@ -204,29 +226,46 @@ export function providerSettingsLifecyclePresentation(
   if (provider.connection?.runtime?.actions.includes("update")) {
     return {
       kind: "attention",
-      statusLabel: "Update available",
-      detail: `A reviewed ${displayName} update is ready to install.`,
-      ...action({ kind: "runtime", label: "Update", runtimeAction: "update" }),
+      statusLabel: r(msg("Update available", { $context: "provider status" })),
+      detail: r(
+        msg("A reviewed {provider} update is ready to install.", { provider: displayName }),
+      ),
+      ...action({
+        kind: "runtime",
+        label: r(msg("Update", { $context: "verb, provider settings button" })),
+        runtimeAction: "update",
+      }),
       busy: false,
     };
   }
   if (isManagedRuntimeBypassed(provider)) {
     return {
       kind: "attention",
-      statusLabel: `Using system ${displayName}`,
+      statusLabel: r(msg("Using system {provider}", { provider: displayName })),
       detail: provider.connection?.runtime?.message ?? null,
-      ...action({ kind: "runtime", label: "Repair", runtimeAction: "repair" }),
+      ...action({
+        kind: "runtime",
+        label: r(msg("Repair", { $context: "verb, provider settings button" })),
+        runtimeAction: "repair",
+      }),
       busy: false,
     };
   }
   if (hasExternalProviderUpdate(provider)) {
     return {
       kind: "attention",
-      statusLabel: "Update available",
+      statusLabel: r(msg("Update available", { $context: "provider status" })),
       detail:
         provider.versionAdvisory?.message ??
-        `A newer ${displayName} version is available on this computer.`,
-      ...action({ kind: "external-update", label: "Update" }),
+        r(
+          msg("A newer {provider} version is available on this computer.", {
+            provider: displayName,
+          }),
+        ),
+      ...action({
+        kind: "external-update",
+        label: r(msg("Update", { $context: "verb, provider settings button" })),
+      }),
       busy: false,
     };
   }
@@ -235,10 +274,24 @@ export function providerSettingsLifecyclePresentation(
       kind: "attention",
       statusLabel:
         provider.compatibilityAdvisory?.status === "broken"
-          ? "Incompatible version"
-          : "Unsupported version",
-      detail: `${provider.compatibilityAdvisory?.message ?? `This ${displayName} version is not supported.`} Install Scient's verified ${displayName} to use a supported version; the current installation stays untouched.`,
-      ...action({ kind: "runtime", label: "Install", runtimeAction: "install" }),
+          ? r(msg("Incompatible version"))
+          : r(msg("Unsupported version")),
+      detail: r(
+        msg(
+          "{advisory} Install Scient''s verified {provider} to use a supported version; the current installation stays untouched.",
+          {
+            advisory:
+              provider.compatibilityAdvisory?.message ??
+              r(msg("This {provider} version is not supported.", { provider: displayName })),
+            provider: displayName,
+          },
+        ),
+      ),
+      ...action({
+        kind: "runtime",
+        label: r(msg("Install", { $context: "verb, provider settings button" })),
+        runtimeAction: "install",
+      }),
       busy: false,
     };
   }
@@ -246,11 +299,20 @@ export function providerSettingsLifecyclePresentation(
     const canRepair = provider.connection?.runtime?.actions.includes("repair") ?? false;
     return {
       kind: "attention",
-      statusLabel: "Runtime needs repair",
-      detail: provider.message ?? `${displayName} could not start correctly.`,
+      statusLabel: r(msg("Runtime needs repair", { $context: "provider status" })),
+      detail:
+        provider.message ??
+        r(msg("{provider} could not start correctly.", { provider: displayName })),
       ...(canRepair
-        ? action({ kind: "runtime", label: "Repair", runtimeAction: "repair" })
-        : action({ kind: "manage", label: "Manage" })),
+        ? action({
+            kind: "runtime",
+            label: r(msg("Repair", { $context: "verb, provider settings button" })),
+            runtimeAction: "repair",
+          })
+        : action({
+            kind: "manage",
+            label: r(msg("Manage", { $context: "verb, provider settings button" })),
+          })),
       busy: false,
     };
   }
@@ -259,9 +321,12 @@ export function providerSettingsLifecyclePresentation(
     const discovered = provider.status === "ready" && provider.models.length > 0;
     return {
       kind: discovered ? "ready" : "manual",
-      statusLabel: discovered ? "Models available" : "Configure Pi",
-      detail: provider.message ?? "Connect a custom model or configure a provider in Pi.",
-      ...action({ kind: "manage", label: "Manage" }),
+      statusLabel: discovered ? r(msg("Models available")) : r(msg("Configure Pi")),
+      detail: provider.message ?? r(msg("Connect a custom model or configure a provider in Pi.")),
+      ...action({
+        kind: "manage",
+        label: r(msg("Manage", { $context: "verb, provider settings button" })),
+      }),
       busy: false,
     };
   }
@@ -269,20 +334,28 @@ export function providerSettingsLifecyclePresentation(
     if (provider.status !== "ready" || provider.models.length === 0) {
       return {
         kind: "attention",
-        statusLabel: "Needs attention",
-        detail: provider.message ?? `${displayName} is connected but has no available model.`,
-        ...action({ kind: "manage", label: "Manage" }),
+        statusLabel: r(msg("Needs attention", { $context: "provider status" })),
+        detail:
+          provider.message ??
+          r(msg("{provider} is connected but has no available model.", { provider: displayName })),
+        ...action({
+          kind: "manage",
+          label: r(msg("Manage", { $context: "verb, provider settings button" })),
+        }),
         busy: false,
       };
     }
     return {
       kind: "ready",
-      statusLabel: "Ready",
+      statusLabel: r(msg("Ready", { $context: "provider status" })),
       detail:
         provider.auth.required === false
-          ? "Ready without account sign-in."
-          : (provider.auth.label ?? provider.auth.email ?? "Account connected."),
-      ...action({ kind: "manage", label: "Manage" }),
+          ? r(msg("Ready without account sign-in."))
+          : (provider.auth.label ?? provider.auth.email ?? r(msg("Account connected."))),
+      ...action({
+        kind: "manage",
+        label: r(msg("Manage", { $context: "verb, provider settings button" })),
+      }),
       busy: false,
     };
   }
@@ -291,9 +364,12 @@ export function providerSettingsLifecyclePresentation(
   if (options.startingHere && !isActiveProviderConnectionOperation(connectionOperation)) {
     return {
       kind: "signing-in",
-      statusLabel: "Starting",
+      statusLabel: r(msg("Starting", { $context: "provider status" })),
       detail: provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE,
-      ...action({ kind: "continue", label: "Continue" }),
+      ...action({
+        kind: "continue",
+        label: r(msg("Continue", { $context: "verb, provider settings button" })),
+      }),
       busy: true,
     };
   }
@@ -301,14 +377,32 @@ export function providerSettingsLifecyclePresentation(
     const canRetrySignIn = (provider.connection?.methods.length ?? 0) > 0;
     return {
       kind: "failed",
-      statusLabel: connectionOperation.failedAfterSignIn ? "Setup failed" : "Sign-in failed",
+      statusLabel: connectionOperation.failedAfterSignIn
+        ? r(msg("Setup failed", { $context: "provider status" }))
+        : r(msg("Sign-in failed", { $context: "provider status" })),
       // After the sign-in finished, the server's sentence is diagnostic; say what happened.
       detail: connectionOperation.failedAfterSignIn
-        ? `${connectionOperation.method.endsWith("_credentials") ? "Connected" : "Signed in"}, but ${displayName} couldn’t start. Try again.`
+        ? connectionOperation.method.endsWith("_credentials")
+          ? r(
+              msg("Connected, but {provider} couldn’t start. Try again.", {
+                provider: displayName,
+              }),
+            )
+          : r(
+              msg("Signed in, but {provider} couldn’t start. Try again.", {
+                provider: displayName,
+              }),
+            )
         : connectionOperation.message,
       ...(canRetrySignIn
-        ? action({ kind: "sign-in", label: "Retry" })
-        : action({ kind: "manage", label: "Manage" })),
+        ? action({
+            kind: "sign-in",
+            label: r(msg("Retry", { $context: "verb, provider settings button" })),
+          })
+        : action({
+            kind: "manage",
+            label: r(msg("Manage", { $context: "verb, provider settings button" })),
+          })),
       busy: false,
     };
   }
@@ -317,33 +411,39 @@ export function providerSettingsLifecyclePresentation(
       kind: "signing-in",
       statusLabel:
         connectionOperation.status === "verifying"
-          ? "Verifying"
+          ? r(msg("Verifying", { $context: "provider status" }))
           : connectionOperation.status === "starting"
-            ? "Starting"
-            : "Signing in",
+            ? r(msg("Starting", { $context: "provider status" }))
+            : r(msg("Signing in", { $context: "provider status" })),
       detail: connectionOperation.message,
-      ...action({ kind: "continue", label: "Continue" }),
+      ...action({
+        kind: "continue",
+        label: r(msg("Continue", { $context: "verb, provider settings button" })),
+      }),
       busy: true,
     };
   }
   if ((provider.connection?.methods.length ?? 0) > 0) {
     return {
       kind: "sign-in-required",
-      statusLabel: "Sign-in required",
+      statusLabel: r(msg("Sign-in required", { $context: "provider status" })),
       detail:
         provider.driver === "codex"
-          ? "Connect your ChatGPT account."
+          ? r(msg("Connect your ChatGPT account."))
           : provider.driver === "droid"
-            ? "Sign in with your existing Factory subscription."
-            : "Connect your account.",
-      ...action({ kind: "sign-in", label: "Sign in" }),
+            ? r(msg("Sign in with your existing Factory subscription."))
+            : r(msg("Connect your account.")),
+      ...action({
+        kind: "sign-in",
+        label: r(msg("Sign in", { $context: "verb, provider settings button" })),
+      }),
       busy: false,
     };
   }
   return {
     kind: "manual",
-    statusLabel: "Manual setup",
-    detail: provider.message ?? "Use the provider's advanced configuration.",
+    statusLabel: r(msg("Manual setup", { $context: "provider status" })),
+    detail: provider.message ?? r(msg("Use the provider's advanced configuration.")),
     ...NO_ACTION,
     busy: false,
   };

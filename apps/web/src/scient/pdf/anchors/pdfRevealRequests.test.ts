@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   abandonPdfReveal,
   claimPdfReveal,
-  ownsPdfReveal,
   pendingPdfReveal,
   releasePdfReveal,
   requestPdfReveal,
@@ -72,7 +71,9 @@ describe("pending quote reveals", () => {
     expect(claimPdfReveal(key, request.id, {})).toBe(false);
     vi.advanceTimersByTime(60_000);
     expect(pendingPdfReveal(key)).toBe(request);
-    expect(ownsPdfReveal(key, request.id, reader)).toBe(true);
+    // Still this reader's: another is refused, and it may claim it again.
+    expect(claimPdfReveal(key, request.id, {})).toBe(false);
+    expect(claimPdfReveal(key, request.id, reader)).toBe(true);
     expect(takePdfReveal(key, request.id)).toBe(true);
     expect(pendingPdfReveal(key)).toBeNull();
   });
@@ -94,8 +95,12 @@ describe("pending quote reveals", () => {
     const reader = {};
     claimPdfReveal(key, first.id, reader);
     const second = requestPdfReveal(key, target);
-    expect(ownsPdfReveal(key, second.id, reader)).toBe(false);
+    expect(claimPdfReveal(key, first.id, reader)).toBe(false);
     expect(claimPdfReveal(key, second.id, {})).toBe(true);
+    // The first reader closing no longer cancels it.
+    releasePdfReveal(key, reader);
+    vi.advanceTimersByTime(1);
+    expect(pendingPdfReveal(key)).toBe(second);
   });
 
   it("keeps a claim through React's development replay (release, then claim again at once)", () => {
@@ -105,7 +110,8 @@ describe("pending quote reveals", () => {
     releasePdfReveal(key, reader);
     claimPdfReveal(key, request.id, reader);
     vi.advanceTimersByTime(1);
-    expect(ownsPdfReveal(key, request.id, reader)).toBe(true);
+    expect(pendingPdfReveal(key)).toBe(request);
+    expect(claimPdfReveal(key, request.id, {})).toBe(false);
     // A real close: no claim follows.
     releasePdfReveal(key, reader);
     vi.advanceTimersByTime(1);

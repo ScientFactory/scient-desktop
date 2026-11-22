@@ -1,14 +1,16 @@
+import { msg } from "gt-react";
 import { useLayoutEffect } from "react";
 import type { Editor } from "@pierre/diffs/edit";
 import type { FileCitation } from "@t3tools/contracts";
 import { useEffect, useRef, useId } from "react";
 import { SelectionCitationToolbar } from "~/components/chat/AssistantSelectionToolbar";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import type { CitationDestination } from "../chat/sideChatCitation";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
-import { sourcePosition } from "../math/input/sourceAdapter";
+import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import {
   createSourceCitation,
   resolveSourceCitation,
@@ -78,11 +80,12 @@ export function SourceCitationActions<Annotation>({
       return null;
     const source = editor?.getFile() ? editor.getText() : staticSource;
     if (source === undefined) return null;
+    // Pierre counts offsets on its "\n" text; the citation counts them on the file's own text.
     const selected =
       state && selections?.length === 1
         ? {
-            from: state.document.offsetAt(selections[0]!.start),
-            to: state.document.offsetAt(selections[0]!.end),
+            from: sourceOffset(source, selections[0]!.start),
+            to: sourceOffset(source, selections[0]!.end),
           }
         : staticSourceSelection(viewport, source);
     return selected ? { source, ...selected } : null;
@@ -148,8 +151,8 @@ export function SourceCitationActions<Annotation>({
     else if (!match)
       toastManager.add({
         type: "warning",
-        title: "The quoted source has changed",
-        description: "Showing its recorded line. Its exact location could not be verified.",
+        title: m(msg("The quoted source has changed")),
+        description: m(msg("Showing its recorded line. Its exact location could not be verified.")),
       });
   }, [editor, reveal, revealId, ready, staticSource, viewport]);
   if (!onCite) return null;
@@ -187,8 +190,8 @@ export function SourceCitationActions<Annotation>({
     ) {
       toastManager.add({
         type: "warning",
-        title: "The selection has changed",
-        description: "Select the source again to cite its current version.",
+        title: m(msg("The selection has changed")),
+        description: m(msg("Select the source again to cite its current version.")),
       });
       return false;
     }
@@ -196,8 +199,8 @@ export function SourceCitationActions<Annotation>({
     if (!accepted)
       toastManager.add({
         type: "warning",
-        title: "Could not add the citation",
-        description: "The chat input is not ready. Your selection is unchanged.",
+        title: m(msg("Could not add the citation")),
+        description: m(msg("The chat input is not ready. Your selection is unchanged.")),
       });
     return accepted;
   };

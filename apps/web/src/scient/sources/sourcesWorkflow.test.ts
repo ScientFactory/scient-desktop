@@ -5,10 +5,12 @@ import type {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { projectKeys } from "./libraryActions";
 import {
   emptyZoteroPage,
   importOutcomeFromOperation,
   initialSourcesWorkflowState,
+  shownSourceRecord,
   sourcesWorkflowReducer,
   type SourcesWorkflowState,
 } from "./sourcesWorkflow";
@@ -340,11 +342,13 @@ describe("sources workflow data consistency", () => {
       {
         type: "sourceDetailArrived",
         sourceId: "current",
+        atDetailFetch: 1,
         detail: detail({ sourceId: "current", revision: 2 }),
       },
       {
         type: "sourceDetailArrived",
         sourceId: "stale",
+        atDetailFetch: 1,
         detail: detail({ sourceId: "stale", revision: 7 }),
       },
     );
@@ -398,6 +402,7 @@ describe("sources workflow data consistency", () => {
       {
         type: "sourceDetailArrived",
         sourceId: "gone",
+        atDetailFetch: 1,
         detail: detail({ sourceId: "gone" }),
       },
     );
@@ -405,6 +410,348 @@ describe("sources workflow data consistency", () => {
     expect(removed.sourceDetails["gone"]).toBeUndefined();
     expect(removed.overview?.records.map((record) => record.sourceId)).toEqual(["kept"]);
     expect(removed.overview?.recordDiagnostics.map((entry) => entry.sourceId)).toEqual(["kept"]);
+  });
+});
+
+describe("sources workflow on a personal Library", () => {
+  const library = (records: Parameters<typeof overviewWith>[0]) => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
+    return sourcesWorkflowReducer(started, {
+      type: "overviewArrived",
+      request: 1,
+      overview: overviewWith(records),
+    });
+  };
+
+  it("takes reading state from the route's answer and keeps the revision", () => {
+    const base = sourcesWorkflowReducer(
+      library([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        { sourceId: "snapshot", revision: 1, pinned: true, fromSnapshot: true },
+      ]),
+      {
+        type: "sourceDetailArrived",
+        sourceId: "a",
+        atDetailFetch: 1,
+        detail: {
+          ...detail({ sourceId: "a", revision: 4 }),
+          readingStatus: "unread",
+          starred: false,
+        },
+      },
+    );
+    const next = sourcesWorkflowReducer(base, {
+      type: "readingStateArrived",
+      atDetailFetch: 1,
+      result: {
+        sources: [
+          { sourceId: "a", outcome: "updated", readingStatus: "read", starred: false },
+          { sourceId: "snapshot", outcome: "not-found" },
+        ],
+      },
+    });
+    expect(next.overview?.records).toMatchObject([
+      { sourceId: "a", revision: 4, readingStatus: "read", pinned: true },
+      { sourceId: "snapshot", revision: 1 },
+    ]);
+    expect(next.overview?.records[1]).not.toHaveProperty("readingStatus");
+    expect(next.sourceDetails["a"]).toMatchObject({ revision: 4, readingStatus: "read" });
+  });
+
+  it("keeps My note and the row's Library fields when a project note save answers without them", () => {
+    const base = sourcesWorkflowReducer(
+      library([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: true, pinned: true },
+      ]),
+      {
+        type: "sourceDetailArrived",
+        sourceId: "a",
+        atDetailFetch: 1,
+        detail: {
+          ...detail({ sourceId: "a", revision: 4 }),
+          pinned: true,
+          readingStatus: "unread",
+          starred: true,
+          personalNote: "Mine",
+        },
+      },
+    );
+    const next = sourcesWorkflowReducer(base, {
+      type: "sourceRecordAccepted",
+      record: { ...detail({ sourceId: "a", revision: 4 }), note: "For this project", pinned: true },
+    });
+    expect(next.sourceDetails["a"]).toMatchObject({
+      note: "For this project",
+      personalNote: "Mine",
+      readingStatus: "unread",
+      starred: true,
+    });
+    expect(next.overview?.records[0]).toMatchObject({ readingStatus: "unread", starred: true });
+  });
+  it("takes this project's keys from the latest overview row alone, so Remove unpins only those", () => {
+    const keys = { citationKey: "ada2026", alsoCitedAs: ["ada2026a"], pinned: true };
+    const edited = reduceAll(
+      library([{ sourceId: "a", revision: 4, ...keys }]),
+      {
+        type: "sourceRecordAccepted",
+        record: { ...detail({ sourceId: "a", revision: 5 }), ...keys },
+      },
+      // A project note save answers the details, which an overview row is rebuilt from.
+      {
+        type: "sourceRecordAccepted",
+        record: { ...detail({ sourceId: "a", revision: 5 }), pinned: true, note: "Primary" },
+      },
+    );
+    expect(projectKeys(edited.overview!.records[0]!)).toEqual(["ada2026", "ada2026a"]);
+    expect(projectKeys(shownSourceRecord(edited, "a")!)).toEqual(["ada2026", "ada2026a"]);
+
+    // Undo of the merge leaves one key here without a new revision of the kept source; a detail
+    // read before the Undo answers after its overview.
+    const undone = reduceAll(
+      edited,
+      { type: "overviewRequestStarted", request: 2 },
+      {
+        type: "overviewArrived",
+        request: 2,
+        overview: overviewWith([
+          { sourceId: "a", revision: 5, citationKey: "ada2026", pinned: true },
+        ]),
+      },
+      {
+        type: "sourceDetailArrived",
+        sourceId: "a",
+        atDetailFetch: 1,
+        detail: { ...detail({ sourceId: "a", revision: 5 }), ...keys },
+      },
+    );
+    expect(projectKeys(shownSourceRecord(undone, "a")!)).toEqual(["ada2026"]);
+    expect(projectKeys(undone.overview!.records[0]!)).toEqual(["ada2026"]);
+  });
+
+  it("shows a review record served from the review's snapshot, which no list row names", () => {
+    const state = reduceAll(library([{ sourceId: "listed", revision: 1 }]), {
+      type: "sourceDetailArrived",
+      sourceId: "screened",
+      atDetailFetch: 1,
+      detail: { ...detail({ sourceId: "screened" }), label: "From this review's snapshot" },
+    });
+    expect(shownSourceRecord(state, "screened")).toMatchObject({ sourceId: "screened" });
+  });
+
+  it("keeps a merged-away source's reading change off the kept one and drops it after Undo", () => {
+    const marked = sourcesWorkflowReducer(
+      library([
+        { sourceId: "kept", revision: 2, readingStatus: "unread", starred: false, pinned: true },
+        { sourceId: "away", revision: 1, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+      {
+        type: "readingStateArrived",
+        atDetailFetch: 1,
+        result: {
+          sources: [{ sourceId: "away", outcome: "updated", readingStatus: "read", starred: true }],
+        },
+      },
+    );
+    const merged = reduceAll(
+      marked,
+      { type: "overviewRequestStarted", request: 2 },
+      {
+        type: "overviewArrived",
+        request: 2,
+        overview: overviewWith([
+          { sourceId: "kept", revision: 3, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+    );
+    expect(merged.overview?.records).toMatchObject([
+      { sourceId: "kept", readingStatus: "unread", starred: false },
+    ]);
+
+    // Marked unread elsewhere before Undo brought it back: the server's state shows.
+    const undone = reduceAll(
+      merged,
+      { type: "overviewRequestStarted", request: 3 },
+      {
+        type: "overviewArrived",
+        request: 3,
+        overview: overviewWith([
+          { sourceId: "kept", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+          { sourceId: "away", revision: 2, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+    );
+    expect(undone.overview?.records[1]).toMatchObject({
+      sourceId: "away",
+      readingStatus: "unread",
+      starred: false,
+    });
+  });
+
+  it("keeps a landed reading change when an older overview answer arrives", () => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
+    const marked = sourcesWorkflowReducer(started, {
+      type: "readingStateArrived",
+      atDetailFetch: 1,
+      result: {
+        sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
+      },
+    });
+    const stale = sourcesWorkflowReducer(marked, {
+      type: "overviewArrived",
+      request: 1,
+      overview: overviewWith([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+    });
+    expect(stale.overview?.records[0]).toMatchObject({ readingStatus: "read", starred: true });
+
+    const refreshed = reduceAll(
+      stale,
+      { type: "overviewRequestStarted", request: 2 },
+      {
+        type: "overviewArrived",
+        request: 2,
+        overview: overviewWith([
+          { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+    );
+    expect(refreshed.overview?.records[0]).toMatchObject({
+      readingStatus: "unread",
+      starred: false,
+    });
+  });
+
+  it("keeps a landed reading change on a late detail answer", () => {
+    const base = sourcesWorkflowReducer(
+      library([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+      {
+        type: "readingStateArrived",
+        atDetailFetch: 1,
+        result: {
+          sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
+        },
+      },
+    );
+    const late = sourcesWorkflowReducer(base, {
+      type: "sourceDetailArrived",
+      sourceId: "a",
+      atDetailFetch: 1,
+      detail: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+      },
+    });
+    expect(late.sourceDetails["a"]).toMatchObject({ readingStatus: "read", starred: true });
+  });
+
+  it("keeps a landed reading change on a late detail answer after the older overview arrives", () => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
+    const marked = sourcesWorkflowReducer(started, {
+      type: "readingStateArrived",
+      atDetailFetch: 1,
+      result: {
+        sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
+      },
+    });
+    const withOverview = sourcesWorkflowReducer(marked, {
+      type: "overviewArrived",
+      request: 1,
+      overview: overviewWith([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+    });
+    expect(withOverview.overview?.records[0]).toMatchObject({
+      readingStatus: "read",
+      starred: true,
+    });
+    const late = sourcesWorkflowReducer(withOverview, {
+      type: "sourceDetailArrived",
+      sourceId: "a",
+      atDetailFetch: 1,
+      detail: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+      },
+    });
+    expect(late.sourceDetails["a"]).toMatchObject({ readingStatus: "read", starred: true });
+  });
+
+  it("does not mask a detail read that started after the reading change", () => {
+    const marked = reduceAll(
+      initialSourcesWorkflowState,
+      { type: "overviewRequestStarted", request: 1 },
+      {
+        type: "overviewArrived",
+        request: 1,
+        overview: overviewWith([
+          { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+      {
+        type: "readingStateArrived",
+        atDetailFetch: 1,
+        result: {
+          sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: false }],
+        },
+      },
+    );
+    const fresh = sourcesWorkflowReducer(marked, {
+      type: "sourceDetailArrived",
+      sourceId: "a",
+      atDetailFetch: 2,
+      detail: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+      },
+    });
+    expect(fresh.sourceDetails["a"]).toMatchObject({ readingStatus: "unread" });
+  });
+
+  it("keeps the server's reading state when a note save answers after another window's change", () => {
+    const marked = reduceAll(
+      initialSourcesWorkflowState,
+      { type: "overviewRequestStarted", request: 1 },
+      {
+        type: "overviewArrived",
+        request: 1,
+        overview: overviewWith([
+          { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+      {
+        type: "readingStateArrived",
+        atDetailFetch: 1,
+        result: {
+          sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: false }],
+        },
+      },
+    );
+    const accepted = sourcesWorkflowReducer(marked, {
+      type: "sourceRecordAccepted",
+      record: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+        personalNote: "Mine",
+      },
+    });
+    expect(accepted.sourceDetails["a"]).toMatchObject({ readingStatus: "unread" });
+    expect(accepted.overview?.records[0]).toMatchObject({ readingStatus: "unread" });
   });
 });
 
@@ -567,6 +914,7 @@ describe("sources workflow transient flags", () => {
     const arrived = sourcesWorkflowReducer(superseded, {
       type: "sourceDetailArrived",
       sourceId: "any",
+      atDetailFetch: 1,
       detail: detail({ sourceId: "any" }),
     });
     expect(arrived.sourceDetails["any"]?.revision).toBe(1);

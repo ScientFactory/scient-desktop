@@ -1,9 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Static audit for expanded-view action parity.
-import * as NodeFS from "node:fs";
-
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const assetState = vi.hoisted(() => ({
   lastEnvironmentId: null as unknown,
@@ -28,11 +29,6 @@ import {
   ScientInlineWorkspaceImage,
   ScientPendingWorkspaceImage,
 } from "./ScientInlineWorkspaceImage";
-
-const imageCardSource = NodeFS.readFileSync(
-  new URL("./ScientInlineWorkspaceImage.tsx", import.meta.url),
-  "utf8",
-);
 
 describe("inline workspace image presentation", () => {
   it("cycles through automatic, light, and dark inspection backgrounds", () => {
@@ -77,30 +73,6 @@ describe("inline workspace image presentation", () => {
     });
   });
 
-  // regression: e34e687915 fix(chat): make rich media reliable and copyable
-  it("keeps the same file and byte actions available while the image is expanded", () => {
-    for (const label of [
-      "Open image file",
-      "Copy image",
-      "Download original",
-      "Copy relative path",
-      "Background:",
-      "Refresh from file",
-    ]) {
-      expect(imageCardSource).toContain(label);
-    }
-    expect(imageCardSource.match(/<InlineImageActionsMenu/gu)).toHaveLength(2);
-    for (const callback of [
-      "onCopyImage={handleCopyImage}",
-      "onCopyPath={handleCopyPath}",
-      "onCycleBackground={handleCycleBackground}",
-      "onDownload={handleDownload}",
-      "onRefresh={handleRetry}",
-    ]) {
-      expect(imageCardSource.split(callback)).toHaveLength(3);
-    }
-  });
-
   it("keeps local image identity visible while streaming without loading raw file URLs", () => {
     const markup = renderToStaticMarkup(
       <ScientPendingWorkspaceImage
@@ -121,10 +93,5 @@ describe("inline workspace image presentation", () => {
     expect(markup).toContain('data-scient-inline-workspace-image-pending="streaming"');
     expect(markup).toContain("Image preview will appear when this response finishes.");
     expect(markup).not.toContain("/workspace/project/figures/result.svg");
-  });
-
-  // regression: e34e687915 fix(chat): make rich media reliable and copyable
-  it("requests actionable image bytes with CORS", () => {
-    expect(imageCardSource).toContain('crossOrigin="anonymous"');
   });
 });

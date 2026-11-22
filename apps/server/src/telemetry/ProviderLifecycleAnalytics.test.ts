@@ -125,11 +125,110 @@ describe("Provider lifecycle analytics", () => {
           stage: "downloading",
           durationMs: 12_000,
           failureClass: "unknown",
+          trigger: "user",
         },
       },
     ]);
     expect(JSON.stringify(failed)).not.toContain("private");
     expect(mapper.observe([provider(operation("failed"))])).toEqual([]);
+  });
+
+  it("says why a sign-in failed and which page it waited on", () => {
+    const signIn = (
+      status: NonNullable<NonNullable<ServerProvider["connection"]>["operation"]>["status"],
+      extra: Partial<NonNullable<NonNullable<ServerProvider["connection"]>["operation"]>> = {},
+    ): ServerProvider => {
+      const base = provider();
+      return {
+        ...base,
+        connection: {
+          ...base.connection!,
+          operation: {
+            operationId: "private-sign-in",
+            method: "droid_device_pairing",
+            status,
+            startedAt: "2026-08-31T00:00:00.000Z",
+            finishedAt: status === "failed" ? "2026-08-31T00:10:00.000Z" : null,
+            message: "private provider text",
+            ...extra,
+          },
+        },
+      };
+    };
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    mapper.observe([signIn("starting")]);
+    expect(
+      mapper.observe([
+        signIn("waiting_for_browser", {
+          authorizationUrl: "https://private.example.invalid/",
+          authorizationUrlKind: "manual_fallback",
+        }),
+      ]),
+    ).toEqual([]);
+    mapper.observe([signIn("verifying")]);
+    const failed = mapper.observe([signIn("failed", { failureReason: "timeout" })]);
+    expect(failed).toMatchObject([
+      {
+        name: "provider.lifecycle.failed",
+        properties: {
+          action: "sign-in",
+          stage: "verifying",
+          failureReason: "timeout",
+          signInPage: "manual_fallback",
+        },
+      },
+    ]);
+    expect(JSON.stringify(failed)).not.toContain("private");
+  });
+
+  it("says a sign-in that failed before showing any page waited on none", () => {
+    const base = provider();
+    const withOperation = (status: "starting" | "failed"): ServerProvider => ({
+      ...base,
+      connection: {
+        ...base.connection!,
+        operation: {
+          operationId: "private-sign-in",
+          method: "droid_device_pairing",
+          status,
+          startedAt: "2026-08-31T00:00:00.000Z",
+          finishedAt: status === "failed" ? "2026-08-31T00:00:02.000Z" : null,
+          message: "private provider text",
+          ...(status === "failed" ? { failureReason: "start_failed" as const } : {}),
+        },
+      },
+    });
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    mapper.observe([withOperation("starting")]);
+    expect(mapper.observe([withOperation("failed")])).toMatchObject([
+      { properties: { failureReason: "start_failed", signInPage: "none" } },
+    ]);
+  });
+
+  it("reports an older failed sign-in with no reason as unknown", () => {
+    const base = provider();
+    const withOperation = (status: "waiting_for_device_code" | "failed"): ServerProvider => ({
+      ...base,
+      connection: {
+        ...base.connection!,
+        operation: {
+          operationId: "private-sign-in",
+          method: "droid_device_pairing",
+          status,
+          startedAt: "2026-08-31T00:00:00.000Z",
+          finishedAt: status === "failed" ? "2026-08-31T00:00:30.000Z" : null,
+          message: "private provider text",
+        },
+      },
+    });
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    mapper.observe([withOperation("waiting_for_device_code")]);
+    expect(mapper.observe([withOperation("failed")])).toMatchObject([
+      { properties: { failureReason: "unknown", signInPage: "none" } },
+    ]);
   });
 
   it("reports the runtime owner's failure class for a failed download", () => {
@@ -146,7 +245,57 @@ describe("Provider lifecycle analytics", () => {
     ]);
   });
 
-  it("does not replay terminal or pre-consent operations as new successes or failures", () => {
+  it("says a background change started on its own and how far its download got", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    const background = { ...operation("downloading"), background: true, attempt: 2 };
+    const [started] = mapper.observe([provider(background)]);
+    expect(started).toMatchObject({
+      name: "provider.lifecycle.started",
+      properties: { trigger: "background", attempt: 2 },
+    });
+    expect(started!.properties).not.toHaveProperty("failureClass");
+    expect(
+      mapper.observe([
+        provider({
+          ...background,
+          status: "failed",
+          finishedAt: "2026-08-31T00:00:12.000Z",
+          failureClass: "timeout",
+          download: {
+            resumedBytes: 41_000_000,
+            source: "fallback",
+            compressed: true,
+            sourceKind: "github",
+            tries: 5,
+            progressPercent: 37,
+            bytesPerSecond: 410_000,
+            networkKind: "stalled",
+          },
+        }),
+      ]),
+    ).toMatchObject([
+      {
+        name: "provider.lifecycle.failed",
+        properties: {
+          // Older clients decode only `timeout`; the stall is told apart here.
+          failureClass: "stalled",
+          trigger: "background",
+          attempt: 2,
+          resumedBytes: 41_000_000,
+          downloadSource: "fallback",
+          downloadVariant: "compressed",
+          sourceKind: "github",
+          downloadAttempts: 5,
+          progressPercent: 37,
+          bytesPerSecond: 410_000,
+          networkKind: "stalled",
+        },
+      },
+    ]);
+  });
+
+  it("does not replay terminal or earlier operations as new successes or failures", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     expect(mapper.observe([provider(operation("failed"))]).map((event) => event.name)).toEqual([
       "provider.installation.observed",
@@ -223,6 +372,31 @@ describe("Provider lifecycle analytics", () => {
       {
         name: "provider.runtime.source.changed",
         properties: { provider: "droid", from: "scient_managed", to: "missing" },
+      },
+    ]);
+  });
+
+  it("says which step of a failed status check took the provider to error", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    const failed = provider();
+    expect(
+      mapper.observe([
+        {
+          ...failed,
+          status: "error",
+          connection: { ...failed.connection!, checkFailure: "version_timeout" },
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "provider.readiness.changed",
+        properties: {
+          provider: "droid",
+          from: "ready",
+          to: "error",
+          checkFailure: "version_timeout",
+        },
       },
     ]);
   });

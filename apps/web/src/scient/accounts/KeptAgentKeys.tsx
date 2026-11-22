@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { useState } from "react";
 import { SettingsRow } from "~/components/settings/settingsLayout";
@@ -30,16 +31,17 @@ export function KeptAgentKeysRow({
   kept: ReturnType<typeof useKeptAgentKeys>;
   agentLabel: string;
 }) {
+  const gt = useGT();
   if (kept.keys.length === 0) return null;
   return (
     <SettingsRow
-      title={`Use the keys from your earlier ${agentLabel}`}
-      description={`Kept in Accounts when it was removed: ${kept.keys
-        .map((key) => key.name)
-        .join(", ")}`}
+      title={gt("Use the keys from your earlier {agent}", { agent: agentLabel })}
+      description={gt("Kept in Accounts when it was removed: {keys}", {
+        keys: kept.keys.map((key) => key.name).join(", "),
+      })}
       control={
         <Switch
-          aria-label={`Use the keys from your earlier ${agentLabel}`}
+          aria-label={gt("Use the keys from your earlier {agent}", { agent: agentLabel })}
           checked={!kept.declined}
           onCheckedChange={(checked) => kept.setDeclined(!checked)}
         />

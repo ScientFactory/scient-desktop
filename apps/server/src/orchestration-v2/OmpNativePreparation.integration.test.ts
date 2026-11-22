@@ -128,7 +128,7 @@ it.live.each(
               Option.getOrNull(yield* receipts.getByCommandId(commandId))?.status,
               "accepted",
             );
-            yield* worker.runOnce;
+            yield* worker.runOnce();
           }
         }).pipe(Effect.exit, Effect.forkScoped);
         yield* trace.at(
@@ -519,7 +519,7 @@ it.live(
             Option.getOrNull(yield* receipts.getByCommandId(followupCommand))?.status,
             "accepted",
           );
-          const delivery = yield* worker.runOnce.pipe(Effect.forkScoped);
+          const delivery = yield* worker.runOnce().pipe(Effect.forkScoped);
           yield* Deferred.await(entered).pipe(Effect.timeout("10 seconds"));
           const prepared = yield* snapshot("sql.preparation-held");
           assert.equal(

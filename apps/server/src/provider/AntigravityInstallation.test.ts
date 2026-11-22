@@ -4,6 +4,7 @@ import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures
 import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
@@ -22,12 +23,13 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 
 import { AntigravityInstallationError } from "./AntigravityInstallation.ts";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
 const serverContents = "antigravity runtime\n";
@@ -63,6 +65,14 @@ const completeArchive = Buffer.from(
 const executableName = hostPlatform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par";
 const harnessName =
   hostPlatform === "win32" ? "localharness_external.exe" : "localharness_external";
+// SCIENT-FORK: Scient's harness defaults to the 1.4.5 pair archive; the agy CLI ships alone.
+const nativeCliArchive =
+  hostPlatform === "win32"
+    ? Buffer.from(serverContents)
+    : Buffer.from(
+        "H4sIAAAAAAACE+3RMQ7CQAwEQNe8Ik8wgYj3XIFQCiiOCxK/56CJRA9CYqZZrxsXLpc2n2q5ze0en5LdYZpe2b1n5rhf5+d+m+MuY8j4guXaSu3n4z+V9f9DXXo5HzcBAAAAAAAAAADAz3sA56lbdQAoAAA=",
+        "base64",
+      );
 
 const releaseAsset = Effect.fn("test.antigravityReleaseAsset")(function* (
   archive: Uint8Array = completeArchive,
@@ -132,6 +142,13 @@ interface HarnessOptions {
   readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
+  readonly connectTimeout?: boolean;
+  readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
+  readonly native?: boolean;
+  readonly nativeVersion?: string;
+  readonly nativeManifest?: (manifest: { version: string; url: string; sha512: string }) => unknown;
+  readonly beforeManifest?: Effect.Effect<void>;
+  readonly updateChecksEnabled?: Effect.Effect<boolean>;
 }
 
 const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
@@ -139,6 +156,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const digest = yield* Digest.Digest;
   const baseDir =
     options.baseDir ?? (yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-test-" }));
   const platform = options.platform ?? hostPlatform;
@@ -147,6 +165,19 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   const asset =
     options.asset === undefined ? yield* releaseAsset(archive, platform) : options.asset;
   const managedDirectory = path.join(baseDir, "tools", "antigravity-acp", `${platform}-${arch}`);
+  if (options.baseDir === undefined && HostProcess.Platform.defaultValue() !== "win32") {
+    const versionsDir = path.join(managedDirectory, "versions");
+    yield* Effect.addFinalizer(() =>
+      fs.readDirectory(versionsDir).pipe(
+        Effect.flatMap((entries) =>
+          Effect.forEach(entries, (entry) =>
+            fs.chmod(path.join(versionsDir, entry), 0o700).pipe(Effect.ignore),
+          ),
+        ),
+        Effect.ignore,
+      ),
+    );
+  }
   if (options.previous) {
     yield* writeRelease(managedDirectory, {
       ...(yield* releaseAsset(archive, platform)),
@@ -185,7 +216,10 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   });
   const installation = yield* AntigravityInstallation.makeAntigravityInstallation({
     baseDir,
-    releaseAsset: asset,
+    ...(options.native ? {} : { releaseAsset: asset }),
+    ...(options.updateChecksEnabled === undefined
+      ? {}
+      : { updateChecksEnabled: options.updateChecksEnabled }),
     ...(options.useDefaultValidation
       ? {}
       : {
@@ -202,11 +236,44 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
+    Effect.provideService(ModelManifest.ModelManifest, {
+      current: options.manifest ?? Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refreshOnDemand: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refreshInBackground: Effect.void,
+    }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           requests.push(request.url);
+          if (request.url.includes("/manifests/")) {
+            return Effect.gen(function* () {
+              yield* options.beforeManifest ?? Effect.void;
+              const version = options.nativeVersion ?? "1.5.7";
+              const folder = platform === "win32" ? "windows-x64" : "linux-x64";
+              const manifest = {
+                version,
+                url: `https://storage.googleapis.com/antigravity-public/antigravity-cli/${version}-123/${folder}/cli_${platform === "win32" ? "windows_x64.exe" : "linux_x64.tar.gz"}`,
+                sha512: Hex.encode(yield* digest.digest(Digest.sha512, archive).pipe(Effect.orDie)),
+              };
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response(JSON.stringify(options.nativeManifest?.(manifest) ?? manifest)),
+              );
+            });
+          }
+          if (options.connectTimeout) {
+            return Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  cause: new Error("Connect Timeout Error (attempted address: dl.google.com:443)"),
+                }),
+              }),
+            );
+          }
           const response = HttpClientResponse.fromWeb(
             request,
             new Response(null, {
@@ -220,15 +287,17 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
               },
             }),
           );
-          return Object.defineProperty(response, "stream", {
-            value:
-              options.body ??
-              Stream.make(
-                archive.subarray(0, 31),
-                archive.subarray(31, 149),
-                archive.subarray(149),
-              ),
-          });
+          return Effect.succeed(
+            Object.defineProperty(response, "stream", {
+              value:
+                options.body ??
+                Stream.make(
+                  archive.subarray(0, 31),
+                  archive.subarray(31, 149),
+                  archive.subarray(149),
+                ),
+            }),
+          );
         }),
       ),
     ),
@@ -282,6 +351,56 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect((yield* h.installation.resolve()).registryVersion).toBe("1.1.0");
       expect(h.requests).toHaveLength(1);
     }),
+  );
+
+  // SCIENT-FORK: Scient's catalog moves a paired install to the agy CLI, never back.
+  it.effect(
+    "switches a paired install to the agy CLI while its running session keeps its copy",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const digest = yield* Digest.Digest;
+        const paired = { ...(yield* releaseAsset()), registryVersion: "1.5.2" };
+        const first = yield* makeHarness({ asset: paired });
+        yield* first.installation.startRelease(paired);
+        expect((yield* terminalState(first.installation)).phase).toBe("succeeded");
+        yield* Deferred.await(first.stagingReleased);
+
+        const second = yield* makeHarness({
+          baseDir: first.baseDir,
+          asset: paired,
+          archive: nativeCliArchive,
+        });
+        const scope = yield* Scope.make();
+        const session = yield* second.installation.acquire().pipe(Scope.provide(scope));
+        expect(session.harnessPath).not.toBeNull();
+        const cli = {
+          version: "1.5.14",
+          url: "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-1/linux-x64/cli_linux_x64.tar.gz",
+          sha512: Hex.encode(
+            yield* digest.digest(Digest.sha512, nativeCliArchive).pipe(Effect.orDie),
+          ),
+          executable: { name: hostPlatform === "win32" ? "agy.exe" : "antigravity" },
+          format: hostPlatform === "win32" ? ("executable" as const) : ("tar.gz" as const),
+        };
+        yield* second.installation.startRelease(cli);
+        expect(yield* terminalState(second.installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.14",
+        });
+        yield* Deferred.await(second.stagingReleased);
+        expect(yield* second.installation.resolve()).toMatchObject({
+          harnessPath: null,
+          version: "1.5.14",
+          source: "managed",
+        });
+        expect(yield* fs.exists(session.executablePath)).toBe(true);
+        yield* Scope.close(scope, Exit.void);
+
+        const refused = yield* second.installation.startRelease(paired).pipe(Effect.flip);
+        expect(refused.message).toContain("newer Antigravity runtime is already installed");
+        expect((yield* second.installation.resolve()).harnessPath).toBeNull();
+      }),
   );
 
   it.effect("does not join a different immutable artifact with the same version label", () =>
@@ -432,6 +551,256 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     }),
   );
 
+  it.effect.each([...new Set(["win32", hostPlatform])] as NodeJS.Platform[])(
+    "migrates the legacy managed runtime to the native CLI on %s and retains the old release",
+    (platform) =>
+      Effect.gen(function* () {
+        const archive =
+          platform === "win32"
+            ? Buffer.from(serverContents)
+            : Buffer.from(
+                "H4sIAAAAAAACE+3RMQ7CQAwEQNe8Ik8wgYj3XIFQCiiOCxK/56CJRA9CYqZZrxsXLpc2n2q5ze0en5LdYZpe2b1n5rhf5+d+m+MuY8j4guXaSu3n4z+V9f9DXXo5HzcBAAAAAAAAAADAz3sA56lbdQAoAAA=",
+                "base64",
+              );
+        const { installation, validations, requests, fs, baseDir, stagingReleased } =
+          yield* makeHarness({ native: true, archive, platform, previous: true });
+        yield* installation.start;
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.7",
+        });
+        yield* Deferred.await(stagingReleased);
+        const resolved = yield* installation.resolve();
+        expect(resolved).toMatchObject({ source: "managed", version: "1.5.7", harnessPath: null });
+        expect(validations[0]?.executable.harnessPath).toBeNull();
+        expect(yield* fs.readFileString(resolved.executablePath)).toBe(serverContents);
+        expect(requests.some((url) => url.includes("/manifests/"))).toBe(true);
+        const restarted = yield* makeHarness({
+          baseDir,
+          native: true,
+          archive,
+          platform,
+          nativeVersion: "1.5.6",
+        });
+        expect(yield* restarted.installation.start).toMatchObject({
+          phase: "verifying",
+          message: "Checking the installed runtime.",
+        });
+        expect(yield* terminalState(restarted.installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.7",
+        });
+        expect(restarted.requests.filter((url) => url.includes("storage.googleapis.com"))).toEqual(
+          [],
+        );
+        expect((yield* restarted.installation.resolve()).executablePath).toBe(
+          resolved.executablePath,
+        );
+      }),
+  );
+
+  // These tar fixtures exercise the POSIX extraction path; Windows downloads one executable.
+  it.effect.skipIf(hostPlatform === "win32")(
+    "rejects unsafe native tar members before activation",
+    () =>
+      Effect.gen(function* () {
+        for (const archive of [
+          "H4sIAAAAAAACE+3OMQqDQBAFUI/iCYxZJPdZMIRtFHQN5PYOKbW2EN5j4P9iYCZPtXyW/C3111ylD69h+Gc45rk/U4r1NnXdI2be6lrG90XPbWvNS5xvAAAAAAAAAAAA4D523kNDtgAoAAA=",
+          "H4sIAAAAAAACE+3RMQ7CMBAEQNe8Ii8IBhzxHhcIpYDCcSLxewwNiJ4IiZlmb6+54vp+m691PJe8jPUWviI2x2F4ZvOZMe7Ta37sdzGlQ+hiWME81Vza+fCf3p7flbmVy2kTAAAAAAAAAAAA+Hl3jhn2/wAoAAA=",
+          "H4sIAAAAAAACE+3TPQrCQBAG0K09RY4wRoPn2UJCClOsG8Hbu6YJ2CtI3mvmp5li+PJcp7Hkx1Sf6VuiuQzDWpvPGtGft/69P0Z/itRF+oHlXnNp59M+5e3/XVnacLseEnv8v/zLv/wDAAAAAAAAAPyZF/c+VksAKAAA",
+        ]) {
+          const { installation, validations } = yield* makeHarness({
+            native: true,
+            archive: Buffer.from(archive, "base64"),
+            platform: "linux",
+            previous: true,
+          });
+          yield* installation.start;
+          expect((yield* terminalState(installation)).phase).toBe("failed");
+          expect(validations).toEqual([]);
+          yield* expectPreviousRelease(installation);
+        }
+      }),
+  );
+
+  it.effect.each([true, false])(
+    "respects background update checks (%s) while allowing explicit installation",
+    (enabled) =>
+      Effect.gen(function* () {
+        const { installation, requests } = yield* makeHarness({
+          native: true,
+          archive: Buffer.from(serverContents),
+          platform: "win32",
+          updateChecksEnabled: Effect.succeed(enabled),
+        });
+        yield* installation.checkForUpdate;
+        if (enabled) {
+          yield* installation.changes.pipe(
+            Stream.filter((value) => value.version === "1.5.7"),
+            Stream.runHead,
+          );
+          yield* installation.state;
+          expect(requests).toHaveLength(1);
+        } else {
+          yield* installation.changes.pipe(Stream.runHead);
+          expect(requests).toEqual([]);
+        }
+        yield* installation.start;
+        expect((yield* terminalState(installation)).phase).toBe("succeeded");
+      }),
+  );
+
+  it.effect("keeps withdrawn native releases from activating or launching", () =>
+    Effect.gen(function* () {
+      let withdrawn = false;
+      const manifest = Effect.sync(() =>
+        withdrawn
+          ? ({
+              ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+              compatibility: [
+                {
+                  driver: "antigravity",
+                  t3CodeRange: ">=0.0.42",
+                  ranges: [{ range: ">=1.5.7", status: "broken" }],
+                },
+              ],
+            } satisfies ModelManifest.ModelManifestData)
+          : ModelManifest.BUNDLED_MODEL_MANIFEST,
+      );
+      const first = yield* makeHarness({
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        previous: true,
+        manifest,
+        validate: () =>
+          Effect.sync(() => {
+            withdrawn = true;
+          }),
+      });
+      yield* first.installation.start;
+      expect((yield* terminalState(first.installation)).phase).toBe("failed");
+      yield* expectPreviousRelease(first.installation);
+      withdrawn = false;
+      const retry = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        manifest,
+      });
+      yield* retry.installation.start;
+      expect((yield* terminalState(retry.installation)).phase).toBe("succeeded");
+      withdrawn = true;
+      expect(yield* retry.installation.resolve().pipe(Effect.flip)).toMatchObject({
+        operation: "resolve",
+      });
+      expect(yield* retry.installation.start.pipe(Effect.flip)).toMatchObject({
+        operation: "start",
+      });
+      const recovery = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeVersion: "1.5.6",
+        archive: Buffer.from("recovery runtime"),
+        platform: "win32",
+        manifest,
+      });
+      yield* recovery.installation.checkForUpdate;
+      expect(yield* recovery.installation.state).toMatchObject({
+        installedVersion: "1.5.7",
+        version: "1.5.6",
+      });
+      yield* recovery.installation.start;
+      expect(yield* terminalState(recovery.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.6",
+      });
+    }),
+  );
+
+  it.effect("discovers subsequent native releases from Google's CLI channel", () =>
+    Effect.gen(function* () {
+      const first = yield* makeHarness({
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+      });
+      yield* first.installation.start;
+      expect((yield* terminalState(first.installation)).phase).toBe("succeeded");
+      const initialPath = (yield* first.installation.resolve()).executablePath;
+      const next = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeVersion: "1.5.8",
+        archive: Buffer.from("next runtime"),
+        platform: "win32",
+      });
+      yield* next.installation.start;
+      expect(yield* terminalState(next.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.8",
+      });
+      const nextPath = (yield* next.installation.resolve()).executablePath;
+      expect(nextPath).not.toBe(initialPath);
+      const republished = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeVersion: "1.5.8",
+        archive: Buffer.from("republished runtime"),
+        platform: "win32",
+      });
+      yield* republished.installation.start;
+      expect((yield* terminalState(republished.installation)).phase).toBe("succeeded");
+      expect((yield* republished.installation.resolve()).executablePath).not.toBe(nextPath);
+      const offline = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeManifest: () => ({}),
+        archive: Buffer.from("unused"),
+        platform: "win32",
+      });
+      yield* offline.installation.start;
+      expect(yield* terminalState(offline.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.8",
+      });
+      expect(offline.requests.filter((url) => url.includes("storage.googleapis.com"))).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "invalid checksum",
+      change: (manifest: { version: string; url: string; sha512: string }) => ({
+        ...manifest,
+        sha512: "0".repeat(128),
+      }),
+    },
+    {
+      name: "foreign download",
+      change: (manifest: { version: string; url: string; sha512: string }) => ({
+        ...manifest,
+        url: "https://example.com/agy.exe",
+      }),
+    },
+  ])("rejects a native $name and preserves the legacy release", ({ change }) =>
+    Effect.gen(function* () {
+      const { installation, validations } = yield* makeHarness({
+        native: true,
+        nativeManifest: change,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        previous: true,
+      });
+      const result = yield* Effect.result(installation.start);
+      if (result._tag === "Success")
+        expect((yield* terminalState(installation)).phase).toBe("failed");
+      expect(validations).toEqual([]);
+      yield* expectPreviousRelease(installation);
+    }),
+  );
+
   it.effect("reports missing Node before downloading the standalone provider runtime", () =>
     Effect.gen(function* () {
       const { installation, requests, validations } = yield* makeHarness();
@@ -487,7 +856,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(yield* fs.readFileString(selected.executablePath)).toBe(serverContents);
       expect(yield* fs.readFileString(selected.harnessPath!)).toBe(harnessContents);
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
-        expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
+        [(yield* releaseAsset()).sha256],
       );
       expect(requests).toEqual([(yield* releaseAsset()).url]);
     }),
@@ -841,6 +1210,135 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     }),
   );
 
+  it.effect(
+    "names the connection failure instead of disk space when the download cannot connect",
+    () =>
+      Effect.gen(function* () {
+        const { installation, validations } = yield* makeHarness({ connectTimeout: true });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).not.toMatch(/disk space/i);
+        expect(state.message).toMatch(/connect|network|download/i);
+        expect(validations).toEqual([]);
+      }),
+  );
+
+  // The runtime's own abort is a real process; Windows has no POSIX sh.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "explains that the linux-arm64 runtime needs 4 KiB pages when it aborts on a 16 KiB kernel",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Google's linux-arm64 build aborts like this on Asahi and Raspberry Pi 5 kernels.
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          String(command.command).endsWith(executableName)
+            ? realSpawner.spawn(
+                ChildProcess.make(
+                  "sh",
+                  [
+                    "-c",
+                    "echo 'F1111 11:50:12.383176 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size' >&2; kill -ABRT $$",
+                  ],
+                  { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+                ),
+              )
+            : realSpawner.spawn(command),
+        );
+        const { installation } = yield* makeHarness({
+          arch: "arm64",
+          useDefaultValidation: true,
+          spawner,
+        });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/page/i);
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refuses a 16 KiB-page linux-arm64 kernel before downloading the runtime",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) && command.command === "getconf"
+            ? realSpawner.spawn(ChildProcess.make("sh", ["-c", "echo 16384"], command.options))
+            : realSpawner.spawn(command),
+        );
+        const { installation, requests } = yield* makeHarness({ arch: "arm64", spawner });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/4 KiB/);
+        expect(requests).toEqual([]);
+      }),
+  );
+
+  it.effect.each(["downloaded", "existing", "concurrent"] as const)(
+    "reports a verification timeout for a %s runtime without changing the active release",
+    (source) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const asset = yield* releaseAsset();
+        const entered = yield* Queue.unbounded<void>();
+        let verificationCount = 0;
+        const { installation, stagingReleased, requests, validations } = yield* makeHarness({
+          previous: true,
+          asset,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            rename: (from, to) =>
+              source === "concurrent" && path.basename(path.dirname(to)) === "versions"
+                ? writeRelease(path.dirname(path.dirname(to)), asset, false).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                    Effect.andThen(
+                      Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "AlreadyExists",
+                          module: "FileSystem",
+                          method: "rename",
+                          pathOrDescriptor: to,
+                        }),
+                      ),
+                    ),
+                  )
+                : fs.rename(from, to),
+          }),
+          validate: () =>
+            Effect.suspend(() =>
+              source === "concurrent" && verificationCount++ === 0
+                ? Effect.void
+                : Queue.offer(entered, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
+        });
+        if (source === "existing") {
+          yield* writeRelease(installation.managedDirectory, asset, false);
+        }
+        yield* installation.start;
+        yield* Queue.take(entered);
+        yield* TestClock.adjust("5 minutes");
+        // SCIENT-FORK: a failed check of the installed copy downloads a verified replacement.
+        if (source === "existing") {
+          yield* Queue.take(entered);
+          yield* TestClock.adjust("5 minutes");
+        }
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "failed",
+          message:
+            "Antigravity didn't finish starting within 5 minutes while Scient was checking it. Starting it can take a while on some computers. Try again.",
+        });
+        yield* Deferred.await(stagingReleased);
+        yield* expectPreviousRelease(installation);
+        expect(requests).toHaveLength(1);
+        expect(validations).toHaveLength(source === "downloaded" ? 1 : 2);
+      }),
+  );
+
   it.effect.each(["download", "extract", "active pointer"] as const)(
     "preserves the old runtime after an ENOSPC error during %s",
     (stage) =>
@@ -1132,8 +1630,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         const baseDir = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
           .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const cliDirectory = path.join(baseDir, "cli");
+        const cliDirectory = path.join(baseDir, 'cli" ');
         yield* fs.makeDirectory(cliDirectory);
+        const siblingDirectory = path.join(baseDir, 'cli"');
+        yield* fs.makeDirectory(siblingDirectory);
+        yield* fs.writeFileString(path.join(siblingDirectory, "agy"), "other cli", { mode: 0o755 });
         const cli = path.join(cliDirectory, "antigravity");
         const alias = path.join(cliDirectory, "agy");
         const other = path.join(cliDirectory, "custom-acp");
@@ -1156,6 +1657,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           executablePath: alias,
           harnessPath: null,
         });
+        expect(yield* installation.resolve(undefined, { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+          source: "path",
+        });
         expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
         });
@@ -1176,10 +1682,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
-          expect(yield* windows.resolve("agy", { PATH: windowsDirectory })).toMatchObject({
-            executablePath: path.join(windowsDirectory, name),
-            harnessPath: null,
-          });
+          const selected = yield* windows.resolve("agy", { PATH: `"${windowsDirectory}"` });
+          expect(selected.harnessPath).toBeNull();
+          expect((yield* fs.realPath(selected.executablePath)).toLowerCase()).toBe(
+            (yield* fs.realPath(path.join(windowsDirectory, name))).toLowerCase(),
+          );
         }
       }),
   );
@@ -1218,6 +1725,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(yield* installation.resolve(executableName)).toMatchObject({
           source: "override",
         });
+        expect(
+          yield* installation
+            .resolve(`~/external/${executableName}`)
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, baseDir)),
+        ).toMatchObject({ source: "override", executablePath: externalExecutable });
         yield* fs.remove(externalHarness);
         expect(yield* installation.resolve(externalExecutable).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
@@ -1268,20 +1780,161 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  it.effect("pairs a Windows launcher script with the helper beside the executable it runs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-agy-launcher-$$-test-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const runtimeDirectory = path.join(baseDir, "runtime (x64)");
+      const launcherDirectory = path.join(baseDir, "launchers");
+      const runtimeExecutable = path.join(runtimeDirectory, "agy_acp_server.exe");
+      const runtimeHarness = path.join(runtimeDirectory, "localharness_external.exe");
+      yield* fs.makeDirectory(runtimeDirectory);
+      yield* fs.makeDirectory(launcherDirectory);
+      yield* fs.writeFileString(runtimeExecutable, "external server");
+      yield* fs.writeFileString(runtimeHarness, "external harness");
+      const { installation } = yield* makeHarness({ baseDir, platform: "win32", previous: true });
+      const writeLauncher = Effect.fn("test.writeAntigravityLauncher")(function* (
+        name: string,
+        launch: string,
+      ) {
+        const launcher = path.join(launcherDirectory, name);
+        yield* fs.writeFileString(
+          launcher,
+          `@echo off\r\nrem Runtime launcher\r\n:: Keep environment setup\r\nset AGY_EXTRA=1\r\n${launch} %*\r\nexit /b\r\n`,
+        );
+        return launcher;
+      });
+
+      const absolute = yield* writeLauncher("agy.cmd", `"${runtimeExecutable}"`);
+      expect(yield* installation.resolve(absolute)).toMatchObject({
+        executablePath: absolute,
+        harnessPath: runtimeHarness,
+        source: "override",
+        managedVersionDirectory: null,
+      });
+      const quoted = yield* writeLauncher(
+        "quoted.cmd",
+        `set "PATH=C:\\Program Files (x86)\\SDK;%PATH%"\r\n"${runtimeExecutable}"`,
+      );
+      expect(yield* installation.resolve(quoted)).toMatchObject({
+        executablePath: quoted,
+        harnessPath: runtimeHarness,
+      });
+      const relative = yield* writeLauncher(
+        "relative.BAT",
+        `"%~dp0../runtime (x64)/agy_acp_server.exe"`,
+      );
+      expect(yield* installation.resolve(relative)).toMatchObject({
+        executablePath: relative,
+        harnessPath: runtimeHarness,
+      });
+
+      const managed = yield* installation.resolve();
+      const intoManaged = yield* writeLauncher("managed.cmd", `"${managed.executablePath}"`);
+      expect(yield* installation.resolve(intoManaged)).toMatchObject({
+        executablePath: intoManaged,
+        harnessPath: managed.harnessPath,
+        version: previousVersion,
+        managedVersionDirectory: managed.managedVersionDirectory,
+      });
+      expect(yield* installation.remove([intoManaged]).pipe(Effect.flip)).toMatchObject({
+        operation: "remove",
+      });
+
+      const ambiguous = yield* writeLauncher(
+        "ambiguous.cmd",
+        `"${managed.executablePath}" --version\r\n"${runtimeExecutable}"`,
+      );
+      expect(yield* installation.resolve(ambiguous).pipe(Effect.flip)).toMatchObject({
+        operation: "resolve",
+      });
+
+      for (const [name, launch] of [
+        ["comment.cmd", `rem Previous runtime: "${runtimeExecutable}"\r\n"%AGY_TARGET%"`],
+        ["label-comment.cmd", `:: "${runtimeExecutable}"\r\n"%AGY_TARGET%"`],
+        ["echo.cmd", `echo "${runtimeExecutable}"`],
+        [
+          "conditional.cmd",
+          `if defined AGY_TARGET "%AGY_TARGET%" %* & exit /b\r\n"${runtimeExecutable}"`,
+        ],
+        ["early-exit.cmd", `exit /b\r\n"${runtimeExecutable}"`],
+        ["continued-set.cmd", `set IGNORED=1^\r\n"${runtimeExecutable}"`],
+        [
+          "chained-comment.cmd",
+          `rem setup & "${managed.executablePath}"\r\n"${runtimeExecutable}"`,
+        ],
+        ["chained.cmd", `"${runtimeExecutable}" --version && "%AGY_TARGET%"`],
+        ["unquoted-parens.cmd", `set PATH=C:\\Program Files (x86)\\SDK\r\n"${runtimeExecutable}"`],
+        [
+          "quoted-chained.cmd",
+          `set "PATH=C:\\Program Files (x86)" & "${managed.executablePath}"\r\n"${runtimeExecutable}"`,
+        ],
+        ["quoted-redirect.cmd", `set "AGY_MODE=1" > nul\r\n"${runtimeExecutable}"`],
+        ["quoted-block.cmd", `(set "AGY_MODE=1")\r\n"${runtimeExecutable}"`],
+        ["quoted-expansion.cmd", `set Q="\r\nset "X=%Q%&exit /b&rem ()"\r\n"${runtimeExecutable}"`],
+      ] as const) {
+        const uncertain = yield* writeLauncher(name, launch);
+        expect(yield* installation.resolve(uncertain).pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+      }
+
+      const win32 = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+      const serverOnC: Path.Path = {
+        ...win32,
+        resolve: (...segments) => win32.resolve("C:\\t3", ...segments),
+      };
+      const launcherOnD = "D:\\launchers\\agy.cmd";
+      for (const [written, expected] of [
+        ["\\runtime\\agy_acp_server.exe", null],
+        ["C:runtime\\agy_acp_server.exe", null],
+        ["%~dp0runtime\\agy_acp_server.exe", "D:\\launchers\\runtime\\agy_acp_server.exe"],
+        ["\\\\server\\share\\agy_acp_server.exe", "\\\\server\\share\\agy_acp_server.exe"],
+        ["D:/runtime/agy_acp_server.exe", "D:\\runtime\\agy_acp_server.exe"],
+        ["//server/share/agy_acp_server.exe", "\\\\server\\share\\agy_acp_server.exe"],
+      ] as const) {
+        expect(AntigravityInstallation.launcherTargetPath(serverOnC, launcherOnD, written)).toBe(
+          expected,
+        );
+      }
+    }),
+  );
+
   it.effect("keeps leased releases available while new sessions resolve the new release", () =>
     Effect.gen(function* () {
-      const { installation, fs, stagingReleased } = yield* makeHarness({ previous: true });
+      const manifestEntered = yield* Deferred.make<void>();
+      const releaseManifest = yield* Deferred.make<void>();
+      const { installation, fs, baseDir, stagingReleased } = yield* makeHarness({
+        native: true,
+        platform: "win32",
+        archive: Buffer.from(serverContents),
+        previous: true,
+        beforeManifest: Deferred.succeed(manifestEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseManifest)),
+        ),
+      });
       const processScope = yield* Scope.make();
       const oldExecutable = yield* installation.acquire().pipe(Scope.provide(processScope));
-      yield* installation.start;
+      const starting = yield* installation.start.pipe(Effect.forkScoped);
+      yield* Deferred.await(manifestEntered);
+      const concurrent = yield* installation.acquire().pipe(Scope.provide(processScope));
+      expect(concurrent.executablePath).toBe(oldExecutable.executablePath);
+      yield* Deferred.succeed(releaseManifest, undefined);
+      yield* Fiber.join(starting);
       expect((yield* terminalState(installation)).phase).toBe("succeeded");
       yield* Deferred.await(stagingReleased);
       const current = yield* installation.resolve();
-      expect(current.version).toBe("fixture-new");
+      expect(current.version).toBe("1.5.7");
       expect(current.executablePath).not.toBe(oldExecutable.executablePath);
       expect(yield* fs.readFileString(oldExecutable.executablePath)).toBe(serverContents);
       expect(yield* installation.remove().pipe(Effect.flip)).toMatchObject({ operation: "remove" });
       yield* Scope.close(processScope, Exit.void);
+      yield* makeHarness({ native: true, platform: "win32", baseDir });
+      expect(yield* fs.exists(oldExecutable.managedVersionDirectory!)).toBe(false);
+      expect(yield* fs.readFileString(current.executablePath)).toBe(serverContents);
       yield* installation.remove();
       expect(yield* fs.exists(installation.managedDirectory)).toBe(false);
     }),
@@ -1293,6 +1946,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       Effect.gen(function* () {
         const { installation, baseDir, fs, path } = yield* makeHarness({ previous: true });
         const previous = yield* installation.resolve();
+        if (hostPlatform !== "win32") {
+          yield* fs.chmod(previous.managedVersionDirectory!, 0o700);
+        }
         yield* fs.remove(previous.harnessPath!);
         const externalDirectory = path.join(baseDir, "external");
         yield* fs.makeDirectory(externalDirectory);
@@ -1413,6 +2069,59 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  // SCIENT-FORK: real time, because Scient's installer retry checks the filesystem between waits.
+  it.effect("publishes a Windows release once a transient EPERM on the release rename clears", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const archive = Buffer.from(zipFixtures.windows, "base64");
+      const releaseRenameDenied = yield* Deferred.make<void>();
+      let releaseRenameDenials = 3;
+      const { installation } = yield* makeHarness({
+        platform: "win32",
+        archive,
+        fileSystem: FileSystem.FileSystem.of({
+          ...fs,
+          rename: (source, target) =>
+            Effect.suspend(() => {
+              if (
+                path.basename(path.dirname(target)) !== "versions" ||
+                releaseRenameDenials === 0
+              ) {
+                return fs.rename(source, target);
+              }
+              releaseRenameDenials -= 1;
+              return Deferred.succeed(releaseRenameDenied, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "Unknown",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: source,
+                      description: "EPERM: operation not permitted, rename",
+                      // SCIENT-FORK: Node's EPERM carries its code, which Scient's installer retry reads.
+                      cause: Object.assign(new Error("EPERM: operation not permitted, rename"), {
+                        code: "EPERM",
+                      }),
+                    }),
+                  ),
+                ),
+              );
+            }),
+        }),
+      });
+      yield* installation.start;
+      const terminal = yield* terminalState(installation).pipe(Effect.forkChild);
+      yield* Deferred.await(releaseRenameDenied);
+      expect(yield* Fiber.join(terminal)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "fixture-new",
+      });
+      expect((yield* installation.resolve()).version).toBe("fixture-new");
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("reports unsupported hosts without downloading or changing state", () =>
     Effect.gen(function* () {
       const { installation, requests } = yield* makeHarness({ asset: null, platform: "darwin" });
@@ -1423,5 +2132,394 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(yield* installation.state).toMatchObject({ phase: "idle", operationId: null });
       expect(requests).toEqual([]);
     }),
+  );
+
+  it.effect(
+    "locks CLI releases on POSIX, detects on-disk changes, and recovers on same-releaseId reinstall",
+    () =>
+      Effect.gen(function* () {
+        const { installation, fs, path, baseDir, stagingReleased } = yield* makeHarness({
+          native: true,
+          archive: nativeCliArchive,
+        });
+        yield* installation.start;
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.7",
+        });
+        yield* Deferred.await(stagingReleased);
+
+        const installed = yield* installation.resolve();
+        const releaseDir = installed.managedVersionDirectory!;
+        const recordPath = path.join(releaseDir, ".install-complete.json");
+
+        if (hostPlatform !== "win32") {
+          expect((yield* fs.stat(releaseDir)).mode & 0o777).toBe(0o500);
+          expect((yield* fs.stat(installed.executablePath)).mode & 0o777).toBe(0o555);
+          expect((yield* fs.stat(recordPath)).mode & 0o777).toBe(0o400);
+          if (process.getuid?.() !== 0) {
+            const stagingAttempt = yield* fs
+              .makeDirectory(path.join(releaseDir, "auto-update-staging"))
+              .pipe(Effect.exit);
+            expect(Exit.isFailure(stagingAttempt)).toBe(true);
+          }
+
+          // Existing writable CLI releases are re-locked on startup.
+          yield* fs.chmod(releaseDir, 0o700);
+          yield* fs.chmod(installed.executablePath, 0o755);
+          yield* fs.chmod(recordPath, 0o600);
+          const relocked = yield* makeHarness({ baseDir, native: true, archive: nativeCliArchive });
+          expect(yield* relocked.installation.state).toMatchObject({
+            phase: "idle",
+            installedVersion: "1.5.7",
+          });
+          expect((yield* fs.stat(releaseDir)).mode & 0o777).toBe(0o500);
+          expect((yield* fs.stat(installed.executablePath)).mode & 0o777).toBe(0o555);
+          expect((yield* fs.stat(recordPath)).mode & 0o777).toBe(0o400);
+        }
+
+        // Simulate an external self-update mutating the managed binary in place.
+        if (hostPlatform !== "win32") {
+          yield* fs.chmod(releaseDir, 0o700);
+          yield* fs.chmod(installed.executablePath, 0o755);
+        }
+        yield* fs.writeFileString(installed.executablePath, `${serverContents}self-updated\n`, {
+          mode: 0o755,
+        });
+
+        const resolveError = yield* installation.resolve().pipe(Effect.flip);
+        expect(resolveError.detail).toContain("changed on disk");
+
+        const restarted = yield* makeHarness({ baseDir, native: true, archive: nativeCliArchive });
+        expect(yield* restarted.installation.state).toMatchObject({
+          phase: "failed",
+          installedVersion: null,
+        });
+        expect((yield* restarted.installation.state).message).toContain("changed on disk");
+
+        // Reinstalling the same releaseId replaces the damaged directory cleanly.
+        yield* restarted.installation.start;
+        expect(yield* terminalState(restarted.installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.7",
+        });
+        yield* Deferred.await(restarted.stagingReleased);
+
+        const repaired = yield* restarted.installation.resolve();
+        expect(repaired.version).toBe("1.5.7");
+        expect(yield* fs.readFileString(repaired.executablePath)).toBe(serverContents);
+        if (hostPlatform !== "win32") {
+          expect((yield* fs.stat(releaseDir)).mode & 0o777).toBe(0o500);
+          expect((yield* fs.stat(repaired.executablePath)).mode & 0o777).toBe(0o555);
+        }
+
+        // remove() unlocks and deletes read-only CLI releases cleanly.
+        yield* restarted.installation.remove();
+        expect(yield* fs.exists(restarted.installation.managedDirectory)).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "restores displaced files on repair publish failure and rejects symlinked managed binaries",
+    () =>
+      Effect.gen(function* () {
+        const { installation, fs, path, baseDir, stagingReleased } = yield* makeHarness({
+          native: true,
+          archive: nativeCliArchive,
+        });
+        yield* installation.start;
+        expect((yield* terminalState(installation)).phase).toBe("succeeded");
+        yield* Deferred.await(stagingReleased);
+        const installed = yield* installation.resolve();
+        const releaseDir = installed.managedVersionDirectory!;
+        const recordPath = path.join(releaseDir, ".install-complete.json");
+        const damagedContents = `${serverContents}damaged\n`;
+
+        if (hostPlatform !== "win32") {
+          yield* fs.chmod(releaseDir, 0o700);
+          yield* fs.chmod(installed.executablePath, 0o755);
+        }
+        yield* fs.writeFileString(installed.executablePath, damagedContents, { mode: 0o755 });
+
+        // Fail the publish rename (staged -> destination) after moving the damaged release aside.
+        let renameToDestinationCount = 0;
+        const failingRepair = yield* makeHarness({
+          baseDir,
+          native: true,
+          archive: nativeCliArchive,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            rename: (from, to) => {
+              if (to === releaseDir && ++renameToDestinationCount === 1) {
+                return Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "AlreadyExists",
+                    module: "FileSystem",
+                    method: "rename",
+                    pathOrDescriptor: to,
+                    description: "EEXIST: simulated publish failure",
+                  }),
+                );
+              }
+              return fs.rename(from, to);
+            },
+          }),
+        });
+        yield* failingRepair.installation.start;
+        expect(yield* terminalState(failingRepair.installation)).toMatchObject({
+          phase: "failed",
+        });
+        yield* Deferred.await(failingRepair.stagingReleased);
+        // The damaged directory was rolled back instead of being left missing.
+        expect(yield* fs.readFileString(installed.executablePath)).toBe(damagedContents);
+
+        // If pointer write fails (e.g. ENOSPC) after repair swapped files in, rollback restores the displaced copy.
+        const failingPointerWrite = yield* makeHarness({
+          baseDir,
+          native: true,
+          archive: nativeCliArchive,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            writeFileString: (target, content, options) =>
+              path.basename(target) === "contents.tmp"
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "Unknown",
+                      module: "FileSystem",
+                      method: "writeFileString",
+                      pathOrDescriptor: target,
+                      description: "ENOSPC: no space left on device",
+                    }),
+                  )
+                : fs.writeFileString(target, content, options),
+          }),
+        });
+        yield* failingPointerWrite.installation.start;
+        expect(yield* terminalState(failingPointerWrite.installation)).toMatchObject({
+          phase: "failed",
+        });
+        yield* Deferred.await(failingPointerWrite.stagingReleased);
+        expect(yield* fs.readFileString(installed.executablePath)).toBe(damagedContents);
+
+        // A symlinked executable is rejected and startup does not chmod its target.
+        if (hostPlatform !== "win32") {
+          const outsideTarget = path.join(baseDir, "outside-target");
+          yield* fs.writeFileString(outsideTarget, serverContents, { mode: 0o755 });
+          yield* fs.remove(installed.executablePath);
+          yield* fs.symlink(outsideTarget, installed.executablePath);
+          const symlinked = yield* makeHarness({
+            baseDir,
+            native: true,
+            archive: nativeCliArchive,
+          });
+          expect((yield* symlinked.installation.state).phase).toBe("failed");
+          expect(yield* symlinked.installation.resolve().pipe(Effect.flip)).toMatchObject({
+            operation: "resolve",
+          });
+          expect((yield* fs.stat(outsideTarget)).mode & 0o777).toBe(0o755);
+
+          // An unreadable completion record is repairable on reinstall.
+          if (process.getuid?.() !== 0) {
+            yield* fs.remove(installed.executablePath);
+            yield* fs.writeFileString(installed.executablePath, serverContents, { mode: 0o755 });
+            yield* fs.chmod(recordPath, 0o000);
+            const unreadableRecord = yield* makeHarness({
+              baseDir,
+              native: true,
+              archive: nativeCliArchive,
+            });
+            expect((yield* unreadableRecord.installation.state).phase).toBe("failed");
+            yield* unreadableRecord.installation.start;
+            expect(yield* terminalState(unreadableRecord.installation)).toMatchObject({
+              phase: "succeeded",
+              installedVersion: "1.5.7",
+            });
+            yield* Deferred.await(unreadableRecord.stagingReleased);
+          }
+        }
+
+        // A regular file occupying the release directory path is classified as incomplete and replaced on reinstall.
+        if (hostPlatform !== "win32") {
+          yield* fs.chmod(releaseDir, 0o700);
+        }
+        yield* fs.remove(releaseDir, { recursive: true, force: true });
+        yield* fs.writeFileString(releaseDir, "not a directory");
+        expect(yield* installation.resolve().pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+        const repairedFromFile = yield* makeHarness({
+          baseDir,
+          native: true,
+          archive: nativeCliArchive,
+        });
+        yield* repairedFromFile.installation.start;
+        expect(yield* terminalState(repairedFromFile.installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.7",
+        });
+        yield* Deferred.await(repairedFromFile.stagingReleased);
+        expect(yield* fs.readFileString(installed.executablePath)).toBe(serverContents);
+
+        // A second service acquiring a custom binaryPath (or external symlink to it) during a
+        // repair swap waits for the managed lock instead of missing the briefly displaced binary.
+        if (hostPlatform !== "win32") {
+          yield* fs.chmod(releaseDir, 0o700);
+          yield* fs.chmod(installed.executablePath, 0o755);
+        }
+        yield* fs.writeFileString(installed.executablePath, damagedContents, { mode: 0o755 });
+        const externalSymlink = path.join(baseDir, "external-agy-link");
+        if (hostPlatform !== "win32") {
+          yield* fs.symlink(installed.executablePath, externalSymlink);
+          // Even when the release is broken, remove() expands `~` and blocks deletion of a protected symlink.
+          expect(
+            yield* installation
+              .remove(["~/external-agy-link"])
+              .pipe(Effect.provideService(HostProcess.HomeDirectory, baseDir), Effect.flip),
+          ).toMatchObject({ operation: "remove" });
+        }
+        const displacedPaused = yield* Deferred.make<void>();
+        const resumeSwap = yield* Deferred.make<void>();
+        const pausedRepair = yield* makeHarness({
+          baseDir,
+          native: true,
+          archive: nativeCliArchive,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            rename: (from, to) =>
+              from === releaseDir && path.basename(to) === "displaced"
+                ? fs
+                    .rename(from, to)
+                    .pipe(
+                      Effect.andThen(Deferred.succeed(displacedPaused, undefined)),
+                      Effect.andThen(Deferred.await(resumeSwap)),
+                    )
+                : fs.rename(from, to),
+          }),
+        });
+        const managedDir = pausedRepair.installation.managedDirectory;
+        let watchResolveExists = false;
+        const expectedResolves = hostPlatform !== "win32" ? 2 : 1;
+        let seenResolves = 0;
+        const resolversEntered = yield* Deferred.make<void>();
+        const secondServer = yield* makeHarness({
+          baseDir,
+          native: true,
+          archive: nativeCliArchive,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            exists: (target) =>
+              watchResolveExists && target === managedDir
+                ? Effect.suspend(() => {
+                    seenResolves += 1;
+                    return seenResolves >= expectedResolves
+                      ? Deferred.succeed(resolversEntered, undefined).pipe(
+                          Effect.andThen(fs.exists(target)),
+                        )
+                      : fs.exists(target);
+                  })
+                : fs.exists(target),
+          }),
+        });
+        yield* Effect.gen(function* () {
+          yield* pausedRepair.installation.start;
+          yield* Deferred.await(displacedPaused);
+          expect(yield* fs.exists(releaseDir)).toBe(false);
+          watchResolveExists = true;
+          const acquireFiber = yield* secondServer.installation
+            .acquire(installed.executablePath)
+            .pipe(Effect.scoped, Effect.forkScoped);
+          const symlinkResolveFiber =
+            hostPlatform !== "win32"
+              ? yield* secondServer.installation.resolve(externalSymlink).pipe(Effect.forkScoped)
+              : null;
+          yield* Deferred.await(resolversEntered);
+          expect(yield* fs.exists(`${managedDir}.lock`)).toBe(true);
+          expect(yield* fs.exists(releaseDir)).toBe(false);
+          expect(acquireFiber.pollUnsafe()).toBeUndefined();
+          if (symlinkResolveFiber !== null) {
+            expect(symlinkResolveFiber.pollUnsafe()).toBeUndefined();
+          }
+          yield* Deferred.succeed(resumeSwap, undefined);
+          expect(yield* terminalState(pausedRepair.installation)).toMatchObject({
+            phase: "succeeded",
+          });
+          const acquired = yield* Fiber.join(acquireFiber);
+          expect(acquired).toMatchObject({
+            source: "override",
+            executablePath: installed.executablePath,
+            version: "1.5.7",
+          });
+          if (symlinkResolveFiber !== null) {
+            expect(yield* Fiber.join(symlinkResolveFiber)).toMatchObject({
+              source: "override",
+              executablePath: installed.executablePath,
+              version: "1.5.7",
+            });
+          }
+          expect(yield* fs.readFileString(acquired.executablePath)).toBe(serverContents);
+          yield* Deferred.await(pausedRepair.stagingReleased);
+        }).pipe(Effect.ensuring(Deferred.succeed(resumeSwap, undefined).pipe(Effect.asVoid)));
+
+        if (hostPlatform !== "win32" && process.getuid?.() !== 0) {
+          // A valid external CLI override resolves even when the managed directory's parent is read-only.
+          const externalCli = path.join(baseDir, "agy");
+          yield* fs.writeFileString(externalCli, "external cli", { mode: 0o755 });
+          const managedParent = path.dirname(managedDir);
+          yield* fs.chmod(managedParent, 0o500);
+          yield* Effect.gen(function* () {
+            expect(yield* installation.resolve(externalCli)).toMatchObject({
+              executablePath: externalCli,
+              source: "override",
+              managedVersionDirectory: null,
+            });
+          }).pipe(Effect.ensuring(fs.chmod(managedParent, 0o700).pipe(Effect.ignore)));
+
+          // A symlinked versions/ root is rejected on startup without chmodding outside targets,
+          // and a dangling managedDirectory symlink can still be removed.
+          const outsideVersions = path.join(baseDir, "outside-versions");
+          const outsideReleaseDir = path.join(outsideVersions, path.basename(releaseDir));
+          const outsideBinary = path.join(outsideReleaseDir, executableName);
+          yield* fs.makeDirectory(outsideReleaseDir, { recursive: true });
+          yield* fs.writeFileString(outsideBinary, serverContents, { mode: 0o755 });
+          yield* fs.writeFileString(
+            path.join(outsideReleaseDir, ".install-complete.json"),
+            encodeJsonString({
+              releaseId: path.basename(releaseDir),
+              version: "1.5.7",
+              executable: { name: executableName, bytes: Buffer.byteLength(serverContents) },
+            }),
+          );
+          yield* fs.chmod(releaseDir, 0o700);
+          yield* fs.remove(path.dirname(releaseDir), { recursive: true, force: true });
+          yield* fs.symlink(outsideVersions, path.dirname(releaseDir));
+
+          const symlinkedRoot = yield* makeHarness({
+            baseDir,
+            native: true,
+            archive: nativeCliArchive,
+          });
+          expect((yield* symlinkedRoot.installation.state).phase).toBe("failed");
+          expect((yield* fs.stat(outsideBinary)).mode & 0o777).toBe(0o755);
+
+          yield* symlinkedRoot.installation.remove();
+          expect(yield* fs.exists(managedDir)).toBe(false);
+          expect(yield* fs.readFileString(outsideBinary)).toBe(serverContents);
+
+          yield* fs.symlink(path.join(baseDir, "nonexistent-target"), managedDir);
+          const danglingManaged = yield* makeHarness({
+            baseDir,
+            native: true,
+            archive: nativeCliArchive,
+          });
+          expect((yield* danglingManaged.installation.state).canRemove).toBe(true);
+          yield* danglingManaged.installation.remove();
+          expect(
+            yield* fs.readLink(managedDir).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            ),
+          ).toBe(false);
+        }
+      }),
   );
 });

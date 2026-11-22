@@ -117,7 +117,7 @@ describe("file path clipboard", () => {
     ).toBeNull();
   });
 
-  it("copies the supplied path and reports the matching success", async () => {
+  it("copies the supplied path without a success notification", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("window", {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
@@ -128,13 +128,7 @@ describe("file path clipboard", () => {
     ).resolves.toBe(true);
 
     expect(writeText).toHaveBeenCalledWith("C:\\repo\\src\\main.ts");
-    expect(addToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "success",
-        title: "Full path copied",
-        description: "C:\\repo\\src\\main.ts",
-      }),
-    );
+    expect(addToast).not.toHaveBeenCalled();
   });
 
   it("preserves the shared unavailable-clipboard error behavior", async () => {

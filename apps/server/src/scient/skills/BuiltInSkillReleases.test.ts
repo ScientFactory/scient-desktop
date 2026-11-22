@@ -17,10 +17,22 @@ describe("Scient built-in skill releases", () => {
       "scient.workspace-readiness-review": true,
       "scient.improve-workspace-readiness": true,
       "scient.skill-authoring": true,
+      "scient.connector-authoring": true,
       "scient.pdf-authoring": true,
-      "scient.html-pdf-authoring": true,
       "scient.latex-authoring": true,
       "scient.overleaf-sync": true,
+      "scient.references": true,
+      "scient.systematic-review": true,
+      "scient.compare-sources": true,
+      "scient.statistics-review": true,
+      "scient.check-reported-numbers": true,
+      "scient.reviewer-response": true,
+      "scient.ml-evaluation-audit": true,
+      "scient.reporting-guideline-check": true,
+      "scient.diagnose-analysis": true,
+      "scient.grill-me": true,
+      "scient.to-questionnaire": true,
+      "scient.teach": true,
     });
   });
 

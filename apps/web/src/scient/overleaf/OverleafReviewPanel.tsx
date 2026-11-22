@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Undo2,
 } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -60,15 +61,16 @@ import {
   useOverleafWorkspace,
 } from "./overleafStore";
 import { useOverleafAgentRunWatch } from "./useOverleafAgentRunWatch";
+import type { MessageResolver } from "~/i18n/messages";
 
 /** A person's choice: the engine's three, plus "Ask the agent", which writes the marks too. */
 export type { OverleafReviewChoice } from "./overleafStore";
 
 const CHOICE_LABELS: Record<OverleafReviewChoice, string> = {
-  mine: "Keep mine",
-  theirs: "Use Overleaf's",
-  markers: "Merge myself",
-  agent: "Ask the agent",
+  mine: msg("Keep mine"),
+  theirs: msg("Use Overleaf's"),
+  markers: msg("Merge myself"),
+  agent: msg("Ask the agent"),
 };
 
 function choicesOffered(allowed: ReadonlyArray<ScientOverleafConflictChoice>) {
@@ -89,10 +91,10 @@ function changePath(change: ScientOverleafChange): string | null {
 }
 
 const KIND_LABELS: Record<ScientOverleafChange["kind"], string> = {
-  added: "New",
-  deleted: "Deleted",
-  modified: "Changed",
-  renamed: "Renamed",
+  added: msg("New", { $context: "kind of file change" }),
+  deleted: msg("Deleted", { $context: "kind of file change" }),
+  modified: msg("Changed", { $context: "kind of file change" }),
+  renamed: msg("Renamed", { $context: "kind of file change" }),
 };
 
 function ChangeList(props: {
@@ -102,6 +104,7 @@ function ChangeList(props: {
   readonly folder: string;
   readonly onOpenFile: (path: string) => void;
 }) {
+  const messages = useMessages();
   if (props.changes.length === 0) return null;
   const Icon = props.icon;
   return (
@@ -140,7 +143,7 @@ function ChangeList(props: {
                 )}
                 {/* Name first in every list; what happened sits at the end, like a row's action. */}
                 <span className="ms-auto shrink-0 ps-2 text-xs text-muted-foreground">
-                  {KIND_LABELS[change.kind]}
+                  {messages(KIND_LABELS[change.kind])}
                 </span>
               </button>
             </li>
@@ -152,9 +155,20 @@ function ChangeList(props: {
 }
 
 /** New files go to Overleaf by default; the review lists the ones it sends. */
-function newFilesLine(count: number, sent: boolean): string {
-  const files = count === 1 ? "1 new file" : `${count} new files`;
-  return sent ? `${files} ${count === 1 ? "was" : "were"} sent.` : `${files} will be sent.`;
+function newFilesLine(count: number, sent: boolean, resolve: MessageResolver): string {
+  return sent
+    ? resolve(
+        msg(
+          "{count, plural, one {{count} new file was sent.} other {{count} new files were sent.}}",
+          { count },
+        ),
+      )
+    : resolve(
+        msg(
+          "{count, plural, one {{count} new file will be sent.} other {{count} new files will be sent.}}",
+          { count },
+        ),
+      );
 }
 
 const OverleafReviewDiff = lazy(() =>
@@ -171,6 +185,8 @@ export function OverleafReviewPanel(props: {
   readonly onOpenFile: (relativePath: string) => void;
 }) {
   const { environmentId, cwd, connectionId, threadRef } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const workspace = useOverleafWorkspace(environmentId, cwd);
   const connection = workspace.connections.find((entry) => entry.connectionId === connectionId);
   const last = workspace.lastSync.get(connectionId);
@@ -215,7 +231,10 @@ export function OverleafReviewPanel(props: {
     } catch {
       setDiffState((current) =>
         current === pending
-          ? { ...pending, error: "Couldn’t read the diff. Check again or try Show in Diff again." }
+          ? {
+              ...pending,
+              error: gt("Couldn’t read the diff. Check again or try Show in Diff again."),
+            }
           : current,
       );
     }
@@ -227,7 +246,7 @@ export function OverleafReviewPanel(props: {
     !reading &&
     readError === null &&
     !(review !== null && "review" in last.result && last.result.review.reviewId !== review.reviewId)
-      ? overleafResultView(last.result)
+      ? overleafResultView(last.result, messages)
       : null;
   // The review shown is what a sync here applied, rather than one still to run.
   const synced = shownState?.applied ?? false;
@@ -263,7 +282,8 @@ export function OverleafReviewPanel(props: {
   if (!connection) {
     return (
       <div className="scient-reading-ui flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-        {workspace.loaded ? "This folder is no longer linked to Overleaf." : "Loading…"}
+        {workspace.error ??
+          (workspace.loaded ? gt("This folder is no longer linked to Overleaf.") : gt("Loading…"))}
       </div>
     );
   }
@@ -288,8 +308,8 @@ export function OverleafReviewPanel(props: {
       if (!opened)
         toastManager.add({
           type: "warning",
-          title: "Couldn't open the linked copy's file",
-          description: "Start a thread on the linked copy to open it.",
+          title: gt("Couldn't open the linked copy's file"),
+          description: gt("Start a thread on the linked copy to open it."),
         });
     });
   };
@@ -345,9 +365,10 @@ export function OverleafReviewPanel(props: {
       if (!started)
         toastManager.add({
           type: "warning",
-          title: "Couldn't ask the agent",
-          description:
+          title: gt("Couldn't ask the agent"),
+          description: gt(
             "The conflict marks are in the linked copy's files. Start a thread there to ask.",
+          ),
         });
       return;
     }
@@ -363,8 +384,8 @@ export function OverleafReviewPanel(props: {
         composer?.current?.focusAtEnd();
         toastManager.add({
           type: "info",
-          title: "The message for the agent is in your draft",
-          description: "Send it when you're ready.",
+          title: gt("The message for the agent is in your draft"),
+          description: gt("Send it when you're ready."),
         });
         return;
       }
@@ -373,15 +394,15 @@ export function OverleafReviewPanel(props: {
       appendToThreadDraft(threadRef, message);
       toastManager.add({
         type: "info",
-        title: "The message for the agent is in the thread's draft",
-        description: "Open this thread's draft to review and send it.",
+        title: gt("The message for the agent is in the thread's draft"),
+        description: gt("Open this thread's draft to review and send it."),
       });
       return;
     }
     toastManager.add({
       type: "warning",
-      title: "Couldn't ask the agent",
-      description: "The conflict marks are in the files. Open a chat for this project to ask.",
+      title: gt("Couldn't ask the agent"),
+      description: gt("The conflict marks are in the files. Open a chat for this project to ask."),
     });
   };
 
@@ -394,7 +415,7 @@ export function OverleafReviewPanel(props: {
         <div className="flex h-10 min-h-10 shrink-0 items-center gap-1.5 border-b border-border/60 px-3">
           <OverleafMark aria-hidden className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
-            {connection.folder === "" ? "This project" : connection.folder}
+            {connection.folder === "" ? gt("This project") : connection.folder}
           </span>
           {/* Line changes of a review still to run; one a sync applied is no longer current. */}
           {review && !synced && (review.incoming.length > 0 || review.outgoing.length > 0) ? (
@@ -404,7 +425,7 @@ export function OverleafReviewPanel(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    aria-label="Show in Diff"
+                    aria-label={gt("Show in Diff")}
                     disabled={
                       shownDiff !== null && shownDiff.result === null && shownDiff.error === null
                     }
@@ -414,7 +435,9 @@ export function OverleafReviewPanel(props: {
               >
                 <FileDiff aria-hidden className="scient-quiet-icon size-4" />
               </TooltipTrigger>
-              <TooltipPopup>Show in Diff</TooltipPopup>
+              <TooltipPopup>
+                <T>Show in Diff</T>
+              </TooltipPopup>
             </Tooltip>
           ) : null}
           {sentAttempt !== null ? (
@@ -424,7 +447,7 @@ export function OverleafReviewPanel(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    aria-label="Undo send"
+                    aria-label={gt("Undo send")}
                     disabled={syncing}
                     onClick={() => setUndoing(sentAttempt)}
                   />
@@ -432,7 +455,9 @@ export function OverleafReviewPanel(props: {
               >
                 <Undo2 aria-hidden className="scient-quiet-icon size-[17px]" strokeWidth={1.75} />
               </TooltipTrigger>
-              <TooltipPopup>Undo send</TooltipPopup>
+              <TooltipPopup>
+                <T>Undo send</T>
+              </TooltipPopup>
             </Tooltip>
           ) : null}
           <Tooltip>
@@ -441,14 +466,16 @@ export function OverleafReviewPanel(props: {
                 <Button
                   size="icon-xs"
                   variant="ghost-muted"
-                  aria-label="Open in Overleaf"
+                  aria-label={gt("Open in Overleaf")}
                   onClick={() => openOverleafProject(connection.projectId)}
                 />
               }
             >
               <ExternalLink aria-hidden className="scient-quiet-icon size-4" />
             </TooltipTrigger>
-            <TooltipPopup>Open in Overleaf</TooltipPopup>
+            <TooltipPopup>
+              <T>Open in Overleaf</T>
+            </TooltipPopup>
           </Tooltip>
           <Button
             size="xs"
@@ -457,7 +484,7 @@ export function OverleafReviewPanel(props: {
             onClick={() => void (allChosen ? syncWithChoices() : syncNow())}
           >
             <RefreshCw aria-hidden className={syncing ? "size-3.5 animate-spin" : "size-3.5"} />
-            {syncing ? "Syncing…" : "Sync"}
+            {syncing ? gt("Syncing…") : gt("Sync", { $context: "verb, button" })}
           </Button>
           {syncing ? (
             <Button
@@ -465,7 +492,7 @@ export function OverleafReviewPanel(props: {
               variant="ghost"
               onClick={() => void cancelOverleafRun(environmentId, cwd, connectionId)}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           ) : null}
         </div>
@@ -489,17 +516,17 @@ export function OverleafReviewPanel(props: {
             <div className="flex items-center gap-2 px-1 text-sm" role="alert">
               <span className="min-w-0 flex-1">{readError}</span>
               <Button size="xs" variant="outline" onClick={readChanges}>
-                Try again
+                <T>Try again</T>
               </Button>
             </div>
           ) : review === null ? (
             reading || syncing ? (
               <p className="px-1 text-sm text-muted-foreground" role="status">
-                Reading changes…
+                <T>Reading changes…</T>
               </p>
             ) : (
               <Button size="xs" variant="outline" className="self-start" onClick={readChanges}>
-                Read changes
+                <T>Read changes</T>
               </Button>
             )
           ) : (
@@ -512,7 +539,7 @@ export function OverleafReviewPanel(props: {
               disabled={reading || syncing}
               onClick={readChanges}
             >
-              {reading ? "Checking…" : "Check again"}
+              {reading ? gt("Checking…") : gt("Check again")}
             </Button>
           )}
           {shownDiff ? (
@@ -520,7 +547,7 @@ export function OverleafReviewPanel(props: {
               <Suspense
                 fallback={
                   <p role="status" className="px-1 text-sm text-muted-foreground">
-                    Reading line changes…
+                    <T>Reading line changes…</T>
                   </p>
                 }
               >
@@ -540,18 +567,20 @@ export function OverleafReviewPanel(props: {
               </Suspense>
             ) : (
               <p role="status" className="px-1 text-sm text-muted-foreground">
-                {shownDiff.error ?? "Reading line changes…"}
+                {shownDiff.error ?? gt("Reading line changes…")}
               </p>
             )
           ) : null}
           {conflicts.length > 0 ? (
-            <section className="flex flex-col gap-2" aria-label="Conflicts">
+            <section className="flex flex-col gap-2" aria-label={gt("Conflicts")}>
               <h3 className="px-1 text-xs font-medium text-muted-foreground">
-                {conflicts.length === 1 ? "1 conflict" : `${conflicts.length} conflicts`}
+                {gt("{count, plural, one {{count} conflict} other {{count} conflicts}}", {
+                  count: conflicts.length,
+                })}
               </h3>
               {chooseAgain ? (
                 <p className="px-1 text-xs text-warning-foreground" role="status">
-                  Overleaf changed since you chose. Choose again.
+                  <T>Overleaf changed since you chose. Choose again.</T>
                 </p>
               ) : null}
               {conflicts.map((conflict) => {
@@ -575,7 +604,11 @@ export function OverleafReviewPanel(props: {
                       ))}
                     </div>
                     <ToggleGroup
-                      aria-label={`Settle ${conflict.paths[0] ?? "conflict"}`}
+                      aria-label={
+                        conflict.paths[0]
+                          ? gt("Settle {path}", { path: conflict.paths[0] })
+                          : gt("Settle conflict")
+                      }
                       className="flex-wrap"
                       value={current ? [current] : []}
                       onValueChange={(value) => {
@@ -590,7 +623,7 @@ export function OverleafReviewPanel(props: {
                     >
                       {choicesOffered(conflict.allowed).map((choice) => (
                         <Toggle key={choice} value={choice}>
-                          {CHOICE_LABELS[choice]}
+                          {messages(CHOICE_LABELS[choice])}
                         </Toggle>
                       ))}
                     </ToggleGroup>
@@ -603,33 +636,41 @@ export function OverleafReviewPanel(props: {
                 disabled={!allChosen || syncing}
                 onClick={() => void syncWithChoices()}
               >
-                Sync again
+                <T>Sync again</T>
               </Button>
             </section>
           ) : null}
           {review ? (
             <>
-              {!synced && readNothingToDoLine(review) ? (
+              {!synced && readNothingToDoLine(review, messages) ? (
                 <p className="px-1 text-sm text-muted-foreground" role="status">
-                  {readNothingToDoLine(review)}
+                  {readNothingToDoLine(review, messages)}
                 </p>
               ) : null}
               {!synced
-                ? reviewHeldLines(review).map((line) => (
+                ? reviewHeldLines(review, [], messages).map((line) => (
                     <p key={line} className="px-1 text-sm text-muted-foreground" role="status">
                       {line}
                     </p>
                   ))
                 : null}
               <ChangeList
-                title={synced ? "Came in" : "To bring in"}
+                title={
+                  synced
+                    ? gt("Came in", { $context: "list heading: files Overleaf sent here" })
+                    : gt("To bring in", { $context: "list heading: files Overleaf will send here" })
+                }
                 icon={ArrowDownToLine}
                 changes={review.incoming}
                 folder={connection.folder}
                 onOpenFile={openFile}
               />
               <ChangeList
-                title={sent ? "Sent" : "To send"}
+                title={
+                  sent
+                    ? gt("Sent", { $context: "list heading: files sent to Overleaf" })
+                    : gt("To send", { $context: "list heading: files to send to Overleaf" })
+                }
                 icon={ArrowUpFromLine}
                 changes={
                   synced
@@ -641,7 +682,7 @@ export function OverleafReviewPanel(props: {
               />
               {synced && review.selectedAdditions.length > 0 ? (
                 <p className="px-1 text-xs text-muted-foreground" data-overleaf-new-files>
-                  {newFilesLine(review.selectedAdditions.length, sent)}
+                  {newFilesLine(review.selectedAdditions.length, sent, messages)}
                 </p>
               ) : null}
               <OverleafNewFiles

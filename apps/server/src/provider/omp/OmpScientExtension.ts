@@ -1,5 +1,9 @@
 import { ompExtensionBootstrapPrelude } from "./OmpExtensionBootstrap.ts";
 import type { OmpTarget } from "./OmpTarget.ts";
+import {
+  SCIENT_ALWAYS_LOADED_TOOLS,
+  SCIENT_CONNECTOR_LOAD_MODE_ENV,
+} from "../scient/ScientAgentToolLoading.ts";
 
 /** A connector the extension proxies, through Scient's connector endpoint. */
 export interface OmpScientExtensionConnector {
@@ -23,14 +27,29 @@ export interface OmpScientExtensionBootstrap {
   readonly connectors?: ReadonlyArray<OmpScientExtensionConnector>;
 }
 
+/** Scient's waits block for up to an hour; stay above that, as Claude's and Codex's limits do. */
+const OMP_SCIENT_TOOL_CALL_TIMEOUT_MS = 65 * 60 * 1_000;
+
 /**
- * OMP tools need essential load mode, and before_agent_start replaces the entire string-array
- * prompt. Share MCP connections across subagent reruns. Connector aliases must avoid native
- * namespaces/collisions and preserve original call names; one failed connector must not remove
- * others' tools.
+ * Older runtimes need essential tools. Supported runtimes mount optional Scient and connector
+ * tools under xd://, keeping a small Scient core direct. Share connections across subagent reruns.
+ * before_agent_start replaces the string-array prompt. Connector aliases preserve call names;
+ * one failed connector must not remove others' tools.
  */
-const ompScientExtensionBody = (target: OmpTarget): string => `
+const ompScientExtensionBody = (target: OmpTarget, workspacePath: string | undefined): string => `
 import { createHash as scientCreateHash } from "node:crypto";
+
+const SCIENT_WORKSPACE_PATH = ${JSON.stringify(workspacePath ?? null)};
+
+// Scient rewrites this file when the thread's folders change; read it at each agent start.
+const scientWorkspace = () => {
+  if (SCIENT_WORKSPACE_PATH === null) return "";
+  try {
+    return scientReadFileSync(SCIENT_WORKSPACE_PATH, "utf8");
+  } catch {
+    return "";
+  }
+};
 
 const scientRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
@@ -42,10 +61,15 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
   let protocolVersion = "2025-06-18";
   const request = async (method, params, signal, notification = false) => {
     const id = ++nextId;
-    const timeout = AbortSignal.timeout(180_000);
+    const timeout = AbortSignal.timeout(
+      method === "tools/call" ? ${OMP_SCIENT_TOOL_CALL_TIMEOUT_MS} : 180_000,
+    );
     const response = await fetch(endpoint, {
       method: "POST",
       redirect: "error",
+      // Bun cuts a request whose answer is still pending after about 300 s; the signal below is
+      // the only deadline. Node's fetch ignores this option.
+      timeout: false,
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
@@ -150,6 +174,11 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     ),
   );
   if (typeof initialized?.protocolVersion === "string") protocolVersion = initialized.protocolVersion;
+  // The server's first instruction line describes it in Scient Agent's catalog, as Codex shows it.
+  const description =
+    typeof initialized?.instructions === "string"
+      ? initialized.instructions.split(/\\r?\\n/u).find((line) => line.trim())?.trim().slice(0, 200)
+      : undefined;
   await request("notifications/initialized", {}, connectSignal, true);
   const tools = [];
   let cursor;
@@ -173,7 +202,7 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     if (seen.has(cursor) || page === 99) throw new Error(label + " tool catalog pagination did not finish.");
     seen.add(cursor);
   }
-  return { tools, request };
+  return { tools, request, description };
 };
 
 /** The tool's model-facing name, or undefined when none is usable. */
@@ -222,21 +251,29 @@ const scientToolResult = (output, label) => {
 export default async function scientOmpExtension(pi) {
   const shared = scientOnce((bootstrap) => ({
     awareness: typeof bootstrap.awareness === "string" ? bootstrap.awareness : "",
+    connectorLoadMode:
+      process.env[${JSON.stringify(SCIENT_CONNECTOR_LOAD_MODE_ENV)}] === "discoverable" ? "discoverable" : "essential",
     connection: scientConnect(bootstrap.endpoint, bootstrap.authorization, "Scient"),
     connectors: scientConnectors(bootstrap.connectors).map((connector) => {
       const label = "Connector " + JSON.stringify(connector.displayName);
       return scientConnect(connector.url, bootstrap.authorization, label, AbortSignal.timeout(30_000)).then(
-        ({ tools, request }) => ({ ...connector, label, connected: true, tools, request }),
+        ({ tools, request, description }) => ({ ...connector, label, connected: true, tools, request, description }),
         () => ({ ...connector, label, connected: false, tools: [], request: undefined }),
       );
     }),
   }));
-  const { awareness } = shared;
-  const [{ tools, request }, connectors] = await Promise.all([
+  const awareness = shared.awareness + (shared.connectorLoadMode === "discoverable"
+    ? "\\nAdditional Scient and connector tools are available as xd:// devices: use read on xd:// to discover them, read xd://<name> for the schema, and write JSON arguments to xd://<name> to call them. Tools named in these instructions may be devices rather than top-level tools."
+    : "");
+  const [{ tools, request, description }, connectors] = await Promise.all([
     shared.connection,
     Promise.all(shared.connectors),
   ]);
-  const proxied = tools.map((tool) => ({ ...tool, remoteName: tool.name, label: "Scient", request }));
+  const coreTools = new Set(${JSON.stringify(SCIENT_ALWAYS_LOADED_TOOLS)});
+  const proxied = tools.map((tool) => ({
+    ...tool, remoteName: tool.name, label: "Scient", request, serverName: "Scient", serverDescription: description ?? "Scient workspace tools",
+    loadMode: coreTools.has(tool.name) ? "essential" : shared.connectorLoadMode,
+  }));
   const skipped = new Map();
   const taken = new Set(proxied.map((tool) => tool.name));
   for (const connector of connectors) {
@@ -247,7 +284,7 @@ export default async function scientOmpExtension(pi) {
         continue;
       }
       taken.add(name);
-      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, request: connector.request });
+      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, serverName: connector.serverName, serverDescription: connector.description ?? connector.displayName + ", a Scient connector", request: connector.request, loadMode: shared.connectorLoadMode });
     }
   }
   const toolNames = proxied.map((tool) => tool.name);
@@ -256,7 +293,11 @@ export default async function scientOmpExtension(pi) {
     pi.registerTool({
       name,
       label: name,
-      loadMode: "essential",
+      loadMode: tool.loadMode,
+      mcpServerName: tool.serverName,
+      // Scient Agent lists a described service as one catalog row.
+      mcpServerDescription: tool.serverDescription,
+      mcpToolName: remoteName,
       description: tool.description,
       parameters: tool.parameters,
       // A strict grammar makes models fill optional fields, and a filled field changes
@@ -275,9 +316,10 @@ export default async function scientOmpExtension(pi) {
       return { isError: true };
     return undefined;
   });
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: awareness ? [...event.systemPrompt, awareness] : undefined,
-  }));
+  pi.on("before_agent_start", (event) => {
+    const prompt = [awareness, scientWorkspace()].filter(Boolean).join("\\n\\n");
+    return { systemPrompt: prompt ? [...event.systemPrompt, prompt] : undefined };
+  });
   const status =
     "Scient connected: " + tools.length + " tools. Full access; no native sandbox." +
     connectors
@@ -299,6 +341,13 @@ export default async function scientOmpExtension(pi) {
 }
 `;
 
-/** Module source of Scient's OMP extension, reading `bootstrapPath`. */
-export const ompScientExtensionSource = (target: OmpTarget, bootstrapPath: string): string =>
-  `${ompExtensionBootstrapPrelude(target, bootstrapPath)}${ompScientExtensionBody(target)}`;
+/**
+ * Module source of Scient's OMP extension, reading `bootstrapPath` once and, at each agent
+ * start, the thread's folder list from `workspacePath`.
+ */
+export const ompScientExtensionSource = (
+  target: OmpTarget,
+  bootstrapPath: string,
+  workspacePath?: string,
+): string =>
+  `${ompExtensionBootstrapPrelude(target, bootstrapPath)}${ompScientExtensionBody(target, workspacePath)}`;

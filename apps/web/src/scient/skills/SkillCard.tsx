@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { BookOpenIcon, EllipsisIcon, MessageCircleIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import ChatMarkdown from "../../components/ChatMarkdown";
 import { Button } from "../../components/ui/button";
@@ -29,6 +30,7 @@ export function SkillCard({
   readonly onOpenChange: (open: boolean) => void;
   readonly onTry?: (() => Promise<void>) | undefined;
 }) {
+  const gt = useGT();
   const [trying, setTrying] = useState(false);
   const [tryError, setTryError] = useState<string | null>(null);
   return (
@@ -42,7 +44,13 @@ export function SkillCard({
       actions={
         <Menu>
           <MenuTrigger
-            render={<Button size="icon-sm" variant="ghost-muted" aria-label={`More for ${name}`} />}
+            render={
+              <Button
+                size="icon-sm"
+                variant="ghost-muted"
+                aria-label={gt("More for {name}", { name })}
+              />
+            }
           >
             <EllipsisIcon aria-hidden />
           </MenuTrigger>
@@ -53,7 +61,7 @@ export function SkillCard({
                 if (instructions) void navigator.clipboard.writeText(instructions);
               }}
             >
-              Copy instructions
+              <T>Copy instructions</T>
             </MenuItem>
           </MenuPopup>
         </Menu>
@@ -77,20 +85,20 @@ export function SkillCard({
                     (cause: unknown) => {
                       setTrying(false);
                       setTryError(
-                        cause instanceof Error ? cause.message : "Could not start a draft.",
+                        cause instanceof Error ? cause.message : gt("Could not start a draft."),
                       );
                     },
                   );
                 }}
               >
                 <MessageCircleIcon aria-hidden />
-                {trying ? "Opening…" : "Try now"}
+                {trying ? gt("Opening…") : gt("Try now")}
               </Button>
             </DialogFooter>
           ) : (
             <DialogFooter variant="bare" padding="compact">
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Close
+                <T>Close</T>
               </Button>
             </DialogFooter>
           )}
@@ -98,7 +106,7 @@ export function SkillCard({
       }
     >
       {instructions === null ? (
-        <p className="p-4 text-sm text-muted-foreground">{error ?? "Loading skill…"}</p>
+        <p className="p-4 text-sm text-muted-foreground">{error ?? gt("Loading skill…")}</p>
       ) : (
         <ChatMarkdown
           text={instructions}

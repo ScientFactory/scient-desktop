@@ -1,7 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
+import { useClientSettings } from "../../hooks/useSettings.ts";
+import { useChatGptDictation } from "./chatGptDictation.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
 import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
 
@@ -22,8 +25,11 @@ export function ScientVoiceCommentControl({
   readonly onTranscript: (text: string) => void;
   readonly className?: string;
 }): ReactNode {
+  const gt = useGT();
   const client = getVoiceBridge();
   const [ready, setReady] = useState(false);
+  const engine = useClientSettings((settings) => settings.voiceDictationEngine);
+  const chatGptReady = useChatGptDictation(environmentId).transcriber !== null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the voice client's model state when the client changes, ignoring stale completions
   useEffect(() => {
@@ -42,10 +48,13 @@ export function ScientVoiceCommentControl({
     };
   }, [client]);
 
-  if (!client || !ready) return null;
+  // Before an engine is chosen, a ChatGPT sign-in means the choice is still owed in the composer.
+  const engineReady =
+    engine === "chatgpt" ? chatGptReady : ready && !(engine === "auto" && chatGptReady);
+  if (!client || !engineReady) return null;
   return (
     <ScientVoiceComposerControl
-      ariaLabel="Dictate citation comment"
+      ariaLabel={gt("Dictate citation comment")}
       {...(className ? { className } : {})}
       disabled={disabled}
       environmentId={environmentId}

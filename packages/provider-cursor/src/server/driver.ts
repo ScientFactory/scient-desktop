@@ -9,6 +9,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
+import type { SDKModel } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
@@ -56,6 +57,7 @@ import { makeCursorMachineSkillCatalog, probeCursorSkills } from "./skills.ts";
 import { makeCursorCommandCatalog } from "./commandCatalog.ts";
 import { makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
+import { cursorRateModel } from "./accountUsage.ts";
 import { readCursorUsageLimits } from "./usageLimits.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
@@ -155,6 +157,7 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
     usage: {
       kind: "scan",
       provider: "cursor",
+      rateModel: cursorRateModel,
       scan: ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
         CursorUsageAccounts.CursorUsageAccounts.pipe(
           Effect.flatMap((accounts) =>
@@ -263,6 +266,7 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
       };
 
       let catalogModels: ReadonlyArray<ServerProviderModel> = [];
+      let catalogSdkModels: ReadonlyArray<SDKModel> = [];
       const orchestrationAdapter = yield* makeCursorAdapterV2({
         instanceId: input.instanceId,
         environment: effectiveEnvironment,
@@ -274,6 +278,7 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
           ? {}
           : { runtimeInstructions: runtime.runtimeInstructions }),
         getModels: () => catalogModels,
+        getSdkModels: () => catalogSdkModels,
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           ...sdkRunner,
@@ -322,6 +327,9 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
         effectiveEnvironment,
         auth.requireApiKey,
         auth.withAccess,
+        () => catalogModels,
+        () => catalogSdkModels,
+        sdkRunner,
       );
       const readMachineSkills = (yield* makeCursorMachineSkillCatalog(effectiveEnvironment).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -366,6 +374,19 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
               catalogModels = provider.models;
             }
           }),
+        ),
+        Effect.provideServiceEffect(
+          CursorSdkCatalog.CursorSdkCatalog,
+          Effect.map(CursorSdkCatalog.CursorSdkCatalog, (catalog) =>
+            CursorSdkCatalog.CursorSdkCatalog.of({
+              // Untraced: CursorSdkCatalog.read already spans this call.
+              read: Effect.fnUntraced(function* (apiKey) {
+                const snapshot = yield* catalog.read(apiKey);
+                if (snapshot.models.length > 0) catalogSdkModels = snapshot.models;
+                return snapshot;
+              }),
+            }),
+          ),
         ),
         Effect.provide(CursorSdkCatalog.layer),
         Effect.provideService(HttpClient.HttpClient, httpClient),

@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
@@ -49,15 +50,11 @@ import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
 import { getMachineOwners } from "./telemetry/MachineId.ts";
+import { ScientAnalyticsAvailability } from "./telemetry/ScientAnalytics.ts";
 import { observeAnalyticsEffect } from "./telemetry/OperationAnalytics.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import {
-  formatHeadlessServeOutput,
-  formatHostForUrl,
-  isWildcardHost,
-  issueHeadlessServeAccessInfo,
-} from "./startupAccess.ts";
+import { formatHeadlessServeOutput, issueHeadlessServeAccessInfo } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -223,8 +220,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
   yield* analytics.recordOwners(yield* getServerOwners, "server");
   yield* Effect.gen(function* () {
-    const status = yield* analytics.status;
-    if (status.available && status.consent !== "off")
+    if ((yield* ScientAnalyticsAvailability).available)
       yield* analytics.recordOwners(yield* getMachineOwners, "server");
   }).pipe(Effect.forkScoped);
 });
@@ -258,7 +254,10 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
     workspaceRoots,
     (cwd) =>
       Effect.gen(function* () {
-        const status = yield* git.statusDetails(cwd);
+        // Startup checks once, so it waits for the fetch rather than reading the old references.
+        const status = yield* git
+          .statusDetails(cwd)
+          .pipe(Effect.provideService(GitVcsDriver.AwaitStatusFetch, true));
         if (
           !status.isRepo ||
           !status.isDefaultBranch ||
@@ -713,7 +712,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     yield* runStartupPhase("http.wait", Deferred.await(httpListening));
     yield* runStartupPhase("auxiliary-roots.parked", options?.awaitAuxiliaryParked ?? Effect.void);
 
-    const updateOutcome = yield* launcher.prepareTrial;
+    const updateOutcome = yield* launcher.prepareTrial({ baseDir: serverConfig.baseDir });
 
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,

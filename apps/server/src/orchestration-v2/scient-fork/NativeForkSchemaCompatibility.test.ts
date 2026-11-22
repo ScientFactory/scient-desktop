@@ -36,8 +36,18 @@ it.effect.each(
     );
     assert.isTrue(t3.length > 0);
     assert.isTrue(scient.length > 0);
-    const names = new Set(t3.map((row) => row.name));
-    assert.isTrue(scient.every((row) => !names.has(row.name)));
+    const t3Names = new Set(t3.map((row) => row.name));
+    const scientNames = new Set(scient.map((row) => row.name));
+    assert.isTrue(scient.every((row) => !t3Names.has(row.name)));
+    for (const [name, own, alien] of [
+      ["durable-thread-forks", scientNames, t3Names],
+      ["normalize-active-lineage", scientNames, t3Names],
+      ["OrchestrationEvents", t3Names, scientNames],
+      ["Projections", t3Names, scientNames],
+    ] as const) {
+      assert.isTrue(own.has(name), name);
+      assert.isFalse(alien.has(name), name);
+    }
     assert.isTrue(scient.some((row) => row.migration_id === 3));
     assert.isTrue(t3.some((row) => row.migration_id === 3));
     yield* runMigrations();
@@ -50,7 +60,7 @@ it.effect.each(
       yield* sql`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`,
       scient,
     );
-  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it.effect(
@@ -114,5 +124,5 @@ it.effect(
           created_at: "2026-07-02T12:00:00.000Z",
         },
       ]);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );

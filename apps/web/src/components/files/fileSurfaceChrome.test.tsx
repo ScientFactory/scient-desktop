@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { FileSurfaceFailure, FileSurfaceMessage } from "./fileSurfaceChrome";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 // regression: d75449ca1d fix(files): reliable copy paths and calm file-failure states (#400)
 describe("file surface states", () => {
   it("announces a failure calmly, with the raw error only behind Details", () => {

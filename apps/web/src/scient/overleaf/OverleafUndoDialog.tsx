@@ -7,6 +7,7 @@ import type {
   ScientOverleafUndoableSends,
   ScientOverleafUndoResult,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -70,6 +71,8 @@ export function OverleafUndoDialog(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, workspaceRoot, connection, attemptNumber, onClose } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const [phase, setPhase] = useState<Phase>({ _tag: "loading" });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Opening the dialog reads the undoable sends from the server; the answer is dropped once it closes.
@@ -98,7 +101,7 @@ export function OverleafUndoDialog(props: {
 
   const busy = phase._tag === "undoing";
   const send = phase._tag === "ready" || phase._tag === "undoing" ? phase.send : null;
-  const view = phase._tag === "done" ? overleafUndoView(phase.result) : null;
+  const view = phase._tag === "done" ? overleafUndoView(phase.result, messages) : null;
   const undo = async (chosen: Send) => {
     setPhase({ _tag: "undoing", send: chosen });
     const completed = await undoSend(
@@ -106,7 +109,7 @@ export function OverleafUndoDialog(props: {
       chosen,
     );
     if (completed._tag === "done" && overleafUndoSucceeded(completed.result)) {
-      const resultView = overleafUndoView(completed.result);
+      const resultView = overleafUndoView(completed.result, messages);
       toastManager.add({
         type: resultView.tone,
         title: resultView.title,
@@ -130,14 +133,14 @@ export function OverleafUndoDialog(props: {
           <DialogTitle>
             <span className="flex items-center gap-2">
               <OverleafMark aria-hidden className="size-4" />
-              {send ? `Undo send #${send.attemptNumber}` : "Undo send"}
+              {send ? gt("Undo send #{number}", { number: send.attemptNumber }) : gt("Undo send")}
             </span>
           </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           {phase._tag === "loading" ? (
             <p className="text-sm text-muted-foreground" role="status">
-              Loading…
+              <T>Loading…</T>
             </p>
           ) : phase._tag === "failed" ? (
             <p className="text-sm text-destructive" role="alert">
@@ -153,13 +156,15 @@ export function OverleafUndoDialog(props: {
               ))}
             </div>
           ) : send === null ? (
-            <p className="text-sm text-muted-foreground">No send to undo.</p>
+            <p className="text-sm text-muted-foreground">
+              <T>No send to undo.</T>
+            </p>
           ) : (
-            <ul className="flex flex-col" aria-label="What Undo puts back">
+            <ul className="flex flex-col" aria-label={gt("What Undo puts back")}>
               {send.changes.map((change) => (
                 <li key={changeName(change)} className="flex min-w-0 items-center gap-2 py-0.5">
                   <span className="w-28 shrink-0 text-xs text-muted-foreground">
-                    {undoChangeLabel(change)}
+                    {undoChangeLabel(change, messages)}
                   </span>
                   <span className="min-w-0 truncate text-sm">{changeName(change)}</span>
                 </li>
@@ -170,15 +175,15 @@ export function OverleafUndoDialog(props: {
         <DialogFooter variant="bare" className="mt-2">
           {phase._tag === "done" || phase._tag === "failed" || send === null ? (
             <Button type="button" size="sm" onClick={onClose}>
-              Done
+              <T context="button, closes the dialog">Done</T>
             </Button>
           ) : (
             <>
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={onClose}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button type="button" size="sm" disabled={busy} onClick={() => void undo(send)}>
-                {busy ? "Undoing…" : "Undo"}
+                {busy ? gt("Undoing…") : gt("Undo", { $context: "button, undoes the send" })}
               </Button>
             </>
           )}

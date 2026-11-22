@@ -23,6 +23,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import type { PaperRequester } from "../../papers/paperAttempt.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import {
+  agentAccessOff,
   authorizationDecision,
   siteMatches as siteMatchesOrigin,
   signedInMomentsAgo,
@@ -50,8 +51,10 @@ export type SignInCaller =
   | {
       readonly kind: "paper";
       readonly scope: AccountSessionScope;
-      readonly requester: Pick<PaperRequester, "accounts">;
+      readonly requester: Pick<PaperRequester, "threadId">;
     }
+  /** A local connector the user linked this sign-in to: signed in again, unattended, when it ends. */
+  | { readonly kind: "connector" }
   /** The user's own press, in the invocation's thread: they see the tab and finish what's left. */
   | {
       readonly kind: "person";
@@ -92,12 +95,15 @@ interface SignInRequest {
   readonly caller: SignInCaller;
 }
 
-const automatic = (caller: SignInCaller) => caller.kind === "page" || caller.kind === "paper";
+const automatic = (caller: SignInCaller) =>
+  caller.kind === "page" || caller.kind === "paper" || caller.kind === "connector";
 const userPress = (caller: SignInCaller) => caller.kind === "check" || caller.kind === "person";
 
 /** A person has fifteen minutes, looked at often enough to close a university's return at once. */
 const PERSON = { waitMs: 15 * 60_000, lookGapMs: 400 };
 const MOST_PENDING = 4;
+/** A connector's session that ends sooner than this after a sign-in is not signed in again. */
+const CONNECTOR_SIGN_IN_PAUSE_MS = 2 * 60_000;
 
 type Invocation = AgentInvocationContext["Service"];
 
@@ -202,7 +208,6 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
   account: AccountSummary,
   agentAccess: boolean,
 ) {
-  const unattended = { projectId: undefined, unattended: true };
   switch (caller.kind) {
     case "agent":
       // Ask waits for the user's card; Off and out of scope refuse.
@@ -212,11 +217,14 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
       return (
         authorizationDecision(agentAccess, account.controls, caller.scope).decision === "allowed"
       );
-    case "paper":
-      // The user's own request may use any sign-in that isn't Off; an agent's needs it Allowed.
-      return caller.requester.accounts === "all"
-        ? account.controls.access !== "off"
-        : authorizationDecision(agentAccess, account.controls, unattended).decision === "allowed";
+    case "paper": {
+      // The user's own request may use any sign-in that isn't Off; an agent's, one its conversation
+      // may use without asking now, in its project, approvals it was given included.
+      if (caller.requester.threadId === undefined) return account.controls.access !== "off";
+      const accounts = yield* AccountsService;
+      const target = { type: "account" as const, accountId: account.accountId };
+      return (yield* accounts.authorize(caller.scope, target, "sign-in")).decision === "allowed";
+    }
     case "person":
       if (caller.agent) {
         yield* authorize(
@@ -229,6 +237,9 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
       return account.controls.access !== "off";
     case "check":
       return account.controls.access !== "off";
+    case "connector":
+      // The user linked it to the connector; the connector already checked Off and scope.
+      return !agentAccessOff(agentAccess, account.controls.access);
   }
 });
 
@@ -248,9 +259,10 @@ const run = Effect.fn("AccountsAgent.guardedSignIn")(function* (
   if ("find" in request.signIn) {
     const { accounts: rows } = yield* accounts.snapshot;
     const { caller } = request;
+    // An agent's paper never types into a sign-in that is Off; the rest is decided before typing.
     const usable =
-      caller.kind === "paper" && caller.requester.accounts !== "all"
-        ? rows.filter((row) => caller.requester.accounts.includes(row.accountId))
+      caller.kind === "paper" && caller.requester.threadId !== undefined
+        ? rows.filter((row) => row.controls.access !== "off")
         : rows;
     const fitting = signInsForPage(
       usable,
@@ -301,7 +313,13 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       outcome: "limited",
       message: "The site is limiting access from this network. Try again in an hour.",
     } satisfies SignInAttempt;
-  if (automatic(caller) && signedInMomentsAgo(account, now))
+  const endedTooSoon =
+    caller.kind === "connector"
+      ? // A connector retries each call once; only a session that ends right away is a loop.
+        account.signIn?.state === "signed-in" &&
+        now - Date.parse(account.signIn.at) < CONNECTOR_SIGN_IN_PAUSE_MS
+      : signedInMomentsAgo(account, now);
+  if (automatic(caller) && endedTooSoon)
     return {
       outcome: "failed",
       message: `${account.name} signed in moments ago, so something keeps ending it. Scient won't repeat it by itself.`,

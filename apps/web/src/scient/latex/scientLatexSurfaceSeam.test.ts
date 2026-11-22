@@ -64,7 +64,7 @@ describe("Scient LaTeX file-preview seam", () => {
     );
     expect(surfaceSource).toContain("resolvedRootRelativePath === null");
     expect(surfaceSource).toContain('resolution.result?._tag === "unresolved"');
-    expect(surfaceSource).toContain('aria-label="Choose LaTeX document to compile"');
+    expect(surfaceSource).toContain('aria-label={gt("Choose LaTeX document to compile")}');
   });
 
   it("consumes an automatic Split presentation without changing the saved user preference", () => {
@@ -141,7 +141,8 @@ describe("Scient LaTeX file-preview seam", () => {
       /usesDocumentSession && relativePath !== null \? \{ environmentId, cwd, relativePath \} : null/u,
     );
     expect(panelSource).toMatch(
-      /markdownLease \? \(\s*<MarkdownSourceSurface[\s\S]*?persistence=\{markdownLease\}/u,
+      // T3's file-content focus target (Cmd+F reaches the editor) may sit just before it.
+      /markdownLease \? \(\s*(?:<>\s*\{contentFocus\}\s*)?<MarkdownSourceSurface[\s\S]*?persistence=\{markdownLease\}/u,
     );
   });
 

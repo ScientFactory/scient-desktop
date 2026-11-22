@@ -2,8 +2,31 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
-pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
+T3 Code uses [Vite+](https://viteplus.dev/guide/). Install its global `vp` command:
+
+```sh
+curl -fsSL https://vite.plus | bash
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://vite.plus/ps1 | iex
+```
+
+`vp` provides the Node version pinned in `package.json` (Node 26), so no separate Node install is
+needed.
+
+On Windows, clone with Git's long-path support enabled. The bundled reference repositories
+under `.repos/` can otherwise make checkout fail with `Filename too long`:
+
+```powershell
+git clone -c core.longpaths=true https://github.com/pingdotgg/t3code.git
+```
+
+This saves the setting in the new clone before checkout, without changing your global Git settings.
+
+From the repository root:
 
 ```sh
 vp i
@@ -21,7 +44,7 @@ Scient's `origin` remains `ScientFactory/scient-desktop` on GitHub.
 The official T3 repository is the fetch-only `upstream` remote, with push URL
 `DISABLED`. Do not replace either remote with an upstream mirror.
 
-The official project's [GitCafe mirror](https://git.cafe/pingdotgg/t3code)
+The official project's [forge mirror](https://source.tanstack.com/@pingdotgg/t3code)
 can help with read-only upstream research. It does not mirror Scient's issues,
 reviews, CI, or release authority. Use Scient's GitHub repository for those
 operations and follow [AGENTS.md](../../AGENTS.md#git-upstream-and-delivery).
@@ -49,6 +72,13 @@ can identify a listener, but a port or worktree match alone does not establish
 ownership. Never pipe a process search into a kill command. Managed Electron
 candidates use the [local dev app stop command](./local-dev-app.md) instead.
 
+`vp` does not pass SIGTERM on, so signalling the `vp run dev` PID alone leaves Vite and the
+server running; stop a background run through the session or harness that owns it, which ends
+the whole tree. Run dev servers, Metro, and builds from your own shell so they end with your
+session, and do not detach them with `systemd-run`, `nohup`, `setsid`, or `tmux` unless a server
+must outlive the session. On Linux the dev runner stops itself above `--memory-limit-gb` (half of
+RAM, at most 16 GiB).
+
 To stop a worktree's dev stack when its thread settles, import the **Dev** action from
 `t3.json` in Settings > Projects > Actions and start it through the action menu or its
 keybinding. Its `stopOnSettle` option lets Scient stop the terminal and its child processes.
@@ -66,6 +96,9 @@ For `vp run dev`, a nonblank `--home-dir` takes precedence over the linked workt
 The runner sets `SCIENT_NEXT_HOME` and the compatibility variable `T3CODE_HOME` for
 its children from that resolved path, rather than inheriting ambient home overrides.
 This is the dev runner's precedence, not a rule for every server or desktop entry point.
+The first start in any checkout also builds the native resource monitor with Cargo when
+`native/resource-monitor/target` has no binary. Without Rust, dev starts with a warning
+and no process telemetry; install Rust and run `vp run build:resource-monitor`.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
@@ -122,7 +155,7 @@ Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through 
 origin so the same build works over localhost and remote connections.
 
 Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. These traps matter
 when changing this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application
@@ -132,6 +165,9 @@ when changing this setup:
 - The app and its routes are lazy chunks, built on first request. A plugin pre-bundles the
   startup chain when the server starts. Renaming or moving a startup route or the app entry
   silently drops it from that list.
+- Bundled dev and `--built` hand Rolldown its own watcher, which skips Vite's default
+  `node_modules` ignore. Those files are pnpm-store hardlinks, so another worktree's install or
+  removal rebuilds every long-running server and leaks memory. Keep `node_modules` excluded.
 
 The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts),
 [Tailwind plugin](../../apps/web/vite/tailwind.ts), and
@@ -289,53 +325,76 @@ Release-note content keeps its additional catalog and rendering qualification;
 it does not suppress the full suites. Test selection never uses an import scan
 or a package subset.
 
-`Changes` uses the immutable event base and tested commit. It retains upstream's
+`Changes` uses the run's comparison base and tested commit; for a PR that base is
+the `main` its tested merge was made on (`docs/internals/ci.md`). It retains upstream's
 workspace ownership and production dependency graph for release smoke, plus the
 existing mobile native, Compute and packaging selectors. Their failed self-tests
 block `Check` while unknown outputs still run the native lanes. Rust runs for
 all three crate trees, Rust source files, Cargo manifests/lockfiles, Rust toolchain
 files, and `.cargo` configuration at any depth. Unknown paths and unresolvable
-diffs fail open. Main runs every lane fresh. The unchanged packaging selector
+diffs fail open. A main push that cannot reuse queue qualification, and the nightly run,
+select every lane. The unchanged packaging selector
 selects Windows and remote-server packaging for web/server production source;
 test-only edits skip packaging.
 
-The merge queue can reuse a successful same-repository PR run into main only for the exact
-content and comparison base. Schema-3 receipts record which web/server suites actually
-ran; only their reports must be restored before reuse is confirmed. Missing, stale,
-legacy, or partial evidence falls back to ordinary CI. One reporting job per suite
-covers reused qualification; shard names are not required
-contexts. A successful workflow still needs transfer evidence whenever server tests ran.
+Nothing that already passed on the same content runs again. The merge queue reuses a
+same-repository PR run whose `Check` passed into main only for the exact content and comparison
+base, even while that run's advisory jobs still run or after one of them failed,
+and a push to main reuses the queue runs that qualified each commit it lands. A PR whose CI ran
+against the main it is queued on qualifies whether or not its branch contains that main, unless
+both changed Compute recipes, whose sealing reads Git history. Receipts
+record which web/server suites actually ran and that Overleaf Windows passed; only those
+reports must be restored, from the attempt whose job passed, before reuse is confirmed.
+Missing, stale, legacy, or partial evidence falls back to ordinary CI, as does a push the
+queue never ran, such as an administrator merge. One reporting job per suite covers reused qualification, and four
+small jobs report the `Test` and `Test Server 1`–`3` names that `release/stable` protection
+requires on the promoted commit; other shard names are not required contexts. A successful workflow still needs transfer evidence
+whenever server tests ran.
 
-Workspace package tests run on three runners. Part 1 keeps the `Test` name that
-`release/stable` requires and runs every package parts 2 and 3 don't name, so a new
+A reused push still saves main's Linux dependency store when the merged lockfile needs
+a new one, because pull requests restore it. Other main-only work, such
+as the Windows packaging caches and the 10- and 50-file Overleaf benchmark, moves to the
+nightly run: a `schedule` run of CI on main at 02:41 UTC that selects every lane on every
+computer. It catches environment drift and anything an exact gate missed, up to a day after
+the merge. Start one by hand with `gh workflow run ci.yml --repo ScientFactory/scient-desktop
+--ref main`.
+
+Workspace package tests run on six runners. Part 1 keeps the `Test` name that
+`release/stable` requires and runs every package the other parts don't name, so a new
 package always runs; it alone sets up Electron and the browser secret helper.
 
-Server tests use twelve sequential-file shards. Web uses six shards on standard
-GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
+Server tests use sixteen sequential-file shards with a 20-minute ceiling. Web uses twelve shards
+with a 15-minute ceiling. Trials on 11-18 (PR #1017) kept twelve: ten shards saved 3.0
+runner-minutes but lengthened the slowest job from 251 s to 304 s; weighting browser files by
+page time, module load included, left two shards about 70 s behind the rest, so per-run contention
+outweighs the weights; and installing only `@t3tools/web...` broke the root Vite config. All run on standard GitHub-hosted 4-vCPU Ubuntu runners.
 Both use longest-file-first allocation with package-relative path tie breaking and
 the lowest shard index on equal load. New files receive the sequencer's fallback
 weight (server 0.6 seconds; web 1 second). Weights schedule tests; they never select or
 exclude them. The shard-one performance suites retain their own measurements.
 
-Weights come from main's own timings. The `Shard weights` job reads the reports of the
-newest main pushes (successful reports only, medians over up to three runs per suite)
-and publishes one artifact that every shard of the run copies over
-`apps/{server,web}/src/testUtils/shardWeights.json`, so all shards derive the same split.
-When no recent report is readable, or that job fails, every shard uses the checked-in
-weights instead. To refresh the checked-in fallback:
+Weights are the checked-in `apps/{server,web}/src/testUtils/shardWeights.json`, so every shard
+of a run derives the same split with no job before the shards. Refresh them from main's newest
+timings (successful reports only, medians over up to three runs per suite) after large test
+changes, or when one shard runs well behind the others:
 
 ```sh
-GITHUB_REPOSITORY=ScientFactory/scient-desktop RUNNER_TEMP=/tmp \
-  node .github/scripts/ci-shard-weights.mjs /tmp/scient-shard-weights
-cp /tmp/scient-shard-weights/web.json apps/web/src/testUtils/shardWeights.json
-cp /tmp/scient-shard-weights/server.json apps/server/src/testUtils/shardWeights.json
+out="$(mktemp -d)/weights"
+GITHUB_REPOSITORY=ScientFactory/scient-desktop node .github/scripts/ci-shard-weights.mjs "$out"
+cp "$out/web.json" apps/web/src/testUtils/shardWeights.json
+cp "$out/server.json" apps/server/src/testUtils/shardWeights.json
 node .github/scripts/verify-ci-shards.mjs
 ```
 
+A suite takes a main run only when that run has a successful report from every shard, using each
+shard's latest attempt. When no complete run is found for a suite, its file is not written and its
+`cp` fails, so the checked-in weights stay.
+
 The importer normalizes runner roots and takes per-file medians across multiple runs.
 It rejects failed reports, malformed paths, duplicates within a report, and invalid
-durations. Server weights include elapsed gaps between serial file results to capture
-imports/setup; overlapping web projects use individual file durations.
+durations. Weights are each file's own duration: CI runs server files four at a time, so gaps
+between results mean nothing. The server sequencer adds about 2.2 s of start cost per file,
+and the web sequencer about 2.5 s of module loading per browser file.
 The verifier loads the actual Vitest configurations, discovers every test specification,
 and checks that the configured partitions cover each exactly once, independent of
 discovery order. Vitest's `list --filesOnly --shard` does not apply the sequencer.
@@ -355,16 +414,17 @@ in `.github/scripts/compute-ci-gate.mjs` distinguishes these inputs:
 - Broad inputs run both suites on Linux only: package manifests, the lockfile,
   workspace configuration, root Vite configuration, server configuration and
   settings, `ci.yml`, workspace code and test infrastructure. They are rarely
-  Compute changes but every upstream alignment touches them, and a push to main
-  still runs all four computers, so a platform-only break shows there after merge.
+  Compute changes but every upstream alignment touches them, and the nightly run
+  covers all four computers, so a platform-only break shows there within a day.
 - Unit tests, which run in the ordinary lanes, and the server's RPC fixture
   `ComputeRpcServerTests.ts` run neither, as do unrelated UI and docs changes.
   Mixed changes take the union, so a Compute file beside the lockfile still runs
   every platform; uncertain diffs run everything.
 
 Both suites remain enabled on every platform by default for reusable callers and
-manual dispatch; manual dispatch can also select either suite. Every push to main
-runs both suites on all four computers. No cross-revision success cache or
+manual dispatch; manual dispatch can also select either suite. The nightly run, and any
+main push that cannot reuse queue qualification, runs both suites on all four computers.
+No cross-revision success cache or
 dependency-lock graph is used to skip checks. This uses the existing required
 `Test` check without separate branch-protection settings for conditional jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
@@ -440,6 +500,7 @@ C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
 Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
 Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
 toolchain as release CI does.
+The packaged ELF compatibility check uses binutils’ `readelf`, included by the C/C++ toolchain.
 
 Ubuntu 24.04 and Debian 13:
 

@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import type {
   ProviderRuntimeOperation,
   ProviderRuntimeSummary,
@@ -48,6 +49,7 @@ import {
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type PendingAction =
   | "install"
@@ -61,24 +63,40 @@ type PendingAction =
   | "cancel-sign-in"
   | null;
 
-function runtimeStage(operation: ProviderRuntimeOperation | null): string {
+// Each reads as the action's own words, as before; some actions name a step, not a verb.
+const GROK_ACTION_FAILURES = {
+  install: msg("Scient could not install Grok."),
+  repair: msg("Scient could not repair Grok."),
+  update: msg("Scient could not update Grok."),
+  "external-update": msg("Scient could not update Grok."),
+  "sign-in": msg("Scient could not sign-in Grok."),
+  "device-sign-in": msg("Scient could not device-sign-in Grok."),
+  "submit-code": msg("Scient could not submit-code Grok."),
+  "cancel-runtime": msg("Scient could not cancel-runtime Grok."),
+  "cancel-sign-in": msg("Scient could not cancel-sign-in Grok."),
+} satisfies Record<Exclude<PendingAction, null>, string>;
+
+function runtimeStage(
+  operation: ProviderRuntimeOperation | null,
+  resolve: MessageResolver = m,
+): string {
   switch (operation?.status) {
     case "preparing":
-      return "Preparing the reviewed download…";
+      return resolve(msg("Preparing the reviewed download…"));
     case "downloading":
-      return "Downloading Grok from xAI…";
+      return resolve(msg("Downloading Grok from xAI…"));
     case "verifying":
-      return "Verifying the reviewed release…";
+      return resolve(msg("Verifying the reviewed release…"));
     case "installing":
-      return "Installing Grok privately…";
+      return resolve(msg("Installing Grok privately…"));
     case "testing":
-      return "Checking the installation…";
+      return resolve(msg("Checking the installation…"));
     case "activating":
-      return "Finishing setup…";
+      return resolve(msg("Finishing setup…"));
     case "removing":
-      return "Removing Scient’s private Grok copy…";
+      return resolve(msg("Removing Scient’s private Grok copy…"));
     default:
-      return "Preparing Grok…";
+      return resolve(msg("Preparing Grok…"));
   }
 }
 
@@ -92,6 +110,8 @@ export function GrokInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   const [showAuthorizationCode, setShowAuthorizationCode] = useState(false);
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
@@ -156,8 +176,7 @@ export function GrokInlineSetup(props: {
       try {
         await operation();
       } catch (error) {
-        const verb = action === "external-update" ? "update" : action;
-        setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${verb} Grok.`));
+        setLocalError(providerLifecycleFailureMessage(error, m(GROK_ACTION_FAILURES[action])));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -182,7 +201,7 @@ export function GrokInlineSetup(props: {
     const provider = await updateManagedOrExternalProviderRuntime(
       props.controller,
       props.provider,
-      "No Grok update is currently available.",
+      gt("No Grok update is currently available."),
     );
     setLocalRuntime(provider.connection?.runtime ?? null);
   };
@@ -213,22 +232,22 @@ export function GrokInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={runtimeStage(activeRuntimeOperation)}
+          body={runtimeStage(activeRuntimeOperation, messages)}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
             action === "repair"
-              ? "Repairing Grok"
+              ? gt("Repairing Grok")
               : action === "update"
-                ? "Updating Grok"
+                ? gt("Updating Grok")
                 : action === "remove"
-                  ? "Removing Grok"
-                  : "Installing Grok"
+                  ? gt("Removing Grok")
+                  : gt("Installing Grok")
           }
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              aria-label={cancelRuntimeActionLabel("Grok", activeRuntimeOperation.action)}
+              aria-label={cancelRuntimeActionLabel("Grok", activeRuntimeOperation.action, messages)}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() =>
                 void run("cancel-runtime", () =>
@@ -239,7 +258,7 @@ export function GrokInlineSetup(props: {
               type="button"
               variant="ghost-destructive-action"
             >
-              <XIcon aria-hidden /> Cancel
+              <XIcon aria-hidden /> <T>Cancel</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -265,10 +284,13 @@ export function GrokInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={localError ?? managedRuntimeRepairMessage(props.provider, "Grok", runtimeOperation)}
+          body={
+            localError ??
+            managedRuntimeRepairMessage(props.provider, "Grok", runtimeOperation, messages)
+          }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Grok needs repair"
+          title={gt("Grok needs repair")}
         />
         <AssistedSetupActions>
           <Button
@@ -276,7 +298,7 @@ export function GrokInlineSetup(props: {
             size="sm"
             variant="ghost-primary"
           >
-            <RefreshCwIcon aria-hidden /> Repair Grok
+            <RefreshCwIcon aria-hidden /> <T>Repair Grok</T>
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
@@ -294,8 +316,8 @@ export function GrokInlineSetup(props: {
           body={
             installationError ??
             (canInstall
-              ? "Scient can install a reviewed official Grok Build runtime privately."
-              : "Assisted installation is not available on this computer.")
+              ? gt("Scient can install a reviewed official Grok Build runtime privately.")
+              : gt("Assisted installation is not available on this computer."))
           }
           icon={
             installationError ? (
@@ -305,18 +327,18 @@ export function GrokInlineSetup(props: {
             )
           }
           role={installationError ? "alert" : undefined}
-          title={installationError ? "Grok installation couldn’t finish" : "Install Grok"}
+          title={installationError ? gt("Grok installation couldn’t finish") : gt("Install Grok")}
         />
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={installationError ? "Retry installation of Grok" : "Install Grok"}
+              aria-label={installationError ? gt("Retry installation of Grok") : gt("Install Grok")}
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               variant="ghost-primary"
             >
               {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {installationError ? "Retry installation" : "Install"}
+              {installationError ? gt("Retry installation") : gt("Install")}
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -337,13 +359,13 @@ export function GrokInlineSetup(props: {
         <AssistedSetupStatus
           body={
             verifying
-              ? "Confirming your Grok account…"
+              ? gt("Confirming your Grok account…")
               : deviceFlow
-                ? "Enter this code on Grok’s secure sign-in page."
-                : "Complete sign in in your browser."
+                ? gt("Enter this code on Grok’s secure sign-in page.")
+                : gt("Complete sign in in your browser.")
           }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={verifying ? "Checking your account" : "Finish signing in"}
+          title={verifying ? gt("Checking your account") : gt("Finish signing in")}
         />
         {deviceFlow && activeConnectionOperation?.userCode ? (
           <AssistedSetupDeviceCode code={activeConnectionOperation.userCode} providerName="Grok" />
@@ -374,18 +396,18 @@ export function GrokInlineSetup(props: {
               >
                 <ExternalLinkIcon aria-hidden />
                 {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
-                  ? "Open sign-in page"
-                  : "Reopen sign-in page"}
+                  ? gt("Open sign-in page")
+                  : gt("Reopen sign-in page")}
               </Button>
             ) : null}
             {activeConnectionOperation ? (
               <Button
-                aria-label="Cancel Grok sign-in"
+                aria-label={gt("Cancel Grok sign-in")}
                 onClick={() => void run("cancel-sign-in", cancelConnection)}
                 size="sm"
                 variant="ghost-destructive-action"
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
             ) : null}
           </AssistedSetupActions>
@@ -420,12 +442,12 @@ export function GrokInlineSetup(props: {
   }
 
   if (accountConnected) {
-    const account = providerAccountIdentity(props.provider) ?? "Grok subscription";
+    const account = providerAccountIdentity(props.provider) ?? gt("Grok subscription");
     return (
       <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         body={`${account} is connected.`}
-        title="Grok is ready"
+        title={gt("Grok is ready")}
       />
     );
   }
@@ -434,9 +456,9 @@ export function GrokInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body="Grok is available through the xAI API key configured on this computer."
+          body={gt("Grok is available through the xAI API key configured on this computer.")}
           icon={<CheckCircle2Icon className="size-5 text-success" />}
-          title="Ready via API key"
+          title={gt("Ready via API key")}
           trailing={props.accountAction}
         />
         <AssistedSetupActions>
@@ -447,7 +469,7 @@ export function GrokInlineSetup(props: {
             size="sm"
             variant="ghost-muted"
           >
-            <ExternalLinkIcon aria-hidden /> Use a Grok subscription
+            <ExternalLinkIcon aria-hidden /> <T>Use a Grok subscription</T>
           </Button>
         </AssistedSetupActions>
       </AssistedSetupFrame>
@@ -458,10 +480,10 @@ export function GrokInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={props.provider.message ?? "Scient could not confirm Grok’s account state."}
+          body={props.provider.message ?? gt("Scient could not confirm Grok’s account state.")}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Couldn’t verify Grok"
+          title={gt("Couldn’t verify Grok")}
         />
         {runtimeDiagnostics}
       </AssistedSetupFrame>
@@ -477,7 +499,7 @@ export function GrokInlineSetup(props: {
       <AssistedSetupStatus
         body={
           signInError ??
-          "Sign in with your existing Grok subscription. Scient never sees your password."
+          gt("Sign in with your existing Grok subscription. Scient never sees your password.")
         }
         icon={
           signInError ? (
@@ -487,7 +509,7 @@ export function GrokInlineSetup(props: {
           )
         }
         role={signInError ? "alert" : undefined}
-        title={signInError ? "Grok sign-in didn’t finish" : "Sign in required"}
+        title={signInError ? gt("Grok sign-in didn’t finish") : gt("Sign in required")}
       />
       <AssistedSetupActions>
         <Button
@@ -497,15 +519,15 @@ export function GrokInlineSetup(props: {
           size="sm"
           variant="ghost-muted"
         >
-          Use device code
+          <T>Use device code</T>
         </Button>
         <Button
-          aria-label={signInError ? "Try again to sign in to Grok" : undefined}
+          aria-label={signInError ? gt("Try again to sign in to Grok") : undefined}
           onClick={() => void run("sign-in", () => startGrokSignIn(props.controller))}
           size="sm"
           variant="ghost-primary"
         >
-          <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Grok"}
+          <ExternalLinkIcon aria-hidden /> {signInError ? gt("Try again") : gt("Sign in with Grok")}
         </Button>
       </AssistedSetupActions>
       {signInError && !props.managedRuntimePresentedExternally ? (

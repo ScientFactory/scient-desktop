@@ -14,6 +14,9 @@ export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
     description: Schema.String,
     /** How long the relay asked callers to wait (`Retry-After`) before retrying. */
     retryAfterMillis: Schema.optionalKey(Schema.Number),
+    // SCIENT-FORK:START — the account's computer limit when the relay refused a link for it.
+    linkLimit: Schema.optionalKey(Schema.Number),
+    // SCIENT-FORK:END
   },
 ) {
   override get message(): string {
@@ -65,8 +68,12 @@ function recoveryHint(error: RelayProtectedError): string {
       return "Unlink an unused environment in Scient remote connection, then restart Scient on this machine.";
     case "RelayAuthInvalidError":
       return "Run `scient connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `scient connect logout`, then run `scient connect` again. Restart Scient after signing in.";
-    case "RelayEnvironmentLinkProofExpiredError":
     case "RelayEnvironmentLinkProofInvalidError":
+      if (error.reason === "environment_key_mismatch") {
+        return "Scient Connect already has this environment linked with a different key. Unlink it in Scient Connect, then restart Scient on this machine.";
+      }
+      return "Check this machine's date and time, update Scient, then restart it.";
+    case "RelayEnvironmentLinkProofExpiredError":
       return "Check this machine's date and time, update Scient, then restart it.";
     default:
       return "Retry when the relay is available. If this continues, include the trace ID when reporting it.";
@@ -98,7 +105,15 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     return yield* new RelayRequestError({ rejection: "unauthorized", description });
   }
   if (response.status === 403) {
-    return yield* new RelayRequestError({ rejection: "forbidden", description });
+    return yield* new RelayRequestError({
+      rejection: "forbidden",
+      description,
+      // SCIENT-FORK:START — the account's computer limit when the relay refused a link for it.
+      ...(Option.isSome(decoded) && decoded.value._tag === "RelayEnvironmentLinkLimitExceededError"
+        ? { linkLimit: decoded.value.maxTunnels }
+        : {}),
+      // SCIENT-FORK:END
+    });
   }
   if (
     response.status >= 400 &&

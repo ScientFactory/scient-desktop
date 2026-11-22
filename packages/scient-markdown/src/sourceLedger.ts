@@ -55,12 +55,6 @@ export interface MarkdownSourceLedger {
   readonly contextSources: readonly string[];
 }
 
-export interface MarkdownSourceBlockReplacement {
-  readonly id: string;
-  /** Null deletes only the block content; its trailing trivia remains. */
-  readonly markdown: string | null;
-}
-
 export {
   applyDocumentSourcePatches as applyMarkdownSourcePatches,
   type DocumentSourcePatch as MarkdownSourcePatch,
@@ -370,30 +364,4 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
     hasReferenceDefinitions: hasReferenceDefinition(root),
     contextSources: contextSources(root, source, parserOffset),
   };
-}
-
-/** Rebuild a document while reusing every untouched block and trivia slice verbatim. */
-export function replaceMarkdownSourceBlocks(
-  ledger: MarkdownSourceLedger,
-  replacements: ReadonlyArray<MarkdownSourceBlockReplacement>,
-): string {
-  const knownIds = new Set(ledger.blocks.map((block) => block.id));
-  const replacementById = new Map<string, string | null>();
-  for (const replacement of replacements) {
-    if (!knownIds.has(replacement.id)) {
-      throw new Error(`Unknown Markdown source block '${replacement.id}'.`);
-    }
-    if (replacementById.has(replacement.id)) {
-      throw new Error(`Duplicate replacement for Markdown source block '${replacement.id}'.`);
-    }
-    replacementById.set(replacement.id, replacement.markdown);
-  }
-
-  let output = ledger.prefix;
-  for (const block of ledger.blocks) {
-    const replacement = replacementById.get(block.id);
-    output += replacementById.has(block.id) ? (replacement ?? "") : block.source;
-    output += block.trailing;
-  }
-  return output;
 }

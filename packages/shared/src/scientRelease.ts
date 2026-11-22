@@ -16,6 +16,7 @@ export function scientReleaseRepository(version: string): string {
     : SCIENT_DESKTOP_RELEASE_REPOSITORY;
 }
 
+/** The GitHub release index a build records as its publisher, and older clients still read. */
 export function scientDesktopUpdateFeed(channel: "latest" | "beta" | "nightly") {
   const repository =
     channel === "beta" ? SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY : SCIENT_DESKTOP_RELEASE_REPOSITORY;
@@ -23,6 +24,27 @@ export function scientDesktopUpdateFeed(channel: "latest" | "beta" | "nightly") 
     provider: "github" as const,
     owner: "ScientFactory",
     repo: repository.slice("ScientFactory/".length),
+  };
+}
+
+/**
+ * ScientFactory's generic update feeds, published by the website's release mirror only after
+ * every file they name is in its immutable version directory.
+ */
+const SCIENT_DESKTOP_UPDATE_FEED_ORIGIN =
+  "https://downloads.scientfactory.com/scient-desktop/updates";
+
+/**
+ * The feed a running app checks: the mirror for Stable and Beta, GitHub for nightly builds,
+ * which the mirror does not carry. Like GitHub's provider, it downloads differences with single
+ * ranges; the mirror's storage does not promise multi-range responses.
+ */
+export function scientDesktopRuntimeUpdateFeed(channel: "latest" | "beta" | "nightly") {
+  if (channel === "nightly") return scientDesktopUpdateFeed(channel);
+  return {
+    provider: "generic" as const,
+    url: `${SCIENT_DESKTOP_UPDATE_FEED_ORIGIN}/${channel === "beta" ? "beta" : "stable"}`,
+    useMultipleRangeRequest: false,
   };
 }
 export const SCIENT_SERVER_PACKAGE_NAME = "t3";

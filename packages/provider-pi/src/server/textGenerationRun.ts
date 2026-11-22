@@ -2,7 +2,11 @@
  * One-shot text generation must carry no workspace instructions, skills, tools, extensions, or
  * persisted session. Apply model/effort natively, consume ordered events, and bound total duration.
  */
-import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
+import { ProviderDriverKind, TextGenerationError, type ModelSelection } from "@t3tools/contracts";
+import {
+  brokenVersionDetail,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
 import {
   investigationUnsupported,
   type Operation,
@@ -24,8 +28,11 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
-import { decodePiModelSlug } from "./model.ts";
+import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
+import * as Option from "effect/Option";
 import { applyPiModelSelection } from "./modelSelection.ts";
+import { runPiVersionCommand } from "./status.ts";
+import { resolvePiModelSlug } from "./rpc.ts";
 import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "./rpcClient.ts";
 
 export type PiRpcClientFactory = (
@@ -69,8 +76,10 @@ export const makePiRunJson = (run: {
   readonly makeRpcClient: PiRpcClientFactory;
   readonly options: PiTextGenerationOptions;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  /** The host's version policy; releases it rates broken never run. */
+  readonly compatibility: ProviderCompatibilityLookup;
 }) => {
-  const { settings, environment, makeRpcClient, options, spawner } = run;
+  const { settings, environment, makeRpcClient, options, spawner, compatibility } = run;
   return <S extends Schema.Top>(input: {
     operation: Operation;
     cwd: string;
@@ -82,15 +91,32 @@ export const makePiRunJson = (run: {
       Effect.gen(function* () {
         if (input.operation === "generateReviewGuide")
           return yield* investigationUnsupported(input.operation, "Pi");
-        const selected =
-          input.modelSelection.model === "default"
-            ? undefined
-            : decodePiModelSlug(input.modelSelection.model);
-        if (input.modelSelection.model !== "default" && !selected)
-          return yield* new TextGenerationError({
-            operation: input.operation,
-            detail: "Pi model selection must use the 'provider/model' format.",
-          });
+        const thinking =
+          getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel") ??
+          getModelSelectionStringOptionValue(input.modelSelection, "thinking");
+        // Earlier Pi saves a background thinking change as the user's global default. A named
+        // model also changes thinking: a fresh session picks that model's preferred level.
+        if (thinking !== undefined || input.modelSelection.model !== "default") {
+          const output = yield* runPiVersionCommand(settings, environment, input.cwd).pipe(
+            Effect.timeoutOption(4_000),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.orElseSucceed(() => Option.none()),
+          );
+          const version =
+            Option.isSome(output) && output.value.code === 0
+              ? parseGenericCliVersion(`${output.value.stdout}\n${output.value.stderr}`)
+              : null;
+          const broken =
+            version === null
+              ? "Scient could not determine the Pi version. Update Pi and try again."
+              : brokenVersionDetail({
+                  name: "Pi",
+                  version,
+                  advisory: yield* compatibility(ProviderDriverKind.make("pi"), version),
+                });
+          if (broken !== undefined)
+            return yield* new TextGenerationError({ operation: input.operation, detail: broken });
+        }
         const resolved = resolvePiLaunchArgs(settings.launchArgs);
         if (!resolved.ok)
           return yield* new TextGenerationError({
@@ -138,6 +164,21 @@ export const makePiRunJson = (run: {
               }),
           ),
         );
+        // Pi provider names and model ids may contain "/", so a custom slug resolves through the
+        // `{provider, id}` pairs Pi reports before falling back to the canonical encoding.
+        let selected: { readonly provider: string; readonly modelId: string } | undefined;
+        if (input.modelSelection.model !== "default") {
+          const reported = yield* client.getAvailableModels().pipe(
+            Effect.map((inventory) => inventory.models),
+            Effect.orElseSucceed(() => undefined),
+          );
+          selected = resolvePiModelSlug(input.modelSelection.model, reported) ?? undefined;
+          if (!selected)
+            return yield* new TextGenerationError({
+              operation: input.operation,
+              detail: "Pi model selection must use the 'provider/model' format.",
+            });
+        }
         const output = yield* Ref.make("");
         const currentDeltas = yield* Ref.make("");
         const outputExhausted = yield* Ref.make(false);
@@ -236,9 +277,6 @@ export const makePiRunJson = (run: {
           Effect.asVoid,
           Effect.forkScoped,
         );
-        const thinking =
-          getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel") ??
-          getModelSelectionStringOptionValue(input.modelSelection, "thinking");
         const before = yield* client.getState();
         if (selected !== undefined || thinking !== undefined) {
           const effectiveModel =

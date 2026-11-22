@@ -1,8 +1,12 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { SourceEditor } from "./SourceEditor.tsx";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const record = {
   formatVersion: 1 as const,
@@ -73,6 +77,30 @@ describe("SourceEditor", () => {
     expect(markup).toContain("Clinical guideline");
   });
 
+  it("lists further details in the list's order, keeps Extra as written, and omits absent ones", () => {
+    const markup = renderToStaticMarkup(
+      <SourceEditor
+        environmentId={EnvironmentId.make("environment_test")}
+        root="/project"
+        record={{
+          ...record,
+          type: "book",
+          more: { "publisher-place": "Oxford", edition: "4", extra: "OCLC: 12345" },
+        }}
+        onCancel={() => undefined}
+        onRefreshed={() => undefined}
+        onSaved={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("More details");
+    // In the list's order, whatever order the record keeps them in.
+    expect(markup.indexOf("Edition")).toBeLessThan(markup.indexOf("Place of publication"));
+    expect(markup).toContain("OCLC: 12345");
+    // A detail the source does not have is offered, not shown as an empty row.
+    expect(markup).not.toContain('aria-label="Remove Series"');
+  });
+
   it("keeps an empty tag list pristine and requires a name for Other source", () => {
     const pristineMarkup = renderToStaticMarkup(
       <SourceEditor
@@ -98,5 +126,22 @@ describe("SourceEditor", () => {
     expect(pristineMarkup).toContain("disabled");
     expect(invalidOtherMarkup).toContain("Enter the source type.");
     expect(invalidOtherMarkup).toContain('aria-invalid="true"');
+  });
+
+  it("shows the citation key for a deliberate rename and refuses one documents cannot read", () => {
+    const render = (citationKey: string) =>
+      renderToStaticMarkup(
+        <SourceEditor
+          environmentId={EnvironmentId.make("environment_test")}
+          root="/project"
+          record={{ ...record, citationKey }}
+          onCancel={() => undefined}
+          onRefreshed={() => undefined}
+          onSaved={() => undefined}
+        />,
+      );
+
+    expect(render("lovelace2026correctable")).toContain('value="lovelace2026correctable"');
+    expect(render("has space")).toContain("in the citation key");
   });
 });

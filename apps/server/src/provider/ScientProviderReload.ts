@@ -118,6 +118,21 @@ export function makeScientProviderReload(deps: {
     return yield* syncProvider(canonicalProvider);
   });
 
+  const readFreshInstance = Effect.fn("ProviderRegistry.readFreshInstance")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const instance = (yield* getLiveInstances).get(instanceId);
+    if (!instance) {
+      return yield* new ProviderRegistry.ProviderRegistryRefreshError({
+        operation: "refresh",
+        instanceId,
+        message: `Provider refresh failed for ${instanceId}: no live source is available.`,
+      });
+    }
+    // Canonical and unpublished: a proven authentication failure stays shown until verification.
+    return yield* readRefreshedSource(instance).pipe(failStrictRefresh("refresh", instanceId));
+  });
+
   const reloadInstanceStrict = Effect.fn("ProviderRegistry.reloadInstanceStrict")(function* (
     instanceId: ProviderInstanceId,
   ) {
@@ -140,6 +155,7 @@ export function makeScientProviderReload(deps: {
     reloadInstance,
     refreshInstanceStrict,
     refreshInstanceAfterAccountChange,
+    readFreshInstance,
     reloadInstanceStrict,
   };
 }

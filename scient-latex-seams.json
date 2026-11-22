@@ -183,16 +183,6 @@
       "purpose": "Register the Visual LaTeX benchmark's production build configuration, page entry and runner."
     },
     {
-      "path": "apps/web/src/components/settings/SettingsGroup.tsx",
-      "anchor": "[&>:not(:first-child)]:border-t",
-      "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
-    },
-    {
-      "path": "apps/web/src/components/settings/FoldedSettingsSection.tsx",
-      "anchor": "[&>:not(:first-child)]:border-t",
-      "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
-    },
-    {
       "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
       "anchor": "attachmentPdfMount",
       "purpose": "Open chat attachment PDFs in Scient's PDF reader (find, outline, zoom, Ask in chat) instead of Chromium's built-in viewer; other kinds keep their generic previews."
@@ -233,6 +223,11 @@
       "path": "apps/server/src/telemetry/OperationAnalytics.ts",
       "anchor": "ScientLatexBuildFailureClass",
       "purpose": "Carry bounded LaTeX failure classes through shared operation analytics without including compiler output or document details."
+    },
+    {
+      "path": "apps/server/src/telemetry/FailureAttribution.ts",
+      "anchor": "ScientLatexBuildFailureClass",
+      "purpose": "Map each bounded LaTeX failure class to who owns the failure (document, environment or Scient) without reading compiler output."
     }
   ]
 }

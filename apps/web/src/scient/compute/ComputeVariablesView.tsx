@@ -1,4 +1,5 @@
 import type { ComputeVariableSnapshot } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { LoaderCircle, RefreshCw, Table2 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -26,21 +27,32 @@ export function ComputeVariablesView(props: {
   readonly onRefresh: () => void;
   readonly onOpenTable?: (name: string) => void;
 }) {
-  if (!props.hasLiveSession) return <Centered>No running session</Centered>;
+  const gt = useGT();
+  if (!props.hasLiveSession)
+    return (
+      <Centered>
+        <T>No running session</T>
+      </Centered>
+    );
   if (!props.selectedIsLive) {
     return (
       <Centered>
         <Button size="xs" variant="outline" onClick={props.onShowLive}>
-          Show running session
+          <T>Show running session</T>
         </Button>
       </Centered>
     );
   }
-  if (!props.available) return <Centered>Not available for this language</Centered>;
+  if (!props.available)
+    return (
+      <Centered>
+        <T>Not available for this language</T>
+      </Centered>
+    );
   if (props.busy) {
     return (
       <Centered>
-        <LoaderCircle className="size-3 animate-spin" /> Running…
+        <LoaderCircle className="size-3 animate-spin" /> <T>Running…</T>
       </Centered>
     );
   }
@@ -51,7 +63,7 @@ export function ComputeVariablesView(props: {
           <Button
             size="icon-xs"
             variant="ghost-muted"
-            aria-label="Refresh variables"
+            aria-label={gt("Refresh variables")}
             disabled={props.loading}
             onClick={props.onRefresh}
           >
@@ -68,28 +80,28 @@ export function ComputeVariablesView(props: {
           </p>
         ) : props.snapshot === null || props.snapshot.variables.length === 0 ? (
           <p className="flex min-h-32 items-center justify-center text-xs text-muted-foreground">
-            No variables yet
+            <T>No variables yet</T>
           </p>
         ) : (
           <div className="@container min-w-0 overflow-hidden rounded-[6px] border border-border/70">
-            <ScrollArea className="h-auto" aria-label="Current variables">
+            <ScrollArea className="h-auto" aria-label={gt("Current variables")}>
               <table className="w-full table-fixed text-left text-xs">
                 <thead className="border-b border-border/60 bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th scope="col" className="w-[30%] px-2 py-1.5 font-medium @min-[30rem]:w-1/4">
-                      Name
+                      <T>Name</T>
                     </th>
                     <th scope="col" className="w-[30%] px-2 py-1.5 font-medium @min-[30rem]:w-1/5">
-                      Type
+                      <T>Type</T>
                     </th>
                     <th
                       scope="col"
                       className="hidden w-1/5 px-2 py-1.5 font-medium @min-[30rem]:table-cell"
                     >
-                      Shape / size
+                      <T>Shape / size</T>
                     </th>
                     <th scope="col" className="px-2 py-1.5 font-medium">
-                      Preview
+                      <T>Preview</T>
                     </th>
                   </tr>
                 </thead>
@@ -145,7 +157,7 @@ export function ComputeVariablesView(props: {
             </ScrollArea>
             {props.snapshot.truncated ? (
               <p className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-                First 200 variables
+                <T>First 200 variables</T>
               </p>
             ) : null}
           </div>

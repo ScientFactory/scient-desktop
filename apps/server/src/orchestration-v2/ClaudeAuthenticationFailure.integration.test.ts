@@ -111,10 +111,14 @@ it.effect.each(
               Effect.gen(function* () {
                 const messages = yield* Queue.unbounded<SDKMessage>();
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -173,6 +177,7 @@ it.effect.each(
               }),
             forkSession: () => Effect.die("Auth fixture never forks native history"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -248,7 +253,10 @@ it.effect.each(
     ).pipe(Layer.provide(liveSnapshots));
     const replay = makeOrchestratorV2ReplayLayerWithRegistry(
       { name: "native-claude-revoked-auth" },
-      ProviderAdapters.layerFromProviderInstanceRegistry.pipe(Layer.provide(instanceLayer)),
+      ProviderAdapters.layerFromProviderInstanceRegistry.pipe(
+        Layer.provide(instanceLayer),
+        Layer.provide(ModelManifest.layerTest),
+      ),
       {
         providerRegistryLayer: snapshots,
         configureMcp: false,

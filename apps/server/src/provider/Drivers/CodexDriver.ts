@@ -1,12 +1,16 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as Signature from "effect/crypto/Signature";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import * as Stream from "effect/Stream";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import type * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
@@ -25,7 +29,7 @@ import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
-  probeCodexSkillsForCwd,
+  makeCodexSkillsProbe,
   setCodexSkillEnabled,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
@@ -44,6 +48,7 @@ import {
   makeCodexManagedRuntimeResolution,
 } from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
 import { makeCodexVoiceTranscriptCorrection } from "../../scient/voice/CodexVoiceTranscriptCorrection.ts";
+import { makeCodexChatGptDictation } from "../../scient/voice/CodexChatGptDictation.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -51,6 +56,7 @@ import {
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
+  type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -59,6 +65,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
   codexContinuationIdentity,
+  codexHomeLaunchArgs,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -107,6 +114,31 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
   });
 }
 
+// `codex update` installs this channel's release, which can lag npm's latest tag.
+const CODEX_NATIVE_CHANNEL = "https://releases.openai.com/codex/channels/latest";
+const CodexNativeRelease = Schema.Struct({ tag_name: Schema.String });
+
+function withCodexNativeLatestVersion(
+  capabilities: ProviderMaintenanceCapabilities,
+  http: HttpClient.HttpClient,
+): ProviderMaintenanceCapabilities {
+  if (capabilities.update?.lockKey !== `${DRIVER_KIND}-native`) return capabilities;
+  return {
+    ...capabilities,
+    latestVersion: null,
+    latestVersionCacheKey: CODEX_NATIVE_CHANNEL,
+    lookupLatestVersion: http.get(CODEX_NATIVE_CHANNEL).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(Schema.decodeUnknownEffect(CodexNativeRelease)),
+      Effect.map((release) => /^rust-v(\d+\.\d+\.\d+)$/.exec(release.tag_name)?.[1] ?? null),
+      Effect.timeoutOption("4 seconds"),
+      Effect.map(Option.getOrNull),
+      Effect.orElseSucceed(() => null),
+    ),
+  };
+}
+
 export type CodexDriverEnv =
   | CodexAdapterV2DriverEnv
   | ProviderHost.ProviderHost
@@ -138,6 +170,8 @@ const withInstanceIdentity =
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
     readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
+    /** The Codex home whose plugins.cache and config.toml this instance installs into. */
+    readonly pluginHome: string;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
@@ -146,6 +180,7 @@ const withInstanceIdentity =
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },
+    pluginHomes: { codex: input.pluginHome },
     skills: snapshot.skills.map((skill) => ({ ...skill, canSetEnabled: true })),
     connection: {
       methods: snapshot.auth.required === false ? [] : ["codex_browser", "codex_device_code"],
@@ -198,11 +233,11 @@ export const CodexDriver: ScientProviderDriver<
       yield* HostProcess.Environment,
     );
     const environmentHome = processEnv.CODEX_HOME;
-    const homeLayout = yield* resolveCodexHomeLayout(
-      !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()
+    const homeConfig =
+      !config.homePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
-        : config,
-    );
+        : config;
+    const homeLayout = yield* resolveCodexHomeLayout(homeConfig);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.mapError(
@@ -230,6 +265,7 @@ export const CodexDriver: ScientProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
       runtime: managedRuntime.summary,
+      pluginHome: homeLayout.sharedHomePath,
     });
     const effectiveConfig = {
       ...config,
@@ -239,8 +275,10 @@ export const CodexDriver: ScientProviderDriver<
         yield* HostProcess.HomeDirectory,
       ),
       homePath: homeLayout.effectiveHomePath ?? "",
+      launchArgs: codexHomeLaunchArgs(pathService, homeLayout, config.launchArgs),
     } satisfies CodexSettings;
-    const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+    // SCIENT-FORK: Scient-managed Codex runtimes are updated by Scient, not by the native updater.
+    const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
       (managedRuntime.usesManagedPath || isStandInForManagedCodex(managedRuntime.summary)
         ? Effect.succeed(
             makeManualOnlyProviderMaintenanceCapabilities({
@@ -261,11 +299,23 @@ export const CodexDriver: ScientProviderDriver<
         Effect.provideService(Path.Path, pathService),
       ),
     );
+    const resolveMaintenance: typeof resolveInstallation = (options) =>
+      resolveInstallation(options).pipe(
+        Effect.map((capabilities) => withCodexNativeLatestVersion(capabilities, httpClient)),
+      );
 
     const voiceTranscriptCorrection = yield* makeCodexVoiceTranscriptCorrection(
       effectiveConfig,
       processEnv,
     );
+    // SCIENT-FORK: dictation with ChatGPT through this Codex's ChatGPT sign-in.
+    const voiceDictation = makeCodexChatGptDictation({
+      settings: effectiveConfig,
+      cwd: serverConfig.cwd,
+      environment: processEnv,
+      spawner,
+      http: httpClient,
+    });
     const connectionActions = makeCodexConnectionActions(
       effectiveConfig,
       serverConfig.cwd,
@@ -320,10 +370,13 @@ export const CodexDriver: ScientProviderDriver<
         environment,
         enabled,
         // The native factory resolves the shared/auth-overlay home itself.
-        config: { ...config, binaryPath: effectiveConfig.binaryPath },
+        config: { ...homeConfig, binaryPath: effectiveConfig.binaryPath },
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        models: Effect.suspend(() => snapshot.getSnapshot).pipe(
+          Effect.map((value) => value.models),
+        ),
         compatibility: installation.compatibility,
       },
     ).pipe(
@@ -405,22 +458,21 @@ export const CodexDriver: ScientProviderDriver<
       processEnv,
       snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
     );
+    const probeSkills = yield* makeCodexSkillsProbe().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
     const snapshotForCwd = (cwd: string) =>
       !effectiveConfig.enabled
         ? snapshot.getSnapshot
         : Effect.all([
             snapshot.getSnapshot,
-            probeCodexSkillsForCwd({
+            probeSkills({
               binaryPath: effectiveConfig.binaryPath,
               homePath: effectiveConfig.homePath,
               launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
               cwd,
               environment: processEnv,
-            }).pipe(
-              Effect.scoped,
-              Effect.timeout("20 seconds"),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            ),
+            }).pipe(Effect.timeout(resolveProviderProbeTimeoutMs("codex", 20_000, processEnv))),
           ]).pipe(
             Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
             Effect.mapError(
@@ -466,32 +518,37 @@ export const CodexDriver: ScientProviderDriver<
                 cause,
               }),
           ),
-          // The windows just changed; re-probe so the snapshot says so. A
-          // failed probe republishes the pre-redemption limits rather than
-          // marking them failed, so "confirmed" means `checkedAt` moved past
-          // what was published before the redemption started.
           Effect.tap((outcome) =>
-            Effect.gen(function* () {
-              const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              const refreshed = yield* snapshot.refresh;
-              const after = refreshed.usageLimits?.checkedAt;
-              if (
-                outcome === "reset" &&
-                (after === undefined ||
-                  after === before ||
-                  refreshed.usageLimits?.unavailable?.reason === "probeFailed")
-              ) {
-                return yield* new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail:
-                    "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                });
-              }
-            }),
+            ResetCreditCoordinator.refreshAfterRedemption({
+              outcome,
+              getSnapshot: snapshot.getSnapshot,
+              refresh: snapshot.refresh,
+            }).pipe(
+              Effect.filterOrFail(
+                (confirmed) => confirmed,
+                () =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail:
+                      "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                  }),
+              ),
+            ),
           ),
         );
 
+    // `codex login` and `codex logout` rewrite auth.json outside T3.
+    if (effectiveConfig.enabled) {
+      yield* fileSystem.watch(accountKey).pipe(
+        Stream.filter((event) => pathService.basename(event.path) === "auth.json"),
+        Stream.debounce(Duration.millis(250)),
+        Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+        Effect.ignoreCause({ log: true }),
+        Effect.forkScoped,
+      );
+    }
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -505,6 +562,7 @@ export const CodexDriver: ScientProviderDriver<
       orchestrationAdapter,
       textGeneration,
       voiceTranscriptCorrection,
+      voiceDictation,
       connectionActions,
       managedRuntimeActions: managedRuntime.actions,
       skillActions,

@@ -65,6 +65,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
+import * as ProviderInstallationGate from "../ProviderInstallationGate.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
@@ -616,6 +617,8 @@ const managerLayer = Effect.fn("LegacyShutdown.managerLayer")(function* (h: Harn
     Layer.succeed(McpSessionRegistry.McpSessionRegistry, mcp),
     ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
       Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
+      // The registry rates provider versions against the manifest's compatibility policy.
+      Layer.provide(ModelManifest.layerTest),
     ),
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
@@ -627,6 +630,7 @@ const managerLayer = Effect.fn("LegacyShutdown.managerLayer")(function* (h: Harn
         ),
       ),
     ),
+    ProviderInstallationGate.layer,
     NodeServices.layer,
     NodeCrypto.layer,
   );
@@ -989,6 +993,7 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           { name: "legacy-idle-recovery", runtimePolicyOverride: { cwd } },
           ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
             Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
+            Layer.provide(ModelManifest.layerTest),
           ),
           {
             databaseLayer: SqlitePersistenceMemory,

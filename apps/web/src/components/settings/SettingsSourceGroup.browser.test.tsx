@@ -46,6 +46,40 @@ describe("shared raised settings surface", () => {
         ),
     );
   };
+  it("keeps long source strips scrollable without widening the settings page", async () => {
+    await using fixture = _createFixture();
+    await _setupFixture0(fixture);
+    fixture.host.style.overflow = "auto";
+    await act(async () =>
+      fixture.root0.rerender(
+        <div className="grid gap-10">
+          <section className="grid gap-3">
+            <SettingsSourceGroup activePanelId={null}>
+              <SettingsSourceStrip label="Projects">
+                {Array.from({ length: 24 }, (_, index) => (
+                  <SettingsSourceStripItem
+                    key={index}
+                    controls={`project-${index}`}
+                    expanded={false}
+                    label={`Lab project ${index} — research workspace`}
+                    icon={<span />}
+                    separated={index > 0}
+                    onToggle={() => {}}
+                  />
+                ))}
+              </SettingsSourceStrip>
+            </SettingsSourceGroup>
+          </section>
+        </div>,
+      ),
+    );
+    const strip = fixture.host.querySelector<HTMLElement>('[aria-label="Projects"]')!;
+    expect(fixture.host.scrollWidth).toBe(fixture.host.clientWidth);
+    expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth);
+    strip.scrollLeft = 200;
+    expect(strip.scrollLeft).toBeGreaterThan(0);
+    expect(fixture.host.scrollLeft).toBe(0);
+  });
   it("removes the decoration and disconnects when collapsed", async () => {
     await using _fixture = _createFixture();
     await _setupFixture0(_fixture);

@@ -704,7 +704,7 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
         });
         expect(variablesAfterRestart.variables).toEqual([]);
 
-        // A large unrelated output directory must not hide verified root figures.
+        // Neither a large unrelated folder nor depth may hide what a cell wrote.
         yield* fs.makeDirectory(`${projectRoot}/large`);
         yield* Effect.forEach(
           Array.from({ length: 4_100 }, (_, index) => index),
@@ -712,36 +712,41 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
           { concurrency: 32 },
         );
         yield* fs.writeFileString(`${projectRoot}/known.svg`, "<svg/>");
-        const partialScanId = ComputeExecutionId.make("partial-project-scan");
+        const largeProjectId = ComputeExecutionId.make("large-project-outputs");
         yield* gateway.submitExecution({
           cwd: projectRoot,
           sessionId,
-          executionId: partialScanId,
+          executionId: largeProjectId,
           expectedGeneration: restarted.generation,
           source: { _tag: "console" },
-          code: "from pathlib import Path\nPath('known.svg').write_text('<svg><circle/></svg>')\nPath('new.svg').write_text('<svg/>')",
+          code: [
+            "from pathlib import Path",
+            "Path('known.svg').write_text('<svg><circle/></svg>')",
+            "Path('new.svg').write_text('<svg/>')",
+            "deep = Path(*['deep'] * 12)",
+            "deep.mkdir(parents=True)",
+            "(deep / 'deep.svg').write_text('<svg/>')",
+          ].join("\n"),
         });
         expect(
-          (yield* waitForTerminal(gateway, projectRoot, sessionId, partialScanId)).result?.status,
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, largeProjectId)).result?.status,
         ).toBe("succeeded");
-        const partialOutputs = yield* gateway.listOutputs({
+        const largeProjectOutputs = yield* gateway.listOutputs({
           cwd: projectRoot,
           sessionId,
-          executionId: partialScanId,
+          executionId: largeProjectId,
         });
         expect(
-          partialOutputs.outputs
+          largeProjectOutputs.outputs
             .filter((item) => item._tag === "image")
             .map((item) => (item.origin?._tag === "project-file" ? item.origin.path : null))
             .sort(),
-        ).toEqual(["known.svg", "new.svg"]);
-        expect(
-          partialOutputs.outputs.some(
-            (item) =>
-              item._tag === "system" &&
-              item.detail?.includes("Some project files could not be checked"),
-          ),
-        ).toBe(true);
+        ).toEqual([
+          `${Array.from({ length: 12 }, () => "deep").join("/")}/deep.svg`,
+          "known.svg",
+          "new.svg",
+        ]);
+        expect(largeProjectOutputs.outputs.some((item) => item._tag === "system")).toBe(false);
 
         const stopped = yield* gateway.stopSession({
           cwd: projectRoot,

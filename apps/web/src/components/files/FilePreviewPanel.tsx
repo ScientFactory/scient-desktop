@@ -47,8 +47,11 @@ import { isScientDataFile } from "~/scient/dataTable/dataFiles";
 // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
 import { editorCompositions } from "~/scient/editorFlush/editorComposition";
 // SCIENT-FORK:END
-import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import { LatexDocumentPreparation } from "~/scient/latex/latexOpeningPresentation";
 import { Button } from "~/components/ui/button";
@@ -97,14 +100,22 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 // SCIENT-FORK:START — FolderTree moved to the tab strip's Files button
 import { AlertTriangle, Download, Globe, WrapTextIcon } from "lucide-react";
 // SCIENT-FORK:END
-import { Code2, Eye, Table2 } from "lucide";
 import { MarkdownDownloadMenu } from "~/scient/documentExport/MarkdownDownloadMenu";
 import {
   DocumentDownloadMenu,
   type DocumentDownloadActions,
 } from "~/scient/documentExport/DocumentDownloadMenu";
 import * as Schema from "effect/Schema";
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import type { FileCitation } from "@t3tools/contracts";
@@ -113,7 +124,6 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
-import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -122,7 +132,8 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 // SCIENT-FORK:END
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
+import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type {
   HtmlFilePresentationRequest,
   LatexFilePresentationRequest,
@@ -139,10 +150,11 @@ import { isHostPath } from "@t3tools/shared/path";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildFileReviewComment } from "~/reviewCommentContext";
+import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
@@ -205,7 +217,7 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
-import { MEDIA_FAILURE_COPY, readOnlyNotice } from "~/scient/fileSurfaces/fileFailureCopy";
+import { mediaFailureCopy, readOnlyNotice } from "~/scient/fileSurfaces/fileFailureCopy";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
@@ -224,6 +236,7 @@ import {
   nextFileCommentId,
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
+  promptFileCommentEntries,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
 import {
@@ -352,6 +365,7 @@ function WorkspaceImagePreview(props: {
 }) {
   // SCIENT-FORK:START — persisted threads use the rooted tab-path locator; drafts use the upstream draft resource.
   const resource = workspaceViewerAssetResource(props, "workspace-file");
+  const messages = useMessages();
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -376,7 +390,8 @@ function WorkspaceImagePreview(props: {
         {/* A plain element receives the menu trigger's handlers and ref. */}
         <div className="flex min-h-0 flex-1 flex-col">
           <FileSurfaceFailure
-            {...MEDIA_FAILURE_COPY.image}
+            // SCIENT-FORK: failure copy in the active language.
+            {...mediaFailureCopy("image", messages)}
             retrying={retrying || (assetUrl._tag === "Failure" && assetUrl.waiting === true)}
             onRetry={() =>
               // Keep the failure (busy) until renewed authorization arrives, so
@@ -407,8 +422,35 @@ function WorkspaceImagePreview(props: {
   );
 }
 
+interface HtmlPreviewFrame {
+  readonly revision: string | null;
+  readonly url: string;
+  /** When the loaded page's grant is about to expire and a fresh URL has to replace it. */
+  readonly renewAt: number;
+}
+
+const HTML_PREVIEW_RENEW_BEFORE_EXPIRY_MS = 2 * 60_000;
+// Grants last an hour. A client clock far from the server's would otherwise renew at once, forever.
+const HTML_PREVIEW_MIN_GRANT_HOLD_MS = 3 * 60_000;
+const HTML_PREVIEW_MAX_GRANT_HOLD_MS = 60 * 60_000;
+
+const htmlPreviewFrame = (
+  minted: { readonly revision: string | null; readonly url: string; readonly expiresAt: number },
+  now: number,
+): HtmlPreviewFrame => ({
+  revision: minted.revision,
+  url: minted.url,
+  renewAt: Math.min(
+    Math.max(
+      minted.expiresAt - HTML_PREVIEW_RENEW_BEFORE_EXPIRY_MS,
+      now + HTML_PREVIEW_MIN_GRANT_HOLD_MS,
+    ),
+    now + HTML_PREVIEW_MAX_GRANT_HOLD_MS,
+  ),
+});
+
 /** Opaque-origin HTML cannot reach app storage; adjacent assets may be outside the workspace. */
-function WorkspaceBrowserPreview(props: {
+export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -416,21 +458,69 @@ function WorkspaceBrowserPreview(props: {
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly title: string;
+  readonly workspaceMutationId: string | null;
   readonly refreshKey: number;
+  // SCIENT-FORK: Reload file always reloads the page.
+  readonly manualReloadKey: number;
 }) {
   // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
   const resource = workspaceViewerAssetResource(props, "workspace-file", true);
+  const messages = useMessages();
   // SCIENT-FORK:END
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
-  // SCIENT-FORK:START — reload when the file's watcher reports a change
-  useScientViewerRefreshKey(props.refreshKey, assetUrl.refresh);
-  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // Each workspace mutation re-mints the URL: a file outside the workspace is signed by its
+  // inode, which an atomic replace changes.
+  // SCIENT-FORK:START — so does each change the file's watcher reports.
+  const mintRevision = `${props.workspaceMutationId ?? ""}:${props.refreshKey}:${props.manualReloadKey}`;
+  const assetUrl = useAssetUrlState(props.environmentId, resource, mintRevision);
   // SCIENT-FORK:END
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  // Servers that report the file's revision let an unchanged page stay loaded.
+  const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  // SCIENT-FORK:START — Reload file always reloads the page. Without a server revision (a page
+  // outside the workspace, an older server), Scient's refresh of the page decides, as before.
+  const latestRevision =
+    fileRevision === undefined
+      ? `${props.refreshKey}:${props.manualReloadKey}`
+      : `${fileRevision}:${props.manualReloadKey}`;
+  // SCIENT-FORK:END
+  // The HTML frame keeps the URL it loaded, so it moves only once a re-minted URL has arrived.
+  const [frame, setFrame] = useState<HtmlPreviewFrame | null>(null);
+  const [endingGrant, setEndingGrant] = useState<string | null>(null);
+  const grantEnding = frame !== null && endingGrant === frame.url;
+  if (
+    assetUrl._tag === "Success" &&
+    (frame === null ||
+      (!assetUrl.waiting &&
+        (frame.revision !== latestRevision || (grantEnding && frame.url !== assetUrl.url))))
+  ) {
+    const { url, expiresAt } = assetUrl;
+    setFrame(() => htmlPreviewFrame({ revision: latestRevision, url, expiresAt }, Date.now()));
+  }
+  const renewGrant = useEffectEvent((url: string) => {
+    setEndingGrant(url);
+    // A command may have minted the next URL already; otherwise ask for it.
+    if (assetUrl._tag === "Success" && assetUrl.url === url) {
+      void refreshAssetUrl().catch(() => undefined);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mints a fresh URL shortly before the loaded page's grant expires
+  useEffect(() => {
+    if (frame === null) return;
+    const timer = setTimeout(() => renewGrant(frame.url), frame.renewAt - Date.now());
+    return () => clearTimeout(timer);
+  }, [frame]);
+  const revision = frame?.revision ?? latestRevision;
+  const url = assetUrl._tag !== "Success" ? null : (frame?.url ?? assetUrl.url);
+  const revisionSuffix =
+    revision === null
+      ? ""
+      : `${url?.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
 
   if (assetUrl._tag === "Failure") {
     return (
       <FileSurfaceFailure
-        {...MEDIA_FAILURE_COPY.document}
+        // SCIENT-FORK: failure copy in the active language.
+        {...mediaFailureCopy("document", messages)}
         retrying={assetUrl.waiting === true}
         onRetry={assetUrl.refresh}
       />
@@ -443,10 +533,12 @@ function WorkspaceBrowserPreview(props: {
       </div>
     );
   }
+  const documentId = `${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`;
   return (
     <BrowserDocumentFrame
-      src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${props.refreshKey}`}
+      src={`${url}${revisionSuffix}`}
+      documentKey={`${documentId}:${revision}:${frame?.renewAt}`}
+      documentId={documentId}
       title={props.title}
     />
   );
@@ -525,6 +617,8 @@ function WorkspaceAudioPreview(props: {
   /** Advances when the file's native watcher reports a change. */
   readonly refreshKey: number;
 }) {
+  // SCIENT-FORK: failure copy in the active language.
+  const messages = useMessages();
   const resource = workspaceAssetResource({
     kind: "media-file",
     threadRef: props.threadRef,
@@ -559,7 +653,8 @@ function WorkspaceAudioPreview(props: {
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
       <FileSurfaceFailure
-        {...MEDIA_FAILURE_COPY.audio}
+        // SCIENT-FORK: failure copy in the active language.
+        {...mediaFailureCopy("audio", messages)}
         retrying={retrying}
         onRetry={() => {
           setFailedUrl(null);
@@ -604,6 +699,10 @@ interface FileRevealState {
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
+  /** The path's code view offset when it last unmounted, restored when it is shown again. */
+  scrollTop: number;
+  scrollContainer: HTMLElement | null;
+  restoreFrameId: number | null;
 }
 
 export function useFileLineReveal(
@@ -631,6 +730,9 @@ export function useFileLineReveal(
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
+      scrollTop: 0,
+      scrollContainer: null,
+      restoreFrameId: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
 
@@ -640,10 +742,20 @@ export function useFileLineReveal(
         state.frameId = null;
       }
       state.cancelGuard?.();
+      if (state.restoreFrameId !== null) {
+        cancelAnimationFrame(state.restoreFrameId);
+        state.restoreFrameId = null;
+      }
     };
 
+    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
+
     if (phase === "unmount") {
+      // A view torn down before its restore ran never showed the saved offset, so keep it.
+      const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
+      if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      state.scrollContainer = null;
       return;
     }
 
@@ -660,13 +772,46 @@ export function useFileLineReveal(
       state.handledRequestId = null;
     }
 
+    if (scrollContainer && state.scrollContainer !== scrollContainer) {
+      state.scrollContainer = scrollContainer;
+      const savedScrollTop = state.scrollTop;
+      // A pending line reveal owns the scroll position.
+      if (
+        savedScrollTop > 0 &&
+        // SCIENT-FORK: a citation's source selection is a pending reveal too.
+        ((revealLine === null && !citation?.sourceSelection) ||
+          state.handledRequestId === revealRequestId)
+      ) {
+        const restoreScroll = (attempt: number) => {
+          state.restoreFrameId = requestAnimationFrame(() => {
+            state.restoreFrameId = null;
+            if (!scrollContainer.isConnected || scrollContainer.scrollTop !== 0) return;
+            // Wait for the virtualizer to size the file so the offset is not clamped.
+            const fits =
+              scrollContainer.scrollHeight - scrollContainer.clientHeight >= savedScrollTop;
+            if (fits || attempt >= REVEAL_MAX_ATTEMPTS) {
+              scrollContainer.scrollTop = savedScrollTop;
+              return;
+            }
+            restoreScroll(attempt + 1);
+          });
+        };
+        restoreScroll(0);
+      }
+    }
+
     if (revealLine === null && !citation?.sourceSelection) {
-      cancelPendingReveal();
+      // SCIENT-FORK:START — a cleared reveal stops its own frames, not the scroll restore.
+      if (state.frameId !== null) {
+        cancelAnimationFrame(state.frameId);
+        state.frameId = null;
+      }
+      state.cancelGuard?.();
+      // SCIENT-FORK:END
       fileContainer.style.minHeight = "";
       return;
     }
 
-    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
     if (!scrollContainer) return;
     fileContainer.style.minHeight = `${Math.ceil(
       Math.max(instance.height, scrollContainer.clientHeight),
@@ -782,11 +927,14 @@ export function useFileLineReveal(
   return { onPostRender, move };
 }
 
+const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
+
 const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
   editorType,
   options,
   editStateKey,
 ) => new Editor(editorType, options, editStateKey);
+type FileEditor = Editor<"file", FileCommentAnnotationGroup, undefined>;
 
 function editableFileContents(
   environmentId: EnvironmentId,
@@ -862,6 +1010,8 @@ interface EditableFileSurfaceProps {
   onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
   onSaveResolutionApplied: () => void;
   saveResolution: FileSaveResolution | null;
+  // SCIENT-FORK: optional, as Scient's other mounts of the editor (LaTeX, compute, Markdown source) pass none.
+  onEditorChange?: ((editor: FileEditor | null) => void) | undefined;
   onSelectionChange?: (range: SelectedLineRange | null) => void;
   activeLineRange?: SelectedLineRange | null;
   // SCIENT-FORK:START — what a clicked caret stands for when asking in chat.
@@ -945,6 +1095,7 @@ export function EditableFileEditor({
   onRunShortcut,
   enableFileComments = true,
   gutterUtilityVisibility = "always",
+  onEditorChange,
 }: Omit<
   EditableFileSurfaceProps,
   | "onPendingChange"
@@ -959,8 +1110,15 @@ export function EditableFileEditor({
   onExternalVersionApplied?: (version: number) => void;
   editingBlocked?: boolean;
 }) {
+  const messages = useMessages();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
+  const promptCommentIds = new Set(
+    useComposerDraftStore(
+      (store) =>
+        store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
+    ).map((comment) => comment.id),
+  );
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
@@ -1060,6 +1218,7 @@ export function EditableFileEditor({
     onAttach: (attachedEditor) => {
       editorRef.current = attachedEditor;
       setEditor(attachedEditor);
+      onEditorChange?.(attachedEditor);
       const persistence = externalBindings.current.externalPersistence;
       projectionReady.current = persistence === undefined;
       const snapshot = persistence?.getSnapshot();
@@ -1120,6 +1279,7 @@ export function EditableFileEditor({
       // SCIENT-FORK:START — a detached editor takes no in-place update.
       setEditor(null);
       // SCIENT-FORK:END
+      onEditorChange?.(null);
     },
     onFocus: () => queueMicrotask(() => reportEditorSelectionRef.current()),
   };
@@ -1151,7 +1311,7 @@ export function EditableFileEditor({
       setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
       for (const annotation of remapped) {
         for (const entry of annotation.metadata.entries) {
-          if (entry.kind !== "comment") continue;
+          if (entry.kind !== "comment" || !promptCommentIds.has(entry.id)) continue;
           addReviewComment(
             composerDraftTarget,
             buildFileReviewComment({
@@ -1170,6 +1330,8 @@ export function EditableFileEditor({
   };
   const { mathInput, onCompositionEnd, onKeyDownCapture } = useScientFileEditorBindings({
     editor,
+    environmentId,
+    cwd,
     relativePath,
     editingBlocked: editingBlocked || restorationBlocked,
     surfaceRef,
@@ -1372,7 +1534,9 @@ export function EditableFileEditor({
         {/* SCIENT-FORK:START — Explain source refusal without discarding retained edits. */}
         {restorationBlocked ? (
           <div role="alert" className="p-2 text-xs text-muted-foreground">
-            Source editing is paused to protect changes made in Rich. Return to Rich to continue.
+            <T>
+              Source editing is paused to protect changes made in Rich. Return to Rich to continue.
+            </T>
           </div>
         ) : null}
         {/* SCIENT-FORK:END */}
@@ -1415,29 +1579,37 @@ export function EditableFileEditor({
             }}
             selectedLines={displayedRange}
             lineAnnotations={enableFileComments ? lineAnnotations : []}
-            renderAnnotation={(annotation) => (
-              <div className="py-1">
-                {annotation.metadata.entries.map((entry) => (
-                  <DiffCommentAnnotation
-                    key={entry.id}
-                    environmentId={environmentId}
-                    projectId={projectId}
-                    ownerKey={JSON.stringify([
-                      environmentId,
-                      composerDraftTarget,
-                      relativePath,
-                      entry.id,
-                    ])}
-                    kind={entry.kind}
-                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                    text={entry.text}
-                    onCancel={() => removeAnnotationEntry(entry.id)}
-                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                    onDelete={() => removeAnnotationEntry(entry.id)}
-                  />
-                ))}
-              </div>
-            )}
+            renderAnnotation={(annotation) => {
+              // Sent comments stay annotated so a failed send can restore them at remapped lines.
+              const entries = promptFileCommentEntries(
+                annotation.metadata.entries,
+                promptCommentIds,
+              );
+              if (entries.length === 0) return null;
+              return (
+                <div className="py-1">
+                  {entries.map((entry) => (
+                    <DiffCommentAnnotation
+                      key={entry.id}
+                      environmentId={environmentId}
+                      projectId={projectId}
+                      ownerKey={JSON.stringify([
+                        environmentId,
+                        composerDraftTarget,
+                        relativePath,
+                        entry.id,
+                      ])}
+                      kind={entry.kind}
+                      rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine, messages)}
+                      text={entry.text}
+                      onCancel={() => removeAnnotationEntry(entry.id)}
+                      onComment={(text) => submitAnnotationEntry(entry.id, text)}
+                      onDelete={() => removeAnnotationEntry(entry.id)}
+                    />
+                  ))}
+                </div>
+              );
+            }}
             // SCIENT-FORK:START — editor action beside Add comment in the gutter
             {...scientEditorGutterUtility(
               renderEditorGutterAction,
@@ -1451,6 +1623,25 @@ export function EditableFileEditor({
       </div>
     </EditProvider>
   );
+}
+
+function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
+  const mac = isMacPlatform(navigator.platform);
+  const selectAll =
+    event.key.toLowerCase() === "a" &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+    !event.shiftKey &&
+    !event.altKey;
+  // React bubbles keys from portaled children (the image dialog) through this surface.
+  if (
+    !selectAll ||
+    !(event.target instanceof Node) ||
+    !event.currentTarget.contains(event.target)
+  ) {
+    return;
+  }
+  event.preventDefault();
+  window.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
 /** T3's ordinary rendered preview remains authoritative for MDX. */
@@ -1479,6 +1670,7 @@ function RenderedMarkdownSurface({
   | "revealRequestId"
   | "wordWrap"
   | "onPostRender"
+  | "onEditorChange"
 > & {
   truncated: boolean;
   readOnly: boolean;
@@ -1502,7 +1694,7 @@ function RenderedMarkdownSurface({
   });
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}
@@ -1533,11 +1725,14 @@ function RenderedMarkdownSurface({
 function renderedToggleLabel(
   mode: "markdown" | "mermaid" | "html" | "table",
   rendered: boolean,
+  resolve: MessageResolver,
 ): string {
-  if (mode === "mermaid") return rendered ? "Show Mermaid source" : "Show rendered diagram";
-  if (mode === "markdown") return rendered ? "Show markdown source" : "Show rendered markdown";
-  if (mode === "table") return rendered ? "Show source" : "Show table";
-  return rendered ? "Show HTML source" : "Show rendered page";
+  if (mode === "mermaid")
+    return rendered ? resolve(msg("Show Mermaid source")) : resolve(msg("Show rendered diagram"));
+  if (mode === "markdown")
+    return rendered ? resolve(msg("Show markdown source")) : resolve(msg("Show rendered markdown"));
+  if (mode === "table") return rendered ? resolve(msg("Show source")) : resolve(msg("Show table"));
+  return rendered ? resolve(msg("Show HTML source")) : resolve(msg("Show rendered page"));
 }
 
 // SCIENT-FORK:START — the file list's saved state is read through usePanelFilesOpen
@@ -1581,18 +1776,22 @@ export default function FilePreviewPanel({
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
+  const gt = useGT();
+  const m = useMessages();
   const { resolvedTheme } = useTheme();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const hostEnvironmentId = useAtomValue(hostEnvironmentIdAtom);
   const remoteOpenState = useRemoteOpenState(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const previewAvailable = usePreviewAvailable(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
+    refresh: true,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
@@ -1612,7 +1811,7 @@ export default function FilePreviewPanel({
   // workspace editor or explorer.
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isHostPath(relativePath));
-  const fileAccess = useFilesystemReadAccess(environmentId);
+  const fileAccess = useFilesystemReadAccess(environmentId, m);
   const { canReadFiles } = fileAccess;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [genericPendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
@@ -1820,6 +2019,7 @@ export default function FilePreviewPanel({
     markdownSnapshot,
     relativePath,
     hostOs,
+    m,
   );
   const compiledRevealRevision =
     latexSourceReveal?.id === revealRequestId ? latexSourceReveal.revision : null;
@@ -1871,6 +2071,25 @@ export default function FilePreviewPanel({
     !isPdf &&
     !isDocument &&
     !renderMermaid;
+  const copyableContents =
+    previewPath !== null &&
+    !isMedia &&
+    !isDocument &&
+    !isPdf &&
+    file.data &&
+    !file.data.truncated &&
+    file.data.contents.length > 0
+      ? file.data.contents
+      : null;
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget(previewPath ?? ""),
+    onError: (error) =>
+      toastManager.add({
+        type: "error",
+        title: gt("Could not copy file"),
+        description: error.message,
+      }),
+  });
   const awaitingMarkdownLease =
     usesDocumentSession &&
     markdownLease === null &&
@@ -1900,6 +2119,59 @@ export default function FilePreviewPanel({
       return;
     }
     runAfterPendingSave([relativePath], apply);
+  };
+  const contentFocusRef = useRef<HTMLDivElement>(null);
+  const fileEditorRef = useRef<FileEditor | null>(null);
+  const focusEditorFromContent = () => {
+    const editor = fileEditorRef.current;
+    if (!editor || document.activeElement !== contentFocusRef.current) return;
+    // Without a caret the editor focuses with no selection, so no caret shows and typing
+    // lands on whatever the browser selection held.
+    const hasCaret = Boolean(editor.getViewState().selections?.length);
+    editor.focus(
+      hasCaret
+        ? { preventScroll: true }
+        : { preventScroll: true, lineNumber: revealLine ?? "first-visible" },
+    );
+  };
+  const handleEditorChange = (editor: FileEditor | null) => {
+    fileEditorRef.current = editor;
+    focusEditorFromContent();
+  };
+  const handleEditorChangeStable = useStableCallback(handleEditorChange);
+  // SCIENT-FORK:START — rendered only beside the source editor, which Scient's surface chain picks.
+  // Panel focus lands here and passes to the editor once it attaches. sr-only keeps the
+  // 1px box workspace focus needs, and clips it so clicks in the file never reach it.
+  // The hand-off waits a microtask: workspace focus checks that focus stayed here.
+  const contentFocus = (
+    <div
+      ref={contentFocusRef}
+      tabIndex={-1}
+      data-workspace-focus-default
+      data-file-content-focus
+      aria-label={gt("File contents")}
+      className="sr-only"
+      onFocus={() => queueMicrotask(focusEditorFromContent)}
+    />
+  );
+  // SCIENT-FORK:END
+  const focusEditorOnTreeRowClickOrEnter = (event: {
+    nativeEvent: Event;
+    altKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+  }) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const row = event.nativeEvent
+      .composedPath()
+      .find(
+        (node): node is Element =>
+          node instanceof Element && node.matches('[role="treeitem"][data-item-path]'),
+      );
+    const path = row?.getAttribute("data-item-path");
+    if (!path || path.endsWith("/")) return;
+    requestWorkspaceFocus({ area: "panel", selector: "[data-file-content-focus]" });
   };
   const handleRenderedChange = (pressed: boolean) => {
     if (isMermaid) {
@@ -2209,8 +2481,8 @@ export default function FilePreviewPanel({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open file in browser",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Unable to open file in browser"),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         }),
       );
     })();
@@ -2239,13 +2511,13 @@ export default function FilePreviewPanel({
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-4" />
-          Checking file access...
+          <T>Checking file access...</T>
         </div>
       );
     }
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        {fileAccess.error ?? "This connection cannot read host files."}
+        {fileAccess.error ?? gt("This connection cannot read host files.")}
       </div>
     );
   }
@@ -2324,16 +2596,18 @@ export default function FilePreviewPanel({
                       {...(isRichMarkdown
                         ? {
                             normalize: normalizeMarkdownCreatePath,
-                            invalidMessage: "Enter a relative Markdown path inside this workspace.",
+                            invalidMessage: gt(
+                              "Enter a relative Markdown path inside this workspace.",
+                            ),
                           }
                         : {})}
                       {...(latexRename?.includedBy
                         ? {
                             notice: (
-                              <>
-                                {latexRename.includedBy} includes this file. After renaming, update
-                                the line that includes it.
-                              </>
+                              <T>
+                                <Var>{latexRename.includedBy}</Var> includes this file. After
+                                renaming, update the line that includes it.
+                              </T>
                             ),
                           }
                         : {})}
@@ -2381,7 +2655,9 @@ export default function FilePreviewPanel({
             {/* SCIENT-FORK:END */}
           </ScrollArea>
           {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          (environmentId === primaryEnvironmentId ||
+            environmentId === hostEnvironmentId ||
+            remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
@@ -2397,7 +2673,7 @@ export default function FilePreviewPanel({
               when it switches to the source and back. */}
           {showsRawText ? (
             <FileSurfaceAction
-              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              label={wordWrap ? gt("Disable word wrap") : gt("Enable word wrap")}
               pressed={wordWrap}
               onPress={() => setWordWrapOverride(!wordWrap)}
             >
@@ -2410,18 +2686,32 @@ export default function FilePreviewPanel({
           ) : null}
           {canToggleRenderedForSurface ? (
             <FileSurfaceAction
-              label={renderedToggleLabel(renderedMode!, surfaceRendered)}
+              label={renderedToggleLabel(renderedMode!, surfaceRendered, m)}
               pressed={surfaceRendered}
               onPress={() => handleRenderedChange(!surfaceRendered)}
             >
-              <MorphIcon
-                className="size-3.5"
-                icon={surfaceRendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
-              />
+              {surfaceRendered ? (
+                <Code2Icon className="size-3.5" />
+              ) : renderedMode === "table" ? (
+                <Table2Icon className="size-3.5" />
+              ) : (
+                <EyeIcon className="size-3.5" />
+              )}
+            </FileSurfaceAction>
+          ) : null}
+          {copyableContents !== null ? (
+            <FileSurfaceAction
+              label={isCopied ? gt("Copied") : gt("Copy contents")}
+              onPress={() => copyToClipboard(copyableContents, undefined)}
+            >
+              {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
-            <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
+            <FileSurfaceAction
+              label={gt("Open file in preview browser")}
+              onPress={handleOpenInBrowser}
+            >
               <Globe className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
@@ -2502,11 +2792,11 @@ export default function FilePreviewPanel({
           ) : canSaveCopy && latexDownloads ? (
             <DocumentDownloadMenu
               {...latexDownloads}
-              sourceLabel="LaTeX source (.tex)"
+              sourceLabel={gt("LaTeX source (.tex)")}
               onSaveCopy={handleSaveCopy}
             />
           ) : canSaveCopy ? (
-            <FileSurfaceAction label="Save a copy to this device" onPress={handleSaveCopy}>
+            <FileSurfaceAction label={gt("Save a copy to this device")} onPress={handleSaveCopy}>
               <Download className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
@@ -2551,9 +2841,11 @@ export default function FilePreviewPanel({
         >
           <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
           <p className="min-w-0 flex-1 leading-snug">
-            <span className="font-medium">This file is no longer on disk.</span>{" "}
+            <span className="font-medium">
+              <T>This file is no longer on disk.</T>
+            </span>{" "}
             <span className="text-muted-foreground">
-              Your text is still here and hasn’t been saved anywhere.
+              <T>Your text is still here and hasn’t been saved anywhere.</T>
             </span>
           </p>
           <Button
@@ -2561,18 +2853,19 @@ export default function FilePreviewPanel({
             disabled={!canWriteFiles || file.data === null}
             onClick={() => genericSaveCoordinator.recreateMissingCurrent(file.data!.contents)}
           >
-            Save it again
+            <T>Save it again</T>
           </Button>
         </div>
       ) : null}
       {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
-          Read-only connection. Unsaved edits are kept until write access returns.
+          <T>Read-only connection. Unsaved edits are kept until write access returns.</T>
         </div>
       ) : null}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
-          {readOnlyNotice(file.data.outsideWorkspace === true)}
+          {/* SCIENT-FORK: the read-only notice in the active language. */}
+          {readOnlyNotice(file.data.outsideWorkspace === true, m)}
         </div>
       ) : null}
       {previewPath &&
@@ -2583,8 +2876,10 @@ export default function FilePreviewPanel({
       file.data?.truncated &&
       !renderLargeText ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 scient-reading-micro text-warning-foreground">
-          Read-only preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()}{" "}
-          byte file.
+          {gt(
+            "{count, plural, one {Read-only preview limited to the first 1 MB of a {formatted} byte file.} other {Read-only preview limited to the first 1 MB of a {formatted} byte file.}}",
+            { count: file.data.byteLength, formatted: file.data.byteLength.toLocaleString() },
+          )}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -2670,7 +2965,9 @@ export default function FilePreviewPanel({
               workspaceRoot={cwd}
               relativePath={relativePath}
               title={relativePath}
+              workspaceMutationId={workspaceMutationId}
               refreshKey={viewerRefreshKey}
+              manualReloadKey={manualReloadKey}
             />
           ) : awaitingMarkdownLease && admissionError ? (
             // SCIENT-FORK:START — document session could not be admitted
@@ -2691,7 +2988,7 @@ export default function FilePreviewPanel({
             ) : (
               <div
                 className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
-                aria-label="Opening editor"
+                aria-label={gt("Opening editor")}
               />
             )
           ) : // SCIENT-FORK:START — data files open in the paged grid; CSV and TSV keep their text view
@@ -2761,7 +3058,7 @@ export default function FilePreviewPanel({
                     mimeType="application/octet-stream"
                     sizeBytes={0}
                     asset={documentAsset}
-                    origin="File"
+                    origin={gt("File", { $context: "label for a file opened from the workspace" })}
                     embedded
                     onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
                   />
@@ -2917,21 +3214,25 @@ export default function FilePreviewPanel({
                 />
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
-              <MarkdownSourceSurface
-                threadRef={threadRef}
-                onCite={onCiteFile}
-                citationReveal={citationRevealActive ? fileCitation : undefined}
-                key={documentSurfaceKey}
-                persistence={markdownLease}
-                environmentId={environmentId}
-                cwd={cwd}
-                relativePath={relativePath}
-                composerDraftTarget={composerDraftTarget}
-                resolvedTheme={resolvedTheme}
-                revealRequestId={revealRequestId}
-                wordWrap={wordWrap}
-                onPostRender={onFilePostRender}
-              />
+              <>
+                {contentFocus}
+                <MarkdownSourceSurface
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  key={documentSurfaceKey}
+                  persistence={markdownLease}
+                  environmentId={environmentId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  composerDraftTarget={composerDraftTarget}
+                  resolvedTheme={resolvedTheme}
+                  revealRequestId={revealRequestId}
+                  wordWrap={wordWrap}
+                  onPostRender={onFilePostRender}
+                  onEditorChange={handleEditorChangeStable}
+                />
+              </>
             ) : isMarkdownDocument && renderMarkdown ? (
               <RenderedMarkdownSurface
                 key={relativePath}
@@ -2988,75 +3289,88 @@ export default function FilePreviewPanel({
                 onPostRender={onFilePostRender}
               />
             ) : (
-              <EditableFileSurface
-                threadRef={threadRef}
-                onCite={onCiteFile}
-                citationReveal={citationRevealActive ? fileCitation : undefined}
-                citationBaseline={file.authoritativeData?.contents}
-                key={`${relativePath}:${resolvedTheme}`}
-                environmentId={environmentId}
-                projectId={projectId}
-                cwd={cwd}
-                relativePath={relativePath}
-                composerDraftTarget={composerDraftTarget}
-                contents={file.data.contents}
-                initialSource={queriedFile.authoritativeData?.contents ?? ""}
-                revision={queriedFile.authoritativeData?.revision ?? ""}
-                {...(queriedFile.authoritativeData?.publicationAttention === undefined
-                  ? {}
-                  : { publicationAttention: queriedFile.authoritativeData.publicationAttention })}
-                resolvedTheme={resolvedTheme}
-                revealRequestId={revealRequestId}
-                wordWrap={wordWrap}
-                onPostRender={onFilePostRender}
-                onPendingChange={handlePendingChange}
-                onSaveFailure={handleSaveFailure}
-                onSaveConfirmed={handleSaveConfirmed}
-                onSaveResolutionApplied={handleSaveResolutionApplied}
-                saveResolution={saveResolution}
-              />
+              <>
+                {contentFocus}
+                <EditableFileSurface
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  citationBaseline={file.authoritativeData?.contents}
+                  key={`${relativePath}:${resolvedTheme}`}
+                  environmentId={environmentId}
+                  projectId={projectId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  composerDraftTarget={composerDraftTarget}
+                  contents={file.data.contents}
+                  initialSource={queriedFile.authoritativeData?.contents ?? ""}
+                  revision={queriedFile.authoritativeData?.revision ?? ""}
+                  {...(queriedFile.authoritativeData?.publicationAttention === undefined
+                    ? {}
+                    : { publicationAttention: queriedFile.authoritativeData.publicationAttention })}
+                  resolvedTheme={resolvedTheme}
+                  revealRequestId={revealRequestId}
+                  wordWrap={wordWrap}
+                  onPostRender={onFilePostRender}
+                  onPendingChange={handlePendingChange}
+                  onSaveFailure={handleSaveFailure}
+                  onSaveConfirmed={handleSaveConfirmed}
+                  onSaveResolutionApplied={handleSaveResolutionApplied}
+                  saveResolution={saveResolution}
+                  onEditorChange={handleEditorChangeStable}
+                />
+              </>
             )
           ) : null}
         </ScientDocumentShelf>
         {showExplorer ? (
           <FileExplorerPane resizable={Boolean(previewPath)}>
-            <FileBrowserPanel
-              key={`${environmentId}:${hostFolderPath ?? cwd}`}
-              environmentId={environmentId}
-              cwd={hostFolderPath ?? cwd}
-              projectName={hostFolderPath ?? projectName}
-              hostFolder={hostFolderPath !== null}
-              selectedPath={
-                hostFolderPath === null
-                  ? relativePath
-                  : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
-              }
-              selectedPathRevealId={revealRequestId}
-              onOpenFile={onOpenFile}
-              onOpenFileSource={onOpenFileSource}
-              workspaceMutationId={workspaceMutationId}
-              // SCIENT-FORK:START — the Files tab's Back and Forward sit in its toolbar
-              {...(previewPath === null
-                ? {
-                    scientToolbarLeading: (
-                      <TabHistoryButtons
-                        threadRef={threadRef}
-                        surfaceId={scientSurfaceId}
-                        keybindings={keybindings}
-                      />
-                    ),
-                  }
-                : {})}
-              // SCIENT-FORK:END
-              {...(previewPath && !isMedia && !isPdf
-                ? {
-                    onRefreshSelectedFile: () => {
-                      if (!isDocument) file.refresh();
-                      setFileRefreshRevision((value) => value + 1);
-                    },
-                  }
-                : {})}
-            />
+            <div
+              className="contents"
+              onClick={focusEditorOnTreeRowClickOrEnter}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") focusEditorOnTreeRowClickOrEnter(event);
+              }}
+            >
+              <FileBrowserPanel
+                key={`${environmentId}:${hostFolderPath ?? cwd}`}
+                environmentId={environmentId}
+                cwd={hostFolderPath ?? cwd}
+                projectName={hostFolderPath ?? projectName}
+                hostFolder={hostFolderPath !== null}
+                selectedPath={
+                  hostFolderPath === null
+                    ? relativePath
+                    : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
+                }
+                selectedPathRevealId={revealRequestId}
+                onOpenFile={onOpenFile}
+                onOpenFileSource={onOpenFileSource}
+                answersPanelFind={!previewPath}
+                workspaceMutationId={workspaceMutationId}
+                // SCIENT-FORK:START — the Files tab's Back and Forward sit in its toolbar
+                {...(previewPath === null
+                  ? {
+                      scientToolbarLeading: (
+                        <TabHistoryButtons
+                          threadRef={threadRef}
+                          surfaceId={scientSurfaceId}
+                          keybindings={keybindings}
+                        />
+                      ),
+                    }
+                  : {})}
+                // SCIENT-FORK:END
+                {...(previewPath && !isMedia && !isPdf
+                  ? {
+                      onRefreshSelectedFile: () => {
+                        if (!isDocument) file.refresh();
+                        setFileRefreshRevision((value) => value + 1);
+                      },
+                    }
+                  : {})}
+              />
+            </div>
           </FileExplorerPane>
         ) : null}
       </div>
@@ -3092,14 +3406,17 @@ export function WorkspaceLargeTextPreview(props: {
     path: props.absolutePath,
     disposition: "attachment",
   } as const;
+  const gt = useGT();
   const copyContents = useRef<(() => Promise<string>) | null>(null);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget(props.name),
+  });
   const [revision, setRevision] = useState(0);
   const showError = (cause: unknown) => {
     toastManager.add({
       type: "error",
-      title: "Could not read file",
-      description: cause instanceof Error ? cause.message : "Try again.",
+      title: gt("Could not read file"),
+      description: thrownErrorMessage(cause, m) ?? gt("Try again."),
     });
   };
   // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
@@ -3125,8 +3442,8 @@ export function WorkspaceLargeTextPreview(props: {
   if (assetUrl._tag === "Failure")
     return (
       <FileSurfaceFailure
-        title="Couldn't open this file"
-        description="Scient couldn't load this file."
+        title={gt("Couldn't open this file")}
+        description={gt("Scient couldn't load this file.")}
         onRetry={() => {
           setRevision((value) => value + 1);
           void refreshAssetUrl().catch(showError);
@@ -3138,9 +3455,11 @@ export function WorkspaceLargeTextPreview(props: {
   return (
     <>
       <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-        <span className="min-w-0 flex-1 text-xs text-muted-foreground">Full file</span>
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+          <T>Full file</T>
+        </span>
         <FileSurfaceAction
-          label={isCopied ? "Copied" : "Copy contents"}
+          label={isCopied ? gt("Copied") : gt("Copy contents")}
           onPress={() => {
             const copy = copyContents.current;
             if (!copy) return;
@@ -3152,7 +3471,7 @@ export function WorkspaceLargeTextPreview(props: {
           {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </FileSurfaceAction>
         {props.onSaveCopy ? (
-          <FileSurfaceAction label="Save a copy to this device" onPress={props.onSaveCopy}>
+          <FileSurfaceAction label={gt("Save a copy to this device")} onPress={props.onSaveCopy}>
             <DownloadIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}

@@ -543,10 +543,21 @@ describe("Oh My Pi RPC client", () => {
             }),
           );
         }
-        // The transport is drained asynchronously, so wait for the frame.
-        yield* Effect.sleep("2 seconds").pipe(TestClock.withLive);
-        const delivered = yield* Queue.takeAll(seen);
-        expect(delivered.filter((notification) => notification._tag === "Event")).toHaveLength(1);
+        // Frames are decoded in order, so everything the large frame produced precedes the barrier.
+        yield* Queue.offer(stdout, line({ type: "test_barrier" }));
+        const delivered: Array<OmpRpcNotification> = [];
+        for (;;) {
+          const next = yield* Queue.take(seen);
+          if (next._tag === "Event" && next.event.type === "test_barrier") break;
+          delivered.push(next);
+        }
+        const events = delivered.flatMap((notification) =>
+          notification._tag === "Event" ? [notification.event] : [],
+        );
+        expect(events.map((event) => event.type)).toEqual(["agent_end"]);
+        expect((events[0] as { readonly messages?: ReadonlyArray<unknown> }).messages).toHaveLength(
+          70_000,
+        );
         expect(delivered.filter((notification) => notification._tag === "ProtocolFailure")).toEqual(
           [],
         );

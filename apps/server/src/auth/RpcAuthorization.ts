@@ -2,6 +2,7 @@ import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
+  containsSecretReference,
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
@@ -24,6 +25,8 @@ import {
   AuthTerminalOperateScope,
   ORCHESTRATION_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2Command,
+  type OrchestrationV2ThreadLaunchInput,
   AuthTerminalReadScope,
   type AuthEnvironmentScope,
   EnvironmentAuthorizationError,
@@ -35,12 +38,14 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
+import { isProviderSignOutPrompt } from "../orchestration-v2/CommandPolicy.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
   ...CLIENT_GUARDED_RPC_SCOPES,
   [ORCHESTRATION_WS_METHODS.getForkOptions]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_WS_METHODS.awaitFork]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: AuthOrchestrationReadScope,
@@ -73,6 +78,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
+  [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
+  // SCIENT-FORK: an Antigravity plugin sign-in takes the same grant as an MCP sign-in.
+  [WS_METHODS.pluginSignInOpen]: AuthProvidersManageScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptImportProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptHandoffSubscribe]: AuthProvidersManageScope,
@@ -94,6 +103,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverStartProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderRuntime]: AuthProvidersManageScope,
+  [WS_METHODS.serverObserveProviderRuntimePick]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
@@ -103,7 +113,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
+  // Names only, so a client that reads threads can open a linked environment's.
+  [WS_METHODS.peerLinksNames]: AuthOrchestrationReadScope,
+  // A linked environment's thread is read as this one's own are.
+  [WS_METHODS.peerLinksSubscribeThread]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksThreadHistoryPage]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksThreadItem]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
 
   [WS_METHODS.serverSaveCustomModel]: AuthSettingsWriteScope,
@@ -241,6 +258,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer (authorize also requires
+  // the desktop's own session, checked by its handler).
+  [WS_METHODS.scientConnectStatus]: AuthRelayReadScope,
+  [WS_METHODS.scientConnectAuthorize]: AuthRelayWriteScope,
+  [WS_METHODS.scientConnectTurnOff]: AuthRelayWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsFilterOptions]: AuthOrchestrationReadScope,
@@ -250,6 +273,15 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsStack]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLinkedThreads]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesTemplates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesLinkedThreads]: AuthOrchestrationReadScope,
+  [WS_METHODS.issueTrackersList]: AuthOrchestrationReadScope,
+  [WS_METHODS.issueTrackersConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.issueTrackersBindProject]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
@@ -261,6 +293,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReportState]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
@@ -277,6 +310,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
   [WS_METHODS.filesystemBrowse]: AuthFilesystemReadScope,
+  [WS_METHODS.workspaceListFolders]: AuthFilesystemReadScope,
+  [WS_METHODS.workspaceScanFolders]: AuthFilesystemReadScope,
+  [WS_METHODS.workspaceTaskFolder]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListDirectory]: AuthFilesystemReadScope,
   [WS_METHODS.projectsRenameFile]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsDeleteFile]: AuthFilesystemWriteScope,
@@ -298,7 +334,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.analysisPromoteRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeInspectRuntimes]: AuthOrchestrationReadScope,
   [WS_METHODS.computeRuntimeInventory]: AuthOrchestrationReadScope,
-  [WS_METHODS.computeActiveWork]: AuthOrchestrationReadScope,
   [WS_METHODS.computeVerifyRuntime]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeManagedRuntimeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.computeManageRuntime]: AuthOrchestrationOperateScope,
@@ -318,6 +353,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.dataReadFileTable]: AuthFilesystemReadScope,
   [WS_METHODS.computeSaveOutput]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeSaveConsoleNotebook]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsResolve]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsPlaceFigure]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsPlaceLatex]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsPlacements]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsUpdateFiles]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsUndoUpdate]: AuthFilesystemWriteScope,
   [WS_METHODS.computeSubmitCells]: AuthOrchestrationOperateScope,
   [WS_METHODS.notebookRead]: AuthFilesystemReadScope,
   [WS_METHODS.notebookReadOutput]: AuthFilesystemReadScope,
@@ -356,6 +399,15 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushResolve]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
+  // SCIENT-FORK: who has a thread's room open; invites are guarded with the client scopes.
+  [WS_METHODS.threadRoomPresence]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — a voice call drives the thread's agent like a sent message.
+  [WS_METHODS.liveVoiceCall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.liveVoiceMute]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — ChatGPT dictation runs the agent with its sign-in, like transcript correction.
+  [WS_METHODS.voiceDictateWithChatGpt]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash write files.
   [WS_METHODS.projectsChangeEntries]: AuthFilesystemWriteScope,
@@ -364,6 +416,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsOpenWith]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeComputeActiveWork]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDocumentBindingChanges]: AuthFilesystemReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
@@ -450,6 +503,32 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
+/**
+ * A queued edit that omits `attachments` keeps the queued ones, which a payload cannot show;
+ * ThreadMessageIntake.dispatchCommand decides that case.
+ */
+const sendsProviderSignOutPrompt = (method: string, payload: unknown): boolean => {
+  if (method === ORCHESTRATION_V2_WS_METHODS.launchThread) {
+    const message = (payload as OrchestrationV2ThreadLaunchInput).initialMessage;
+    return message !== undefined && isProviderSignOutPrompt(message);
+  }
+  if (method !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand) return false;
+  const command = payload as OrchestrationV2Command;
+  switch (command.type) {
+    case "message.dispatch":
+      return isProviderSignOutPrompt(command);
+    case "queued-run.edit":
+      return (
+        command.attachments !== undefined &&
+        isProviderSignOutPrompt({ text: command.text, attachments: command.attachments })
+      );
+    case "delegated_task.request":
+      return isProviderSignOutPrompt({ text: command.task, attachments: [] });
+    default:
+      return false;
+  }
+};
+
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
@@ -465,18 +544,30 @@ const requiredScopesForRpcCall = (
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
-      resource._tag === "draft-workspace-file"
+      resource._tag === "draft-workspace-file" ||
+      (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
         ? AuthFilesystemReadScope
         : AuthOrchestrationReadScope,
     ];
   }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  // These send the credential they are given to a URL the caller names, as a saved setting would.
+  if (
+    (method === WS_METHODS.deviceSimlockIdentity ||
+      method === WS_METHODS.deviceEasAccount ||
+      method === WS_METHODS.serverListTextGeneratorModels) &&
+    containsSecretReference(payload)
+  ) {
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
   }
   const guarded = clientRpcRequiredScopes(method, payload);
-  if (guarded.length > 0) return guarded;
-  return [requiredScopeForRpcMethod(method)];
+  const scopes = guarded.length > 0 ? guarded : [requiredScopeForRpcMethod(method)];
+  return sendsProviderSignOutPrompt(method, payload)
+    ? [...scopes, AuthProvidersManageScope]
+    : scopes;
 };
 
 /**

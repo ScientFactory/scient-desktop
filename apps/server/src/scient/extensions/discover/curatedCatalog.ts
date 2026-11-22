@@ -7,6 +7,7 @@ import {
   matchesExtensionAddressTemplate,
   type DiscoverEntry,
   type ExtensionCategory,
+  type LocalPackage,
 } from "@t3tools/contracts";
 
 import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
@@ -16,42 +17,79 @@ const CATALOG_VERIFIED_ON = "2026-10-21";
 /** Names of curated servers not listed in the MCP Registry. Install them by URL. */
 export const CURATED_NAME_PREFIX = "scient.curated/";
 
-/** Section order on the Discover home page. */
-export const FEATURED_SERVER_IDS = [
-  "semantic-scholar",
+/** Most used: what nearly everyone needs, whatever their field, in this order. */
+export const MOST_USED_SERVER_IDS = [
+  "github",
+  "slack",
+  "notion",
   "pubmed",
-  "wolfram",
-  "hugging-face",
-  "nasa-earthdata",
-  "biorender",
+  "semantic-scholar",
+  "exa",
+  "playwright",
+  "context7",
+  "vercel",
+  "cloudflare",
 ] as const;
 
+/** Section order on the Discover home page: most used, then fields led by where users work. */
 export const CATALOG_CATEGORY_ORDER: ReadonlyArray<ExtensionCategory> = [
-  "featured",
+  "most-used",
   "papers",
   "biology",
+  "code",
+  "data",
+  "physics-math",
+  "files",
+  "communication",
+  "projects",
+  "figures",
   "chemistry",
   "earth",
-  "physics-math",
   "social-science",
-  "data",
-  "writing",
-  "figures",
-  "code",
-  "teamwork",
 ];
 
 export const CATALOG_SECTIONS: Readonly<
   Record<ExtensionCategory, { readonly title: string; readonly description: string }>
 > = {
-  featured: { title: "Featured", description: "Strong starting points across the sciences." },
+  "most-used": {
+    title: "Most used",
+    description: "What nearly everyone connects, whatever their field.",
+  },
   papers: {
-    title: "Papers & evidence",
+    title: "Papers & literature",
     description: "Find publications, follow citations and weigh the evidence.",
   },
   biology: {
-    title: "Biology & health",
+    title: "Biology & medicine",
     description: "Genes, proteins, structures, disease, trials and lab data.",
+  },
+  code: {
+    title: "Code & developer tools",
+    description: "Repositories, models, documentation and deployment.",
+  },
+  data: {
+    title: "Data & databases",
+    description: "Datasets, notebooks, warehouses and databases.",
+  },
+  "physics-math": {
+    title: "Physics, maths & astronomy",
+    description: "Preprints, symbolic computation, sequences and the sky.",
+  },
+  files: {
+    title: "Files & documents",
+    description: "Your drives, documents and shared workspaces.",
+  },
+  communication: {
+    title: "Email, calendar & chat",
+    description: "Mail, meetings, calendars and messages.",
+  },
+  projects: {
+    title: "Projects & tasks",
+    description: "Issues, tasks, boards and project tracking.",
+  },
+  figures: {
+    title: "Figures & diagrams",
+    description: "Scientific illustrations, diagrams, slides and boards.",
   },
   chemistry: {
     title: "Chemistry & materials",
@@ -61,28 +99,10 @@ export const CATALOG_SECTIONS: Readonly<
     title: "Earth & environment",
     description: "Earth observation, climate, earthquakes, biodiversity and agriculture.",
   },
-  "physics-math": {
-    title: "Physics, astronomy & math",
-    description: "Preprints, symbolic computation, sequences and the sky.",
-  },
   "social-science": {
     title: "Social science & economics",
     description: "Economic and development indicators, census data and open studies.",
   },
-  data: {
-    title: "Data & statistics",
-    description: "Datasets, notebooks and databases.",
-  },
-  writing: {
-    title: "Writing & references",
-    description: "Documents, notes, files and references.",
-  },
-  figures: {
-    title: "Figures & presentations",
-    description: "Scientific illustrations, diagrams, slides and boards.",
-  },
-  code: { title: "Code", description: "Repositories, documentation and developer tools." },
-  teamwork: { title: "Teamwork", description: "Chat, meetings, tasks and project tracking." },
 };
 
 export interface CuratedServer {
@@ -93,8 +113,10 @@ export interface CuratedServer {
   readonly tagline: string;
   /** Two or three sentences. */
   readonly description: string;
-  /** Streamable HTTP endpoint (https). */
-  readonly url: string;
+  /** Streamable HTTP endpoint (https); absent for a server Scient runs on the computer. */
+  readonly url?: string;
+  /** A pinned package Scient runs on the computer, for a server with no web address. */
+  readonly localPackage?: LocalPackage;
   /** The MCP Registry entry publishing this exact remote, when there is one. */
   readonly registry?: { readonly name: string; readonly version: string };
   /** First category is the primary one; `featured` may be added to any entry. */
@@ -124,7 +146,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Search biomedical literature, read abstracts and find related papers. Anthropic's public connector also retrieves full text from PubMed Central when available; article reuse follows the publisher's licence.",
     url: "https://pubmed.mcp.claude.com/mcp",
-    categories: ["featured", "papers", "biology"],
+    categories: ["most-used", "papers", "biology"],
     websiteUrl: "https://pubmed.ncbi.nlm.nih.gov",
     icon: CURATED_ICONS["pubmed"],
   },
@@ -137,7 +159,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Ai2's Semantic Scholar corpus for agents. Search papers by relevance or title, read citations and author publication lists, and pull matching snippets from paper text.",
     url: "https://api.semanticscholar.org/mcp",
-    categories: ["featured", "papers"],
+    categories: ["most-used", "papers"],
     websiteUrl: "https://www.semanticscholar.org",
     icon: CURATED_ICONS["semantic-scholar"],
   },
@@ -184,6 +206,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "scite",
+    agentStores: { codex: "scite" },
     accountRequired: true,
     displayName: "scite",
     tagline: "See how papers are cited",
@@ -191,7 +214,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Find papers and see whether later work supports or contrasts their claims. Uses scite's Smart Citations index; sign in with a scite account.",
     url: "https://api.scite.ai/mcp",
     registry: { name: "ai.scite/mcp", version: "1.0.0" },
-    categories: ["papers", "writing"],
+    categories: ["papers"],
     websiteUrl: "https://scite.ai",
     icon: CURATED_ICONS["scite"],
   },
@@ -211,6 +234,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // open: 200 "huggingface.co/mcp" 0.4.31
     id: "hugging-face",
+    agentStores: { codex: "hugging-face" },
     accountRequired: false,
     displayName: "Hugging Face",
     tagline: "Models, datasets, Spaces and papers on the Hub",
@@ -218,7 +242,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Search the Hugging Face Hub for models, datasets, Spaces and papers, and read repository details and files. Works without an account; sign in to reach your private repositories.",
     url: "https://huggingface.co/mcp",
     registry: { name: "co.huggingface/hf-mcp-server", version: "0.2.33" },
-    categories: ["featured", "data", "code"],
+    categories: ["code", "data"],
     websiteUrl: "https://huggingface.co",
     icon: CURATED_ICONS["hugging-face"],
   },
@@ -329,7 +353,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Compute symbolic and numerical answers, evaluate Wolfram Language and query curated data through Wolfram Research's official server. Free without an account for limited personal, small-scale use; requests are stateless. Wolfram's terms restrict bulk extraction and AI training; other uses may require separate licensing.",
     url: "https://agenttools.wolfram.com/mcp",
     registry: { name: "com.wolfram/mcp", version: "1.0.1" },
-    categories: ["featured", "physics-math", "data"],
+    categories: ["physics-math", "data"],
     websiteUrl: "https://www.wolfram.com/ai/mcp/cloud/",
     icon: CURATED_ICONS["wolfram"],
   },
@@ -366,6 +390,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "hex",
+    agentStores: { codex: "hex" },
     accountRequired: true,
     displayName: "Hex",
     tagline: "Notebooks and data apps in Hex",
@@ -379,6 +404,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "motherduck",
+    agentStores: { codex: "motherduck" },
     accountRequired: true,
     displayName: "MotherDuck",
     tagline: "Query DuckDB databases in the cloud",
@@ -392,6 +418,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "supabase",
+    agentStores: {
+      claude: "supabase@claude-plugins-official",
+      codex: "supabase",
+      antigravity: "supabase@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Supabase",
     tagline: "Postgres projects, tables and SQL",
@@ -406,6 +437,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "neon",
+    agentStores: { claude: "neon@claude-plugins-official", codex: "neon-postgres" },
     accountRequired: true,
     displayName: "Neon",
     tagline: "Serverless Postgres with branching",
@@ -420,6 +452,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "airtable",
+    agentStores: { claude: "airtable@claude-plugins-official", codex: "airtable" },
     accountRequired: true,
     displayName: "Airtable",
     tagline: "Bases, tables and records",
@@ -427,7 +460,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Read and update records in your Airtable bases, and inspect their tables and fields. Handy for lab inventories and study trackers kept in Airtable.",
     url: "https://mcp.airtable.com/mcp",
     registry: { name: "com.airtable/mcp", version: "0.1.0" },
-    categories: ["data", "teamwork"],
+    categories: ["projects", "data"],
     websiteUrl: "https://www.airtable.com",
     icon: CURATED_ICONS["airtable"],
   },
@@ -437,14 +470,14 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "github",
     accountRequired: true,
-    agentStores: { codex: "github" },
+    agentStores: { claude: "github@claude-plugins-official", codex: "github" },
     displayName: "GitHub",
     tagline: "Repositories, issues and pull requests",
     description:
       "Work with GitHub repositories, issues, pull requests and Actions from your agent. Access follows the account and organizations you authorize.",
     url: "https://api.githubcopilot.com/mcp/",
     registry: { name: "io.github.github/github-mcp-server", version: "2.0.2" },
-    categories: ["code"],
+    categories: ["most-used", "code"],
     websiteUrl: "https://github.com",
     icon: CURATED_ICONS["github"],
   },
@@ -464,6 +497,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "gitlab",
+    agentStores: { claude: "gitlab@claude-plugins-official" },
     accountRequired: true,
     displayName: "GitLab",
     tagline: "Projects, issues and merge requests",
@@ -478,6 +512,10 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // open: 200 "Context7" 4.4.3
     id: "context7",
+    agentStores: {
+      claude: "context7@claude-plugins-official",
+      antigravity: "context7@antigravity-plugins-partners",
+    },
     accountRequired: false,
     displayName: "Context7",
     tagline: "Up-to-date library documentation",
@@ -485,13 +523,18 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Fetch current, version-specific documentation and code examples for libraries and frameworks. Helps agents avoid outdated APIs.",
     url: "https://mcp.context7.com/mcp",
     registry: { name: "io.github.upstash/context7", version: "4.4.4" },
-    categories: ["code"],
+    categories: ["most-used", "code"],
     websiteUrl: "https://context7.com",
     icon: CURATED_ICONS["context7"],
   },
   {
     // sign-in: 401 OAuth
     id: "sentry",
+    agentStores: {
+      claude: "sentry@claude-plugins-official",
+      codex: "sentry",
+      antigravity: "sentry@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Sentry",
     tagline: "Errors, issues and performance data",
@@ -506,6 +549,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "vercel",
+    agentStores: {
+      claude: "vercel@claude-plugins-official",
+      codex: "vercel",
+      antigravity: "vercel-plugin@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Vercel",
     tagline: "Projects, deployments and logs",
@@ -513,9 +561,75 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Inspect Vercel projects and deployments, read build logs and search Vercel documentation. Access follows the teams you authorize.",
     url: "https://mcp.vercel.com",
     registry: { name: "com.vercel/vercel-mcp", version: "0.0.3" },
-    categories: ["code"],
+    categories: ["most-used", "code"],
     websiteUrl: "https://vercel.com",
     icon: CURATED_ICONS["vercel"],
+  },
+  {
+    // sign-in: 401 OAuth, dynamic client registration (verified 2026-11-14)
+    id: "cloudflare",
+    agentStores: {
+      claude: "cloudflare@claude-plugins-official",
+      codex: "cloudflare",
+      antigravity: "cloudflare@antigravity-plugins-partners",
+    },
+    accountRequired: true,
+    displayName: "Cloudflare",
+    tagline: "Workers, DNS, storage and the rest of your account",
+    description:
+      "Manage your Cloudflare account through its whole API: Workers, Pages, DNS, R2, D1 and more. Access follows the account you authorize.",
+    url: "https://mcp.cloudflare.com/mcp",
+    categories: ["most-used", "code"],
+    websiteUrl: "https://www.cloudflare.com",
+    icon: CURATED_ICONS["cloudflare"],
+  },
+  {
+    // local: npx @playwright/mcp 0.0.85, no keys (verified 2026-11-14)
+    id: "playwright",
+    agentStores: { claude: "playwright@claude-plugins-official" },
+    accountRequired: false,
+    displayName: "Playwright",
+    tagline: "Drive a real browser: open, click, fill and check pages",
+    description:
+      "Lets agents open web pages in a browser on your computer, click, type, fill forms and read what is on screen, for testing sites or doing web tasks. Made by Microsoft; runs locally, no account needed.",
+    localPackage: {
+      runner: "npx",
+      identifier: "@playwright/mcp",
+      version: "0.0.85",
+      args: [],
+      environment: [],
+    },
+    categories: ["most-used", "code"],
+    websiteUrl: "https://playwright.dev",
+    icon: CURATED_ICONS["playwright"],
+  },
+  {
+    // local: npx @ghostpaw/telegram 0.7.9 mcp, 4 tools, no dependencies; MCP Registry
+    // io.github.GhostPawJS/telegram (verified 2026-11-14). Telegram has no official server.
+    id: "telegram",
+    hosting: "Community",
+    accountRequired: true,
+    displayName: "Telegram",
+    tagline: "Send, read and search messages with your bot",
+    description:
+      "Lets agents send, edit and pin messages, read and search the chats your bot is in, and moderate groups it runs. It works through a bot: create one by messaging @BotFather in Telegram, send /newbot, and paste the token it gives you. Runs on your computer and keeps a copy of the bot's messages there.",
+    localPackage: {
+      runner: "npx",
+      identifier: "@ghostpaw/telegram",
+      version: "0.7.9",
+      args: ["mcp"],
+      environment: [
+        {
+          name: "TELEGRAM_BOT_TOKEN",
+          description: "The bot token from @BotFather (send /newbot in Telegram)",
+          required: true,
+          secret: true,
+        },
+      ],
+    },
+    categories: ["communication"],
+    websiteUrl: "https://github.com/GhostPawJS/telegram",
+    icon: CURATED_ICONS["telegram"],
   },
   {
     // open: 200 "docs-ai-search" 0.4.14
@@ -551,27 +665,35 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "notion",
     accountRequired: true,
-    agentStores: { codex: "notion" },
+    agentStores: {
+      claude: "notion@claude-plugins-official",
+      codex: "notion",
+      antigravity: "notion@antigravity-plugins-partners",
+    },
     displayName: "Notion",
     tagline: "Pages, databases and lab notes",
     description:
       "Search, read and update Notion pages and databases. Keeps project notes, protocols and reading lists close to your agent.",
     url: "https://mcp.notion.com/mcp",
     registry: { name: "com.notion/mcp", version: "1.0.1" },
-    categories: ["writing", "teamwork"],
+    categories: ["most-used", "files", "projects"],
     websiteUrl: "https://www.notion.com",
     icon: CURATED_ICONS["notion"],
   },
   {
     // sign-in: 401 OAuth
     id: "atlassian",
+    agentStores: {
+      claude: "atlassian@claude-plugins-official",
+      antigravity: "atlassian-twg-cli@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Atlassian",
     tagline: "Confluence pages and Jira issues",
     description:
       "Search and update Confluence pages and Jira issues in your Atlassian Cloud sites. Access follows your Atlassian permissions.",
     url: "https://mcp.atlassian.com/v1/mcp",
-    categories: ["teamwork", "writing"],
+    categories: ["projects", "files"],
     websiteUrl: "https://www.atlassian.com",
     icon: CURATED_ICONS["atlassian"],
   },
@@ -584,7 +706,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Read and edit Coda docs, pages and tables. Useful when shared protocols and trackers live in Coda.",
     url: "https://coda.io/apis/mcp",
-    categories: ["writing", "teamwork"],
+    categories: ["files", "projects"],
     websiteUrl: "https://coda.io",
     icon: CURATED_ICONS["coda"],
   },
@@ -594,20 +716,25 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "linear",
     accountRequired: true,
-    agentStores: { codex: "linear" },
+    agentStores: {
+      claude: "linear@claude-plugins-official",
+      codex: "linear",
+      antigravity: "linear@antigravity-plugins-partners",
+    },
     displayName: "Linear",
     tagline: "Issues, projects and cycles",
     description:
       "Create, search and update Linear issues and projects. Keeps your agent's work tied to the team's plan.",
     url: "https://mcp.linear.app/mcp",
     registry: { name: "app.linear/linear", version: "1.0.1" },
-    categories: ["teamwork", "code"],
+    categories: ["projects", "code"],
     websiteUrl: "https://linear.app",
     icon: CURATED_ICONS["linear"],
   },
   {
     // sign-in: 401 OAuth
     id: "monday",
+    agentStores: { codex: "monday-com", antigravity: "monday@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "monday.com",
     tagline: "Boards, items and updates",
@@ -615,26 +742,28 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Read and update monday.com boards and items. Access follows the account you authorize.",
     url: "https://mcp.monday.com/mcp",
     registry: { name: "com.monday/monday.com", version: "0.0.1" },
-    categories: ["teamwork"],
+    categories: ["projects"],
     websiteUrl: "https://monday.com",
     icon: CURATED_ICONS["monday"],
   },
   {
     // sign-in: 401 OAuth
     id: "clickup",
+    agentStores: { codex: "clickup", antigravity: "clickup@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "ClickUp",
     tagline: "Tasks, docs and workspaces",
     description:
       "Search and update ClickUp tasks, lists and docs. Access follows your ClickUp workspace permissions.",
     url: "https://mcp.clickup.com/mcp",
-    categories: ["teamwork"],
+    categories: ["projects"],
     websiteUrl: "https://clickup.com",
     icon: CURATED_ICONS["clickup"],
   },
   {
     // sign-in: 401 OAuth
     id: "fireflies",
+    agentStores: { codex: "fireflies" },
     accountRequired: true,
     displayName: "Fireflies",
     tagline: "Meeting transcripts and summaries",
@@ -642,20 +771,21 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Search meeting transcripts and summaries recorded by Fireflies. Useful for recalling decisions from lab meetings and interviews.",
     url: "https://api.fireflies.ai/mcp",
     registry: { name: "ai.fireflies/fireflies", version: "1.1.0" },
-    categories: ["teamwork"],
+    categories: ["communication"],
     websiteUrl: "https://fireflies.ai",
     icon: CURATED_ICONS["fireflies"],
   },
   {
     // sign-in: 401 OAuth
     id: "granola",
+    agentStores: { codex: "granola", antigravity: "granola@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Granola",
     tagline: "Your meeting notes",
     description:
       "Search and read the meeting notes you took with Granola. Access follows the account you authorize.",
     url: "https://mcp.granola.ai/mcp",
-    categories: ["teamwork"],
+    categories: ["communication"],
     websiteUrl: "https://www.granola.ai",
     icon: CURATED_ICONS["granola"],
   },
@@ -669,7 +799,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Add, find and complete Todoist tasks and projects. Access follows the account you authorize.",
     url: "https://ai.todoist.net/mcp",
     registry: { name: "net.todoist/mcp", version: "1.0.0" },
-    categories: ["teamwork"],
+    categories: ["projects"],
     websiteUrl: "https://www.todoist.com",
     icon: CURATED_ICONS["todoist"],
   },
@@ -678,19 +808,25 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "biorender",
+    agentStores: { codex: "biorender" },
     accountRequired: true,
     displayName: "BioRender",
     tagline: "Scientific figures and icons",
     description:
       "Find BioRender icons and templates for scientific figures. Access follows your BioRender account.",
     url: "https://mcp.services.biorender.com/mcp",
-    categories: ["featured", "figures"],
+    categories: ["figures", "biology"],
     websiteUrl: "https://www.biorender.com",
     icon: CURATED_ICONS["biorender"],
   },
   {
     // sign-in: 401 OAuth
     id: "canva",
+    agentStores: {
+      claude: "canva@claude-plugins-official",
+      codex: "canva",
+      antigravity: "canva@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Canva",
     tagline: "Create and edit Canva designs",
@@ -705,6 +841,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "miro",
+    agentStores: { claude: "miro@claude-plugins-official" },
     accountRequired: true,
     displayName: "Miro",
     tagline: "Boards, diagrams and sticky notes",
@@ -712,7 +849,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Read and create content on Miro boards, from diagrams to brainstorms. Access follows your Miro account.",
     url: "https://mcp.miro.com/",
     registry: { name: "io.github.miroapp/mcp-server", version: "1.0.2" },
-    categories: ["figures", "teamwork"],
+    categories: ["figures", "projects"],
     websiteUrl: "https://miro.com",
     icon: CURATED_ICONS["miro"],
   },
@@ -751,7 +888,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Resolve DOIs, retrieve references and search scholarly metadata. Hosted by Casey Hand, independently of Crossref; abstracts retain their copyright.",
     url: "https://crossref.caseyjhand.com/mcp",
-    categories: ["papers", "writing"],
+    categories: ["papers"],
     websiteUrl: "https://www.crossref.org",
     accountRequired: false,
     hosting: "Community",
@@ -948,7 +1085,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Discover Earth-observation collections, granules, variables and citations through NASA’s official server. Discovery needs no account; downloads and transformations may require Earthdata Login and separate services.",
     url: "https://cmr.earthdata.nasa.gov/mcp/v1",
-    categories: ["earth", "data", "featured"],
+    categories: ["earth", "data"],
     websiteUrl: "https://www.earthdata.nasa.gov",
     accountRequired: false,
     icon: CURATED_ICONS["nasa-earthdata"],
@@ -1058,7 +1195,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Search US federal funding opportunities and read eligibility and deadlines. Hosted independently by Casey Hand; verify current requirements with the funding agency.",
     url: "https://grantsgov.caseyjhand.com/mcp",
-    categories: ["social-science", "papers", "teamwork"],
+    categories: ["social-science", "papers", "projects"],
     websiteUrl: "https://www.grants.gov",
     accountRequired: false,
     hosting: "Community",
@@ -1086,7 +1223,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Find Zenodo datasets, software, DOI metadata, versions and files. Hosted independently by Casey Hand; each record and file has its own licence and access restrictions.",
     url: "https://zenodo.caseyjhand.com/mcp",
-    categories: ["data", "papers", "writing"],
+    categories: ["data", "papers", "files"],
     websiteUrl: "https://zenodo.org",
     accountRequired: false,
     hosting: "Community",
@@ -1147,12 +1284,13 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://developer.box.com/guides/box-mcp/.
     id: "box",
+    agentStores: { claude: "box@claude-plugins-official", codex: "box" },
     displayName: "Box",
     tagline: "Find and work with files in Box",
     description:
       "Find and work with files in your Box account. OAuth and organisation permissions govern access and changes.",
     url: "https://mcp.box.com",
-    categories: ["writing"],
+    categories: ["files"],
     websiteUrl: "https://www.box.com",
     accountRequired: true,
     accessNote: "Registered OAuth client needed",
@@ -1162,12 +1300,16 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://help.dropbox.com/integrations/connect-dropbox-mcp-server.
     id: "dropbox",
+    agentStores: {
+      claude: "dropbox@claude-plugins-official",
+      antigravity: "dropbox@antigravity-plugins-partners",
+    },
     displayName: "Dropbox",
     tagline: "Search, read and organise Dropbox files",
     description:
       "Search, read and organise files in your Dropbox account. OAuth permissions apply; automatic registration is limited to vendor-supported clients.",
     url: "https://mcp.dropbox.com/mcp",
-    categories: ["writing"],
+    categories: ["files"],
     websiteUrl: "https://www.dropbox.com",
     accountRequired: true,
     accessNote: "Vendor-supported OAuth clients only",
@@ -1176,12 +1318,13 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://docs.slack.dev/ai/slack-mcp-server/.
     id: "slack",
+    agentStores: { claude: "slack@claude-plugins-official", codex: "slack" },
     displayName: "Slack",
     tagline: "Search conversations and collaborate in Slack",
     description:
       "Search conversations and files and collaborate in Slack. Requires a registered OAuth application and workspace authorisation; your account permissions apply.",
     url: "https://mcp.slack.com/mcp",
-    categories: ["teamwork"],
+    categories: ["most-used", "communication"],
     websiteUrl: "https://slack.com",
     accountRequired: true,
     accessNote: "Registered OAuth client needed",
@@ -1191,12 +1334,13 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://developers.asana.com/docs/using-asanas-mcp-server.
     id: "asana",
+    agentStores: { claude: "asana@claude-plugins-official", codex: "asana" },
     displayName: "Asana",
     tagline: "Projects, tasks and team coordination",
     description:
       "Work with projects and tasks in Asana. Requires a registered OAuth client and account authorisation; your workspace permissions apply.",
     url: "https://mcp.asana.com/v2/mcp",
-    categories: ["teamwork"],
+    categories: ["projects"],
     websiteUrl: "https://asana.com",
     accountRequired: true,
     accessNote: "Registered OAuth client needed",
@@ -1206,12 +1350,13 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: initialize + tools/list (2 tools).
     id: "exa",
+    agentStores: { claude: "exa@claude-plugins-official" },
     displayName: "Exa",
     tagline: "Web research and page search",
     description:
       "Search the wider web and fetch pages for research. Web results are not peer-review certification; vendor limits and third-party content rights apply.",
     url: "https://mcp.exa.ai/mcp",
-    categories: ["papers", "code"],
+    categories: ["most-used", "papers", "code"],
     websiteUrl: "https://exa.ai",
     accountRequired: false,
     icon: CURATED_ICONS["exa"],
@@ -1236,9 +1381,27 @@ export const curatedServerForUrl = (
   return servers.find((server) =>
     server.address
       ? matchesExtensionAddressTemplate(url, server.address.urlTemplate)
-      : canonicalConnectorUrl(server.url) === canonical,
+      : server.url !== undefined && canonicalConnectorUrl(server.url) === canonical,
   );
 };
+
+/** Who runs a curated server: the service itself, Anthropic for the service, or a third party. */
+const curatedHosting = (server: CuratedServer): string =>
+  server.hosting ??
+  (server.url === undefined
+    ? "Official"
+    : server.url.includes(".caseyjhand.com/")
+      ? "Community"
+      : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
+        ? "Hosted by Anthropic"
+        : "Official");
+
+/**
+ * Whether the Discover home page and its category pages list a server. A community server, run by
+ * neither the service nor Anthropic, is found only by searching.
+ */
+export const listedWhenBrowsing = (server: CuratedServer): boolean =>
+  curatedHosting(server) !== "Community";
 
 /** The Discover entry for a curated server, before installation state. */
 export const curatedDiscoverEntry = (
@@ -1250,13 +1413,7 @@ export const curatedDiscoverEntry = (
   ...(server.agentStores ? { agentStores: server.agentStores } : {}),
   ...(server.accountRequired !== undefined ? { accountRequired: server.accountRequired } : {}),
   ...(server.oauthClientRequired ? { oauthClientRequired: true } : {}),
-  hosting:
-    server.hosting ??
-    (server.url.includes(".caseyjhand.com/")
-      ? "Community"
-      : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
-        ? "Hosted by Anthropic"
-        : "Official"),
+  hosting: curatedHosting(server),
   ...(server.paidPlan ? { paidPlan: true } : {}),
   ...(server.beta ? { beta: true } : {}),
   ...(server.accessNote ? { accessNote: server.accessNote } : {}),
@@ -1267,8 +1424,10 @@ export const curatedDiscoverEntry = (
   categories: [...server.categories],
   websiteUrl: server.websiteUrl,
   iconUrl: server.icon,
-  remotes: [
-    { type: "streamable-http", url: server.url, requiresInput: server.address !== undefined },
-  ],
+  remotes:
+    server.url === undefined
+      ? []
+      : [{ type: "streamable-http", url: server.url, requiresInput: server.address !== undefined }],
+  ...(server.localPackage ? { localPackage: server.localPackage } : {}),
   installable: true,
 });

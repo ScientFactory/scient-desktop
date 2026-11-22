@@ -28,13 +28,13 @@ export const SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = scientAgentCopy(
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
 );
 
-// Upstream keeps this note private in ClaudeAdapterV2.ts (CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS);
-// this is its exact text. Claude Code defers MCP tools behind ToolSearch.
+// Upstream keeps this note private in ClaudeAdapterV2.ts (CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS).
+// Unlike upstream, it says when the ID exists: Claude batched the wait with the start and guessed.
 const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 
 ### Background work you wait on
 
-To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
+To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with \`taskIds: [id]\` in a later response, once the start result shows the ID, before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
 `;
 
 export const SCIENT_CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = scientAgentCopy(
@@ -81,9 +81,15 @@ export function buildScientOrchestrationPrompt(input: {
   readonly orchestrationDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
   readonly awareness?: string;
+  /** A provider's own tool guidance, in upstream's words. */
+  readonly providerInstructions?: string;
+  readonly providerInstructionsDelivered?: boolean;
 }): string {
   return t3OrchestrationPrompt({
     ...input,
+    ...(input.providerInstructions === undefined
+      ? {}
+      : { providerInstructions: scientAgentCopy(input.providerInstructions) }),
     instructions: withAwareness(input.awareness),
     deviceInstructions: SCIENT_DEVICE_TOOL_INSTRUCTIONS,
     wrapperElement: "scient_orchestration_instructions",

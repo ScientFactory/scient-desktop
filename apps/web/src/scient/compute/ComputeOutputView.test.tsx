@@ -23,6 +23,9 @@ vi.mock("~/assets/assetUrls", () => ({
   }),
 }));
 vi.mock("~/rightPanelStore", () => ({ useRightPanelStore: {} }));
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 vi.mock("./ComputeRichOutput", () => ({ ComputeRichOutput: () => null }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, search }: { children: ReactNode; search: { environmentId: string } }) => (

@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import * as Schema from "effect/Schema";
 import {
   type ServerProvider,
@@ -15,6 +16,7 @@ import {
   type AccountActivityEntry,
   type AccountControls,
   type AccountDetails,
+  type ApiKeyAuth,
   type GrantScope,
   type ProjectId,
   type AccountStoresStatus,
@@ -39,6 +41,7 @@ import { loginValueFits, type LoginBox } from "@t3tools/shared/scientLoginFields
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import ACCOUNT_ICONS from "./accountIcons.json";
 import { activeProfiles } from "./activeProfiles";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
 export function profileAccounts(
@@ -208,20 +211,37 @@ export function mergeSourceProfiles(
   }));
 }
 
-const cookieCount = (count: number) =>
-  `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
+const cookieCount = (count: number, resolve: MessageResolver) =>
+  resolve(
+    msg("{count, plural, one {{formatted} cookie} other {{formatted} cookies}}", {
+      count,
+      formatted: count.toLocaleString(),
+    }),
+  );
 
 /** How many cookies a browser profile holds, when its browser lets Scient count them. */
-export function cookiesLabel(count: number | undefined) {
+export function cookiesLabel(count: number | undefined, resolve: MessageResolver = m) {
   if (count === undefined) return undefined;
-  return count === 0 ? "no cookies" : cookieCount(count);
+  return count === 0 ? resolve(msg("no cookies")) : cookieCount(count, resolve);
 }
 
 /** What importing a browser profile brought: cookies, counted per site. A cookie isn't a sign-in. */
-export function importedLabel(cookies: number, sites: number | undefined) {
-  if (cookies === 0) return "nothing to import";
-  if (!sites) return cookieCount(cookies);
-  return `cookies for ${sites.toLocaleString()} ${sites === 1 ? "site" : "sites"}`;
+export function importedLabel(
+  cookies: number,
+  sites: number | undefined,
+  resolve: MessageResolver = m,
+) {
+  if (cookies === 0) return resolve(msg("nothing to import"));
+  if (!sites) return cookieCount(cookies, resolve);
+  return resolve(
+    msg(
+      "{count, plural, one {cookies for {formatted} site} other {cookies for {formatted} sites}}",
+      {
+        count: sites,
+        formatted: sites.toLocaleString(),
+      },
+    ),
+  );
 }
 
 /** The names the desktop's browser import gives each browser. */
@@ -281,6 +301,9 @@ const MANAGE_PAGES: Readonly<Record<string, string>> = {
   "zotero.org": "https://www.zotero.org/settings/keys",
   "ncbi.nlm.nih.gov": "https://www.ncbi.nlm.nih.gov/account/settings/",
   "semanticscholar.org": "https://www.semanticscholar.org/product/api",
+  "openalex.org": "https://openalex.org/settings/api",
+  "www.googleapis.com": "https://console.cloud.google.com/apis/credentials",
+  "unpaywall.org": "https://unpaywall.org/products/api",
   "elsevier.com": "https://dev.elsevier.com/apikey/manage",
   "kaggle.com": "https://www.kaggle.com/settings",
   "wandb.ai": "https://wandb.ai/authorize",
@@ -305,6 +328,7 @@ const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
   moodle: "moodle.org",
   postgres: "postgresql.org",
   gcloud: "cloud.google.com",
+  "google books": "google.com",
 };
 
 /** The entry for the first site whose host is a key or a subdomain of one. */
@@ -387,6 +411,14 @@ export const accountCatalogue = [
     site: "semanticscholar.org",
     envName: "SEMANTIC_SCHOLAR_API_KEY",
   },
+  { name: "OpenAlex", kind: "api-key", site: "openalex.org", envName: "OPENALEX_API_KEY" },
+  {
+    name: "Google Books",
+    kind: "api-key",
+    site: "www.googleapis.com",
+    envName: "GOOGLE_BOOKS_API_KEY",
+  },
+  { name: "Unpaywall email", kind: "api-key", site: "unpaywall.org", envName: "UNPAYWALL_EMAIL" },
   {
     name: "Elsevier / Scopus",
     kind: "api-key",
@@ -409,24 +441,27 @@ export type CatalogueEntry = (typeof accountCatalogue)[number];
 
 export const accountCatalogueGroups = [
   {
-    name: "AI models",
+    name: msg("AI models"),
     entries: ["OpenAI", "Anthropic", "OpenRouter", "Google Gemini", "Mistral"],
   },
   {
-    name: "Research",
+    name: msg("Research"),
     entries: [
       "Overleaf",
       "Zotero",
       "NCBI / PubMed",
       "Semantic Scholar",
+      "OpenAlex",
+      "Google Books",
+      "Unpaywall email",
       "Elsevier / Scopus",
       "ORCID",
     ],
   },
-  { name: "Websites", entries: ["Google"] },
-  { name: "Universities & libraries", entries: ["University library", "Moodle"] },
+  { name: msg("Websites"), entries: ["Google"] },
+  { name: msg("Universities & libraries"), entries: ["University library", "Moodle"] },
   {
-    name: "Developer tools",
+    name: msg("Developer tools"),
     entries: [
       "GitHub token",
       "GitLab token",
@@ -436,8 +471,18 @@ export const accountCatalogueGroups = [
       "Postgres database",
     ],
   },
-  { name: "Data & ML", entries: ["Hugging Face", "Kaggle", "Weights & Biases"] },
+  { name: msg("Data & ML"), entries: ["Hugging Face", "Kaggle", "Weights & Biases"] },
 ] satisfies ReadonlyArray<{ name: string; entries: ReadonlyArray<CatalogueEntry["name"]> }>;
+
+/** How each service takes its key, where it is not a bearer token. */
+const API_KEY_AUTH: Readonly<Record<string, ApiKeyAuth>> = {
+  Anthropic: { type: "header", name: "x-api-key" },
+  "Semantic Scholar": { type: "header", name: "x-api-key" },
+  "NCBI / PubMed": { type: "query", name: "api_key" },
+  OpenAlex: { type: "query", name: "api_key" },
+  "Google Books": { type: "query", name: "key" },
+  "Unpaywall email": { type: "query", name: "email" },
+};
 
 export function catalogueDetails(entry: CatalogueEntry | null, website = ""): AccountDetails {
   if (!entry) return { kind: "website", sites: website ? [website] : [] };
@@ -448,8 +493,7 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
       return {
         kind: "api-key",
         sites: [entry.site],
-        auth:
-          entry.name === "Anthropic" ? { type: "header", name: "x-api-key" } : { type: "bearer" },
+        auth: API_KEY_AUTH[entry.name] ?? { type: "bearer" },
         envName: entry.envName,
       };
     case "database":
@@ -573,14 +617,25 @@ type MergedSourceProfile = MergedSource["profiles"][number];
 const FOLDED_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Accounts' one line, for a week, naming the profiles the fold merged into Main; Undo takes these. */
-export function foldedNotice(snapshot: Pick<AccountsSnapshot, "profiles">, now: number) {
+export function foldedNotice(
+  snapshot: Pick<AccountsSnapshot, "profiles">,
+  now: number,
+  resolve: MessageResolver = m,
+) {
   const merged = snapshot.profiles.flatMap((record) =>
     record.retired && now - Date.parse(record.retired.at) <= FOLDED_NOTICE_MS
       ? [{ profileId: record.profileId, name: record.retired.name }]
       : [],
   );
   return merged.length
-    ? { text: `Merged into Main: ${merged.map(({ name }) => name).join(", ")}.`, merged }
+    ? {
+        text: resolve(
+          msg("Merged into Main: {profiles}.", {
+            profiles: merged.map(({ name }) => name).join(", "),
+          }),
+        ),
+        merged,
+      }
     : undefined;
 }
 
@@ -729,10 +784,10 @@ export const signedIntoUniversity = (account: AccountSummary) =>
 
 /** What each kind of account is called on screen. */
 export const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
-  website: "Website sign-in",
-  "api-key": "API key",
-  database: "Database",
-  "cli-login": "Command-line login",
+  website: msg("Website sign-in"),
+  "api-key": msg("API key"),
+  database: msg("Database"),
+  "cli-login": msg("Command-line login"),
 };
 
 /**
@@ -756,7 +811,7 @@ export function toggleScope(
 }
 
 type ProviderManagedAccount = {
-  kind: "claude" | "codex" | "droid";
+  kind: "claude" | "codex" | "droid" | "scient";
   id: string;
   instanceId: ProviderInstanceId;
   name: string;
@@ -826,12 +881,32 @@ function claudeRows(
     }));
 }
 
-function codexRows(provider: ServerProvider, plugins: NonNullable<ServerProvider["plugins"]>) {
+/** The ChatGPT apps Scient Agent's own ChatGPT sign-in reaches. */
+function scientRows(provider: ServerProvider, servers: NonNullable<ServerProvider["mcpServers"]>) {
+  return servers
+    .filter((server) => server.scope === "chatgpt" && server.status === "connected")
+    .map((server) => ({
+      kind: "scient" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      name: server.name,
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
+function codexRows(
+  provider: ServerProvider,
+  plugins: NonNullable<ServerProvider["plugins"]>,
+  servers: ServerProvider["mcpServers"],
+) {
+  // Apps of Codex's ChatGPT account, whether or not a plugin brought them; one row per app.
   const apps = new Map(
-    plugins
-      .flatMap((plugin) => plugin.apps ?? [])
-      .filter((app) => app.connected)
-      .map((app) => [app.id ?? app.name, app]),
+    [
+      ...plugins.flatMap((plugin) => plugin.apps ?? []).filter((app) => app.connected),
+      ...(servers ?? [])
+        .filter((server) => server.scope === "chatgpt" && server.status === "connected")
+        .map((server) => ({ name: server.name })),
+    ].map((app) => [app.name, app]),
   );
   return [...apps].map(([id, app]) => ({
     kind: "codex" as const,
@@ -868,19 +943,21 @@ export function providerManagedAccounts(
   const next = new Map<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>();
   for (const provider of providers) {
     if (!provider.enabled || !provider.installed) continue;
-    if (!["claudeAgent", "codex", "droid"].includes(provider.driver)) continue;
+    if (!["claudeAgent", "codex", "droid", "scient"].includes(provider.driver)) continue;
     const known = inventory.find((entry) => entry.instanceId === provider.instanceId);
     const kept = previous.get(provider.instanceId) ?? [];
     const rows =
       provider.driver === "codex"
         ? known?.plugins
-          ? codexRows(provider, known.plugins)
+          ? codexRows(provider, known.plugins, known.mcpServers)
           : kept
         : !known?.mcpServers
           ? kept
           : provider.driver === "claudeAgent"
             ? claudeRows(provider, known.mcpServers, kept)
-            : droidRows(provider, known.mcpServers);
+            : provider.driver === "scient"
+              ? scientRows(provider, known.mcpServers)
+              : droidRows(provider, known.mcpServers);
     next.set(provider.instanceId, rows);
   }
   // Agents signed in to one known account report the same connectors: one connection, one row.
@@ -959,74 +1036,98 @@ export function accountStatusLabel(
     readonly details?: AccountSummary["details"];
   },
   relativeTime: (iso: string) => string,
+  resolve: MessageResolver = m,
 ) {
   const signIn = account.signIn;
   // A refused key is the one thing a key's check says.
-  if (account.details?.kind === "api-key") return signIn?.state === "failed" ? "Key refused" : null;
+  if (account.details?.kind === "api-key")
+    return signIn?.state === "failed" ? resolve(msg("Key refused")) : null;
   const university = account.details && universityDetails(account.details);
-  if (!signIn) return university ? "Not signed in yet" : null;
+  if (!signIn) return university ? resolve(msg("Not signed in yet")) : null;
   switch (signIn.state) {
     case "signed-in": {
       const who = account.details?.kind === "website" ? account.details.username : undefined;
-      return `Signed in${who ? ` as ${who}` : ""} · ${relativeTime(signIn.at)}`;
+      const time = relativeTime(signIn.at);
+      return who
+        ? resolve(msg("Signed in as {who} · {time}", { who, time }))
+        : resolve(msg("Signed in · {time}", { time }));
     }
     case "signed-out":
-      return university ? "Sign in needed" : "Signed out";
+      return university ? resolve(msg("Sign in needed")) : resolve(msg("Signed out"));
     case "needs-you":
-      return "Needs you";
+      return resolve(msg("Needs you"));
     case "password-rejected":
-      return "Password rejected";
+      return resolve(msg("Password rejected"));
     case "code-rejected":
-      return "Code rejected";
+      return resolve(msg("Code rejected"));
     case "limited":
-      return "Site is limiting access";
+      return resolve(msg("Site is limiting access"));
     case "unknown":
       return signIn.from === "import"
-        ? "Imported"
+        ? resolve(msg("Imported"))
         : signIn.from === "copy"
-          ? "Copied"
+          ? resolve(msg("Copied"))
           : // An action that said nothing yet about the site, such as a changed password.
             signIn.by === "action" && signIn.detail
             ? signIn.detail
-            : "Couldn't check";
+            : resolve(msg("Couldn't check"));
     // A failed attempt holds automatic sign-ins until the person signs in.
     case "failed":
-      return "Sign in needed";
+      return resolve(msg("Sign in needed"));
   }
 }
 
 const ACTIVITY_LABELS: Readonly<Record<AccountUseAction, string>> = {
-  "sign-in": "Signed in",
-  credentials: "Read its credentials",
-  request: "Made a request",
-  "browser-session": "Used its sign-in in a script",
-  "open-profile": "Opened a browser tab",
+  "sign-in": msg("Signed in"),
+  credentials: msg("Read its credentials"),
+  request: msg("Made a request"),
+  "browser-session": msg("Used its sign-in in a script"),
+  "open-profile": msg("Opened a browser tab"),
+};
+const DENIED_LABELS: Readonly<Record<AccountUseAction, string>> = {
+  "sign-in": msg("Denied: signed in"),
+  credentials: msg("Denied: read its credentials"),
+  request: msg("Denied: made a request"),
+  "browser-session": msg("Denied: used its sign-in in a script"),
+  "open-profile": msg("Denied: opened a browser tab"),
+};
+const FAILED_LABELS: Readonly<Record<AccountUseAction, string>> = {
+  "sign-in": msg("Failed: signed in"),
+  credentials: msg("Failed: read its credentials"),
+  request: msg("Failed: made a request"),
+  "browser-session": msg("Failed: used its sign-in in a script"),
+  "open-profile": msg("Failed: opened a browser tab"),
 };
 const SIGN_IN_OUTCOME_LABELS: Readonly<
   Record<NonNullable<AccountActivityEntry["signInOutcome"]>, string>
 > = {
-  "signed-in": "Signed in",
-  "needs-user": "Needed you",
-  "password-rejected": "Password rejected",
-  "code-rejected": "Code rejected",
-  limited: "Site limited access",
-  failed: "Sign-in failed",
+  "signed-in": msg("Signed in"),
+  "needs-user": msg("Needed you"),
+  "password-rejected": msg("Password rejected"),
+  "code-rejected": msg("Code rejected"),
+  limited: msg("Site limited access"),
+  failed: msg("Sign-in failed"),
 };
 
 /** One line of an account's activity; `where` names the conversation. */
-export function activityLine(entry: AccountActivityEntry, where: string | undefined) {
-  const what =
+export function activityLine(
+  entry: AccountActivityEntry,
+  where: string | undefined,
+  resolve: MessageResolver = m,
+) {
+  const what = resolve(
     entry.keptTyped === "kept"
-      ? "Kept the password you typed"
+      ? msg("Kept the password you typed")
       : entry.keptTyped === "linked"
-        ? "The typed password wasn't kept: it lives in its linked password store"
+        ? msg("The typed password wasn't kept: it lives in its linked password store")
         : entry.decision === "denied"
-          ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+          ? DENIED_LABELS[entry.action]
           : entry.signInOutcome
             ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
             : entry.outcome === "error"
-              ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
-              : ACTIVITY_LABELS[entry.action];
+              ? FAILED_LABELS[entry.action]
+              : ACTIVITY_LABELS[entry.action],
+  );
   return where ? `${what} · ${where}` : what;
 }
 
@@ -1064,9 +1165,10 @@ export type ApiKeyRow = {
 );
 
 /** Where a key not kept in Accounts lives, or nothing when it is kept. */
-export function onlyIn(row: ApiKeyRow) {
-  if (row.stored === "agent") return `Only in ${row.uses[0]?.label} settings`;
-  return row.stored === "files" ? `Only in ${row.file}` : undefined;
+export function onlyIn(row: ApiKeyRow, resolve: MessageResolver = m) {
+  if (row.stored === "agent")
+    return resolve(msg("Only in {agent} settings", { agent: row.uses[0]?.label ?? "" }));
+  return row.stored === "files" ? resolve(msg("Only in {file}", { file: row.file })) : undefined;
 }
 
 /**
@@ -1091,7 +1193,9 @@ export function apiKeyRows(input: {
   readonly customModelKeys: AccountsSnapshot["customModelKeys"];
   readonly plainKeys: ReadonlyArray<AccountPlainKey>;
   readonly driverName: (driver: string) => string;
+  readonly resolve?: MessageResolver;
 }): ReadonlyArray<ApiKeyRow> {
+  const resolve = input.resolve ?? m;
   const uses = new Map<string, KeyUse[]>();
   const keys = input.accounts.filter((account) => account.details.kind === "api-key");
   const used = (accountId: string, use: KeyUse) =>
@@ -1119,7 +1223,7 @@ export function apiKeyRows(input: {
         });
     }
   for (const connection of input.customModelKeys) {
-    const use = { label: "Custom models", href: "/settings/custom-models" } as const;
+    const use = { label: resolve(msg("Custom models")), href: "/settings/custom-models" } as const;
     const account = keys.find(({ secrets }) => {
       const source = secrets.token?.source;
       return source?.type === "custom-model" && source.connectionId === connection.connectionId;

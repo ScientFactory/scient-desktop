@@ -6,11 +6,14 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import { TERMINAL_COMPUTE_SESSION_STATUSES } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+
+import { m } from "~/i18n/messages";
 
 import {
   getComputeContext,
@@ -89,7 +92,7 @@ function resultError(result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
 }): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "Unable to stop the compute context.";
+  return error instanceof Error ? error.message : m(msg("Unable to stop the compute context."));
 }
 
 function isTerminal(record: ComputeSessionRecord | null): record is ComputeSessionRecord {
@@ -104,7 +107,7 @@ function isTerminalForSession(
 }
 
 function thrownError(error: unknown): string {
-  return error instanceof Error ? error.message : "Unable to stop the compute context.";
+  return error instanceof Error ? error.message : m(msg("Unable to stop the compute context."));
 }
 
 /**
@@ -284,7 +287,7 @@ async function stopOwnedComputeContext(
       const rejection = stopped._tag === "Failure" ? squashAtomCommandFailure(stopped) : null;
       useComputeContextStore.getState().markCloseFailed({
         contextId: input.contextId,
-        error: "Session replacement was not admitted.",
+        error: m(msg("Session replacement was not admitted.")),
       });
       if (
         typeof rejection === "object" &&
@@ -303,7 +306,7 @@ async function stopOwnedComputeContext(
         error:
           stopped._tag === "Failure"
             ? resultError(stopped)
-            : "Session replacement was not admitted.",
+            : m(msg("Session replacement was not admitted.")),
       };
     }
     if (current.value.generation === expectedGeneration || attempt === 1) {
@@ -369,7 +372,10 @@ export async function replaceComputeContextSession(
     binding.sessionId !== expected.sessionId ||
     binding.generation !== expected.generation
   )
-    return { kind: "failed", error: "The owned session changed. Choose the current result again." };
+    return {
+      kind: "failed",
+      error: m(msg("The owned session changed. Choose the current result again.")),
+    };
 
   const pending = { cancelled: false };
   replacements.set(input.contextId, pending);
@@ -391,7 +397,7 @@ export async function replaceComputeContextSession(
     }
     const closed = await stopOwnedComputeContext(input, true);
     if (!closed.closed)
-      return { kind: "failed", error: closed.error ?? "Shutdown was not confirmed." };
+      return { kind: "failed", error: closed.error ?? m(msg("Shutdown was not confirmed.")) };
     const stopped = getComputeContext(input.contextId);
     if (
       pending.cancelled ||
@@ -427,8 +433,11 @@ export async function replaceComputeContextSession(
         });
         return {
           kind: "failed",
-          error:
-            "Compute capacity reached. Stop an unused session, then try again. No code was run.",
+          error: m(
+            msg(
+              "Compute capacity reached. Stop an unused session, then try again. No code was run.",
+            ),
+          ),
         };
       }
       await cleanup();
@@ -447,7 +456,10 @@ export async function replaceComputeContextSession(
       started.value.status !== "ready"
     ) {
       await cleanup();
-      return { kind: "failed", error: "The requested runtime was not started. No code was run." };
+      return {
+        kind: "failed",
+        error: m(msg("The requested runtime was not started. No code was run.")),
+      };
     }
     if (
       !useComputeContextStore.getState().bindSession({
@@ -464,7 +476,7 @@ export async function replaceComputeContextSession(
     if (reserved) await cleanup();
     return {
       kind: "failed",
-      error: error instanceof Error ? error.message : "Unable to start a new session.",
+      error: error instanceof Error ? error.message : m(msg("Unable to start a new session.")),
     };
   } finally {
     replacements.delete(input.contextId);

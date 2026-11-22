@@ -15,6 +15,8 @@ import thesisIntroduction from "./templates/thesis/chapters/introduction.tex?raw
 import thesisMethods from "./templates/thesis/chapters/methods.tex?raw";
 import thesisResults from "./templates/thesis/chapters/results.tex?raw";
 import thesisSource from "./templates/thesis/main.tex?raw";
+import { msg } from "gt-react";
+
 import { DEFAULT_HEBREW_DOCUMENT_FONT, updateLatexLanguageSource } from "../latex/latexLanguage";
 import {
   declaredLatexCompiler,
@@ -59,6 +61,7 @@ export function isDocumentTemplateId(id: string): boolean {
 }
 
 export function templateName(id: DocumentTemplateId): string {
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- names the new file, like the built-in template names
   return builtIn(id)?.name ?? userTemplates.get(id)?.name ?? "Blank";
 }
 
@@ -162,8 +165,8 @@ export const NEW_DOCUMENT_LANGUAGES: ReadonlyArray<{
   readonly id: NewDocumentLanguage;
   readonly name: string;
 }> = [
-  { id: "english", name: "English" },
-  { id: "hebrew", name: "Hebrew" },
+  { id: "english", name: msg("English") },
+  { id: "hebrew", name: msg("Hebrew") },
 ];
 
 /** A filename stem from a title: letters and digits in any script, joined by hyphens. */

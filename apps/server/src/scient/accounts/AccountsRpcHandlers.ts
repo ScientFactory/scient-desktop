@@ -9,6 +9,7 @@ import {
   type PaperItem,
   type PreviewTabId,
   type PaperQueueInput,
+  type PaperQueueContinueInput,
   type PaperQueueRequestInput,
   type Institution,
   type AccountSignInAsPersonInput,
@@ -24,6 +25,7 @@ import { endedWebsiteSessions } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
 import {
   continuePapersAsUser,
+  continueWaitingPapers,
   getPaperForSource,
   listPapersAsUser,
   requestPapersAsUser,
@@ -103,7 +105,7 @@ export const makeAccountsRpcHandlers = ({
   ) => Effect.Effect<typeof AccountPaperForSourceResult.Type, AccountsError>;
   readonly papers: {
     readonly request: (input: PaperQueueRequestInput) => Effect.Effect<object, AccountsError>;
-    readonly continue: (input: PaperQueueInput) => Effect.Effect<object, AccountsError>;
+    readonly continue: (input: PaperQueueContinueInput) => Effect.Effect<object, AccountsError>;
     readonly list: (
       input: PaperQueueInput,
     ) => Effect.Effect<ReadonlyArray<PaperItem>, AccountsError>;
@@ -544,8 +546,16 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
           Effect.provideService(Path.Path, path),
         );
   return {
+    // A check can find sessions back, so papers waiting on the user go on. A glance leaves them:
+    // a paper that goes on may sign in elsewhere, and a glance never signs in.
     check: (input: AccountsCheckInput) =>
-      run((environmentId) => checkAccounts(input, environmentId)),
+      run((environmentId) =>
+        checkAccounts(input, environmentId).pipe(
+          Effect.tap(({ checked }) =>
+            checked > 0 && !input.glance ? continueWaitingPapers(environmentId) : Effect.void,
+          ),
+        ),
+      ),
     paperForSource: (input: AccountPaperForSourceInput) =>
       run((environmentId) =>
         getPaperForSource(input, environmentId).pipe(
@@ -577,8 +587,8 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
         ),
       request: (input: PaperQueueRequestInput) =>
         run((environmentId) => requestPapersAsUser(input, environmentId)),
-      continue: ({ root }: PaperQueueInput) =>
-        run((environmentId) => continuePapersAsUser(root, environmentId)),
+      continue: (input: PaperQueueContinueInput) =>
+        run((environmentId) => continuePapersAsUser(input, environmentId)),
       list: ({ root }: PaperQueueInput) =>
         run((environmentId) => listPapersAsUser(root, environmentId)),
       universities: (query: string) =>

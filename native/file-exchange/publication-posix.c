@@ -775,12 +775,15 @@ int platform_linux_folder(const char *path, int directory_only) {
   struct stat stat;
   char uuid[37] = {0};
   uint64_t subvolume = 0;
+  /* ext4, XFS and Btrfs reuse a freed inode number; the generation tells the new file apart. */
+  unsigned int generation = 0;
   const char *reason = fd < 0 ? "volume-unavailable" : linux_admission(fd, &mount);
   if (!reason && (fstat(fd, &stat) || (!S_ISDIR(stat.st_mode) && !S_ISREG(stat.st_mode)))) reason = "no-volume-identity";
   if (!reason && (linux_uuid(fd, &mount, uuid) || linux_subvolume(fd, &subvolume))) reason = "no-volume-identity";
+  if (!reason && ioctl(fd, FS_IOC_GETVERSION, &generation)) reason = "no-volume-identity";
   if (reason) printf("{\"version\":1,\"reason\":\"%s\",\"identity\":null}\n", reason);
   else {
-    printf("{\"version\":1,\"reason\":null,\"identity\":{\"version\":1,\"platform\":\"linux\",\"volume\":\"%s\",\"fileId\":\"%" PRIuMAX "\",\"subvolumeId\":", uuid, (uintmax_t)stat.st_ino);
+    printf("{\"version\":1,\"reason\":null,\"identity\":{\"version\":1,\"platform\":\"linux\",\"volume\":\"%s\",\"fileId\":\"%" PRIuMAX "\",\"generation\":\"%u\",\"subvolumeId\":", uuid, (uintmax_t)stat.st_ino, generation);
     if (subvolume) printf("\"%" PRIu64 "\"", subvolume); else printf("null");
     printf("}}\n");
   }

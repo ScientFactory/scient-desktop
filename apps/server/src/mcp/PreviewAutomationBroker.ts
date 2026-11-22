@@ -18,6 +18,7 @@ import {
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTargetNotEditableError,
   PreviewAutomationTimeoutError,
+  PreviewAutomationTimeoutDetail,
   PreviewAutomationUnsupportedClientError,
   PreviewTabId,
   type PreviewAutomationError,
@@ -42,8 +43,13 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
 import * as AgentInvocationContext from "../scient/operations/AgentInvocationContext.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK: a page-reported script exception keeps its class for analytics.
+import { withRemoteFailureClass } from "../telemetry/ScientMcpAnalytics.ts";
 
 const HOST_RESPONSE_GRACE_MS = 1_000;
+// SCIENT-FORK:START — Scient's account check before an action spends this same budget.
+export const PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS = 15_000;
+// SCIENT-FORK:END
 
 export interface PreviewAutomationInvokeInput {
   // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
@@ -222,6 +228,7 @@ const readRemoteReason = (detail: unknown): string | undefined =>
     : undefined;
 
 const MAX_REASON_CHARS = 500;
+const decodeTimeoutDetail = Schema.decodeUnknownOption(PreviewAutomationTimeoutDetail);
 
 const classifyResponseError = (
   context: PreviewAutomationRequestErrorContext,
@@ -271,6 +278,7 @@ const classifyResponseError = (
       });
     case "PreviewAutomationTimeoutError": {
       const remoteTimeoutMs = readRemoteTimeoutMs(error.detail);
+      const detail = decodeTimeoutDetail(error.detail);
       const remoteReason = readRemoteReason(error.detail);
       return new PreviewAutomationTimeoutError({
         ...context,
@@ -281,6 +289,7 @@ const classifyResponseError = (
         ...(remoteTimeoutMs === undefined
           ? {}
           : { timeoutMs: Math.min(context.timeoutMs, remoteTimeoutMs) }),
+        ...(Option.isSome(detail) ? { pendingStages: detail.value.pendingStages } : {}),
       });
     }
     case "PreviewAutomationControlInterruptedError": {
@@ -355,14 +364,17 @@ const classifyResponseError = (
         ...context,
         ...remoteDiagnostics,
       });
-    default:
-      return new PreviewAutomationExecutionError({
+    default: {
+      const failure = new PreviewAutomationExecutionError({
         ...context,
         ...remoteDiagnostics,
         ...(context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
           ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
           : {}),
       });
+      // SCIENT-FORK: a page-reported script exception is the caller's code, for analytics.
+      return withRemoteFailureClass(failure, error);
+    }
   }
 };
 
@@ -579,7 +591,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         input.timeoutMs ??
         ((input.operation === "open" || input.operation === "status") && connection.preferred
           ? 660_000
-          : 15_000);
+          : PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS);
       // SCIENT-FORK:END
       const canReuseAssignedTab =
         assigned !== undefined &&
@@ -681,7 +693,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         // The enclosing operation owns the span for this inline handler.
         onNone: Effect.fnUntraced(function* () {
           // Never replay possibly applied actions; slow metadata reads must not evict the host.
-          if (input.updateCurrentTab !== false) {
+          // The in-process server browser is shared by every thread and cannot hang its stream.
+          if (
+            input.updateCurrentTab !== false &&
+            connection.clientId !== SERVER_BROWSER_AUTOMATION_CLIENT_ID
+          ) {
             yield* disconnect(connection.clientId, connection.queue, true);
           }
           return yield* new PreviewAutomationTimeoutError(requestContext);

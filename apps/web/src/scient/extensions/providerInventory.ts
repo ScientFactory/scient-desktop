@@ -52,16 +52,26 @@ export function mergeProviderInventory(
   });
 }
 
+/** The agents that report their own plugins and servers; the others have nothing to wait for. */
+const INVENTORY_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent", "scient", "droid"]);
+
+/**
+ * Whether an agent that should have reported has not. Agents that are off, not installed or
+ * keep no inventory never report, and that is not something missing.
+ */
 function hasUnknownInventory(providers: ReadonlyArray<ServerProvider>, roots: ReadonlySet<string>) {
   return providers.some(
     (provider) =>
-      provider.plugins === undefined ||
-      provider.mcpServers === undefined ||
-      [...roots].some(
-        (cwd) =>
-          provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.plugins ===
-          undefined,
-      ),
+      provider.enabled &&
+      provider.installed &&
+      INVENTORY_DRIVERS.has(provider.driver) &&
+      (provider.plugins === undefined ||
+        provider.mcpServers === undefined ||
+        [...roots].some(
+          (cwd) =>
+            provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.plugins ===
+            undefined,
+        )),
   );
 }
 
@@ -178,19 +188,4 @@ export function createProviderInventoryRequest({
       disposed = true;
     },
   };
-}
-
-export function providerInventoryMessage(view: ProviderInventoryView): string {
-  switch (view.phase) {
-    case "unknown":
-      return "Agent extensions have not been checked yet.";
-    case "checking":
-      return "Checking agent extensions across your projects…";
-    case "error":
-      return "Could not load agent extensions.";
-    case "partial":
-      return "Some agent inventories are unavailable. Showing what agents reported.";
-    case "ready":
-      return "No agent plugins or MCP servers were reported.";
-  }
 }

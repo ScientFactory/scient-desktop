@@ -49,12 +49,20 @@ import {
   THREAD_FORK_NATIVE_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import {
+  liveCodexThreadSetup,
+  materializeCodexThreadSetup,
+} from "../testkit/CodexReplayThreadSetup.ts";
+
+// SCIENT-FORK: native thread names follow their app threads' titles (upstream 767f194fd9).
+const forkThreadNames = (nativeThreadId: string) =>
+  nativeThreadId === "native-source-thread" ? "Source" : "Source (2)";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFrame = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -237,7 +245,12 @@ it.live.each(
         };
       }
       const replayTranscript = { ...transcript, entries };
-      const driver = yield* CodexReplay.makeReplayDriver(replayTranscript);
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const driverTranscript = {
+        ...transcript,
+        entries: liveCodexThreadSetup(transcript, entries, forkThreadNames),
+      };
+      const driver = yield* CodexReplay.makeReplayDriver(driverTranscript);
       const targetModelSelection =
         scenario === "changed-instance"
           ? { ...modelSelection, instanceId: ProviderInstanceId.make("codex-alternative") }
@@ -245,7 +258,7 @@ it.live.each(
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },
         makeCodexProviderAdapterRegistryReplayLayer({
-          transcript: replayTranscript,
+          transcript: driverTranscript,
           driver,
           instanceIds: [modelSelection.instanceId, targetModelSelection.instanceId],
         }),
@@ -254,7 +267,6 @@ it.live.each(
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;
-        const forks = yield* ConversationForkService;
         const now = yield* DateTime.now;
         const source = yield* createSource(cwd, sourceStatus);
         assert.equal(source.runs[0]?.status, sourceStatus);
@@ -335,7 +347,7 @@ it.live.each(
           sourceAssistantMessageId: answer.messageId,
           workspaceMode: "local" as const,
         };
-        const receipt = yield* forks.dispatch(forkCommand);
+        const receipt = yield* forkConversation(forkCommand);
         const frozen = yield* orchestrator.getThreadProjection(targetId);
         assert.lengthOf(
           frozen.contextTransfers,
@@ -365,7 +377,7 @@ it.live.each(
           assert.equal(inheritedAnswer.inheritedFrom?.itemId, answer.id);
           assert.lengthOf(frozen.runs, 0);
           assert.lengthOf(frozen.providerThreads, 0, "Admission must not execute a provider");
-          const repeated = yield* forks.dispatch(forkCommand);
+          const repeated = yield* forkConversation(forkCommand);
           assert.equal(repeated.sequence, receipt.sequence);
           const reloaded = yield* (yield* ProjectionStoreV2).getThreadProjection(targetId);
           assert.lengthOf(reloaded.contextTransfers, 1);
@@ -418,7 +430,7 @@ it.live.each(
               frame !== null &&
               "id" in frame &&
               typeof frame.id === "number"
-              ? { ...entry, frame: { ...frame, id: frame.id + 1 } }
+              ? { ...entry, frame: { ...frame, id: frame.id + 2 } }
               : entry;
           });
           const sourceStart = entries.find(
@@ -463,7 +475,7 @@ it.live.each(
                 : entry;
             });
             const revertResponse: unknown = decodeFrame(
-              encodeFrame(sourceStart.frame).replace('"id":2', '"id":8'),
+              encodeFrame(sourceStart.frame).replace('"id":2', '"id":10'),
             );
             entries.splice(
               nextFork,
@@ -472,7 +484,7 @@ it.live.each(
                 type: "expect_outbound",
                 label: "thread/read/source-rollback",
                 frame: {
-                  id: 6,
+                  id: 8,
                   method: "thread/read",
                   params: { threadId: "native-source-thread", includeTurns: false },
                 },
@@ -481,7 +493,7 @@ it.live.each(
                 type: "emit_inbound",
                 label: "thread/read/source-rollback",
                 frame: {
-                  id: 6,
+                  id: 8,
                   result: {
                     thread: {
                       id: "native-source-thread",
@@ -495,7 +507,7 @@ it.live.each(
                 type: "expect_outbound",
                 label: "thread/turns/list/source-rollback",
                 frame: {
-                  id: 7,
+                  id: 9,
                   method: "thread/turns/list",
                   params: {
                     threadId: "native-source-thread",
@@ -510,7 +522,7 @@ it.live.each(
                 type: "emit_inbound",
                 label: "thread/turns/list/source-rollback",
                 frame: {
-                  id: 7,
+                  id: 9,
                   result: {
                     data: [
                       {
@@ -528,7 +540,7 @@ it.live.each(
                 type: "expect_outbound",
                 label: "thread/revert/source-rollback",
                 frame: {
-                  id: 8,
+                  id: 10,
                   method: "thread/revert",
                   params: {
                     threadId: "native-source-thread",
@@ -633,17 +645,21 @@ it.live.each(
           });
           const freshResult: unknown = decodeFrame(
             encodeFrame(sourceStart.frame)
-              .replace('"id":2', '"id":5')
+              .replace('"id":2', '"id":6')
               .replaceAll("native-source-thread", "native-portable-thread"),
           );
           const suffix = entries.slice(forkIndex + 2).map((entry) => {
             if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
             const frame: unknown = decodeFrame(
-              encodeFrame(entry.frame)
-                .replace('"id":5', '"id":7')
-                .replaceAll("native-fork-thread", "native-portable-thread"),
+              encodeFrame(entry.frame).replaceAll("native-fork-thread", "native-portable-thread"),
             );
-            return { ...entry, frame };
+            // The fallback's thread/start and inject_items take two request ids.
+            return typeof frame === "object" &&
+              frame !== null &&
+              "id" in frame &&
+              typeof frame.id === "number"
+              ? { ...entry, frame: { ...frame, id: frame.id + 2 } }
+              : { ...entry, frame };
           });
           entries.splice(
             forkIndex + 1,
@@ -651,13 +667,13 @@ it.live.each(
             {
               type: "emit_inbound",
               label: "thread/fork/failure",
-              frame: { id: 4, error: { code: -32000, message: "fork exploded" } },
+              frame: { id: 5, error: { code: -32000, message: "fork exploded" } },
             },
             {
               type: "expect_outbound",
               label: "thread/start/fallback",
               frame: {
-                id: 5,
+                id: 6,
                 method: "thread/start",
                 params: { config: CODEX_THREAD_CONFIG },
               },
@@ -667,7 +683,7 @@ it.live.each(
               type: "expect_outbound",
               label: "thread/inject_items/fallback",
               frame: {
-                id: 6,
+                id: 7,
                 method: "thread/inject_items",
                 params: {
                   threadId: "native-portable-thread",
@@ -678,7 +694,7 @@ it.live.each(
             {
               type: "emit_inbound",
               label: "thread/inject_items/fallback",
-              frame: { id: 6, result: {} },
+              frame: { id: 7, result: {} },
             },
             ...suffix,
           );
@@ -692,7 +708,7 @@ it.live.each(
                 frame !== null &&
                 "id" in frame &&
                 typeof frame.id === "number"
-                ? { ...entry, frame: { ...frame, id: frame.id - 3 } }
+                ? { ...entry, frame: { ...frame, id: frame.id - 4 } }
                 : entry;
             });
             entries.splice(
@@ -724,7 +740,7 @@ it.live.each(
               type: "expect_outbound",
               label: "thread/unsubscribe/deleted-source",
               frame: {
-                id: 4,
+                id: 5,
                 method: "thread/unsubscribe",
                 params: { threadId: "later-source-native-thread" },
               },
@@ -732,7 +748,7 @@ it.live.each(
             {
               type: "emit_inbound",
               label: "thread/unsubscribe/deleted-source",
-              frame: { id: 4, result: {} },
+              frame: { id: 5, result: {} },
             },
             ...shifted,
           );
@@ -863,7 +879,7 @@ it.live.each(
           );
         }
         assert.include(target.messages.at(-1)?.text ?? "", "fork native ok");
-        const repeated = yield* forks.dispatch(forkCommand);
+        const repeated = yield* forkConversation(forkCommand);
         assert.equal(repeated.sequence, receipt.sequence);
         assert.lengthOf((yield* orchestrator.getThreadProjection(targetId)).contextTransfers, 1);
       }).pipe(Effect.provide(layer));
@@ -903,7 +919,7 @@ it.live(
               type: "expect_outbound" as const,
               label: "thread/unsubscribe/source",
               frame: {
-                id: 4,
+                id: 5,
                 method: "thread/unsubscribe",
                 params: { threadId: "native-source-thread" },
               },
@@ -911,19 +927,21 @@ it.live(
             {
               type: "emit_inbound" as const,
               label: "thread/unsubscribe/source",
-              frame: { id: 4, result: {} },
+              frame: { id: 5, result: {} },
             },
           ],
         };
         const beforeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
-          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(before),
+          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
+            // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+            materializeCodexThreadSetup(before, forkThreadNames),
+          ),
           { databaseLayer, configureMcp: false },
         );
         const accepted = yield* Effect.scoped(
           Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
-            const forks = yield* ConversationForkService;
             const source = yield* createSource(cwd);
             const answer = source.turnItems.find(
               (item) => item.type === "assistant_message" && item.status === "completed",
@@ -937,7 +955,7 @@ it.live(
               sourceAssistantMessageId: answer.messageId,
               workspaceMode: "local" as const,
             };
-            const receipt = yield* forks.dispatch(command);
+            const receipt = yield* forkConversation(command);
             yield* orchestrator.dispatch({
               type: "thread.delete",
               commandId: CommandId.make("native-fork-restart-delete"),
@@ -958,20 +976,21 @@ it.live(
                 frame !== null &&
                 "id" in frame &&
                 typeof frame.id === "number"
-                ? { ...entry, frame: { ...frame, id: frame.id - 2 } }
+                ? { ...entry, frame: { ...frame, id: frame.id - 3 } }
                 : entry;
             }),
           ],
         };
         const afterLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
-          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(after),
+          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
+            materializeCodexThreadSetup(after, forkThreadNames),
+          ),
           { databaseLayer, configureMcp: false, recoverOnStartup: true },
         );
         yield* Effect.scoped(
           Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
-            const forks = yield* ConversationForkService;
             const frozen = yield* orchestrator.getThreadProjection(targetId);
             assert.equal(
               frozen.contextTransfers[0]?.frozenSource?.sourceProviderTurns.at(-1)?.nativeTurnRef
@@ -979,7 +998,7 @@ it.live(
               "native-source-turn",
             );
             assert.equal(
-              (yield* forks.dispatch(accepted.command)).sequence,
+              (yield* forkConversation(accepted.command)).sequence,
               accepted.receipt.sequence,
             );
             yield* orchestrator.dispatch({
@@ -1021,21 +1040,25 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
       );
       const entries = [...decoded.entries];
       const transcript = { ...decoded, entries };
-      const driver = yield* CodexReplay.makeReplayDriver(transcript);
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const driverTranscript = {
+        ...decoded,
+        entries: liveCodexThreadSetup(decoded, entries, forkThreadNames),
+      };
+      const driver = yield* CodexReplay.makeReplayDriver(driverTranscript);
       const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },
-        makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
+        makeCodexProviderAdapterRegistryReplayLayer({ transcript: driverTranscript, driver }),
         { configureMcp: false },
       );
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
-        const forks = yield* ConversationForkService;
         const source = yield* createSource(cwd);
         const answer = source.turnItems.find(
           (item) => item.type === "assistant_message" && item.status === "completed",
         );
         assert.ok(answer?.type === "assistant_message");
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("first-turn-retry-fork"),
           originThreadId: sourceId,
@@ -1046,19 +1069,25 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
         const forkIndex = entries.findIndex(
           (entry) => entry.type === "expect_outbound" && entry.label === "thread/fork",
         );
+        // The retry's config/read and turn/start follow the rejected turn and the injected history.
         const retryFrames = entries.slice(forkIndex + 2).map((entry) => {
           if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
-          const frame: unknown = decodeFrame(encodeFrame(entry.frame).replace('"id":5', '"id":7'));
-          return { ...entry, frame };
+          const frame = entry.frame;
+          return typeof frame === "object" &&
+            frame !== null &&
+            "id" in frame &&
+            typeof frame.id === "number"
+            ? { ...entry, frame: { ...frame, id: frame.id + 3 } }
+            : entry;
         });
         const forkResponse = entries[forkIndex + 1];
         assert.ok(forkResponse?.type === "emit_inbound");
         // Control only the native app-server response; the actual adapter and run
         // execution machinery must terminalize the rejected first turn.
-        entries.splice(forkIndex + 3, entries.length - forkIndex - 3, {
+        entries.splice(forkIndex + 5, entries.length - forkIndex - 5, {
           type: "emit_inbound",
           label: "turn/start/fork/rejected",
-          frame: { id: 5, error: { code: -32602, message: "first turn rejected" } },
+          frame: { id: 7, error: { code: -32602, message: "first turn rejected" } },
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -1109,7 +1138,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
             type: "expect_outbound",
             label: "thread/inject_items/rejected-turn",
             frame: {
-              id: 6,
+              id: 8,
               method: "thread/inject_items",
               params: {
                 threadId: "native-fork-thread",
@@ -1120,7 +1149,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           {
             type: "emit_inbound",
             label: "thread/inject_items/rejected-turn",
-            frame: { id: 6, result: {} },
+            frame: { id: 8, result: {} },
           },
           ...retryFrames,
         );
@@ -1230,7 +1259,7 @@ it.live.each(
         (entry) => entry.type === "emit_inbound" && entry.label === "thread/fork",
       );
       assert.ok(nativeFork?.type === "emit_inbound");
-      const revertedFrame = decodeFrame(encodeFrame(nativeFork.frame).replace('"id":4', '"id":8'));
+      const revertedFrame = decodeFrame(encodeFrame(nativeFork.frame).replace('"id":5', '"id":10'));
       const exitIndex = entries.findIndex((entry) => entry.type === "runtime_exit");
       assert.isAbove(exitIndex, 0);
       entries.splice(
@@ -1240,7 +1269,7 @@ it.live.each(
           type: "expect_outbound",
           label: "thread/read/fork-rollback",
           frame: {
-            id: 6,
+            id: 8,
             method: "thread/read",
             params: { threadId: "native-fork-thread", includeTurns: false },
           },
@@ -1249,7 +1278,7 @@ it.live.each(
           type: "emit_inbound",
           label: "thread/read/fork-rollback",
           frame: {
-            id: 6,
+            id: 8,
             result: {
               thread: {
                 id: "native-fork-thread",
@@ -1263,7 +1292,7 @@ it.live.each(
           type: "expect_outbound",
           label: "thread/turns/list/fork-rollback",
           frame: {
-            id: 7,
+            id: 9,
             method: "thread/turns/list",
             params: {
               threadId: "native-fork-thread",
@@ -1278,7 +1307,7 @@ it.live.each(
           type: "emit_inbound",
           label: "thread/turns/list/fork-rollback",
           frame: {
-            id: 7,
+            id: 9,
             result: {
               data: [{ id: "native-fork-turn", items: [], status: "completed", error: null }],
               nextCursor: null,
@@ -1289,14 +1318,13 @@ it.live.each(
           type: "expect_outbound",
           label: "thread/revert/fork-baseline",
           frame: {
-            id: 8,
+            id: 10,
             method: "thread/revert",
             params: { threadId: "native-fork-thread", beforeTurnId: "native-fork-turn" },
           },
         },
         { type: "emit_inbound", label: "thread/revert/fork-baseline", frame: revertedFrame },
       );
-      const replayTranscript = { ...transcript, entries };
       const gate = makeProviderReplayGate(queuedAttachment ? ["turn/completed/fork"] : []);
       yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
       if (queuedAttachment) {
@@ -1310,24 +1338,28 @@ it.live.each(
           frame: decodeFrame(encoded.replace('"status":"completed"', '"status":"interrupted"')),
         };
       }
-      const driver = yield* CodexReplay.makeReplayDriver(replayTranscript, {
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const driverTranscript = {
+        ...transcript,
+        entries: liveCodexThreadSetup(transcript, entries, forkThreadNames),
+      };
+      const driver = yield* CodexReplay.makeReplayDriver(driverTranscript, {
         beforeEmitInbound: (entry) =>
           Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
       });
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },
-        makeCodexProviderAdapterRegistryReplayLayer({ transcript: replayTranscript, driver }),
+        makeCodexProviderAdapterRegistryReplayLayer({ transcript: driverTranscript, driver }),
         { configureMcp: false },
       );
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
         const source = yield* createSource(cwd);
         assert.ok(source.visibleTurnItems.some((row) => row.item.type === "command_execution"));
         const sourceAnswer = source.messages.findLast((message) => message.role === "assistant");
         assert.ok(sourceAnswer);
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("scient-rollback-fork"),
           originThreadId: sourceId,
@@ -1593,7 +1625,7 @@ it.live.each(
         );
         const replayState = yield* Ref.get(driver.state);
         assert.isNull(replayState.failure);
-        assert.equal(replayState.cursor, entries.length);
+        assert.equal(replayState.cursor, driverTranscript.entries.length);
       }).pipe(Effect.ensuring(Effect.sync(() => gate.releaseAll())), Effect.provide(layer));
     }),
   ).pipe(Effect.provide(NodeServices.layer)),

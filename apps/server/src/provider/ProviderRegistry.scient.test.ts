@@ -639,6 +639,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             ...failed,
             auth: signedIn.auth,
             models: signedIn.models,
+            // Upstream 1a42ba1b5f: one failed check after a ready one keeps the catalog offered.
+            modelsRetained: true,
           });
         });
       });
@@ -701,15 +703,21 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           const releaseCacheWrite = yield* Deferred.make<void>();
           const threeEventsObserved = yield* Deferred.make<void>();
           const fileSystem = yield* FileSystem.FileSystem;
+          // Upstream's atomic save (eb62a37150) writes a temporary file and renames it into place.
           const delayedFileSystem = FileSystem.FileSystem.of({
             ...fileSystem,
-            writeFileString: (path, contents, options) =>
-              contents.includes(refreshedProvider.checkedAt)
-                ? Deferred.succeed(cacheWriteStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseCacheWrite)),
-                    Effect.andThen(fileSystem.writeFileString(path, contents, options)),
-                  )
-                : fileSystem.writeFileString(path, contents, options),
+            rename: (from, to) =>
+              fileSystem.readFileString(from).pipe(
+                Effect.orElseSucceed(() => ""),
+                Effect.flatMap((contents) =>
+                  contents.includes(refreshedProvider.checkedAt)
+                    ? Deferred.succeed(cacheWriteStarted, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseCacheWrite)),
+                        Effect.andThen(fileSystem.rename(from, to)),
+                      )
+                    : fileSystem.rename(from, to),
+                ),
+              ),
           });
           const instance = {
             instanceId: cursorInstanceId,

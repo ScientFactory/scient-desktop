@@ -83,10 +83,18 @@ const loadExtension = async (
 
 /** A synthetic Scient MCP endpoint. */
 const stubMcp = (toolResult: Record<string, unknown> = { content: [] }) => {
-  const requests: Array<{ readonly body: McpRequest; readonly authorization: string | null }> = [];
-  vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+  const requests: Array<{
+    readonly body: McpRequest;
+    readonly authorization: string | null;
+    readonly timeout: unknown;
+  }> = [];
+  vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit & { timeout?: unknown }) => {
     const body = JSON.parse(String(init?.body)) as McpRequest;
-    requests.push({ body, authorization: new Headers(init?.headers).get("authorization") });
+    requests.push({
+      body,
+      authorization: new Headers(init?.headers).get("authorization"),
+      timeout: init?.timeout,
+    });
     if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
     const result =
       body.method === "initialize"
@@ -141,6 +149,30 @@ describe("Scient's Oh My Pi extension", () => {
     );
   });
 
+  it("lets a tool call outlast Scient's longest wait while the handshake stays short", async () => {
+    const requests = stubMcp({ content: [{ type: "text", text: "settled" }] });
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+      SESSION,
+    );
+    const timeouts = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const host = makeApi();
+      await (
+        await extension.importFresh()
+      )(host.api);
+      expect(timeouts.mock.calls.map(([ms]) => ms)).toEqual([180_000, 180_000, 180_000]);
+      // regression: a thread wait over 3 minutes failed with "The operation timed out."
+      await host.tools.get("scient_fixture")!.execute("wait", { timeoutMs: 3_600_000 });
+      expect(timeouts.mock.calls.at(-1)?.[0]).toBeGreaterThan(60 * 60 * 1_000);
+      // regression: Bun's own fetch deadline ended a key card's call after ~5.5 minutes with
+      // "The operation timed out.", whatever the signal allowed.
+      expect(requests.find(({ body }) => body.method === "tools/call")?.timeout).toBe(false);
+    } finally {
+      timeouts.mockRestore();
+    }
+  });
+
   it("gives a subagent's re-run the same tools over the one connection", async () => {
     const requests = stubMcp({ content: [{ type: "text", text: "child" }] });
     const extension = await loadExtension(
@@ -193,6 +225,44 @@ describe("Scient's Oh My Pi extension", () => {
     // No endpoint means no Scient tool connection, but awareness still applies.
     expect(host.tools.size).toBe(0);
     expect(requests).toHaveLength(0);
+  });
+
+  it("adds the thread's folder list at each agent start, as Scient last wrote it", async () => {
+    stubMcp();
+    const folders = NodePath.join(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-folders-")),
+      "folders.txt",
+    );
+    roots.push(NodePath.dirname(folders));
+    NodeFS.writeFileSync(folders, "<workspace_folders>\n- api\n</workspace_folders>");
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath, folders),
+      { endpoint: null, authorization: null, awareness: SESSION.awareness },
+    );
+    const host = makeApi();
+    await (
+      await extension.importFresh()
+    )(host.api);
+    const hook = host.handlers.get("before_agent_start") as Handler | undefined;
+
+    expect(hook?.({ systemPrompt: ["base"] } as never)).toEqual({
+      systemPrompt: [
+        "base",
+        `${SESSION.awareness}\n\n<workspace_folders>\n- api\n</workspace_folders>`,
+      ],
+    });
+    NodeFS.writeFileSync(folders, "<workspace_folders>\n- api\n- web\n</workspace_folders>");
+    expect(hook?.({ systemPrompt: ["base"] } as never)).toEqual({
+      systemPrompt: [
+        "base",
+        `${SESSION.awareness}\n\n<workspace_folders>\n- api\n- web\n</workspace_folders>`,
+      ],
+    });
+    // A single-folder thread's empty list adds nothing.
+    NodeFS.writeFileSync(folders, "");
+    expect(hook?.({ systemPrompt: ["base"] } as never)).toEqual({
+      systemPrompt: ["base", SESSION.awareness],
+    });
   });
 
   it("leaves the system prompt untouched without awareness", async () => {

@@ -16,6 +16,10 @@ vi.mock("./ConnectModelsButton", () => ({
 
 import { PiInlineSetup } from "./PiInlineSetup";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("pi"),
   driver: ProviderDriverKind.make("pi"),

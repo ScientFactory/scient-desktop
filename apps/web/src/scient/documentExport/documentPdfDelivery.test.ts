@@ -39,6 +39,7 @@ describe("document PDF delivery", () => {
     expect(await deliverDocumentPdf({ saveCopy }, published, "Field notes.pdf")).toEqual({
       _tag: "delivered",
       title: "Download started",
+      outcome: "download-started",
       description: "Field notes.pdf",
     });
     expect(saveCopy).toHaveBeenCalledWith(published, "Field notes.pdf");

@@ -225,9 +225,20 @@ export const AnalysisArtifact = Schema.Struct({
 });
 export type AnalysisArtifact = typeof AnalysisArtifact.Type;
 
+/** How much of a run's project output capture could vouch for: closed codes, no file names. */
+export const AnalysisCaptureCoverage = Schema.Struct({
+  coverage: Schema.Literals(["complete", "partial", "unavailable"]),
+  coverageReason: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+  rejectedCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  rejectionReason: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+});
+export type AnalysisCaptureCoverage = typeof AnalysisCaptureCoverage.Type;
+
 export const AnalysisArtifactReceipt = Schema.Struct({
   status: Schema.Literals(["not-requested", "pending", "succeeded", "failed"]),
   failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2048))),
+  /** Absent on runs recorded before coverage was kept, and on adapters that do not report it. */
+  coverage: Schema.optional(AnalysisCaptureCoverage),
 });
 export type AnalysisArtifactReceipt = typeof AnalysisArtifactReceipt.Type;
 
@@ -503,6 +514,7 @@ export interface AnalysisArtifactCollection {
   readonly writtenFiles?: ReadonlyArray<string>;
   /** A producer warning that does not invalidate representations published successfully. */
   readonly failureMessage: string | null;
+  readonly coverage?: AnalysisCaptureCoverage;
 }
 
 export interface AnalysisRunOutcome {
@@ -529,6 +541,8 @@ export interface AnalysisRuntimeAdapter {
   }) => Promise<AnalysisRuntimeProfile>;
   readonly validateSource?: (source: AnalysisRunSource) => string | null;
   readonly prepareRun?: (context: AnalysisRunContext) => Promise<void>;
+  /** Releases what prepareRun held, whether or not the run reached collection. */
+  readonly releaseRun?: (context: AnalysisRunContext) => Promise<void>;
   readonly prepare: (context: AnalysisRunContext) => {
     readonly executable: string;
     readonly args: ReadonlyArray<string>;

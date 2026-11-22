@@ -14,6 +14,7 @@ export interface MathCommandCompletion {
 export function mathCommandCompletions(query: string, context: LatexCompletionContext = {}) {
   if (/^\\beg(?:i(?:n)?)?$/u.test(query))
     return [
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- a LaTeX environment command
       { label: "\\begin{}", latex: "\\begin{}", preview: "\\begin{environment}", argument: true },
     ];
   const environments = mathEnvironmentCompletions(query);
@@ -53,10 +54,12 @@ export function mathArgumentCompletion(command: string): MathCommandCompletion |
 /** Formula environments only: display wrappers are changed through the Math menu. */
 export function mathEnvironmentCompletions(beforeCaret: string): MathCommandCompletion[] {
   if (/^\\beg(?:i(?:n)?)?$/u.test(beforeCaret))
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- a LaTeX environment command
     return [{ label: "\\begin{}", latex: "\\begin{}", argument: true }];
   const match = /^\\begin\{([A-Za-z*]*)\}?$/u.exec(beforeCaret);
   if (!match) return [];
   return MATRIX_ENVIRONMENTS.filter((name) => name.startsWith(match[1]!)).map((name) => ({
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- a LaTeX environment command
     label: `\\begin{${name}}`,
     latex: `\\begin{${name}}#? & #? \\\\ #? & #?\\end{${name}}`,
   }));

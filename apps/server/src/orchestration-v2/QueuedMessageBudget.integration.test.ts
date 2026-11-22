@@ -18,6 +18,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
@@ -30,6 +31,7 @@ import {
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { readQueue, writeQueue } from "./legacy/LegacyQueueLedger.ts";
@@ -83,7 +85,11 @@ const withBusyNative = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
         (entry) => entry.type === "emit_inbound" && entry.label === "turn/started/source",
       );
       assert.ok(end > 0);
-      const transcript = { ...full, entries: full.entries.slice(0, end + 1) };
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const transcript = materializeCodexThreadSetup(
+        { ...full, entries: full.entries.slice(0, end + 1) },
+        () => "Queue bounds",
+      );
       const driver = yield* CodexReplay.makeReplayDriver(transcript);
       const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },
@@ -99,7 +105,10 @@ const withBusyNative = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
         SqlitePersistenceMemory,
         CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
       );
-      const layer = ThreadManagement.layerWithLegacyImporter.pipe(Layer.provideMerge(services));
+      const layer = ThreadManagement.layerWithLegacyImporter.pipe(
+        Layer.provideMerge(services),
+        Layer.provide(Layer.succeed(ThreadWorktreeRestore, { restore: () => Effect.void })),
+      );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;
@@ -146,6 +155,7 @@ const withBusyNative = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
         });
         yield* ThreadMessageIntake.dispatchCommand(
           message("active", [], THREAD_FORK_NATIVE_SOURCE_PROMPT),
+          { managesProviders: true },
         );
         const cursor = yield* orchestrator.getThreadEventSequence(threadId);
         const pull = yield* Stream.toPull(
@@ -246,7 +256,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         for (let index = 0; index < 19; index++)
-          yield* ThreadMessageIntake.dispatchCommand(message(`prior-${index}`));
+          yield* ThreadMessageIntake.dispatchCommand(message(`prior-${index}`), {
+            managesProviders: true,
+          });
         const candidates = yield* Effect.forEach(["twenty", "twenty-one"], (key) =>
           stage(1).pipe(Effect.map((upload) => ({ key, upload }))),
         );
@@ -254,7 +266,11 @@ it.live(
         const results = yield* Effect.forEach(
           candidates,
           ({ key, upload }) =>
-            Effect.result(ThreadMessageIntake.dispatchCommand(message(key, [upload.attachment]))),
+            Effect.result(
+              ThreadMessageIntake.dispatchCommand(message(key, [upload.attachment]), {
+                managesProviders: true,
+              }),
+            ),
           { concurrency: 2 },
         );
         assert.equal(results.filter((result) => result._tag === "Success").length, 1);
@@ -266,6 +282,7 @@ it.live(
           if (results[index]?._tag === "Success") {
             yield* ThreadMessageIntake.dispatchCommand(
               message(candidate.key, [candidate.upload.attachment]),
+              { managesProviders: true },
             );
             assert.lengthOf(
               (yield* queued()).messages,
@@ -295,7 +312,9 @@ it.live(
       "queue-count-mixed",
       Effect.gen(function* () {
         for (let index = 0; index < 19; index++)
-          yield* ThreadMessageIntake.dispatchCommand(message(`native-${index}`));
+          yield* ThreadMessageIntake.dispatchCommand(message(`native-${index}`), {
+            managesProviders: true,
+          });
         const now = "2026-10-04T00:00:00.000Z";
         yield* writeQueue(threadId, {
           ...(yield* readQueue(threadId)),
@@ -341,8 +360,11 @@ it.live(
           ["qitem_second"],
         );
         assert.equal(
-          (yield* Effect.result(ThreadMessageIntake.dispatchCommand(message("native-overflow"))))
-            ._tag,
+          (yield* Effect.result(
+            ThreadMessageIntake.dispatchCommand(message("native-overflow"), {
+              managesProviders: true,
+            }),
+          ))._tag,
           "Failure",
         );
         assert.lengthOf((yield* queued()).messages, 20);
@@ -358,7 +380,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const first = yield* stage(32 * MiB);
-        yield* ThreadMessageIntake.dispatchCommand(message("large-first", [first.attachment]));
+        yield* ThreadMessageIntake.dispatchCommand(message("large-first", [first.attachment]), {
+          managesProviders: true,
+        });
         const ownedFirst = (yield* queued()).messages.find(
           (item) => item.id === message("large-first").messageId,
         )?.attachments[0];
@@ -372,14 +396,18 @@ it.live(
         const beforeRejected = yield* files();
         assert.equal(
           (yield* Effect.result(
-            ThreadMessageIntake.dispatchCommand(message("large-second", [second.attachment])),
+            ThreadMessageIntake.dispatchCommand(message("large-second", [second.attachment]), {
+              managesProviders: true,
+            }),
           ))._tag,
           "Failure",
         );
         assert.deepEqual(yield* files(), beforeRejected);
         assert.equal(yield* fs.exists(second.pendingPath), true);
         yield* fs.truncate(firstPath, 32 * MiB);
-        yield* ThreadMessageIntake.dispatchCommand(message("below-limit", [second.attachment]));
+        yield* ThreadMessageIntake.dispatchCommand(message("below-limit", [second.attachment]), {
+          managesProviders: true,
+        });
         const ownedSecond = (yield* queued()).messages.find(
           (item) => item.id === message("below-limit").messageId,
         )?.attachments[0];
@@ -391,7 +419,9 @@ it.live(
         assert.ok(retained);
         assert.equal(
           (yield* Effect.result(
-            ThreadMessageIntake.dispatchCommand(message("shared-overflow", [retained])),
+            ThreadMessageIntake.dispatchCommand(message("shared-overflow", [retained]), {
+              managesProviders: true,
+            }),
           ))._tag,
           "Failure",
           "Each queued message spends its attachment bytes, including shared references, as protected MAIN does",
@@ -438,11 +468,14 @@ it.live(
         });
         assert.equal(yield* cutOverLegacyQueue(threadId), 1);
         const heavy = yield* stage(40 * MiB);
-        yield* ThreadMessageIntake.dispatchCommand({
-          ...message("heavy-neighbor", [heavy.attachment], "$analysis neighboring work"),
-          context: { version: 1 as const, records: [] },
-          selectedScientSkillNames: ["analysis"],
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            ...message("heavy-neighbor", [heavy.attachment], "$analysis neighboring work"),
+            context: { version: 1 as const, records: [] },
+            selectedScientSkillNames: ["analysis"],
+          },
+          { managesProviders: true },
+        );
         const before = yield* queued();
         const run = before.projection.runs.find(
           (candidate) => candidate.legacyQueue?.queueItemId === "qitem_edit",
@@ -453,16 +486,19 @@ it.live(
         const excessive = yield* stage(24 * MiB);
         const beforeRejected = yield* files();
         const rejected = yield* Effect.result(
-          ThreadMessageIntake.dispatchCommand({
-            type: "queued-run.edit",
-            commandId: CommandId.make("edit-excessive"),
-            threadId,
-            runId: run.id,
-            text: "Rejected replacement",
-            attachments: [excessive.attachment],
-            context: null,
-            selectedScientSkillNames: [],
-          }),
+          ThreadMessageIntake.dispatchCommand(
+            {
+              type: "queued-run.edit",
+              commandId: CommandId.make("edit-excessive"),
+              threadId,
+              runId: run.id,
+              text: "Rejected replacement",
+              attachments: [excessive.attachment],
+              context: null,
+              selectedScientSkillNames: [],
+            },
+            { managesProviders: true },
+          ),
         );
         assert.equal(rejected._tag, "Failure");
         assert.deepEqual(
@@ -476,13 +512,16 @@ it.live(
           Number((yield* fs.stat(yield* attachmentPath(original.attachments[0]))).size),
           MiB,
         );
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "queued-run.edit",
-          commandId: CommandId.make("edit-text-only"),
-          threadId,
-          runId: run.id,
-          text: "$analysis edited",
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "queued-run.edit",
+            commandId: CommandId.make("edit-text-only"),
+            threadId,
+            runId: run.id,
+            text: "$analysis edited",
+          },
+          { managesProviders: true },
+        );
         const edited = (yield* queued()).messages.find((candidate) => candidate.id === original.id);
         assert.ok(edited);
         assert.isUndefined(edited.composerSnapshot);
@@ -490,29 +529,35 @@ it.live(
         assert.deepEqual(edited.selectedScientSkillNames, ["analysis"]);
         assert.deepEqual(edited.attachments, original.attachments);
         const accepted = yield* stage(2 * MiB);
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "queued-run.edit",
-          commandId: CommandId.make("edit-clear"),
-          threadId,
-          runId: run.id,
-          text: "Cleared selections",
-          attachments: [accepted.attachment],
-          context: null,
-          selectedScientSkillNames: [],
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "queued-run.edit",
+            commandId: CommandId.make("edit-clear"),
+            threadId,
+            runId: run.id,
+            text: "Cleared selections",
+            attachments: [accepted.attachment],
+            context: null,
+            selectedScientSkillNames: [],
+          },
+          { managesProviders: true },
+        );
         const neighbor = (yield* queued()).projection.runs.find(
           (candidate) => candidate.userMessageId === message("heavy-neighbor").messageId,
         );
         assert.ok(neighbor);
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "queued-run.edit",
-          commandId: CommandId.make("edit-native-clear"),
-          threadId,
-          runId: neighbor.id,
-          text: "Neighbor cleared",
-          context: null,
-          selectedScientSkillNames: [],
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "queued-run.edit",
+            commandId: CommandId.make("edit-native-clear"),
+            threadId,
+            runId: neighbor.id,
+            text: "Neighbor cleared",
+            context: null,
+            selectedScientSkillNames: [],
+          },
+          { managesProviders: true },
+        );
         const after = yield* orchestrator.getThreadProjection(threadId);
         const neighborMessage = after.messages.find(
           (candidate) => candidate.id === neighbor.userMessageId,
@@ -603,15 +648,18 @@ it.live(
         assert.ok(run);
         const original = before.messages.find((candidate) => candidate.id === run.userMessageId);
         assert.equal(original?.composerSnapshot, snapshot);
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "queued-run.edit",
-          commandId: CommandId.make("snapshot-edit"),
-          threadId,
-          runId: run.id,
-          text: "Edited prompt",
-          context: null,
-          selectedScientSkillNames: [],
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "queued-run.edit",
+            commandId: CommandId.make("snapshot-edit"),
+            threadId,
+            runId: run.id,
+            text: "Edited prompt",
+            context: null,
+            selectedScientSkillNames: [],
+          },
+          { managesProviders: true },
+        );
         const edited = (yield* queued()).messages.find(
           (candidate) => candidate.id === run.userMessageId,
         );
@@ -651,8 +699,11 @@ it.live(
         yield* fs.writeFile(path, new Uint8Array([73]));
         const before = yield* queued();
         assert.equal(
-          (yield* Effect.result(ThreadMessageIntake.dispatchCommand(message("foreign", [foreign]))))
-            ._tag,
+          (yield* Effect.result(
+            ThreadMessageIntake.dispatchCommand(message("foreign", [foreign]), {
+              managesProviders: true,
+            }),
+          ))._tag,
           "Failure",
         );
         assert.deepEqual((yield* queued()).messages, before.messages);

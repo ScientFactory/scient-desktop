@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -23,10 +25,12 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { vi } from "vite-plus/test";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import {
   CheckoutBarrier,
@@ -36,6 +40,7 @@ import {
   makeCheckoutBarrier,
   type CheckoutSection,
 } from "./CheckoutBarrier.ts";
+import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 
 /** A temporary folder holding `repo` (a checkout: it has `.git`) and `other`. */
 const folders = Effect.acquireRelease(
@@ -97,6 +102,47 @@ const waitForBulkAdmission = Effect.fn("test.CheckoutBarrier.waitForBulkAdmissio
   );
 });
 
+/**
+ * Waits until `path`'s checkout epoch exceeds `before` (a bulk change located the checkout and
+ * announced itself, so it holds or waits for the checkout it found) or until `fiber` ended
+ * without doing so. Locating reads the disk, so a fixed number of scheduler turns is not enough
+ * on a slow runner.
+ */
+const waitForBulkAnnounced = (
+  barrier: CheckoutBarrierShape,
+  path: string,
+  before: number,
+  fiber: Fiber.Fiber<unknown, unknown>,
+) =>
+  Effect.gen(function* () {
+    const outcome = yield* Effect.raceFirst(
+      barrier
+        .current(path)
+        .pipe(
+          Effect.repeat({ until: (section) => section.epoch > before }),
+          Effect.as("announced" as const),
+        ),
+      Fiber.await(fiber).pipe(Effect.map((exit) => `ended first: ${String(exit)}`)),
+    );
+    // Ending first (refused, or run without waiting) would make the caller's next steps vacuous.
+    assert.equal(outcome, "announced");
+  });
+
+/** Forks a bulk change of `path` and returns once it has announced itself. */
+const forkBulk = <A, E>(
+  barrier: CheckoutBarrierShape,
+  path: string,
+  effect: Effect.Effect<A, E>,
+  options?: { readonly missing?: "nearest" | "skip"; readonly detach?: boolean },
+) =>
+  Effect.gen(function* () {
+    const before = (yield* barrier.current(path)).epoch;
+    const change = barrier.bulk(path, effect, options);
+    const fiber = yield* options?.detach ? Effect.forkDetach(change) : Effect.forkChild(change);
+    yield* waitForBulkAnnounced(barrier, path, before, fiber);
+    return fiber;
+  });
+
 describe("CheckoutBarrier", () => {
   it.effect("refuses an application while a bulk change runs, and admits one after", () =>
     Effect.gen(function* () {
@@ -120,15 +166,13 @@ describe("CheckoutBarrier", () => {
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, repo, release);
       let mutated = false;
-      const bulk = yield* barrier
-        .bulk(
-          repo,
-          Effect.sync(() => {
-            mutated = true;
-          }),
-        )
-        .pipe(Effect.forkChild);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      const bulk = yield* forkBulk(
+        barrier,
+        repo,
+        Effect.sync(() => {
+          mutated = true;
+        }),
+      );
       assert.isFalse(mutated);
       // The waiting bulk change already refuses a new application.
       assert.isTrue(
@@ -189,13 +233,11 @@ describe("CheckoutBarrier", () => {
           const release = yield* Deferred.make<void>();
           const outer = yield* holdBulk(barrier, repo, release);
           // A nested change of the same checkout, from inside, joins the held section.
-          const second = yield* barrier
-            .bulk(
-              paper,
-              Effect.sync(() => seen.push("second")),
-            )
-            .pipe(Effect.forkChild);
-          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          const second = yield* forkBulk(
+            barrier,
+            paper,
+            Effect.sync(() => seen.push("second")),
+          );
           // The second waits its turn: not even its settler runs while the first holds.
           assert.deepEqual(seen, ["settled"]);
           yield* Deferred.succeed(release, undefined);
@@ -248,15 +290,13 @@ describe("CheckoutBarrier", () => {
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, submodule, release);
       let mutated = false;
-      const bulk = yield* barrier
-        .bulk(
-          repo,
-          Effect.sync(() => {
-            mutated = true;
-          }),
-        )
-        .pipe(Effect.forkChild);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      const bulk = yield* forkBulk(
+        barrier,
+        repo,
+        Effect.sync(() => {
+          mutated = true;
+        }),
+      );
       assert.isFalse(mutated);
       assert.isTrue(
         Exit.isFailure(yield* Effect.exit(barrier.application(submodule, () => Effect.void))),
@@ -298,8 +338,9 @@ describe("CheckoutBarrier", () => {
       );
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, repo, release);
+      const before = (yield* barrier.current(repo)).epoch;
       yield* Deferred.succeed(afterOuter, undefined);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      yield* waitForBulkAnnounced(barrier, repo, before, detached!);
       assert.isFalse(mutated);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(application);
@@ -316,15 +357,13 @@ describe("CheckoutBarrier", () => {
       const release = yield* Deferred.make<void>();
       const outer = yield* holdBulk(barrier, repo, release);
       let mutated = false;
-      const queued = yield* barrier
-        .bulk(
-          repo,
-          Effect.sync(() => {
-            mutated = true;
-          }),
-        )
-        .pipe(Effect.forkChild);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      const queued = yield* forkBulk(
+        barrier,
+        repo,
+        Effect.sync(() => {
+          mutated = true;
+        }),
+      );
       // The checkout moves away and another takes its path.
       yield* Effect.promise(async () => {
         await NodeFSP.rename(repo, NodePath.join(root, "moved"));
@@ -369,15 +408,14 @@ describe("CheckoutBarrier", () => {
         repo,
         Effect.gen(function* () {
           // Forked inside the section, it inherits it but does not own it.
-          child = yield* barrier
-            .bulk(
-              repo,
-              Effect.sync(() => {
-                order.push("child");
-              }),
-            )
-            .pipe(Effect.forkDetach);
-          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          child = yield* forkBulk(
+            barrier,
+            repo,
+            Effect.sync(() => {
+              order.push("child");
+            }),
+            { detach: true },
+          );
           order.push("owner");
         }),
       );
@@ -421,16 +459,14 @@ describe("CheckoutBarrier", () => {
           const release = yield* Deferred.make<void>();
           const outer = yield* holdBulk(barrier, worktree, release);
           let removed = false;
-          const queued = yield* barrier
-            .bulk(
-              worktree,
-              Effect.sync(() => {
-                removed = true;
-              }),
-              { missing: "skip" },
-            )
-            .pipe(Effect.forkChild);
-          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          const queued = yield* forkBulk(
+            barrier,
+            worktree,
+            Effect.sync(() => {
+              removed = true;
+            }),
+            { missing: "skip" },
+          );
           // Gone meanwhile; a settler that would refuse its vanished checkout never runs.
           yield* Effect.promise(() => NodeFSP.rm(worktree, { recursive: true, force: true }));
           yield* barrier.settleBeforeBulk((section) =>
@@ -474,6 +510,112 @@ describe("CheckoutBarrier", () => {
       assert.equal((yield* barrier.current(repo)).epoch, 0);
       yield* barrier.bulk(gone, Effect.void);
       assert.equal((yield* barrier.current(repo)).epoch, 2);
+    }).pipe(Effect.scoped),
+  );
+
+  // A skipped change runs outside the barrier: it neither waits for an application held on the
+  // checkout (it would hang) nor runs a settler or moves an epoch. `arm` starts the removal.
+  const skipsOutside = <R>(
+    barrier: CheckoutBarrierShape,
+    path: string,
+    observe: string,
+    arm: Effect.Effect<void, never, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* barrier.settleBeforeBulk((section) =>
+          Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root })),
+        );
+        const release = yield* Deferred.make<void>();
+        const application = yield* holdApplication(barrier, path, release);
+        yield* arm;
+        let ran = false;
+        yield* barrier.bulk(
+          path,
+          Effect.sync(() => {
+            ran = true;
+          }),
+          { missing: "skip" },
+        );
+        assert.isTrue(ran);
+        assert.equal((yield* barrier.current(observe)).epoch, 0);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(application);
+      }),
+    );
+
+  it.effect.each([
+    { name: "fails its identity read", read: "missing" },
+    // Windows reports a missing identity as an error without a code.
+    { name: "fails its identity read without an error code", read: "uncoded" },
+    { name: "was read, leaving a stale nearest checkout", read: "after-identity" },
+    { name: "leaves its enclosing checkout as the nearest", read: "before-marker" },
+  ] as const)("skips a path removed while it is examined when that $name", ({ read }) =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const worktree = NodePath.join(repo, "worktree");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
+      );
+      const remove = () => NodeFSP.rm(worktree, { recursive: true, force: true });
+      const arm = Effect.gen(function* () {
+        const key = platformFileIdentity.key.bind(platformFileIdentity);
+        const identity = vi.spyOn(platformFileIdentity, "key").mockImplementation(async (path) => {
+          // Gone after its `.git` was seen: before its own identity read, or after it.
+          if (read !== "before-marker" && path === (read === "after-identity" ? repo : worktree))
+            await remove();
+          if (read === "uncoded" && path === worktree)
+            throw new Error("File identity is unavailable.");
+          return key(path);
+        });
+        // Gone after its real path was resolved and before its `.git` is looked for.
+        const promises = NodeFS.promises;
+        const lstat = promises.lstat.bind(promises);
+        const marker = vi.spyOn(promises, "lstat").mockImplementation(async (file, ...rest) => {
+          if (read === "before-marker" && file === NodePath.join(worktree, ".git")) await remove();
+          return lstat(file, ...rest);
+        });
+        NodeModule.syncBuiltinESMExports();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            identity.mockRestore();
+            marker.mockRestore();
+            NodeModule.syncBuiltinESMExports();
+          }),
+        );
+      });
+      yield* skipsOutside(makeCheckoutBarrier(), worktree, repo, arm);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses, not skips, when an enclosing checkout vanishes but the path remains", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const worktree = NodePath.join(repo, "worktree");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
+      );
+      const key = platformFileIdentity.key.bind(platformFileIdentity);
+      const spy = vi.spyOn(platformFileIdentity, "key").mockImplementation(async (path) => {
+        if (path === repo)
+          throw Object.assign(new Error("ENOENT: the enclosing checkout moved"), {
+            code: "ENOENT",
+          });
+        return key(path);
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+      let ran = false;
+      const refused = yield* Effect.exit(
+        makeCheckoutBarrier().bulk(
+          worktree,
+          Effect.sync(() => {
+            ran = true;
+          }),
+          { missing: "skip" },
+        ),
+      );
+      assert.include(String(refused), "CheckoutLookupError");
+      assert.isFalse(ran);
     }).pipe(Effect.scoped),
   );
 
@@ -629,12 +771,17 @@ describe("CheckoutBarrier consumers", () => {
           IdAllocator.layer,
           Layer.succeed(CheckoutBarrier, barrier),
           Layer.mock(CheckpointStore.CheckpointStore)({
+            hasCheckpointRef: () => Effect.succeed(true),
+            captureCheckpoint: () => Effect.void,
+            deleteCheckpointRefs: () => Effect.void,
             restoreCheckpoint: (input) =>
               Effect.sync(() => {
                 restored.push(input.cwd);
                 return true;
               }),
           }),
+          NodeServices.layer,
+          Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
         ),
       ),
       Layer.provideMerge(NodeCrypto.layer),
@@ -659,14 +806,19 @@ describe("CheckoutBarrier consumers", () => {
       const application = yield* holdApplication(barrier, NodePath.join(root, "paper"), release);
       const restoring = yield* checkpoints
         .restore({
-          scope,
-          checkpoint: {
-            id: CheckpointId.make("checkpoint:barrier"),
-            scopeId: scope.id,
-            ordinalWithinScope: 1,
-            ref: CheckpointRef.make("refs/scient/checkpoints/barrier"),
-            status: "ready",
-          } as never,
+          targets: [
+            {
+              scope,
+              checkpoint: {
+                id: CheckpointId.make("checkpoint:barrier"),
+                scopeId: scope.id,
+                ordinalWithinScope: 1,
+                ref: CheckpointRef.make("refs/scient/checkpoints/barrier"),
+                status: "ready",
+              } as never,
+            },
+          ],
+          scopes: [scope],
         })
         .pipe(Effect.forkChild);
       yield* waitForBulkAdmission(barrier, root);
@@ -677,4 +829,119 @@ describe("CheckoutBarrier consumers", () => {
       assert.deepEqual(restored, [root]);
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
+
+  /**
+   * Rewinds `/repo/first` then `/repo/second` on a store that only records, behind a barrier whose
+   * settler refuses the folders `refuse` names on that entry into a bulk section.
+   */
+  const rewindBehindBarrier = (options: {
+    readonly refuse: (root: string, entry: number) => boolean;
+    readonly failRestore?: string;
+    readonly kept?: string;
+  }) => {
+    const barrier = makeCheckoutBarrier((path) => Effect.succeed({ root: path, keys: [path] }));
+    const log: string[] = [];
+    const entries = new Map<string, number>();
+    const targets = ["first", "second"].map((name) => ({
+      scope: {
+        id: CheckpointScopeId.make(`checkpoint-scope:barrier-rewind:${name}`),
+        cwd: `/repo/${name}`,
+      },
+      checkpoint: {
+        ordinalWithinScope: 1,
+        ref: CheckpointRef.make(`refs/scient/test/rewind/${name}`),
+        status: "ready" as const,
+      },
+    }));
+    const isTarget = (ref: string) => targets.some((target) => target.checkpoint.ref === ref);
+    const name = (ref: string) => (isTarget(ref) ? "target" : "pre-rewind");
+    const layer = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.succeed(CheckoutBarrier, barrier),
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            hasCheckpointRef: (input) =>
+              Effect.succeed(isTarget(input.checkpointRef) || input.cwd === options.kept),
+            captureCheckpoint: (input) => Effect.sync(() => log.push(`capture ${input.cwd}`)),
+            restoreCheckpoint: (input) =>
+              Effect.sync(() => log.push(`restore ${input.cwd} ${name(input.checkpointRef)}`)).pipe(
+                Effect.andThen(
+                  input.cwd === options.failRestore && isTarget(input.checkpointRef)
+                    ? Effect.die("restore failed")
+                    : Effect.succeed(true),
+                ),
+              ),
+            deleteCheckpointRefs: (input) =>
+              Effect.sync(() => {
+                for (const ref of input.checkpointRefs)
+                  log.push(`delete ${input.cwd} ${name(ref)}`);
+              }),
+          }),
+          NodeServices.layer,
+          Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+    return Effect.gen(function* () {
+      yield* barrier.settleBeforeBulk((section) => {
+        const entry = (entries.get(section.root) ?? 0) + 1;
+        entries.set(section.root, entry);
+        log.push(`settle ${section.root}`);
+        return options.refuse(section.root, entry)
+          ? Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root }))
+          : Effect.void;
+      });
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const exit = yield* Effect.exit(
+        checkpoints.restore({ targets, scopes: targets.map((target) => target.scope) }),
+      );
+      return { exit, log };
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  };
+
+  it.effect("a rewind leaves a folder whose restore the barrier refuses untouched", () =>
+    Effect.gen(function* () {
+      // The refused folder holds the snapshot an earlier failed rewind kept.
+      const { exit, log } = yield* rewindBehindBarrier({
+        refuse: (root) => root === "/repo/second",
+        kept: "/repo/second",
+      });
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepEqual(log, [
+        "settle /repo/first",
+        "capture /repo/first",
+        "restore /repo/first target",
+        "settle /repo/second",
+        // Putting the first folder back is a bulk change of its own.
+        "settle /repo/first",
+        "restore /repo/first pre-rewind",
+        "delete /repo/first pre-rewind",
+      ]);
+    }),
+  );
+
+  it.effect("a rewind keeps the snapshot of a folder the barrier will not let it put back", () =>
+    Effect.gen(function* () {
+      const { exit, log } = yield* rewindBehindBarrier({
+        refuse: (root, entry) => root === "/repo/first" && entry === 2,
+        failRestore: "/repo/second",
+      });
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepEqual(log, [
+        "settle /repo/first",
+        "capture /repo/first",
+        "restore /repo/first target",
+        "settle /repo/second",
+        "capture /repo/second",
+        "restore /repo/second target",
+        "settle /repo/second",
+        "restore /repo/second pre-rewind",
+        "settle /repo/first",
+        // The first folder's snapshot is still the only copy of how it was.
+        "delete /repo/second pre-rewind",
+      ]);
+    }),
+  );
 });

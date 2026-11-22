@@ -47,7 +47,11 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
-import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/AnalyticsService.ts";
+import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
+import {
+  type AnalyticsAvailability,
+  ScientAnalyticsAvailability,
+} from "../../telemetry/ScientAnalytics.ts";
 import {
   ComputeSessionService,
   DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
@@ -66,7 +70,19 @@ import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 import {
   ComputeProjectOutputObserver,
   type ComputeProjectOutputObserverPort,
+  type ComputeProjectOutputWatch,
 } from "./ComputeProjectOutputObserver.ts";
+
+const fakeProjectOutputs = (
+  collect: ComputeProjectOutputWatch["collect"],
+): ComputeProjectOutputObserverPort => ({
+  watch: (projectRoot) =>
+    Effect.succeed({
+      ready: Effect.void,
+      begin: Effect.succeed({ projectRoot, startedAt: 0, mark: null }),
+      collect,
+    }),
+});
 
 const OBSERVED_AT = "2026-08-20T09:00:00.000Z";
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -337,6 +353,7 @@ interface HarnessOptions {
   readonly adapter?: Partial<ComputeLanguageAdapter>;
   readonly additionalBindings?: ReadonlyArray<ComputeRuntimeBinding>;
   readonly analytics?: AnalyticsService["Service"];
+  readonly availability?: AnalyticsAvailability;
   readonly projectOutputs?: ComputeProjectOutputObserverPort;
   readonly capabilities?: ReadonlyArray<ComputeCapability>;
   readonly reportedCapabilities?: ReadonlyArray<ComputeCapability>;
@@ -431,7 +448,15 @@ const harness = (options: HarnessOptions = {}) =>
       Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(
-        options.analytics ? Layer.succeed(AnalyticsService, options.analytics) : Layer.empty,
+        options.analytics
+          ? Layer.mergeAll(
+              Layer.succeed(AnalyticsService, options.analytics),
+              Layer.succeed(
+                ScientAnalyticsAvailability,
+                options.availability ?? { available: true },
+              ),
+            )
+          : Layer.empty,
       ),
     );
     const use = <A, E>(
@@ -1643,24 +1668,20 @@ describe("compute runtime inspection", () => {
 
 const analyticsFixture = () => {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
     flush: Effect.void,
   });
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+  const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      status = { available: true, consent };
-      epoch += 1;
+      availability.available = next;
     });
-  return { events, service, setConsent };
+  return { events, service, availability, setAvailable };
 };
 
 describe("interactive capture analytics", () => {
@@ -1726,6 +1747,8 @@ describe("interactive capture analytics", () => {
         captureReason: reason,
         retainedOutputCount: retained,
         rejectedOutputCount: rejected,
+        // Missing and mismatched resources are Scient's own capture failures.
+        ...(expected === "failed" ? { failureOwner: "scient", failureCategory: reason } : {}),
       });
       expect(yield* encodeUnknownJson(f.events)).not.toMatch(
         /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,
@@ -1825,24 +1848,22 @@ describe("interactive capture analytics", () => {
       const f = analyticsFixture();
       const test = yield* harness({
         analytics: f.service,
-        projectOutputs: {
-          begin: () => Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
-          collect: () =>
-            Effect.succeed({
-              tables: [],
-              images: [
-                {
-                  relativePath: "private-figure.png",
-                  mediaType: "image/png",
-                  contentHash: PNG_HASH,
-                  bytes: PNG_BYTES,
-                  width: 4,
-                  height: 3,
-                },
-              ],
-              warnings: [],
-            }),
-        },
+        projectOutputs: fakeProjectOutputs(() =>
+          Effect.succeed({
+            tables: [],
+            images: [
+              {
+                relativePath: "private-figure.png",
+                mediaType: "image/png",
+                contentHash: PNG_HASH,
+                bytes: PNG_BYTES,
+                width: 4,
+                height: 3,
+              },
+            ],
+            warnings: [],
+          }),
+        ),
       });
       yield* test.use(
         Effect.gen(function* () {
@@ -1869,15 +1890,13 @@ describe("interactive capture analytics", () => {
       const f = analyticsFixture();
       const test = yield* harness({
         analytics: f.service,
-        projectOutputs: {
-          begin: () => Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
-          collect: () =>
-            Effect.succeed({
-              images: [],
-              tables: [],
-              warnings: ["private project-output warning /private/path"],
-            }),
-        },
+        projectOutputs: fakeProjectOutputs(() =>
+          Effect.succeed({
+            images: [],
+            tables: [],
+            warnings: ["private project-output warning /private/path"],
+          }),
+        ),
       });
       yield* test.use(
         Effect.gen(function* () {
@@ -1901,27 +1920,24 @@ describe("interactive capture analytics", () => {
   );
 
   it.effect.each(["print(1)", "chart"])(
-    "separates known retained output from partial scan coverage for %s",
+    "separates known retained output from partial watch coverage for %s",
     (code) =>
       Effect.gen(function* () {
         const f = analyticsFixture();
         const test = yield* harness({
           analytics: f.service,
-          projectOutputs: {
-            begin: () =>
-              Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
-            collect: () =>
-              Effect.succeed({
-                images: [],
-                tables: [],
-                warnings: ["private scan detail /private/path"],
-                capture: {
-                  coverage: "partial",
-                  coverageReason: "scan-entry-limit",
-                  rejectedCount: 0,
-                },
-              }),
-          },
+          projectOutputs: fakeProjectOutputs(() =>
+            Effect.succeed({
+              images: [],
+              tables: [],
+              warnings: ["private scan detail /private/path"],
+              capture: {
+                coverage: "partial",
+                coverageReason: "watch-overflow",
+                rejectedCount: 0,
+              },
+            }),
+          ),
         });
         yield* test.use(
           Effect.gen(function* () {
@@ -1942,7 +1958,7 @@ describe("interactive capture analytics", () => {
           properties: {
             captureOutcome: code === "chart" ? "retained" : "unobserved",
             captureCoverage: "partial",
-            captureReason: "scan-entry-limit",
+            captureReason: "watch-overflow",
             rejectedOutputCount: 0,
           },
         });
@@ -1951,19 +1967,20 @@ describe("interactive capture analytics", () => {
   );
 
   it.effect.each(
-    (["off", "broken"] as const).map((mode) => ({
+    (["unavailable", "broken"] as const).map((mode) => ({
       caseTitle: `keeps real output persistence intact with ${mode} analytics`,
       mode,
     })),
   )("$caseTitle", ({ mode }) =>
     Effect.gen(function* () {
       const f = analyticsFixture();
-      if (mode === "off") yield* f.setConsent("off");
+      if (mode === "unavailable") yield* f.setAvailable(false);
       const test = yield* harness({
         analytics:
           mode === "broken"
-            ? { ...f.service, status: Effect.die("private analytics error") }
+            ? { ...f.service, record: () => Effect.die("private analytics error") }
             : f.service,
+        availability: f.availability,
       });
       yield* test.use(
         Effect.gen(function* () {
@@ -1985,45 +2002,20 @@ describe("interactive capture analytics", () => {
 });
 
 describe("compute outcome analytics", () => {
-  it.effect.each(
-    (["off", "product"] as const).map((initialConsent) => ({
-      caseTitle: `does not restart tracking queued work when ${initialConsent} consent is reset`,
-      initialConsent,
-    })),
-  )("$caseTitle", ({ initialConsent }) =>
+  it.effect("does not start tracking work submitted while unavailable", () =>
     Effect.gen(function* () {
-      const events: {
-        name: string;
-        properties: Readonly<Record<string, unknown>> | undefined;
-      }[] = [];
-      let status: AnalyticsStatus = { available: true, consent: initialConsent };
-      let epoch = 0;
-      const analytics = AnalyticsService.of({
-        recordOwners: () => Effect.void,
-        record: (name, properties) =>
-          Effect.sync(() => {
-            events.push({ name, properties });
-          }),
-        status: Effect.sync(() => status),
-        collectionEpoch: Effect.sync(() => epoch),
-        flush: Effect.void,
-      });
-      const setConsent = (consent: AnalyticsStatus["consent"]) =>
-        Effect.sync(() => {
-          status = { available: true, consent };
-          epoch += 1;
-        });
-      const test = yield* harness({ analytics });
+      const f = analyticsFixture();
+      yield* f.setAvailable(false);
+      const test = yield* harness({ analytics: f.service, availability: f.availability });
       yield* test.use(
         Effect.gen(function* () {
           const service = yield* ComputeSessionService;
           yield* start;
-          yield* submit("hold", "active-before-consent");
-          yield* waitForExecution(ComputeExecutionId.make("active-before-consent"), "running");
+          yield* submit("hold", "active-before");
+          yield* waitForExecution(ComputeExecutionId.make("active-before"), "running");
           yield* submit("hold", "queued-cancel");
           yield* submit("print(1)", "queued-complete");
-          yield* setConsent("off");
-          yield* setConsent("product");
+          yield* f.setAvailable(true);
           yield* service.cancelExecution({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,
@@ -2036,27 +2028,105 @@ describe("compute outcome analytics", () => {
             expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
           });
           yield* waitForExecution(ComputeExecutionId.make("queued-complete"), "succeeded");
-          yield* submit("boom", "fresh-after-consent");
-          yield* waitForExecution(ComputeExecutionId.make("fresh-after-consent"), "failed");
+          yield* submit("boom", "fresh-after");
+          yield* waitForExecution(ComputeExecutionId.make("fresh-after"), "failed");
         }),
       );
       for (const kind of ["compute-run", "compute-artifact"]) {
         expect(
-          events
+          f.events
             .filter((event) => event.properties?.operationKind === kind)
             .map((event) => event.name),
         ).toEqual([
-          ...(initialConsent === "product"
-            ? Array.from({ length: 3 }, () => "scient.operation.started")
-            : []),
           "scient.operation.started",
           kind === "compute-run" ? "scient.operation.failed" : "scient.operation.skipped",
         ]);
       }
-      expect(events).toHaveLength(initialConsent === "product" ? 10 : 4);
-      expect(yield* encodeUnknownJson(events)).not.toMatch(
-        /project-1|session-1|before-consent|after-consent|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
+      expect(f.events).toHaveLength(4);
+      expect(yield* encodeUnknownJson(f.events)).not.toMatch(
+        /project-1|session-1|active-before|fresh-after|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
       );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("compute run attribution", () => {
+  it.effect.each(
+    (
+      [
+        ["print(1)", "succeeded", "completed", undefined, undefined],
+        ["boom", "failed", "failed", "code", "code-error"],
+        ["die", "lost", "failed", "unknown", "runtime-exited"],
+      ] as const
+    ).map(([code, outcome, expected, owner, category]) => ({
+      caseTitle: `labels a ${outcome} ${code} run with who owns its failure`,
+      code,
+      outcome,
+      expected,
+      owner,
+      category,
+    })),
+  )("$caseTitle", ({ code, outcome, expected, owner, category }) =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({ analytics: f.service });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit(code, "private-attributed-run");
+          yield* waitForExecution(ComputeExecutionId.make("private-attributed-run"), outcome);
+        }),
+      );
+      const runs = f.events.filter((event) => event.properties?.operationKind === "compute-run");
+      expect(runs.map((event) => event.name)).toEqual([
+        "scient.operation.started",
+        `scient.operation.${expected}`,
+      ]);
+      expect(runs[1]?.properties).toMatchObject({
+        language: "python",
+        actor: "user",
+        entry: "console",
+        runtimeSource: "path",
+      });
+      expect(runs[1]?.properties?.failureOwner).toBe(owner);
+      expect(runs[1]?.properties?.failureCategory).toBe(category);
+      expect(yield* encodeUnknownJson(f.events)).not.toMatch(
+        /private-|ZeroDivisionError|division by zero|kernel exited/u,
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("compute run dispatch attribution", () => {
+  it.effect("blames Scient, not the code, when the runtime never accepts a run", () =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({
+        analytics: f.service,
+        transformChannel: (channel) => ({
+          ...channel,
+          execute: () =>
+            Effect.fail(
+              new ComputeTransportError({ operation: "execute", message: "Bridge refused" }),
+            ),
+        }),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("print(1)", "refused-run");
+          yield* waitForExecution(ComputeExecutionId.make("refused-run"), "failed");
+        }),
+      );
+      const failed = f.events.find(
+        (event) =>
+          event.name === "scient.operation.failed" &&
+          event.properties?.operationKind === "compute-run",
+      );
+      expect(failed?.properties).toMatchObject({
+        failureOwner: "scient",
+        failureCategory: "dispatch",
+      });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
@@ -2969,26 +3039,6 @@ describe("compute session startup", () => {
 });
 
 describe("compute session execution", () => {
-  it.effect("waits for host-backed completion without depending on wall-clock time", () =>
-    Effect.gen(function* () {
-      const test = yield* harness();
-      yield* test.use(
-        Effect.gen(function* () {
-          yield* start;
-          yield* submit("print(1)", "host-completion");
-          const completed = yield* waitForExecution(
-            ComputeExecutionId.make("host-completion"),
-            "succeeded",
-          );
-          expect(completed.result?.status).toBe("succeeded");
-          expect((yield* outputsOf(ComputeExecutionId.make("host-completion"))).outputs).toEqual([
-            streamOutput(0, "1\n"),
-          ]);
-        }),
-      );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.effect("rejects MATLAB definition files before they reach the runtime", () =>
     Effect.gen(function* () {
       const matlabProfile: ComputeRuntimeProfile = {

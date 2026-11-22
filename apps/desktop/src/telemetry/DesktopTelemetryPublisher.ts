@@ -26,6 +26,9 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
+// SCIENT-FORK:START — journaled update facts reach one backend's analytics.
+import * as DesktopUpdateFacts from "../scient/updateOutcomes/DesktopUpdateFacts.ts";
+// SCIENT-FORK:END
 
 const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
 const BATTERY_SAMPLE_INTERVAL = Duration.seconds(5);
@@ -66,6 +69,10 @@ export class DesktopTelemetryPublisher extends Context.Service<
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
     readonly encoded: Stream.Stream<Uint8Array>;
+    // SCIENT-FORK:START — one backend's stream, which also carries the update facts offered to it;
+    // without it a backend reads `encoded`.
+    readonly encodedFor?: (sourceId: string) => Stream.Stream<Uint8Array>;
+    // SCIENT-FORK:END
     readonly handleControlForSource: (
       sourceId: string,
       message: DesktopTelemetryControlMessage,
@@ -150,6 +157,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+  // SCIENT-FORK: absent in tests and tools that never deliver update facts.
+  const updateFacts = yield* Effect.serviceOption(DesktopUpdateFacts.DesktopUpdateFacts);
   yield* electronApp.whenReady;
 
   const initialPowerState: PowerState = {
@@ -355,6 +364,18 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         return Queue.offer(updateCommitQueue, message).pipe(Effect.asVoid);
       case "cancelDesktopUpdate":
         return Queue.offer(updateCancellationQueue, message).pipe(Effect.asVoid);
+      // SCIENT-FORK:START — a ready backend can take journaled update facts.
+      case "serverReady":
+        return Option.match(updateFacts, {
+          onNone: () => Effect.void,
+          onSome: (facts) => facts.sourceReady(sourceId),
+        });
+      case "ackDesktopUpdateFacts":
+        return Option.match(updateFacts, {
+          onNone: () => Effect.void,
+          onSome: (facts) => facts.acknowledge(message.ids),
+        });
+      // SCIENT-FORK:END
     }
   };
   const removeControlSource: DesktopTelemetryPublisher["Service"]["removeControlSource"] = (
@@ -370,6 +391,13 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         previous === enabled
           ? Effect.void
           : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
+      ),
+      // SCIENT-FORK: pending update facts move to another ready backend.
+      Effect.andThen(
+        Option.match(updateFacts, {
+          onNone: () => Effect.void,
+          onSome: (facts) => facts.sourceRemoved(sourceId),
+        }),
       ),
     );
 
@@ -399,17 +427,47 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       );
     }),
   );
-  const encoded = Stream.concat(
-    Stream.make({
-      version: 1,
-      type: "desktopTelemetryHello",
-      electronPid: process.pid,
-    } as const),
-    Stream.merge(
-      Stream.merge(Stream.merge(snapshots, updateReports), shellEnvironment.updates),
-      Stream.fromPubSub(appHealthChanges),
-    ),
-  ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
+  // SCIENT-FORK:START — a backend's own stream adds the update facts offered to it.
+  const encodedWith = (extra: Stream.Stream<DesktopHostTelemetryMessage>) =>
+    Stream.concat(
+      Stream.make({
+        version: 1,
+        type: "desktopTelemetryHello",
+        electronPid: process.pid,
+      } as const),
+      Stream.merge(
+        Stream.merge(
+          Stream.merge(Stream.merge(snapshots, updateReports), shellEnvironment.updates),
+          Stream.fromPubSub(appHealthChanges),
+        ),
+        extra,
+      ),
+    ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
+  const encoded = encodedWith(Stream.empty);
+  const encodedFor = (sourceId: string) =>
+    encodedWith(
+      Option.match(updateFacts, {
+        onNone: () => Stream.empty,
+        onSome: (facts) =>
+          facts.deliveries(sourceId).pipe(
+            Stream.mapEffect((delivered) =>
+              Ref.get(latestUpdateReport).pipe(
+                Effect.map(
+                  Option.map((report): DesktopUpdateStatusReport => ({
+                    version: 1,
+                    type: "desktopUpdateStatus",
+                    state: report.state,
+                    facts: delivered,
+                  })),
+                ),
+              ),
+            ),
+            Stream.filter(Option.isSome),
+            Stream.map((report) => report.value),
+          ),
+      }),
+    );
+  // SCIENT-FORK:END
 
   const publishUpdateReport: DesktopTelemetryPublisher["Service"]["publishUpdateReport"] = (
     report,
@@ -423,6 +481,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     encoded,
+    // SCIENT-FORK: per-backend stream.
+    encodedFor,
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,

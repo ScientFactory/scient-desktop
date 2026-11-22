@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountId,
@@ -8,20 +9,21 @@ import {
 } from "@t3tools/contracts";
 import { universitiesOf } from "@t3tools/shared/scientPaperLinks";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronDownIcon, GraduationCapIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, GraduationCapIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { libraryLinkTemplate, signedIntoUniversity } from "./accountsView";
 import { accountsState } from "./accountsState";
 import { SiteFavicon } from "./AccountLogo";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useSignIn } from "./useSignIn";
+import { parseUrl } from "@t3tools/shared/url";
 
 const SEARCH_DELAY_MS = 300;
-const HIDDEN_KEY = "scient:university-row-hidden";
 
 /** The domain of a university address among saved sign-ins. Only a domain is ever searched. */
 function universityDomain(accounts: ReadonlyArray<AccountSummary>) {
@@ -71,6 +73,7 @@ export function UniversityPicker({
   const [link, setLink] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const searchId = useRef(0);
+  const gt = useGT();
 
   const find = (text: string) => {
     setQuery(text);
@@ -112,8 +115,9 @@ export function UniversityPicker({
     const proxyUrl = pasted.includes("{url}")
       ? pasted
       : `${pasted}${pasted.includes("?") ? "&" : "?"}url={url}`;
-    if (!URL.canParse(pasted)) return;
-    const { hostname } = new URL(pasted);
+    const pastedUrl = parseUrl(pasted);
+    if (pastedUrl === null) return;
+    const { hostname } = pastedUrl;
     const saved = await save({
       name: hostname,
       details: { kind: "website", sites: [hostname], profileId, proxyUrl },
@@ -129,8 +133,8 @@ export function UniversityPicker({
       <Input
         autoFocus={autoFocus}
         type="search"
-        aria-label="Find your university"
-        placeholder="University name or email domain"
+        aria-label={gt("Find your university")}
+        placeholder={gt("University name or email domain")}
         disabled={!canWrite}
         value={query}
         onChange={(event) => find(event.target.value)}
@@ -139,9 +143,6 @@ export function UniversityPicker({
           if (!query && guess) find(guess);
         }}
       />
-      <p className="px-2 text-xs text-muted-foreground">
-        You sign in in Main, so every conversation can use it.
-      </p>
       {found.map((university) => (
         <button
           key={university.entityId}
@@ -168,8 +169,8 @@ export function UniversityPicker({
           <Input
             autoFocus
             type="url"
-            aria-label="Your library's link"
-            placeholder="Paste a link from your library's website"
+            aria-label={gt("Your library's link")}
+            placeholder={gt("Paste a link from your library's website")}
             value={link}
             onChange={(event) => setLink(event.target.value)}
           />
@@ -181,78 +182,23 @@ export function UniversityPicker({
           className="justify-self-start"
           onClick={() => setShowLink(true)}
         >
-          My university isn't listed
+          <T>My university isn't listed</T>
         </Button>
       )}
     </div>
   );
 }
 
-/** The first row of Sources until a university is connected; it opens where it stands. */
-export function UniversityRow({
-  environmentId,
-  threadId,
-}: {
-  environmentId: EnvironmentId;
-  threadId: ThreadId;
-}) {
-  const { data } = useAccounts(environmentId);
-  const [open, setOpen] = useState(false);
-  const [hidden, setHidden] = useState(() => localStorage.getItem(HIDDEN_KEY) === "true");
-  if (!data || hidden || universitiesOf(data.accounts).length > 0) return null;
-  return (
-    <div className="px-2 py-1.5">
-      <div className="flex items-start gap-2">
-        <button
-          type="button"
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          onClick={() => setOpen((current) => !current)}
-        >
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
-            <GraduationCapIcon className="size-4 text-muted-foreground" />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm font-medium">Connect your university</span>
-            <span className="block text-xs text-muted-foreground">
-              Sign in once to your library account
-            </span>
-          </span>
-        </button>
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label="Hide"
-          onClick={() => {
-            localStorage.setItem(HIDDEN_KEY, "true");
-            setHidden(true);
-          }}
-        >
-          <XIcon />
-        </Button>
-      </div>
-      {open ? (
-        <div className="mt-1 px-1 pb-1">
-          <UniversityPicker
-            environmentId={environmentId}
-            threadId={threadId}
-            autoFocus
-            onChosen={() => setOpen(false)}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/** The university's crest beside the Sources title, with a dot when it needs a sign-in. */
-/** Long enough that opening the card again soon doesn't ask again. */
-const RECHECK_AFTER_MS = 2 * 60 * 1000;
+/** The server skips a university it saw recently; an older server ignores the glance and checks. */
+const GLANCE_AGAIN_MS = 2 * 60 * 1000;
+/** When this window last asked about each university, so an older server is asked at most as often. */
+const glancedAt = new Map<AccountId, number>();
 
 /**
- * The university beside the Sources title, answering one question: can Scient get papers through
- * it right now. Opening it asks again, so its status needs no button; Sign in shows only when it
- * is needed.
+ * The university slot beside the Sources title. Connected: the crest, answering whether Scient
+ * can get papers through it now, with Sign in when one is needed. Opening it takes a glance, which
+ * shows what was last seen until the answer changes. None connected: a quiet Connect your
+ * university that opens the picker where it stands.
  */
 export function UniversityCrest({
   environmentId,
@@ -265,26 +211,49 @@ export function UniversityCrest({
   const startSignIn = useStableCallback(useSignIn(environmentId));
   const check = useAccountCommand(accountsState.check, environmentId);
   const navigate = useNavigate();
-  const [checking, setChecking] = useState<ReadonlySet<AccountId>>(new Set());
   const [signingIn, setSigningIn] = useState<ReadonlySet<AccountId>>(new Set());
   const universities = universitiesOf(data?.accounts ?? []);
   const askAgain = useStableCallback((open: boolean) => {
     if (!open || !canWrite) return;
-    for (const account of universities) {
-      const last = account.signIn ? Date.parse(account.signIn.at) : 0;
-      if (checking.has(account.accountId) || Date.now() - last < RECHECK_AFTER_MS) continue;
-      setChecking((current) => new Set(current).add(account.accountId));
-      void check({ accountId: account.accountId }).finally(() =>
-        setChecking((current) => {
-          const next = new Set(current);
-          next.delete(account.accountId);
-          return next;
-        }),
-      );
+    const now = Date.now();
+    for (const { accountId } of universities) {
+      if (now - (glancedAt.get(accountId) ?? 0) < GLANCE_AGAIN_MS) continue;
+      glancedAt.set(accountId, now);
+      // A request that failed, or was turned away by a running check, is asked again next open.
+      void check({ accountId, glance: true }).then((result) => {
+        if (!result.ok || result.value.alreadyRunning) glancedAt.delete(accountId);
+      });
     }
   });
+  const [connecting, setConnecting] = useState(false);
+  const gt = useGT();
   const first = universities[0];
-  if (!first) return null;
+  if (!data) return null;
+  if (!first) {
+    if (!canWrite) return null;
+    return (
+      <Popover open={connecting} onOpenChange={setConnecting}>
+        <PopoverTrigger
+          render={
+            <Button size="xs" variant="ghost-muted" aria-label={gt("Connect your university")} />
+          }
+        >
+          <GraduationCapIcon />
+          <span className="@max-[30rem]:hidden">
+            <T>Connect your university</T>
+          </span>
+        </PopoverTrigger>
+        <PopoverPopup align="end" width="md">
+          <UniversityPicker
+            environmentId={environmentId}
+            threadId={threadId}
+            autoFocus
+            onChosen={() => setConnecting(false)}
+          />
+        </PopoverPopup>
+      </Popover>
+    );
+  }
   const domainOf = (account: AccountSummary) =>
     account.details.kind === "website"
       ? (account.details.institution?.domain ?? account.details.sites[0] ?? "")
@@ -301,14 +270,27 @@ export function UniversityCrest({
           <Button
             size="xs"
             variant="ghost"
-            aria-label={`University: ${first.name}`}
-            className="relative"
+            aria-label={
+              waiting
+                ? gt("University: {name}, sign in needed", { name: first.name })
+                : gt("University: {name}", { name: first.name })
+            }
           />
         }
       >
-        <UniversityIcon site={domainOf(first)} className="size-5" />
-        {waiting ? (
-          <span aria-hidden className="absolute top-1 right-5 size-1.5 rounded-full bg-amber-500" />
+        <span className="relative">
+          <UniversityIcon site={domainOf(first)} className="size-5" />
+          {waiting ? (
+            <span
+              aria-hidden
+              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-amber-500"
+            />
+          ) : null}
+        </span>
+        {waiting && canWrite ? (
+          <span className="@max-[22rem]:hidden">
+            <T>Sign in</T>
+          </span>
         ) : null}
         <ChevronDownIcon className="size-3 text-muted-foreground" />
       </MenuTrigger>
@@ -317,12 +299,10 @@ export function UniversityCrest({
           const signedIn = signedIntoUniversity(account);
           const underWay = !signedIn && signingIn.has(account.accountId);
           const status = signedIn
-            ? "Signed in"
+            ? gt("Signed in")
             : underWay
-              ? "Signing in…"
-              : checking.has(account.accountId)
-                ? "Checking…"
-                : "Sign in needed";
+              ? gt("Signing in…")
+              : gt("Sign in needed");
           return (
             <div key={account.accountId}>
               <div className="px-2 py-1.5">
@@ -331,7 +311,7 @@ export function UniversityCrest({
               </div>
               {signedIn ? null : (
                 <MenuItem disabled={!canWrite} onClick={() => signIn(account.accountId)}>
-                  Sign in
+                  <T>Sign in</T>
                 </MenuItem>
               )}
             </div>
@@ -339,7 +319,7 @@ export function UniversityCrest({
         })}
         <MenuSeparator />
         <MenuItem onClick={() => void navigate({ to: "/settings/accounts" })}>
-          Accounts & secrets
+          <T>Accounts & secrets</T>
         </MenuItem>
       </MenuPopup>
     </Menu>

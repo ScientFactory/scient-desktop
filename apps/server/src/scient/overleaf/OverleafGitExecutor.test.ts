@@ -244,6 +244,9 @@ describe("OverleafGitExecutor", () => {
         const error = yield* unavailable.availability.pipe(Effect.flip);
         expect(error.reason).toBe("runtime-failed");
         expect(NodeFS.readFileSync(runtimeRoot, "utf8")).toBe("untouched");
+        // The failure is not kept: once the folder can be made, the same executor works.
+        NodeFS.rmSync(runtimeRoot);
+        yield* unavailable.availability;
       }),
     ),
   );

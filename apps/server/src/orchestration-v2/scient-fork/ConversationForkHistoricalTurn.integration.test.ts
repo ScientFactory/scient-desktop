@@ -21,9 +21,9 @@ import * as Registry from "../ProviderAdapterRegistry.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -98,7 +98,6 @@ it.live(
         const importer = yield* LegacyImporter.LegacyV1ThreadImporter;
         yield* importer.reconcileShells;
         yield* importer.ensureTranscript(source);
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStore.ProjectionStoreV2;
         const command = {
           type: "thread.fork" as const,
@@ -108,7 +107,7 @@ it.live(
           sourceAssistantMessageId: MessageId.make("clicked-answer"),
           workspaceMode: "local" as const,
         };
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         const child = yield* store.getThreadProjection(command.newThreadId);
         const shown = child.visibleTurnItems.map((row) => row.item);
         assert.equal(shown.length, 12);
@@ -173,10 +172,10 @@ it.live(
         assert.isTrue(
           shown.filter((item) => item.historyTurnId === TurnId.make("same-turn")).length === 10,
         );
-        assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+        assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
         for (const sourceUserMessageId of ["turn-start", "turn-steer"]) {
           const newThreadId = ThreadId.make(`historical-user-child:${sourceUserMessageId}`);
-          yield* forks.dispatch({
+          yield* forkConversation({
             ...command,
             commandId: CommandId.make(`historical-user-fork:${sourceUserMessageId}`),
             newThreadId,

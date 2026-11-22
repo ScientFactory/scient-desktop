@@ -12,12 +12,14 @@ import {
   type ExtensionAudience,
   type ExtensionDeliverySkipReason,
   type ProviderInstanceId,
+  type ProviderStoreEntry,
   type ScientPluginSummary,
   type ServerProvider,
   type ServerProviderMcpServer,
   type ServerProviderMcpServerStatus,
   type ServerProviderPlugin,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   BookOpenIcon,
   CpuIcon,
@@ -29,61 +31,71 @@ import {
 } from "lucide-react";
 
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { normalizeSearchText } from "../../lib/utils";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
+import { parseUrl } from "@t3tools/shared/url";
 
-/** Shown after a row's name; healthy entries show nothing. */
+/** Shown after a row's name; healthy entries show nothing. `msg()` strings. */
 const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
   connected: null,
-  "needs-auth": "Needs sign-in",
-  "needs-credential": "Needs credential",
+  "needs-auth": msg("Needs sign-in"),
+  "needs-credential": msg("Needs credential"),
 };
 
+/** `msg()` strings: resolve them where they are shown. */
 export const MCP_SERVER_STATUS_TEXT: Readonly<
   Record<ServerProviderMcpServerStatus, string | null>
 > = {
   connected: null,
-  failed: "Failed",
-  "needs-auth": "Needs sign-in",
-  pending: "Starting",
-  disabled: "Off",
+  failed: msg("Failed", { $context: "connector status" }),
+  "needs-auth": msg("Needs sign-in"),
+  pending: msg("Starting", { $context: "connector status" }),
+  disabled: msg("Off", { $context: "connector status, turned off" }),
   unknown: null,
 };
 
+/** `msg()` strings: resolve them where they are shown. */
 export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, string>> = {
-  "needs-auth": "Needs sign-in",
-  "needs-credential": "Credential missing",
-  disabled: "Turned off",
-  "project-deselected": "Off for this project",
-  "transport-unsupported": "Not supported by this agent",
-  "name-collision": "Name taken by the agent's own server",
-  "native-servers-unknown": "Agent's own servers couldn't be checked",
-  "registration-failed": "The agent couldn't connect it",
+  "needs-auth": msg("Needs sign-in"),
+  "needs-credential": msg("Credential missing"),
+  disabled: msg("Turned off"),
+  "project-deselected": msg("Off for this project"),
+  "agent-deselected": msg("Not chosen for this agent"),
+  "transport-unsupported": msg("Not supported by this agent"),
+  "name-collision": msg("Name taken by the agent's own server"),
+  "native-servers-unknown": msg("Agent's own servers couldn't be checked"),
+  "registration-failed": msg("The agent couldn't connect it"),
 };
 
+/** `msg()` strings: resolve them where they are shown. */
 export const TEST_OUTCOME_LABELS: Readonly<Record<ConnectorTestResult["outcome"], string>> = {
-  ok: "Reachable",
-  "needs-auth": "Needs sign-in",
-  "needs-setup": "Needs setup",
-  unreachable: "Unreachable",
-  error: "Error",
+  ok: msg("Reachable"),
+  "needs-auth": msg("Needs sign-in"),
+  "needs-setup": msg("Needs setup"),
+  unreachable: msg("Unreachable"),
+  error: msg("Error", { $context: "connector test outcome" }),
 };
 
 /** A turned-off connector says so first; otherwise its health. */
 export function connectorStatusText(
   connector: Pick<ConnectorSummary, "status" | "enabled" | "lastError" | "local">,
+  resolve: MessageResolver = m,
 ) {
-  if (!connector.enabled) return "Off";
-  if (connector.local?.problem !== undefined) return "Can't read its folder";
-  if (connector.local !== undefined && connector.local.missing.length > 0) return "Needs setup";
+  if (!connector.enabled) return resolve(msg("Off", { $context: "connector status, turned off" }));
+  if (connector.local?.problem !== undefined) return resolve(msg("Can't read its folder"));
+  if (connector.local?.signIn?.state === "needs-user") return resolve(msg("Needs sign-in"));
+  if (connector.local !== undefined && connector.local.missing.length > 0)
+    return resolve(msg("Needs setup"));
   if (connector.local !== undefined && connector.lastError !== undefined)
-    return "Stopped with an error";
-  return CONNECTOR_STATUS_TEXT[connector.status];
+    return resolve(msg("Stopped with an error"));
+  const text = CONNECTOR_STATUS_TEXT[connector.status];
+  return text === null ? null : resolve(text);
 }
 
 export interface ConnectorActions {
   /** The primary action appears only when a grant is needed. */
-  readonly signIn: "sign-in" | "reconnect" | null;
+  readonly signIn: "sign-in" | null;
   readonly canTest: boolean;
 }
 
@@ -91,7 +103,7 @@ export interface ConnectorActions {
  * A missing credential cannot be repaired by sign-in: the entered key is gone
  * and the connector must be added again.
  */
-export function connectorActions(connector: Pick<ConnectorSummary, "status" | "auth">) {
+export function connectorActions(connector: Pick<ConnectorSummary, "status">) {
   const actions: Readonly<Record<ConnectorStatus, ConnectorActions>> = {
     connected: { signIn: null, canTest: true },
     "needs-auth": { signIn: "sign-in", canTest: false },
@@ -100,23 +112,34 @@ export function connectorActions(connector: Pick<ConnectorSummary, "status" | "a
   return actions[connector.status];
 }
 
-export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
+export function connectorAuthLabel(
+  auth: ConnectorSummary["auth"],
+  resolve: MessageResolver = m,
+): string {
   switch (auth.type) {
     case "none":
-      return "No sign-in";
+      return resolve(msg("No sign-in"));
     case "oauth":
-      return auth.usesOwnClient ? "OAuth with your own client" : "OAuth";
+      return auth.usesOwnClient ? resolve(msg("OAuth with your own client")) : "OAuth";
     case "credential": {
-      const kind =
-        auth.strategy === "bearer"
-          ? "Bearer token"
-          : auth.strategy === "basic"
-            ? "Basic auth"
-            : `Header ${auth.headerName ?? ""}`.trim();
-      return auth.storage === "bound" ? `${kind} from Accounts` : kind;
+      const bound = auth.storage === "bound";
+      if (auth.strategy === "bearer")
+        return resolve(bound ? msg("Bearer token from Accounts") : msg("Bearer token"));
+      if (auth.strategy === "basic")
+        return resolve(bound ? msg("Basic auth from Accounts") : msg("Basic auth"));
+      const name = auth.headerName ?? "";
+      if (name.trim() === "")
+        return resolve(
+          bound ? msg("Header from Accounts") : msg("Header", { $context: "HTTP header sign-in" }),
+        );
+      return resolve(
+        bound
+          ? msg("Header {name} from Accounts", { name })
+          : msg("Header {name}", { name, $context: "HTTP header sign-in" }),
+      );
     }
     case "source-control":
-      return `${auth.account} from Source Control`;
+      return resolve(msg("{account} from Source Control", { account: auth.account }));
   }
 }
 
@@ -128,28 +151,35 @@ export function connectorSourceLabel(
   source: ConnectorSummary["source"],
   curated: boolean,
   pluginName: string | undefined,
+  resolve: MessageResolver = m,
 ): string {
   switch (source.type) {
     case "registry":
-      return curated ? "Scient catalog" : "MCP Registry";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- MCP Registry is the registry's name
+      return curated ? resolve(msg("Scient catalog")) : "MCP Registry";
     case "url":
-      return curated ? "Scient catalog" : "Added by URL";
+      return resolve(curated ? msg("Scient catalog") : msg("Added by URL"));
     case "plugin":
-      return `Plugin ${pluginName ?? source.pluginId}`;
+      return resolve(msg("Plugin {name}", { name: pluginName ?? source.pluginId }));
     case "local":
-      return source.registry === undefined ? "Runs on this computer" : "MCP Registry, runs locally";
+      return resolve(
+        source.registry === undefined
+          ? msg("Runs on this computer")
+          : msg("MCP Registry, runs locally"),
+      );
   }
 }
 
-export function entrySourceLabel(entry: DiscoverEntry): string {
+export function entrySourceLabel(entry: DiscoverEntry, resolve: MessageResolver = m): string {
   return isCatalogOnlyEntry(entry) || entry.categories.length > 0
-    ? "Scient catalog"
-    : "MCP Registry";
+    ? resolve(msg("Scient catalog"))
+    : // oxlint-disable-next-line t3code/no-untranslated-copy -- MCP Registry is the registry's name
+      "MCP Registry";
 }
 
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
 export function urlHost(url: string): string | null {
-  return URL.canParse(url) ? new URL(url).hostname.replace(/^www\./u, "") : null;
+  return parseUrl(url)?.hostname.replace(/^www\./u, "") ?? null;
 }
 
 const BUILT_IN_PLUGIN_GLYPHS: Readonly<Record<string, LucideIcon>> = {
@@ -226,7 +256,7 @@ export function matchesQuery(query: string, texts: ReadonlyArray<string | undefi
   return words.every((word) => haystack.includes(word));
 }
 
-function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
+export function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
   if (provider.driver === "scient" && (!provider.displayName || provider.displayName === "Scient"))
     return "Scient Agent";
   if (provider.displayName) return provider.displayName;
@@ -261,6 +291,23 @@ export function worksWithOptions(
     });
   }
   return options;
+}
+
+/** An agent the person has and can use now: installed, turned on and ready. */
+export function providerAvailable(provider: ServerProvider): boolean {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    (provider.status === "ready" || provider.status === "warning") &&
+    provider.availability !== "unavailable"
+  );
+}
+
+/** A Scient connector's audience: every agent, or the ones the person chose. */
+export function connectorAudience(connector: Pick<ConnectorSummary, "agents">): ExtensionAudience {
+  return connector.agents === undefined
+    ? { layer: "scient" }
+    : { layer: "scient", agents: connector.agents };
 }
 
 /** Connectors reach an agent only when its instance reports remote MCP support. */
@@ -303,12 +350,13 @@ export function collectProviderExtensionGroups(
     const selected = providers.find((candidate) => candidate.instanceId === worksWith);
     const visiblePlugins = selected
       ? plugins.filter(({ plugin }) =>
-          audienceReaches(providerExtensionAudience(provider, plugin), selected),
+          audienceReaches(providerExtensionAudience(provider, plugin, providers), selected),
         )
       : plugins;
     const mcpServers = (provider.mcpServers ?? []).filter(
       (server) =>
-        !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
+        !selected ||
+        audienceReaches(providerExtensionAudience(provider, server, providers), selected),
     );
     if (
       selected &&
@@ -342,26 +390,27 @@ const LOOPBACK_HOSTS: Readonly<Record<string, true>> = {
 };
 
 /** `https://…`, or plain `http://` only to a loopback host the user typed. */
-export function validateConnectorUrl(raw: string): string | null {
+export function validateConnectorUrl(raw: string, resolve: MessageResolver = m): string | null {
   const value = raw.trim();
-  if (value.length === 0) return "Enter the server URL.";
+  if (value.length === 0) return resolve(msg("Enter the server URL."));
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return "Enter a full URL, for example https://mcp.example.com/mcp.";
+    return resolve(msg("Enter a full URL, for example https://mcp.example.com/mcp."));
   }
   if (url.protocol === "https:") return null;
   if (url.protocol === "http:" && LOOPBACK_HOSTS[url.hostname] === true) return null;
-  return "Use an https:// URL. Plain http:// is allowed only for this computer.";
+  return resolve(msg("Use an https:// URL. Plain http:// is allowed only for this computer."));
 }
 
 const HTTP_HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
-export function validateHeaderName(raw: string): string | null {
+export function validateHeaderName(raw: string, resolve: MessageResolver = m): string | null {
   const value = raw.trim();
-  if (value.length === 0) return "Enter the header name.";
-  if (!HTTP_HEADER_NAME.test(value)) return "Header names use letters, digits and dashes.";
+  if (value.length === 0) return resolve(msg("Enter the header name."));
+  if (!HTTP_HEADER_NAME.test(value))
+    return resolve(msg("Header names use letters, digits and dashes."));
   return null;
 }
 
@@ -375,9 +424,92 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
   }
 }
 
+/** OpenAI's host-coupled Codex plugins, which only Codex can run, all come from this marketplace. */
+const CODEX_HOST_MARKETPLACE = "openai-bundled";
+
+/** The Codex home a Codex instance installs plugins into, or the one a Scient Agent reads. */
+function codexPluginHome(provider: Pick<ServerProvider, "pluginHomes">): string | undefined {
+  return provider.pluginHomes?.codex;
+}
+
+/** Two plugin homes are the same unless both are known and differ. */
+const sameHome = (a: string | undefined, b: string | undefined) =>
+  a === undefined || b === undefined || a === b;
+
+/**
+ * The agent that installs a store entry for `provider`: itself, except that Scient Agent takes a
+ * Claude Code plugin through the Claude instance reading the same Claude home (else its own
+ * installer) and a Codex plugin through the Codex instance whose home it reads. `undefined` when
+ * no instance can install it for that agent.
+ */
+export function storeInstallTarget(
+  provider: ServerProvider,
+  kind: ProviderStoreEntry["kind"],
+  providers: ReadonlyArray<ServerProvider>,
+): ServerProvider | undefined {
+  if (provider.driver !== "scient" || kind === "antigravity") return provider;
+  if (kind === "shared") {
+    const home = provider.pluginHomes?.claude;
+    return (
+      providers.find(
+        (item) =>
+          providerAvailable(item) &&
+          item.driver === "claudeAgent" &&
+          (home === undefined || item.pluginHomes?.claude === home),
+      ) ?? provider
+    );
+  }
+  const home = provider.pluginHomes?.codex;
+  return home === undefined
+    ? undefined
+    : providers.find(
+        (item) =>
+          providerAvailable(item) && item.driver === "codex" && codexPluginHome(item) === home,
+      );
+}
+
+/**
+ * A Codex plugin that Scient Agents loading Codex's installed plugins (its skills and servers)
+ * from the same Codex home reach too, when one does; `undefined` leaves it Codex's own.
+ */
+function codexPluginAudience(
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "pluginHomes">,
+  /** The plugin's `<name>@<marketplace>` id; absent for the store as a whole. */
+  id: string | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+): ExtensionAudience | undefined {
+  const home = codexPluginHome(provider);
+  return !id?.endsWith(`@${CODEX_HOST_MARKETPLACE}`) &&
+    providers.some(
+      (agent) =>
+        agent.driver === "scient" &&
+        agent.usesCodexPlugins === true &&
+        sameHome(agent.pluginHomes?.codex, home),
+    )
+    ? {
+        layer: "codex",
+        ownerInstanceId: provider.instanceId,
+        ...(home ? { pluginHome: home } : {}),
+      }
+    : undefined;
+}
+
+/** A Claude Code plugin's audience: the agents reading the Claude home that holds it. */
+function sharedAudience(
+  provider: Pick<ServerProvider, "instanceId" | "pluginHomes">,
+): ExtensionAudience {
+  const home = provider.pluginHomes?.claude;
+  return {
+    layer: "shared",
+    ownerInstanceId: provider.instanceId,
+    ...(home ? { pluginHome: home } : {}),
+  };
+}
+
 export function providerExtensionAudience(
   provider: ServerProvider,
   entry: ServerProviderPlugin | ServerProviderMcpServer,
+  providers: ReadonlyArray<ServerProvider>,
 ): ExtensionAudience {
   const shared =
     provider.driver === "claudeAgent"
@@ -389,7 +521,12 @@ export function providerExtensionAudience(
         ("id" in entry
           ? Boolean(entry.marketplace)
           : Boolean(entry.pluginId?.includes("@") && !entry.pluginId.startsWith("npm:")));
-  if (shared) return { layer: "shared", ownerInstanceId: provider.instanceId };
+  if (shared) return sharedAudience(provider);
+  const codex =
+    provider.driver === "codex" && "id" in entry
+      ? codexPluginAudience(provider, entry.id, providers)
+      : undefined;
+  if (codex) return codex;
   return {
     layer: "agent",
     driver: provider.driver,
@@ -402,38 +539,132 @@ export function providerExtensionAudience(
           : providerLabel(provider),
     reason:
       provider.driver === "codex" && "source" in entry && entry.source === "remote"
-        ? "Uses Codex's own ChatGPT account"
+        ? msg("Uses Codex's own ChatGPT account")
         : provider.driver === "claudeAgent" && "scope" in entry && entry.scope === "claudeai"
-          ? "Uses Claude's own Claude account"
-          : "Managed by this agent",
+          ? msg("Uses Claude's own Claude account")
+          : provider.driver === "scient" && "scope" in entry && entry.scope === "chatgpt"
+            ? msg("Uses Scient Agent's own ChatGPT account")
+            : provider.driver === "codex" && "scope" in entry && entry.scope === "chatgpt"
+              ? msg("Uses Codex's own ChatGPT account")
+              : msg("Managed by this agent"),
   };
+}
+
+/**
+ * Who a store's plugin is for: Claude's stores serve Claude and Scient Agent; Codex's serve Codex,
+ * and Scient Agent too when it loads Codex's plugins, except OpenAI's host-coupled ones; the
+ * Antigravity Marketplace serves Antigravity.
+ */
+export function providerStoreAudience(
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "pluginHomes">,
+  kind: ProviderStoreEntry["kind"],
+  providers: ReadonlyArray<ServerProvider>,
+  /** One entry's plugin id; absent for the store as a whole. */
+  entryId?: string,
+): ExtensionAudience {
+  if (kind === "shared") return sharedAudience(provider);
+  if (kind === "antigravity")
+    return {
+      layer: "agent",
+      driver: provider.driver,
+      instanceId: provider.instanceId,
+      label: "Antigravity",
+      reason: msg("Installed through Antigravity’s own plugin manager"),
+    };
+  return (
+    codexPluginAudience(provider, entryId, providers) ?? {
+      layer: "agent",
+      driver: provider.driver,
+      instanceId: provider.instanceId,
+      label: "Codex",
+      reason: msg("Uses Codex’s own ChatGPT account"),
+    }
+  );
 }
 
 export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
   switch (audience.layer) {
     case "scient":
-      return true;
+      return audience.agents === undefined || audience.agents.includes(provider.instanceId);
     case "shared":
       return (
-        provider.driver === "claudeAgent" ||
+        provider.instanceId === audience.ownerInstanceId ||
+        (sameHome(provider.pluginHomes?.claude, audience.pluginHome) &&
+          (provider.driver === "claudeAgent" ||
+            (provider.driver === "scient" &&
+              supportsScientClaudePlugins(provider.version) &&
+              provider.usesClaudePlugins === true)))
+      );
+    case "codex":
+      return (
         provider.instanceId === audience.ownerInstanceId ||
         (provider.driver === "scient" &&
-          supportsScientClaudePlugins(provider.version) &&
-          provider.usesClaudePlugins === true)
+          provider.usesCodexPlugins === true &&
+          sameHome(provider.pluginHomes?.codex, audience.pluginHome))
       );
     case "agent":
       return provider.instanceId === audience.instanceId;
+    case "account":
+      return audience.connected.some((agent) => agent.instanceId === provider.instanceId);
   }
 }
 
-export function audienceLabel(audience: ExtensionAudience): string {
+/** "Codex", "Codex and Claude", "Codex, Claude and Scient Agent". */
+export function listLabels(labels: ReadonlyArray<string>, resolve: MessageResolver = m): string {
+  return labels.length <= 1
+    ? (labels[0] ?? "")
+    : resolve(
+        msg("{items} and {last}", {
+          items: labels.slice(0, -1).join(", "),
+          last: labels.at(-1) ?? "",
+          $context: "a list of agent names",
+        }),
+      );
+}
+
+/** Who can use it, as the value beside a "Works with" label: "All your agents", "Codex only". */
+export function audienceNames(audience: ExtensionAudience, resolve: MessageResolver = m): string {
   switch (audience.layer) {
     case "scient":
-      return "Works with all your agents";
+      return resolve(
+        audience.agents === undefined ? msg("All your agents") : msg("The agents you chose"),
+      );
     case "shared":
-      return "Works with Claude and Scient Agent";
+      return resolve(msg("Claude and Scient Agent"));
+    case "codex":
+      return resolve(msg("Codex and Scient Agent"));
     case "agent":
-      return `${audience.label} only`;
+      return resolve(msg("{agent} only", { agent: audience.label }));
+    case "account":
+      return audience.connected.length === 0
+        ? resolve(
+            audience.pending.length === 0
+              ? msg("Through your ChatGPT or Claude account")
+              : msg("Not connected yet"),
+          )
+        : listLabels([...new Set(audience.connected.map((agent) => agent.label))], resolve);
+  }
+}
+
+/** The same as a sentence of its own: "Works with all your agents", "Codex only". */
+export function audienceLabel(audience: ExtensionAudience, resolve: MessageResolver = m): string {
+  switch (audience.layer) {
+    case "scient":
+      return resolve(
+        audience.agents === undefined
+          ? msg("Works with all your agents")
+          : msg("Works with the agents you chose"),
+      );
+    case "shared":
+      return resolve(msg("Works with Claude and Scient Agent"));
+    case "codex":
+      return resolve(msg("Works with Codex and Scient Agent"));
+    case "agent":
+      return audienceNames(audience, resolve);
+    case "account":
+      return audience.connected.length === 0
+        ? audienceNames(audience, resolve)
+        : resolve(msg("Works with {names}", { names: audienceNames(audience, resolve) }));
   }
 }
 
@@ -441,13 +672,34 @@ export function audienceSupport(
   audience: ExtensionAudience,
   providers: ReadonlyArray<ServerProvider>,
   connectorSupport: ReadonlyArray<ConnectorProviderSupport>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ConnectorProviderSupport> {
   return providers.map((provider) => {
     const supported = audienceReaches(audience, provider);
     const connector = connectorSupport.find(
       (entry) => entry.providerInstanceId === provider.instanceId,
     );
+    // An agent left out of a connector's chosen agents shows as such, not as unable to take it.
+    if (audience.layer === "scient" && connector && !supported)
+      return {
+        ...connector,
+        status: "unsupported",
+        reason: resolve(msg("Not chosen for this agent")),
+      };
     if (audience.layer === "scient" && connector) return connector;
+    const pending =
+      audience.layer === "account"
+        ? audience.pending.find((agent) => agent.instanceId === provider.instanceId)
+        : undefined;
+    // An agent one step away from a service (a sign-in, a connect) shows with that step.
+    if (!supported && pending)
+      return {
+        providerInstanceId: provider.instanceId,
+        driver: provider.driver,
+        displayName: providerLabel(provider),
+        status: "conditional",
+        reason: pending.reason,
+      };
     return {
       providerInstanceId: provider.instanceId,
       driver: provider.driver,
@@ -456,7 +708,13 @@ export function audienceSupport(
       ...(!supported
         ? {
             reason:
-              audience.layer === "agent" ? audience.reason : "Uses Claude Code's plugin format",
+              audience.layer === "agent"
+                ? resolve(audience.reason)
+                : audience.layer === "account"
+                  ? resolve(msg("This agent has no account that offers it"))
+                  : audience.layer === "codex"
+                    ? resolve(msg("Uses Codex’s plugin format"))
+                    : resolve(msg("Uses Claude Code's plugin format")),
           }
         : {}),
     };
@@ -472,9 +730,21 @@ export function worksWithCardAgents(
   audience: ExtensionAudience,
   support: ReadonlyArray<ConnectorProviderSupport>,
 ): ReadonlyArray<ConnectorProviderSupport> {
-  return audience.layer === "scient"
+  return audience.layer === "scient" && audience.agents === undefined
     ? support
     : support.filter((entry) => entry.status !== "unsupported");
+}
+
+/** The action that opens an agent's account page for this server, or none. */
+export function providerServerConnectLabel(
+  server: Pick<ServerProviderMcpServer, "connectUrl" | "scope" | "status">,
+  resolve: MessageResolver = m,
+): string | undefined {
+  if (!server.connectUrl) return undefined;
+  if (server.scope === "chatgpt") return resolve(msg("Open in ChatGPT"));
+  return resolve(
+    server.status === "connected" ? msg("Manage on claude.ai") : msg("Connect on claude.ai"),
+  );
 }
 
 export function providerServerDisplayName(
@@ -493,9 +763,10 @@ export function entryNeedsToken(entry: DiscoverEntry | null): boolean {
 export const EXTENSION_KINDS = ["plugins", "skills"] as const;
 export type ExtensionKind = (typeof EXTENSION_KINDS)[number];
 
+/** `msg()` strings: resolve them where they are shown. */
 export const EXTENSION_KIND_LABELS: Readonly<Record<ExtensionKind, string>> = {
-  plugins: "Plugins",
-  skills: "Skills",
+  plugins: msg("Plugins"),
+  skills: msg("Skills"),
 };
 
 /** `?kind=skills` from an Extensions address; anything else is the plugins list. */
@@ -510,7 +781,7 @@ export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKi
 
 export function entryNeedsSetup(entry: DiscoverEntry): boolean {
   return (
-    entry.localPackage !== undefined ||
+    (entry.localPackage !== undefined && entry.localPackage.environment.length > 0) ||
     entry.oauthClientRequired === true ||
     entryNeedsToken(entry) ||
     entry.apiKey !== undefined ||
@@ -518,48 +789,91 @@ export function entryNeedsSetup(entry: DiscoverEntry): boolean {
   );
 }
 
+const ACCESS_FACT = msg("Access", { $context: "what a connector needs to be used" });
+
 export function entryFacts(
   entry: DiscoverEntry | undefined,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<readonly [string, string]> {
   if (!entry) return [];
+  const access = resolve(ACCESS_FACT);
   return [
-    ...(entry.hosting ? [["Hosting", entry.hosting] as const] : []),
-    ...(entry.paidPlan ? [["Plan", "Paid plan"] as const] : []),
-    ...(entry.beta ? [["Status", "Beta"] as const] : []),
+    ...(entry.hosting ? [[resolve(msg("Hosting")), entry.hosting] as const] : []),
+    ...(entry.paidPlan ? [[resolve(msg("Plan")), resolve(msg("Paid plan"))] as const] : []),
+    ...(entry.beta
+      ? [[resolve(msg("Status")), resolve(msg("Beta", { $context: "release stage" }))] as const]
+      : []),
     ...(entry.apiKey
-      ? [["Access", "API key needed"] as const]
+      ? [[access, resolve(msg("API key needed"))] as const]
       : entry.accountRequired === true
-        ? [["Access", "Account needed"] as const]
+        ? [[access, resolve(msg("Account needed"))] as const]
         : entry.accountRequired === false
-          ? [["Access", "No account needed"] as const]
+          ? [[access, resolve(msg("No account needed"))] as const]
           : []),
-    ...(entry.address ? [["Setup", "Your address needed"] as const] : []),
-    ...(entry.accessNote ? [["Requirements", entry.accessNote] as const] : []),
+    ...(entry.address
+      ? [
+          [
+            resolve(msg("Setup", { $context: "noun" })),
+            resolve(msg("Your address needed")),
+          ] as const,
+        ]
+      : []),
+    ...(entry.accessNote ? [[resolve(msg("Requirements")), entry.accessNote] as const] : []),
   ];
 }
 
+/** Who runs a hosted connector, and so receives what passes through it. */
+function connectorHost(
+  connector: Pick<ConnectorSummary, "url"> & { readonly local?: unknown },
+): string | undefined {
+  if (connector.local !== undefined) return undefined;
+  const url = parseUrl(connector.url);
+  if (url === null) return undefined;
+  return url.protocol === "https:" || url.protocol === "http:" ? url.host : undefined;
+}
+
 /**
- * A connector's card facts: once its sign-in works, the catalog's access words give way to
- * whose account it uses, or to nothing when the service does not say.
+ * A connector's card facts: where it is hosted, then the catalog's. Once its sign-in works, the
+ * catalog's access words give way to whose account it uses, or to nothing when the service
+ * does not say.
  */
 export function connectorFacts(
   entry: DiscoverEntry | undefined,
-  connector: Pick<ConnectorSummary, "status" | "auth">,
+  connector: Pick<ConnectorSummary, "status" | "auth" | "url"> & { readonly local?: unknown },
+  resolve: MessageResolver = m,
 ): ReadonlyArray<readonly [string, string]> {
   const signedIn = connector.status === "connected" && connector.auth.type !== "none";
-  return entryFacts(entry).flatMap(([label, value]) =>
-    !signedIn || label !== "Access"
-      ? [[label, value] as const]
-      : connector.auth.type === "source-control"
-        ? [[label, `Signed in as ${connector.auth.account}`] as const]
-        : [],
-  );
+  // Without a sign-in, the Connection card already says so.
+  const settled = signedIn || connector.auth.type === "none";
+  const host = connectorHost(connector);
+  const access = resolve(ACCESS_FACT);
+  return [
+    ...(host === undefined
+      ? []
+      : [[resolve(msg("Host", { $context: "who hosts a server" })), host] as const]),
+    ...entryFacts(entry, resolve).flatMap(([label, value]) =>
+      !settled || label !== access
+        ? [[label, value] as const]
+        : connector.auth.type === "source-control"
+          ? [
+              [
+                label,
+                resolve(msg("Signed in as {account}", { account: connector.auth.account })),
+              ] as const,
+            ]
+          : [],
+    ),
+  ];
 }
 
-export function validateCuratedAddress(value: string, template: string): string | null {
+export function validateCuratedAddress(
+  value: string,
+  template: string,
+  resolve: MessageResolver = m,
+): string | null {
   return matchesExtensionAddressTemplate(value, template)
     ? null
-    : "Enter an https address matching " + template + ".";
+    : resolve(msg("Enter an https address matching {template}.", { template }));
 }
 
 /**
@@ -593,4 +907,115 @@ export function splitCommandLine(text: string): ReadonlyArray<string> | null {
   if (quote !== null) return null;
   if (started) parts.push(current);
   return parts;
+}
+
+function canonicalUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.href.replace(/\/$/u, "");
+  } catch {
+    return value;
+  }
+}
+
+/** Whether an agent-store entry is the same service as one of Scient's curated connectors. */
+export function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
+  return (
+    curated.agentStores?.claude === entry.id ||
+    curated.agentStores?.codex === entry.name ||
+    curated.agentStores?.antigravity === entry.id ||
+    curated.name === entry.id ||
+    curated.name === entry.name ||
+    curated.title?.toLowerCase() === entry.displayName.toLowerCase() ||
+    (entry.website !== undefined &&
+      [curated.websiteUrl, ...curated.remotes.map((remote) => remote.url)].some(
+        (url) => url !== undefined && canonicalUrl(url) === canonicalUrl(entry.website!),
+      ))
+  );
+}
+
+/**
+ * The same service listed in several agents' stores: entries whose names agree once case and
+ * punctuation go, and whose websites, when both give one, share a domain.
+ */
+function storeTwinKey(entry: Pick<ProviderStoreEntry, "displayName">): string {
+  return entry.displayName.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Hosts where every subdomain is somebody else's site. */
+const SHARED_HOSTS = [
+  "github.io",
+  "gitlab.io",
+  "vercel.app",
+  "netlify.app",
+  "pages.dev",
+  "workers.dev",
+  "web.app",
+  "firebaseapp.com",
+  "herokuapp.com",
+  "onrender.com",
+  "fly.dev",
+  "azurewebsites.net",
+  "readthedocs.io",
+  "gitbook.io",
+  "notion.site",
+  "substack.com",
+  "webflow.io",
+  "wixsite.com",
+  "blogspot.com",
+];
+/** Second-level labels country suffixes use: co.uk, com.au, ac.il. */
+const COUNTRY_SECOND_LEVEL: Readonly<Record<string, true>> = {
+  co: true,
+  com: true,
+  org: true,
+  net: true,
+  ac: true,
+  gov: true,
+  edu: true,
+  ne: true,
+  or: true,
+  go: true,
+};
+
+/** Hosts of code and packages: a plugin's homepage there says where it lives, not whose it is. */
+const CODE_HOSTS: Readonly<Record<string, true>> = {
+  "github.com": true,
+  "gitlab.com": true,
+  "bitbucket.org": true,
+  "npmjs.com": true,
+  "www.npmjs.com": true,
+  "pypi.org": true,
+};
+
+/**
+ * The site a website belongs to: developers.zoom.us and zoom.us are one site; foo.co.uk and
+ * bar.co.uk, or two github.io pages, are not. A repository page names no site.
+ */
+const siteDomain = (url: string | undefined) => {
+  let host: string;
+  try {
+    if (!url) return undefined;
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/u, "");
+  } catch {
+    return undefined;
+  }
+  if (CODE_HOSTS[host] === true) return undefined;
+  if (SHARED_HOSTS.some((shared) => host === shared || host.endsWith(`.${shared}`))) return host;
+  const labels = host.split(".");
+  const countrySuffix =
+    labels.length >= 3 &&
+    labels.at(-1)!.length === 2 &&
+    COUNTRY_SECOND_LEVEL[labels.at(-2)!] === true;
+  return labels.slice(countrySuffix ? -3 : -2).join(".");
+};
+
+export function areStoreTwins(
+  a: Pick<ProviderStoreEntry, "displayName" | "website">,
+  b: Pick<ProviderStoreEntry, "displayName" | "website">,
+): boolean {
+  if (storeTwinKey(a) !== storeTwinKey(b)) return false;
+  const [domainA, domainB] = [siteDomain(a.website), siteDomain(b.website)];
+  return domainA === undefined || domainB === undefined || domainA === domainB;
 }

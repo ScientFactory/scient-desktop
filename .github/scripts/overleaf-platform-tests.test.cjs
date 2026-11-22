@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { validateReport } = require("./overleaf-platform-tests.cjs");
+const { failures, validateReport } = require("./overleaf-platform-tests.cjs");
 
 const file = "src/scient/overleaf/OverleafGitExecutor.test.ts";
 const files = [file, "src/scient/overleaf/OverleafGitBytes.test.ts"];
@@ -44,4 +44,27 @@ test("platform evidence rejects skipped, missing, empty and wrong-file reports",
     alter(report);
     assert.throws(() => validateReport(report, files), /Overleaf/);
   }
+});
+
+test("a failure shows its message beyond the first line, bounded", () => {
+  const report = complete();
+  const hdiutil = [
+    "Error: Command failed: /usr/bin/hdiutil detach -force /tmp/mount-fat",
+    "hdiutil: detach failed - Resource busy",
+    ...Array.from({ length: 30 }, (_, i) => `    at frame ${i}`),
+  ].join("\n");
+  report.testResults[0].assertionResults = [
+    { status: "passed", fullName: "passes" },
+    { status: "failed", fullName: "refuses FAT32", failureMessages: [hdiutil] },
+    { status: "failed", title: "times out", failureMessages: [] },
+  ];
+  const lines = failures(report);
+  assert.equal(lines[0], `FAILED D:/checkout/apps/server/${file} > refuses FAT32`);
+  assert.equal(lines[2], "  hdiutil: detach failed - Resource busy");
+  assert.equal(lines.filter((line) => line.startsWith("    at frame")).length, 0);
+  assert.equal(lines.filter((line) => line.startsWith("      at frame")).length, 18);
+  assert.deepEqual(lines.slice(-2), [
+    `FAILED D:/checkout/apps/server/${file} > times out`,
+    "  failed",
+  ]);
 });

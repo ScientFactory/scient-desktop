@@ -1,10 +1,12 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import { type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useLayoutEffect, useRef, useState } from "react";
+import { msg, T, useMessages, Var } from "gt-react";
 import { ChevronRightIcon, SplitIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import type { MessageResolver } from "../../i18n/messages";
 import {
   isProviderInstancePickerReady,
   shouldShowInstanceBadge,
@@ -32,39 +34,58 @@ function unavailableSettingsAction(
 function describeUnavailableInstance(
   entry: ProviderInstanceEntry,
   hasSetupSurface: boolean,
+  resolve: MessageResolver,
 ): string {
+  const label = entry.displayName;
   const settingsAction = unavailableSettingsAction(entry, hasSetupSurface);
   if (settingsAction) {
-    const state = settingsAction === "enable" ? "disabled" : "unavailable";
-    return `${entry.displayName} is ${state}. Open Settings → Providers to ${settingsAction} it.`;
+    return settingsAction === "enable"
+      ? resolve(msg("{label} is disabled. Open Settings → Providers to enable it.", { label }))
+      : resolve(
+          msg("{label} is unavailable. Open Settings → Providers to install or reconnect it.", {
+            label,
+          }),
+        );
   }
   if (entry.status === "ready" && entry.isAvailable) {
-    return entry.displayName;
+    return label;
   }
-  return `${entry.displayName} needs setup. Select it to install or reconnect.`;
+  return resolve(msg("{label} needs setup. Select it to install or reconnect.", { label }));
 }
 
 function SettingsPathTooltip(props: { label: string; action: "enable" | "install or reconnect" }) {
-  const state = props.action === "enable" ? "disabled" : "unavailable";
+  const badgeClassName =
+    "inline-flex rounded bg-muted px-1 py-px text-2xs font-medium text-primary/80";
+  const chevronClassName = "mx-0.5 inline size-3 align-[-0.1em] text-muted-foreground/70";
   return (
     <span className="block text-left leading-snug [text-wrap:wrap]">
       <span className="block">
-        {props.label} is {state}.
+        {props.action === "enable" ? (
+          <T>
+            <Var>{props.label}</Var> is disabled.
+          </T>
+        ) : (
+          <T>
+            <Var>{props.label}</Var> is unavailable.
+          </T>
+        )}
       </span>
       <span className="mt-0.5 block">
-        Open{" "}
-        <span className="inline-flex rounded bg-muted px-1 py-px text-2xs font-medium text-primary/80">
-          Settings
-        </span>
-        <ChevronRightIcon
-          className="mx-0.5 inline size-3 align-[-0.1em] text-muted-foreground/70"
-          aria-hidden
-        />
-        <span className="sr-only">then</span>
-        <span className="inline-flex rounded bg-muted px-1 py-px text-2xs font-medium text-primary/80">
-          Providers
-        </span>{" "}
-        to {props.action} it.
+        {props.action === "enable" ? (
+          <T>
+            Open <span className={badgeClassName}>Settings</span>
+            <ChevronRightIcon className={chevronClassName} aria-hidden />
+            <span className="sr-only">then</span>
+            <span className={badgeClassName}>Providers</span> to enable it.
+          </T>
+        ) : (
+          <T>
+            Open <span className={badgeClassName}>Settings</span>
+            <ChevronRightIcon className={chevronClassName} aria-hidden />
+            <span className="sr-only">then</span>
+            <span className={badgeClassName}>Providers</span> to install or reconnect it.
+          </T>
+        )}
       </span>
     </span>
   );
@@ -90,6 +111,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
    */
   setupAvailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
 }) {
+  const m = useMessages();
   const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {
     props.onSelectInstance(instanceId);
   };
@@ -122,7 +144,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     <Toolbar.Root
       className="w-11 shrink-0 overflow-hidden bg-muted/30"
       data-model-picker-sidebar="true"
-      aria-label="Providers"
+      aria-label={m(msg("Providers"))}
       orientation="vertical"
       onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -154,7 +176,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                         )}
                         onClick={() => handleSelect("favorites")}
                         type="button"
-                        aria-label="Favorites"
+                        aria-label={m(msg("Favorites"))}
                         aria-pressed={props.selectedInstanceId === "favorites"}
                       >
                         <StarIcon className="size-5 fill-current shrink-0" aria-hidden />
@@ -166,7 +188,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
                   >
-                    Favorites
+                    <T>Favorites</T>
                   </TooltipPopup>
                 </Tooltip>
               </div>
@@ -191,11 +213,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               : null;
 
             const tooltip = settingsAction
-              ? describeUnavailableInstance(entry, hasSetupSurface)
+              ? describeUnavailableInstance(entry, hasSetupSurface, m)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
                 : isUnavailable
-                  ? describeUnavailableInstance(entry, hasSetupSurface)
+                  ? describeUnavailableInstance(entry, hasSetupSurface, m)
                   : entry.displayName;
 
             const button = (

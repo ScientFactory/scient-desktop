@@ -6,6 +6,7 @@ import {
   type DataTableRow,
   type DataTableSort,
 } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
 import { ArrowDown, ArrowUp, Search } from "lucide-react";
 import {
   useEffect,
@@ -22,8 +23,9 @@ import {
   FileSurfaceLoading,
 } from "~/components/files/fileSurfaceChrome";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { Spinner } from "~/components/ui/spinner";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -86,6 +88,8 @@ export interface DataGridProps {
 
 /** A paged, virtualized table: only the rows on screen are ever fetched or drawn. */
 export function DataGrid(props: DataGridProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const [sort, setSort] = useState<DataTableSort | null>(null);
   const [searchText, setSearchText] = useState("");
   const [search, setSearch] = useState("");
@@ -102,7 +106,7 @@ export function DataGrid(props: DataGridProps) {
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [anchor, setAnchor] = useState<Cell | null>(null);
   const [focus, setFocus] = useState<Cell | null>(null);
-  const { copyToClipboard } = useCopyToClipboard({ target: "cells" });
+  const { copyToClipboard } = useCopyToClipboard({ target: namedClipboardTarget("cells") });
 
   // A new ref callback each render would re-observe, and a resize report renders again.
   const measureScroller = useStableCallback((node: HTMLDivElement | null) => {
@@ -358,7 +362,7 @@ export function DataGrid(props: DataGridProps) {
   if (error !== null)
     return (
       <FileSurfaceFailure
-        title="Couldn't read this table"
+        title={gt("Couldn't read this table")}
         description={error}
         onRetry={() => setAttempt((value) => value + 1)}
       />
@@ -387,8 +391,8 @@ export function DataGrid(props: DataGridProps) {
               nativeInput
               size="compact"
               type="search"
-              placeholder="Search"
-              aria-label={`Search ${props.label}`}
+              placeholder={gt("Search", { $context: "search field placeholder" })}
+              aria-label={gt("Search {table}", { table: props.label })}
               value={searchText}
               onChange={(event) => {
                 setSearchText(event.currentTarget.value);
@@ -406,7 +410,7 @@ export function DataGrid(props: DataGridProps) {
         </div>
         <span className="ms-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground tabular-nums">
           {busy ? <Spinner size="xs" /> : null}
-          {tableCounts(shape)}
+          {tableCounts(shape, messages)}
         </span>
       </div>
       <div
@@ -583,14 +587,30 @@ function ColumnHeader(props: {
 }
 
 const errorMessage = (cause: unknown) =>
-  cause instanceof Error ? cause.message : "The table could not be read.";
+  cause instanceof Error ? cause.message : m(msg("The table could not be read."));
 
-function tableCounts(shape: TableShape): string {
+function tableCounts(shape: TableShape, resolve: MessageResolver): string {
   const total = `${shape.rowCount.toLocaleString()}${shape.truncated ? "+" : ""}`;
   const rows =
     shape.matchCount === shape.rowCount
-      ? `${total} rows`
-      : `${shape.matchCount.toLocaleString()} of ${total} rows`;
-  const columns = `${shape.columnCount.toLocaleString()} ${shape.columnCount === 1 ? "column" : "columns"}`;
+      ? resolve(
+          msg("{count, plural, one {{total} row} other {{total} rows}}", {
+            count: shape.rowCount,
+            total,
+          }),
+        )
+      : resolve(
+          msg("{matches} of {count, plural, one {{total} row} other {{total} rows}}", {
+            count: shape.rowCount,
+            matches: shape.matchCount.toLocaleString(),
+            total,
+          }),
+        );
+  const columns = resolve(
+    msg("{count, plural, one {{columns} column} other {{columns} columns}}", {
+      count: shape.columnCount,
+      columns: shape.columnCount.toLocaleString(),
+    }),
+  );
   return `${rows} · ${columns}`;
 }

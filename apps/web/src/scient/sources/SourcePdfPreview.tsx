@@ -1,4 +1,5 @@
-import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
+import { T } from "gt-react";
+import type { PdfMaterial, PdfSourceResolver } from "@scientfactory/document-artifacts";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -10,6 +11,7 @@ import type { AssetUrlState } from "../../assets/assetUrls";
 import { Button } from "../../components/ui/button";
 import { workspacePdfSource } from "../pdf/pdfSource";
 import { readScientSourceAttachmentPreview } from "./client";
+import { useSourceTextReveal } from "./sourceTextReveal";
 
 import "../pdf/scientPdfReader.css";
 
@@ -19,11 +21,13 @@ const ScientPdfReader = lazy(() =>
 
 type SourcePreviewAssetState = AssetUrlState & {
   readonly requestKey: string;
+  readonly material?: PdfMaterial;
 };
 /** Held without its retry, which the render attaches. */
 type StoredSourcePreviewAsset = RuntimeAssetUrlState & {
   readonly requestKey: string;
   readonly waiting?: boolean;
+  readonly material?: PdfMaterial;
 };
 
 export function SourcePdfPreview(props: {
@@ -87,6 +91,7 @@ export function SourcePdfPreview(props: {
             url: result.url,
             expiresAt: result.expiresAt,
             ...(result.sourcePath ? { sourcePath: result.sourcePath } : {}),
+            ...(result.material ? { material: result.material } : {}),
             requestKey,
           });
         }
@@ -124,13 +129,14 @@ export function SourcePdfPreview(props: {
             sourceId: props.sourceId,
             attachmentId: props.attachmentId,
           },
+          ...(currentAsset.material ? { material: currentAsset.material } : {}),
         })
       : null;
   // Keyed by its inputs, not its identity: a reauthorization keeps the open reader.
   const requestedSourceKey =
     requestedSource === null
       ? null
-      : `${props.environmentId}\0${props.fileName}\0${props.root}\0${sourceRelativePath}\0${props.sourceId}\0${props.attachmentId}`;
+      : `${props.environmentId}\0${props.fileName}\0${props.root}\0${sourceRelativePath}\0${props.sourceId}\0${props.attachmentId}\0${currentAsset.material?.sha256 ?? ""}`;
   const [retainedSource, setRetainedSource] = useState<{
     requestKey: string;
     sourceKey: string;
@@ -145,6 +151,11 @@ export function SourcePdfPreview(props: {
   }
   const source =
     requestedSource ?? (retainedSource?.requestKey === requestKey ? retainedSource.source : null);
+  useSourceTextReveal(source, {
+    root: props.root,
+    sourceId: props.sourceId,
+    attachmentId: props.attachmentId,
+  });
   const resolver: PdfSourceResolver = { useResolve: () => currentAsset };
   if (source === null) {
     return (
@@ -156,8 +167,12 @@ export function SourcePdfPreview(props: {
           {currentAsset._tag === "Failure" ? (
             <>
               <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
-              <h2>Couldn't open this PDF</h2>
-              <p>Scient could not create an authorized preview for this file.</p>
+              <h2>
+                <T>Couldn't open this PDF</T>
+              </h2>
+              <p>
+                <T>Scient could not create an authorized preview for this file.</T>
+              </p>
               <Button
                 size="xs"
                 variant="outline"
@@ -165,7 +180,7 @@ export function SourcePdfPreview(props: {
                 aria-busy={currentAsset.waiting === true}
                 onClick={refresh}
               >
-                Try again
+                <T>Try again</T>
               </Button>
             </>
           ) : (
@@ -174,7 +189,9 @@ export function SourcePdfPreview(props: {
                 className="size-6 animate-spin text-muted-foreground"
                 aria-hidden="true"
               />
-              <p>Preparing PDF…</p>
+              <p>
+                <T>Preparing PDF…</T>
+              </p>
             </>
           )}
         </div>

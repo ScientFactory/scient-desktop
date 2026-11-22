@@ -1,5 +1,6 @@
 // No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import { piContextExtension } from "./contextExtension.ts";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
@@ -23,9 +24,7 @@ export const makePiMcpExtensionSource = (
 ): string => {
   return /* SCIENT-FORK:END */ `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-// SCIENT-FORK:START: Scient Extensions: hashed aliases for Scient connector tool names.
 import * as NodeCrypto from "node:crypto";
-// SCIENT-FORK:END
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { Type } from "typebox";
@@ -44,6 +43,7 @@ const ORCHESTRATION_INSTRUCTIONS = ${
     JSON.stringify(orchestrationInstructions.trim())
     // SCIENT-FORK:END
   };
+const PULL_REQUEST_LINKING_INSTRUCTIONS = ${JSON.stringify(PULL_REQUEST_LINKING_INSTRUCTIONS)};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -82,12 +82,19 @@ function runtimeMode(): RuntimeMode {
     : "full-access";
 }
 
+// The app keys "Always allow this session" on this text, so a cut summary ends with the
+// full input's hash: calls that differ only past the cut get separate grants.
 function toolInputSummary(input: unknown): string {
+  let text: string;
   try {
-    return JSON.stringify(input, null, 2).slice(0, 4_000);
+    text = JSON.stringify(input, null, 2) ?? String(input);
   } catch {
-    return String(input).slice(0, 4_000);
+    text = String(input);
   }
+  if (text.length <= 4_000) return text;
+  const hash = NodeCrypto.createHash("sha256").update(text, "utf16le").digest("hex");
+  return text.slice(0, 4_000) + "\\n... " + (text.length - 4_000) +
+    " more characters not shown (sha256 " + hash + ")";
 }
 
 // SCIENT-FORK:START: Scient Extensions: incremental, request-correlated response reader. Remote Streamable
@@ -501,9 +508,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // keep their normal meaning without replacing or shadowing Pi's runtime.
   // Only Pi's own search is known to be read-only. An extension that replaces
   // it keeps the name, and cannot discover deferred tools either.
+  // OmO reports Pi's builtin search with angle brackets around the same path.
+  const BUILTIN_TOOL_SEARCH_PATHS = new Set(["builtin:tool-search", "<builtin:tool-search>"]);
   const hasBuiltinToolSearch = () =>
     typeof pi.getAllTools === "function" &&
-    pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
+    pi.getAllTools().some((tool) => tool.name === "tool_search" && BUILTIN_TOOL_SEARCH_PATHS.has(tool.sourceInfo?.path ?? ""));
 
   const readOnlyMcpTools = new Set<string>();
   // SCIENT-FORK:START: Scient Extensions: model tool name -> "server/tool" for Scient connector tools.
@@ -556,8 +565,23 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   }
   delete process.env[TOOL_NAME_MAP_ENV];
   const modelToolName = (canonicalName: string) => toolNameMap[canonicalName] ?? canonicalName;
+  // SCIENT-FORK:START: Pi's search covers only tools not loaded yet; say so wherever it is offered.
+  const toolSearchNote = () =>
+    hasBuiltinToolSearch()
+      ? "tool_search finds only tools that are not loaded yet. Tools already in your tool list, such as bash, read, edit and write, are callable directly; an empty search does not mean a capability is missing."
+      : "";
+  // The pull request linking rules name bridge tools, so they ride with the orchestration copy.
   const runtimeSystemPrompt = (systemPrompt: string) =>
-    [systemPrompt, awareness, endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""].filter(Boolean).join("\\n\\n");
+    [
+      systemPrompt,
+      awareness,
+      toolSearchNote(),
+      endpoint && token ? ORCHESTRATION_INSTRUCTIONS : "",
+      endpoint && token ? PULL_REQUEST_LINKING_INSTRUCTIONS : "",
+    ]
+      .filter(Boolean)
+      .join("\\n\\n");
+  // SCIENT-FORK:END
   if (endpoint === undefined || token === undefined) {
     // SCIENT-FORK:START: runtime guidance without MCP; this path's single before_agent_start hook.
     pi.on("before_agent_start", (event, ctx) => {

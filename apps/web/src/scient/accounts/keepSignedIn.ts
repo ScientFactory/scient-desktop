@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { GOOGLE_SITE, type AccountSummary, type EnvironmentId } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
 import {
@@ -9,6 +10,7 @@ import {
 import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import type { AtomRegistry } from "effect/reactivity";
 import { accountsState } from "./accountsState";
+import { parseUrl } from "@t3tools/shared/url";
 
 const FIRST_GAP_MS = 24 * 60 * 60 * 1000;
 /** A session shorter than this is left alone: chasing it would look like a bot. */
@@ -70,8 +72,9 @@ export function nextQuietVisit(
 /** A site's answer that means the session is over. A site may also just show its public page. */
 export function sessionEnded(requestedUrl: string, answeredUrl: string, status: number) {
   if (status === 401) return true;
-  if (!URL.canParse(answeredUrl)) return false;
-  return isLoginPlace(new URL(answeredUrl)) && !isLoginPlace(new URL(requestedUrl));
+  const answered = parseUrl(answeredUrl);
+  if (answered === null) return false;
+  return isLoginPlace(answered) && !isLoginPlace(new URL(requestedUrl));
 }
 
 /** Sessions ended between visits get visited more often, down to the shortest gap. */
@@ -101,7 +104,12 @@ export function watchKeepSignedIn(
   if (!visit) return () => undefined;
   const key = `scient:quiet-visits:${environmentId}`;
   const tick = async () => {
-    const snapshot = await accountsState.readSnapshot.run(registry, { environmentId, input: {} });
+    const snapshot = await runAtomCommand(
+      registry,
+      accountsState.readSnapshot,
+      { environmentId, input: {} },
+      { reportFailure: false },
+    );
     if (snapshot._tag !== "Success") return;
     const visits = readVisits(key);
     const now = Date.now();
@@ -120,10 +128,15 @@ export function watchKeepSignedIn(
       }),
     );
     if (ended)
-      await accountsState.sessionEnded.run(registry, {
-        environmentId,
-        input: { accountId: target.accountId },
-      });
+      await runAtomCommand(
+        registry,
+        accountsState.sessionEnded,
+        {
+          environmentId,
+          input: { accountId: target.accountId },
+        },
+        { reportFailure: false },
+      );
   };
   const timer = setInterval(() => void tick(), TICK_MS);
   return () => clearInterval(timer);

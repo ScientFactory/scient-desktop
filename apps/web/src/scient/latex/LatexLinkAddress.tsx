@@ -2,16 +2,18 @@ import { useState } from "react";
 import { Input } from "~/components/ui/input";
 import { DockMenu, DockCommandItem } from "../writing/dockChrome";
 import { LatexContextMenuForm } from "./LatexContextMenuForm";
+import { T, useGT } from "gt-react";
 
 export function LatexLinkAddress(props: {
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const gt = useGT();
   return (
     <DockMenu
       icon={undefined}
-      label="Address"
+      label={gt("Address", { $context: "link URL" })}
       commandScope="latex"
       disabled={props.disabled}
       popupClassName="w-max min-w-0 max-w-(--available-width)"
@@ -21,20 +23,21 @@ export function LatexLinkAddress(props: {
   );
 }
 function LinkAddressDraft(props: { value: string; onChange: (value: string) => void }) {
+  const gt = useGT();
   const [draft, setDraft] = useState(props.value);
   const valid = /^(https?:\/\/|mailto:)/iu.test(draft) && !/[{}\\\s]/u.test(draft);
   return (
-    <LatexContextMenuForm label="Link address" width="content">
+    <LatexContextMenuForm label={gt("Link address")} width="content">
       <Input
         size="compact"
         type="url"
-        aria-label="Link address"
+        aria-label={gt("Link address")}
         value={draft}
         aria-invalid={!valid}
         onChange={(event) => setDraft(event.target.value)}
       />
       <DockCommandItem disabled={!valid} onClick={() => props.onChange(draft)}>
-        Apply
+        <T>Apply</T>
       </DockCommandItem>
     </LatexContextMenuForm>
   );

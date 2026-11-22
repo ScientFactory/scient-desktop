@@ -58,6 +58,14 @@ conversations, and `/trace` shows this conversation in it. Both open in the conv
 The dashboard runs inside the conversation's agent, so it stops when that agent does; run `/stats`
 again to bring it back.
 
+Send `/plan` followed by what you want done to have Scient Agent plan first. It reads what it
+needs and drafts a plan, but changes nothing. The plan appears as a plan card, and a question asks
+you to **Approve and carry out** or **Refine plan**. Approve, and the agent leaves plan mode and
+carries out the plan in the same turn. Refine, and it asks what to change; answer in your next
+message. `/plan` alone turns plan mode on, and `/plan off` turns it off. Plan mode and a
+[goal](./composer.md#goals) cannot be on together. This needs a Scient Agent that supports plan
+mode; an older one says so.
+
 **Compact** shows its progress in the conversation. If a turn stops because the session reached a
 spending cap or the account hit a usage limit, the conversation says so, and the next message is
 refused until the cap is raised or the limit resets. When an account is past its usage limit but is
@@ -73,7 +81,9 @@ Scient Agent starts with no sign-ins. Give it a model in one of these ways:
   browser, and services you add an API key for. Choose one, finish in the browser, and paste a
   code or key if the agent asks for one. Some sign-ins ask more than one question, such as
   Cloudflare's token, account ID and gateway ID; each appears after you answer the one before.
-  **Sign out** removes a sign-in the agent stored.
+  **Sign out** removes a sign-in the agent stored. Antigravity is not offered here: neither of
+  its sign-ins can finish from Scient, so Scient leaves them and their models out. Use Scient's
+  separate [Antigravity](providers-antigravity.md) provider instead.
 - **Custom models.** Attach an OpenAI-compatible, OpenAI Responses, or Anthropic Messages
   connection in Scient's **Custom models** settings. Scient passes the key to the agent privately
   for each process; it is never in the agent's environment or arguments.
@@ -91,25 +101,24 @@ Signing out removes the sign-in and then stops Scient Agent's running conversati
 keeps using it. They resume when you next use them. A stored sign-in that no longer works can be
 renewed or signed out of from the same list.
 
-The model picker initially shows Sonnet 5.5, Opus 5.5, and Fable 5.5 for Anthropic;
-GPT-6-Astra, GPT-6-Luna, and GPT-6.1-Sol for Codex; and Gemini 3.8 Flash, Gemini 3.1 Pro,
-and Claude Opus 4.6 for Antigravity, whenever the agent reports those models. Other models
-in these account groups start hidden. They remain on the provider page, where you can enable
+The model picker initially shows Sonnet 5.5, Opus 5.5, and Fable 5.5 for Anthropic,
+and GPT-6-Astra, GPT-6-Luna, and GPT-6.1-Sol for Codex, whenever the agent reports those
+models. Other models in these account groups start hidden. They remain on the provider page, where you can enable
 them. Other account routes and custom models keep their existing defaults.
 
-The default account order is Anthropic, OpenAI/Codex, then Google/Antigravity. Models keep
+The default account order is Anthropic, OpenAI/Codex, then Google. Models keep
 their catalog order within each group. Your saved visibility and ordering choices take
 precedence and belong to this client and Scient Agent instance, independently of Pi and Oh My Pi.
 These defaults curate the display; they do not prove subscription access.
 
 For a new automatic selection, Scient prefers GPT-6.1-Sol for ChatGPT accounts,
-Opus 5.5 for Anthropic, Grok 4.7 for Cursor, and Gemini 3.8 Flash for Antigravity
-when the account reports them. High reasoning is the initial preference when
-the model offers it. Saved model and reasoning choices remain in effect, and
-custom models keep their own defaults. Hidden or unavailable models are excluded
-from automatic selection. Cursor and Antigravity's separate providers use the
-same model preferences; the separate Codex and Claude providers also start at
-high reasoning when supported.
+Opus 5.5 for Anthropic, and Grok 4.7 for Cursor when the account reports them.
+Reasoning starts at Medium for ChatGPT and Anthropic models and at High for Cursor's,
+when the model offers it. Saved model and reasoning choices remain in effect, and custom
+models keep their own defaults. Hidden or unavailable models are excluded from automatic
+selection. Cursor's separate provider uses the same model preference. Antigravity's
+separate provider prefers Gemini 4 Hydrogen at High reasoning, and the separate Codex
+and Claude providers start at Medium.
 
 If a successful refresh stops reporting a native model, the provider page retains it with an
 unavailable explanation, and selectors exclude it. A failed refresh does not establish a denial.
@@ -129,10 +138,29 @@ while the parent conversation and other subagents continue. This requires a runt
 subagent stopping is unsupported. The child's reported lifecycle determines its final state. If
 the agent's process has already ended, Stop marks the child interrupted.
 
+Shell commands show as command rows with their output and exit code, file edits and writes as
+file changes you can open as a diff, and web searches with their query and sources. Pictures any
+tool returns show in its row.
+
 Scient shows the agent's reported context usage, model capacity and session cost. The cost
 includes billed cache refreshes, with cache warming left at the agent's default. `/compact`
 uses the agent's native compaction and shows its summary when available. The agent's task
 list appears above the composer as a read-only list.
+
+**Compact idle threads** works for Scient Agent as it does for
+[Claude](./providers-claude.md#compact-long-conversations), with the same setting and the same
+per-provider override, except that Scient Agent uses **Before the cache expires** unless you
+choose another mode for it (**Use default** follows the setting in Providers > Advanced). Scient
+compacts an idle thread over 200,000 tokens while the agent still holds the conversation and a warm
+prompt cache. With an hour-long cache, as with a Claude sign-in, that is about 25 minutes after the
+last reply, before Scient stops an idle agent after 30 minutes. With a five-minute cache, the agent
+keeps the cache warm while it is worth it, and Scient compacts when that warming stops after at least
+20 minutes idle, measured at the agent rather than when its report arrives, while the last refresh
+still holds; if warming stopped sooner, or never ran, the thread is not compacted. A model whose cache
+never expires is never compacted for being idle, nor is a thread whose model you changed since its
+last reply. **When you return** offers the **Compact** chip after an hour idle. Compaction before the
+cache expires needs a Scient Agent that reports its prompt cache, and for a five-minute cache one
+that also reports the warming-stop time; with an older one, those threads only get the chip.
 
 Agent notices, retry progress and save failures appear in the conversation. Questions retain
 the agent's offered choices, editor text and timeout information; an expired question closes
@@ -156,9 +184,8 @@ What the operating system asks for:
   agent. The provider's settings, and any step macOS refused, show both with an **Allow** button:
   it asks macOS, which lists Scient in the pane, then opens the pane so you only turn Scient on.
   In Screen & System Audio Recording, use the top list; **System Audio Recording Only** does not
-  let the agent see windows. macOS can close Scient when you turn on screen recording, so while
-  runs are going Scient offers to open the pane once they finish; if macOS ends Scient, it opens
-  again by itself with your conversations as they were.
+  let the agent see windows. When you turn on screen recording, macOS offers to quit and reopen
+  Scient: choose **Later**. Scient and the agent see the permission at once, with no restart.
 - **Windows:** nothing to allow. The agent cannot act in windows of apps running as administrator
   unless Scient does too.
 - **Linux (X11):** nothing to allow. Background input needs write access to `/dev/uinput`;
@@ -166,6 +193,14 @@ What the operating system asks for:
   the desktop's accessibility support (AT-SPI) is on.
 - **Linux (Wayland):** the first input shows your desktop's remote-control prompt. Released
   agent builds cannot take screenshots on Wayland.
+
+## Making pictures
+
+Scient Agent can make and edit pictures, such as figures and diagrams, when it has a ChatGPT
+account signed in. Scient turns the agent's image tool on while such an account
+is connected and off when it is not; no restart is needed. The pictures show in the conversation
+and are saved as files. They count against the account or service that makes them. **Image generation** in the provider's
+settings turns it off; it is on by default.
 
 ## Where it keeps things
 

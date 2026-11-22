@@ -5,9 +5,11 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -21,6 +23,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderConnectionActionError } from "../../scient/providerLifecycle/ProviderConnectionActions.ts";
 import {
   makeScientAgentConnectionActions,
+  isOfferedScientAgentAccount,
   readScientAgentAccounts,
 } from "../../scient/providerLifecycle/ScientAgentConnectionActions.ts";
 import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts";
@@ -51,6 +54,7 @@ import {
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
 import {
   SCIENT_AGENT_CONFIG_FILES_ENV,
+  hasImageGenerationAccount,
   writeScientAgentHostConfig,
 } from "../scient/ScientAgentHostConfig.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
@@ -59,9 +63,20 @@ import {
   runScientAgentPluginCommand,
 } from "../../scient/extensions/ScientAgentPluginInventory.ts";
 import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMcpInventory.ts";
+import {
+  hasChatGptAccount,
+  readScientAgentChatGptApps,
+  scientAgentCapabilities,
+  type ScientAgentCapabilities,
+  SCIENT_AGENT_CHATGPT_APPS_ALL,
+  SCIENT_AGENT_CHATGPT_APPS_ENV,
+} from "../../scient/extensions/ScientAgentChatGptApps.ts";
 import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore.ts";
 import { readScientClaudePlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
 import { discoverScientAgentSkills } from "../scient/ScientAgentSkills.ts";
+import { readScientAgentUsageLimits, scientAgentUsageReader } from "../scient/ScientAgentUsage.ts";
+import { makeScientAgentDictation } from "../scient/ScientAgentDictation.ts";
+import { openScientAgentLiveVoiceCall } from "../scient/ScientAgentLiveVoiceHost.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -86,11 +101,16 @@ export type ScientAgentDriverEnv =
  * Share transport/tool bridge behavior, not OMP homes. Managed installs use qualified Scient
  * releases; configured executables remain usable independently.
  */
-export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
+export const ScientAgentDriver: ScientProviderDriver<
+  ScientAgentSettings,
+  ScientAgentDriverEnv,
+  Path.Path | ServerConfig
+> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: scientAgentTarget.displayName, supportsMultipleInstances: false },
   configSchema: ScientAgentSettings,
   defaultConfig: () => decodeSettings({}),
+  usage: scientAgentUsageReader,
   create: Effect.fn("ScientAgentDriver.create")(function* ({
     instanceId,
     displayName,
@@ -130,11 +150,26 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         path.join(yield* HostProcess.HomeDirectory, ".claude"),
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
-    processEnv[SCIENT_AGENT_CONFIG_FILES_ENV] = yield* writeScientAgentHostConfig(root, {
-      computerControl: effectiveConfig.computerControl,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
+    // The Codex home whose installed plugins the codex-plugins source reads. A given CODEX_HOME is
+    // expanded as Codex expands its home and passed on resolved, so both read the same folder.
+    const userHome = yield* HostProcess.HomeDirectory;
+    const configuredCodexHome = processEnv.CODEX_HOME?.trim();
+    const codexHome = path.resolve(
+      configuredCodexHome
+        ? expandHomePath(configuredCodexHome, userHome)
+        : path.join(userHome, ".codex"),
+    );
+    if (configuredCodexHome) processEnv.CODEX_HOME = codexHome;
+    // Image generation waits for the provider check to find an account that can make images.
+    const writeHostConfig = (imageAccount: boolean) =>
+      writeScientAgentHostConfig(root, {
+        computerControl: effectiveConfig.computerControl,
+        imageGeneration: effectiveConfig.imageGeneration && imageAccount,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
+    processEnv[SCIENT_AGENT_CONFIG_FILES_ENV] = yield* writeHostConfig(false).pipe(
       Effect.mapError(failure("Could not write the Scient Agent settings Scient manages.")),
     );
     // A crashed server never removed its extension files, and a bootstrap
@@ -180,27 +215,52 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
     // The list itself says sign-in is available: `methods` stays empty, so a
     // client that predates the account method still decodes this provider.
     const stamp = (
-      snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts">,
+      snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts" | "checkFailure">,
+      capabilities = { runsApps: false, codexPlugins: false },
     ): ServerProvider => {
-      const { accounts, ...draft } = snapshot;
+      const { accounts, checkFailure, ...draft } = snapshot;
       return {
-        ...stampIdentity(draft),
+        // The models of an account Scient does not offer, which Scient Agent may still report.
+        ...stampIdentity({
+          ...draft,
+          models: draft.models.filter((model) => isOfferedScientAgentAccount(model.slug)),
+        }),
         usesClaudePlugins: supportsScientClaudePlugins(draft.version),
+        usesCodexPlugins: capabilities.codexPlugins,
+        pluginHomes: {
+          claude: claudeHome,
+          ...(capabilities.codexPlugins ? { codex: codexHome } : {}),
+        },
+        // The apps of the agent's own ChatGPT sign-in, which only it holds and only a build
+        // that runs them can use.
+        accountAppsAvailable: capabilities.runsApps && hasChatGptAccount(accounts),
         connection: {
           methods: [],
           canDisconnect: false,
           operation: null,
           runtime: managedRuntime.summary,
+          ...(checkFailure ? { checkFailure } : {}),
           ...(accounts ? { accounts } : {}),
         },
       };
     };
+    // A model account the agent signs out leaves its account list; read the list again.
+    const refreshAccounts = yield* Ref.make<Effect.Effect<void>>(Effect.void);
     const orchestrationAdapter = yield* makeOmpAdapterV2({
       target: scientAgentTarget,
+      onAccountSignedOut: Ref.get(refreshAccounts).pipe(
+        Effect.flatten,
+        Effect.forkDetach,
+        Effect.asVoid,
+      ),
       instanceId,
       settings: launchConfig,
       homePath: root,
-      environment: processEnv,
+      // Conversations get the person's ChatGPT apps; title and other one-off runs do not.
+      environment: {
+        ...processEnv,
+        [SCIENT_AGENT_CHATGPT_APPS_ENV]: SCIENT_AGENT_CHATGPT_APPS_ALL,
+      },
       spawner,
       fileSystem: fs,
       path,
@@ -238,6 +298,11 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
+    // What this build last reported it can do, so one failed runtime-info read changes nothing.
+    const lastCapabilities = yield* Ref.make<
+      | { readonly version: string | null; readonly capabilities: ScientAgentCapabilities }
+      | undefined
+    >(undefined);
     const checkProvider = (cwd?: string) =>
       checkOmpProviderStatus(
         scientAgentTarget,
@@ -250,10 +315,56 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
+        Effect.tap((snapshot) =>
+          snapshot.accounts === undefined
+            ? Effect.void
+            : writeHostConfig(hasImageGenerationAccount(snapshot.accounts)).pipe(Effect.ignore),
+        ),
         Effect.flatMap((snapshot) =>
           effectiveConfig.enabled && snapshot.installed
-            ? discoverScientAgentSkills((args) => runPluginCommand(cwd, args)).pipe(
-                Effect.map((skills) => stamp({ ...snapshot, skills })),
+            ? Effect.all(
+                [
+                  discoverScientAgentSkills((args) => runPluginCommand(cwd, args)),
+                  // Limits belong to the accounts, not a workspace: read them on the main check.
+                  cwd === undefined
+                    ? readScientAgentUsageLimits(
+                        (args) => runPluginCommand(cwd, args),
+                        snapshot.accounts,
+                      )
+                    : Effect.undefined,
+                  scientAgentCapabilities(
+                    launchConfig.binaryPath,
+                    processEnv,
+                    serverConfig.stateDir,
+                  ).pipe(
+                    Effect.provideService(OmpExecutableGate, executableGate),
+                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                ],
+                { concurrency: "unbounded" },
+              ).pipe(
+                Effect.flatMap(([skills, usageLimits, read]) =>
+                  // A failed read keeps what this same build last reported.
+                  Ref.modify(lastCapabilities, (last) => {
+                    const known =
+                      read ?? (last?.version === snapshot.version ? last.capabilities : undefined);
+                    return [
+                      known,
+                      known === undefined
+                        ? last
+                        : { version: snapshot.version, capabilities: known },
+                    ];
+                  }).pipe(
+                    Effect.map((capabilities) =>
+                      stamp(
+                        { ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) },
+                        capabilities,
+                      ),
+                    ),
+                  ),
+                ),
               )
             : Effect.succeed(stamp(snapshot)),
         ),
@@ -300,7 +411,9 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSnapshotSettings)),
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
       initialSnapshot: (settings) =>
-        makePendingOmpProvider(scientAgentTarget, settings.provider).pipe(Effect.map(stamp)),
+        makePendingOmpProvider(scientAgentTarget, settings.provider).pipe(
+          Effect.map((snapshot) => stamp(snapshot)),
+        ),
       checkProvider: checkProvider(),
     }).pipe(
       Effect.mapError((cause) =>
@@ -317,7 +430,16 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
           Effect.provideService(Path.Path, path),
         ),
       () =>
-        readScientAgentMcpServers(root).pipe(
+        Effect.all(
+          [
+            readScientAgentMcpServers(root),
+            readScientAgentChatGptApps(launchConfig.binaryPath, processEnv, serverConfig.stateDir),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map(([configured, chatGptApps]) => [...configured, ...chatGptApps]),
+          Effect.provideService(OmpExecutableGate, executableGate),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         ),
@@ -343,6 +465,32 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+    yield* Ref.set(refreshAccounts, Effect.asVoid(snapshot.refresh));
+    const voiceDictation = yield* makeScientAgentDictation({
+      binaryPath: launchConfig.binaryPath,
+      environment: processEnv,
+      workDir: root,
+    }).pipe(
+      Effect.provideService(OmpExecutableGate, executableGate),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    // A voice call runs in an agent of its own, so it needs no running conversation.
+    const liveVoiceHost = {
+      openCall: openScientAgentLiveVoiceCall(
+        makeRpcClient({
+          target: scientAgentTarget,
+          command: launchConfig.binaryPath,
+          env: processEnv,
+          extraArgs: OMP_ISOLATED_ARGS,
+        }),
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      ),
+    };
     return {
       pluginActions: { ...native.actions, store },
       nativeInventoryChanges: native.reports,
@@ -358,6 +506,8 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       textGeneration,
       connectionActions,
       managedRuntimeActions: managedRuntime.actions,
+      voiceDictation,
+      liveVoiceHost,
     } satisfies ScientProviderInstance;
   }),
 };

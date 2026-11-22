@@ -15,6 +15,11 @@ The Shortcuts page uses the same source selector as Skills. Choose **General**, 
 part of the product. General contains application commands; the other sections
 contain document-authoring and reading commands. The selected section stays open.
 
+In Scient Desktop, **General → Application & windows** also lists **New Window**
+(`Cmd+Option+Shift+N` on macOS, `Ctrl+Alt+Shift+N` on Windows and Linux).
+It is labeled **Fixed shortcut** because it belongs to the desktop File menu and
+cannot be changed here. See [Multiple windows](./multiple-windows.md).
+
 Use the page search to filter the selected section. Click a document shortcut to
 edit it in place, or use **+** to add an alternative. The row menu can disable a
 command or reset it to its defaults. A command without a keyboard binding remains
@@ -118,6 +123,9 @@ use bundled fonts and render locally. Unassigned actions are optional. Choose
 **Print / save as PDF**, then Save as PDF or Microsoft Print to PDF in the system
 print dialog. The reference uses the current profile, including custom bindings;
 there is no separate shortcut list to maintain.
+
+To free a default shortcut for another command, choose **Unassign** from its row's
+actions menu. **Reset to default** brings it back.
 
 ## Composer controls
 
@@ -283,10 +291,12 @@ successful pick; its hover glow and badge preview the element and color family t
 so add one in **Settings** → **Shortcuts** if you want to use it.
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
-`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
-`rightPanelOpen` applies only to `rightPanel.new` and is true while the right panel is
-open; the default `mod+t` uses it to open the panel's new-tab menu.
+`draftThreadRoute`, `turnRunning`, `composerEmpty`, `editableFocus`, `isWeb`, and `isDesktop`.
+In a thread, `rightPanelOpen` is true while its right panel is open; the default
+`mod+t` uses it to open the panel's new-tab menu.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
+`composerEmpty` is true while the composer has no text, attachments, or context, and is not
+editing a queued message or answering a question.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
@@ -348,6 +358,9 @@ always matches the build you are running. Use that rather than a copied list.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Shortcuts**.
 
+`thread.regenerateTitle` generates a new title for the focused thread, like
+**Regenerate title** in the thread menu. It has no default shortcut.
+
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive
@@ -392,6 +405,15 @@ if the browser takes it first.
 
 Many defaults include `!terminalFocus` so they do not intercept terminal input.
 Keep that condition when remapping them if you want the same behavior.
+`sidebar.toggle` never takes a Ctrl chord from a focused terminal, so tmux's `Ctrl+B`
+prefix reaches it. On macOS, `Cmd+B` still toggles the sidebar there.
+
+## Find on a browser page
+
+`preview.find` (`mod+f` while a browser has focus) searches the open page in the desktop app. It
+is also in the browser's **⋮** menu and the command palette. A page that handles `mod+f` itself,
+such as a code editor, keeps its own find. Use the **⋮** menu to reach the browser's find there.
+Streamed browser tabs and Scient in a web browser do not support it.
 
 ## `when` Conditions
 

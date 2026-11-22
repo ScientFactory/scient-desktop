@@ -1,7 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
-// SCIENT-FORK:START — Scient Extensions connectors: hashed connector tool aliases.
 import * as NodeCrypto from "node:crypto";
-// SCIENT-FORK:END
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
@@ -17,6 +15,12 @@ export interface RegisteredTool {
   readonly exposure?: string;
   readonly promptSnippet?: string;
   readonly promptGuidelines?: ReadonlyArray<string>;
+  readonly prepareLoadout?: (loadout: {
+    readonly declared: ReadonlyArray<RegisteredTool>;
+    readonly callable: ReadonlyArray<RegisteredTool>;
+    readonly registered: ReadonlyArray<RegisteredTool>;
+    readonly getExposure: (name: string) => string;
+  }) => { readonly hiddenDeclarations?: ReadonlyArray<string> } | undefined;
   readonly execute: (
     id: string,
     args: Record<string, unknown>,
@@ -60,12 +64,20 @@ export interface FixtureConnector {
 }
 // SCIENT-FORK:END
 
+function activatesOnRegistration(tool: RegisteredTool) {
+  return (
+    tool.exposure === undefined || tool.exposure === "direct" || tool.exposure === "model-only"
+  );
+}
+
 export async function loadMcpBridge(
   options: {
     readonly modern?: boolean;
     readonly result?: unknown;
     readonly toolSearchAvailable?: boolean;
     readonly toolSearchDisabled?: boolean;
+    // Pi activates direct and model-only tools when they are registered.
+    readonly activatesOnRegistration?: boolean;
     readonly allowsTool?: (name: string) => boolean;
     readonly toolNameMap?: Readonly<Record<string, string>>;
     readonly runtimeMode?: string;
@@ -143,10 +155,9 @@ export async function loadMcpBridge(
       },
     },
     AbortSignal,
-    // SCIENT-FORK:START — Scient Extensions connectors: streamed responses and hashed aliases.
+    // SCIENT-FORK: Scient Extensions connectors: streamed responses.
     TextDecoder,
     NodeCrypto,
-    // SCIENT-FORK:END
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
@@ -213,8 +224,17 @@ export async function loadMcpBridge(
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
         const index = tools.findIndex((current) => current.name === tool.name);
+        const previous = index === -1 ? undefined : tools[index];
         if (index === -1) tools.push(tool);
         else tools[index] = tool;
+        if (
+          options.activatesOnRegistration &&
+          activatesOnRegistration(tool) &&
+          (previous === undefined || !activatesOnRegistration(previous)) &&
+          !activeTools.includes(tool.name)
+        ) {
+          activeTools = [...activeTools, tool.name];
+        }
       },
       getActiveTools: () => activeTools,
       setActiveTools: (names: string[]) => {
@@ -237,9 +257,43 @@ export async function loadMcpBridge(
         : {}),
     },
   });
+  const exposureOf = (name: string) =>
+    tools.find((tool) => tool.name === name)?.exposure ?? "direct";
+  // Pi resolves model tool calls against the active, non-hidden tools only.
+  const modelTools = () =>
+    tools.filter((tool) => activeTools.includes(tool.name) && exposureOf(tool.name) !== "hidden");
+  // Pi's ctx.executeTool() catalog, which codemode scripts search and list.
+  const callableTools = () =>
+    tools.filter(
+      (tool) =>
+        ["codemode", "deferred"].includes(exposureOf(tool.name)) ||
+        (exposureOf(tool.name) === "direct" && activeTools.includes(tool.name)),
+    );
+  const declaredTools = () => {
+    const active = modelTools();
+    const loadout = {
+      declared: active,
+      callable: callableTools(),
+      registered: tools,
+      getExposure: exposureOf,
+    };
+    const hidden = new Set(
+      active.flatMap((tool) => tool.prepareLoadout?.(loadout)?.hiddenDeclarations ?? []),
+    );
+    return active.map((tool) => tool.name).filter((name) => !hidden.has(name));
+  };
   return {
     handlers,
     tools,
+    declaredTools,
+    callableTools: () => callableTools().map((tool) => tool.name),
+    callModelTool: async (name: string, args: Record<string, unknown>) => {
+      const tool = modelTools().find((candidate) => candidate.name === name);
+      if (tool === undefined) {
+        return { content: [{ type: "text", text: `Tool ${name} not found` }], isError: true };
+      }
+      return tool.execute("model-call", args);
+    },
     setBridgeSourcePath: (path: string) => {
       bridgeSourcePath = path;
     },

@@ -9,6 +9,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import { piContextExtension } from "./contextExtension.ts";
 import {
@@ -170,6 +171,11 @@ describe("Pi orchestration prompt section", () => {
 
     assert.isUndefined(await hook(event, ctx));
     assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    // Every schema is loaded on completion gateways, so an empty search must not read as "no bash".
+    assert.include(
+      sections.t3_code_orchestration,
+      "tool_search finds only tools that are not loaded yet",
+    );
     assert.equal(event.systemPrompt, "base");
     assert.include(bridge.getActiveTools(), "preview_snapshot");
 
@@ -207,7 +213,20 @@ describe("Pi orchestration prompt section", () => {
       assert.isDefined(result);
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
+      assert.include(result!.systemPrompt, PULL_REQUEST_LINKING_INSTRUCTIONS);
     }
+  });
+
+  it("sets the guidance section on Pi builds with prompt sections", async () => {
+    const bridge = await loadMcpBridge();
+    const sections: Record<string, string> = {};
+    const result = await bridge.handlers.get("before_agent_start")!(
+      { systemPrompt: "base", systemPromptOptions: { sections } },
+      { ui: { notify: assert.fail } },
+    );
+    assert.isUndefined(result);
+    assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    assert.include(sections.t3_code_orchestration, PULL_REQUEST_LINKING_INSTRUCTIONS);
   });
 });
 
@@ -650,9 +669,12 @@ describe("Pi tool discovery permissions", () => {
         },
       },
     };
-    assert.isUndefined(
-      await toolCall!({ toolName: "tool_search", input: { query: "preview_snapshot" } }, ctx),
-    );
+    for (const builtinPath of ["builtin:tool-search", "<builtin:tool-search>"]) {
+      searchPath = builtinPath;
+      assert.isUndefined(
+        await toolCall!({ toolName: "tool_search", input: { query: "preview_snapshot" } }, ctx),
+      );
+    }
     assert.equal(confirmations.length, 0);
     const result = await toolCall!({ toolName: "preview_snapshot", input: {} }, ctx);
     assert.equal(result?.block, true);
@@ -662,6 +684,37 @@ describe("Pi tool discovery permissions", () => {
     const replaced = await toolCall!({ toolName: "tool_search", input: {} }, ctx);
     assert.equal(replaced?.block, true);
     assert.equal(confirmations.at(-1), "Allow tool_search?");
+  });
+
+  it("gives long inputs that differ past the shown text different confirmation details", async () => {
+    const bridge = await loadMcpBridge({ runtimeMode: "approval-required" });
+    const hook = bridge.handlers.get("tool_call") as unknown as (
+      event: { toolName: string; input: unknown },
+      ctx: {
+        // SCIENT-FORK: Scient blocks instead of confirming when Pi has no UI.
+        hasUI: boolean;
+        ui: { confirm: (title: string, detail: string) => Promise<boolean> };
+      },
+    ) => Promise<{ block: true; reason: string } | undefined>;
+    const details: string[] = [];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        confirm: async (_title: string, detail: string) => {
+          details.push(detail);
+          return true;
+        },
+      },
+    };
+    const filler = "a".repeat(4_100);
+    await hook({ toolName: "bash", input: { command: filler + "\necho one" } }, ctx);
+    await hook({ toolName: "bash", input: { command: filler + "\necho two" } }, ctx);
+    await hook({ toolName: "bash", input: { command: "ls" } }, ctx);
+    const [first, second, short] = details;
+    assert.equal(first!.slice(0, 4_000), second!.slice(0, 4_000));
+    assert.notEqual(first, second);
+    assert.match(first!, /\n\.\.\. \d+ more characters not shown \(sha256 [0-9a-f]{64}\)$/);
+    assert.equal(short, JSON.stringify({ command: "ls" }, null, 2));
   });
 });
 

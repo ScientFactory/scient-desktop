@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useContext, useId, useState, type ReactNode } from "react";
 import type { NodeViewProps } from "@tiptap/react";
 import { Input } from "~/components/ui/input";
@@ -49,21 +50,22 @@ function CodeSubmenu(props: { label: string; disabled?: boolean; children: React
 }
 
 function CodeLanguage(props: { value: string; onChange: (value: string) => void }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const choices = ["", "Python", "C", "C++", "Java", "Matlab", "R", "SQL", "[LaTeX]TeX"];
   if (!choices.includes(props.value)) choices.push(props.value);
   const languages = choices.map((value) => ({
     value,
-    label: value === "[LaTeX]TeX" ? "LaTeX" : value || "Plain text",
+    label: value === "[LaTeX]TeX" ? "LaTeX" : value || gt("Plain text"),
   }));
   return (
     <>
-      <LatexContextMenuForm label="Find code language">
+      <LatexContextMenuForm label={gt("Find code language")}>
         <Input
           size="compact"
           type="search"
-          aria-label="Find code language"
-          placeholder="Search languages"
+          aria-label={gt("Find code language")}
+          placeholder={gt("Search languages")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -89,14 +91,15 @@ function CodeLanguage(props: { value: string; onChange: (value: string) => void 
 }
 
 function CodeFirstNumber(props: { value: number; onChange: (value: string) => void }) {
+  const gt = useGT();
   const [draft, setDraft] = useState(String(props.value));
   const valid = /^\d+$/u.test(draft) && Number(draft) <= 100000;
   return (
-    <LatexContextMenuForm label="First line number">
+    <LatexContextMenuForm label={gt("First line number")}>
       <Input
         size="compact"
         type="number"
-        aria-label="First line number"
+        aria-label={gt("First line number")}
         min={0}
         max={100000}
         value={draft}
@@ -104,7 +107,7 @@ function CodeFirstNumber(props: { value: number; onChange: (value: string) => vo
         onChange={(event) => setDraft(event.target.value)}
       />
       <DockCommandItem disabled={!valid} onClick={() => props.onChange(draft)}>
-        Apply
+        <T>Apply</T>
       </DockCommandItem>
     </LatexContextMenuForm>
   );
@@ -124,6 +127,7 @@ export function LatexCodeControls({
   draftKey?: string | undefined;
   onCaption: () => void;
 }) {
+  const gt = useGT();
   const context = useContext(LatexAuthoringContext);
   const report = useLatexActionNotice();
   const inventory = latexLabelInventory(context.source);
@@ -156,14 +160,14 @@ export function LatexCodeControls({
     option({ basicstyle: `{${next}${size === "inherit" ? "" : `\\${size}`}}` });
   };
   const sizes = [
-    { value: "inherit", label: "Document" },
-    { value: "tiny", label: "Tiny" },
-    { value: "scriptsize", label: "Script" },
-    { value: "footnotesize", label: "Footnote" },
-    { value: "small", label: "Small" },
-    { value: "normalsize", label: "Normal" },
-    { value: "large", label: "Large" },
-    { value: "Large", label: "Larger" },
+    { value: "inherit", label: gt("Document", { $context: "font size: document default" }) },
+    { value: "tiny", label: gt("Tiny", { $context: "font size" }) },
+    { value: "scriptsize", label: gt("Script", { $context: "font size" }) },
+    { value: "footnotesize", label: gt("Footnote", { $context: "font size" }) },
+    { value: "small", label: gt("Small", { $context: "font size" }) },
+    { value: "normalsize", label: gt("Normal", { $context: "font size" }) },
+    { value: "large", label: gt("Large", { $context: "font size" }) },
+    { value: "Large", label: gt("Larger", { $context: "font size" }) },
   ];
   const tabs = [2, 4, 8];
   if (!tabs.includes(settings.tabSize)) tabs.push(settings.tabSize);
@@ -175,8 +179,8 @@ export function LatexCodeControls({
   return (
     <>
       <DockMenu
-        label="Code language"
-        icon="Language"
+        label={gt("Code language")}
+        icon={gt("Language", { $context: "code language" })}
         commandScope="latex"
         disabled={!editable}
         chevron
@@ -186,15 +190,20 @@ export function LatexCodeControls({
           onChange={(language) => option({ language: `{${language}}` })}
         />
       </DockMenu>
-      <DockMenu label="Code appearance" icon="Appearance" commandScope="latex" disabled={!editable}>
-        <CodeSubmenu label="Frame">
+      <DockMenu
+        label={gt("Code appearance")}
+        icon={gt("Appearance")}
+        commandScope="latex"
+        disabled={!editable}
+      >
+        <CodeSubmenu label={gt("Frame", { $context: "code frame" })}>
           <MenuRadioGroup value={settings.frame}>
             {[
-              { value: "none", label: "None" },
-              { value: "single", label: "Full frame" },
-              { value: "lines", label: "Top and bottom" },
-              { value: "topline", label: "Top" },
-              { value: "bottomline", label: "Bottom" },
+              { value: "none", label: gt("None", { $context: "code frame" }) },
+              { value: "single", label: gt("Full frame") },
+              { value: "lines", label: gt("Top and bottom") },
+              { value: "topline", label: gt("Top", { $context: "code frame" }) },
+              { value: "bottomline", label: gt("Bottom", { $context: "code frame" }) },
             ].map((choice) => (
               <DockCommandRadioItem
                 key={choice.value}
@@ -212,9 +221,9 @@ export function LatexCodeControls({
           closeOnClick={false}
           onCheckedChange={(checked) => option({ breaklines: String(checked) })}
         >
-          Wrap long lines
+          <T>Wrap long lines</T>
         </MenuCheckboxItem>
-        <CodeSubmenu label="Font size">
+        <CodeSubmenu label={gt("Font size")}>
           <MenuRadioGroup value={settings.basic.size}>
             {sizes.map((choice) => (
               <DockCommandRadioItem
@@ -227,7 +236,7 @@ export function LatexCodeControls({
             ))}
           </MenuRadioGroup>
         </CodeSubmenu>
-        <CodeSubmenu label="Tab width">
+        <CodeSubmenu label={gt("Tab width")}>
           <MenuRadioGroup value={String(settings.tabSize)}>
             {tabs.map((value) => (
               <DockCommandRadioItem
@@ -240,7 +249,7 @@ export function LatexCodeControls({
             ))}
           </MenuRadioGroup>
         </CodeSubmenu>
-        <CodeSubmenu label="Line numbers">
+        <CodeSubmenu label={gt("Line numbers")}>
           <MenuCheckboxItem
             variant="switch"
             checked={numbered}
@@ -252,14 +261,17 @@ export function LatexCodeControls({
               })
             }
           >
-            Line numbers
+            <T>Line numbers</T>
           </MenuCheckboxItem>
           <MenuSeparator />
-          <CodeSubmenu label="Position" disabled={!numbered}>
+          <CodeSubmenu
+            label={gt("Position", { $context: "line number position" })}
+            disabled={!numbered}
+          >
             <MenuRadioGroup value={settings.numbers}>
               {[
-                { value: "left", label: "Left" },
-                { value: "right", label: "Right" },
+                { value: "left", label: gt("Left", { $context: "line number position" }) },
+                { value: "right", label: gt("Right", { $context: "line number position" }) },
               ].map((choice) => (
                 <DockCommandRadioItem
                   key={choice.value}
@@ -271,14 +283,14 @@ export function LatexCodeControls({
               ))}
             </MenuRadioGroup>
           </CodeSubmenu>
-          <CodeSubmenu label="First number" disabled={!numbered}>
+          <CodeSubmenu label={gt("First number")} disabled={!numbered}>
             <CodeFirstNumber
               key={settings.firstNumber}
               value={settings.firstNumber}
               onChange={(value) => option({ firstnumber: value })}
             />
           </CodeSubmenu>
-          <CodeSubmenu label="Number every" disabled={!numbered}>
+          <CodeSubmenu label={gt("Number every")} disabled={!numbered}>
             <MenuRadioGroup value={String(settings.step)}>
               {intervals.map((value) => (
                 <DockCommandRadioItem
@@ -286,17 +298,21 @@ export function LatexCodeControls({
                   value={String(value)}
                   onClick={() => option({ stepnumber: String(value) })}
                 >
-                  {value === 1 ? "Every line" : `Every ${value} lines`}
+                  {value === 1
+                    ? gt("Every line")
+                    : gt("{count, plural, one {Every {count} line} other {Every {count} lines}}", {
+                        count: value,
+                      })}
                 </DockCommandRadioItem>
               ))}
             </MenuRadioGroup>
           </CodeSubmenu>
         </CodeSubmenu>
-        <CodeSubmenu label="Caption position">
+        <CodeSubmenu label={gt("Caption position")}>
           <MenuRadioGroup value={settings.captionPosition}>
             {[
-              { value: "t", label: "Above" },
-              { value: "b", label: "Below" },
+              { value: "t", label: gt("Above", { $context: "caption position" }) },
+              { value: "b", label: gt("Below", { $context: "caption position" }) },
             ].map((choice) => (
               <DockCommandRadioItem
                 key={choice.value}
@@ -313,14 +329,14 @@ export function LatexCodeControls({
         className={dockButtonClass()}
         type="button"
         disabled={!editable}
-        aria-label={captioned ? "Edit code caption" : "Add code caption"}
+        aria-label={captioned ? gt("Edit code caption") : gt("Add code caption")}
         onClick={onCaption}
       >
-        Caption
+        <T>Caption</T>
       </button>
       {captioned && (
         <LatexReferenceLabelControl
-          label="Code reference label"
+          label={gt("Code reference label")}
           value={label}
           allowEmpty
           draftKey={draftKey}

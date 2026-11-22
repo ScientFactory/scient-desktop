@@ -4,12 +4,14 @@ import {
   AccountId,
   AccountsError,
   ProviderDriverKind,
+  ProjectId,
   ProviderInstanceId,
   type AccountKeyLink,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
@@ -148,3 +150,101 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("removed agent ke
     }).pipe(Effect.scoped, Effect.provide(layerFailingRemove));
   });
 });
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("guest links default", (it) => {
+  // Scient turned guest links on by default; an older default-off file has no key and turns on.
+  it.effect("stores turning guest links off, and nothing while they are on", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      assert.isTrue((yield* service.getSettings).guestSharingEnabled);
+      yield* service.updateSettings({ guestSharingEnabled: false });
+      assert.include(yield* fs.readFileString(config.settingsPath), '"guestSharingEnabled": false');
+      yield* service.updateSettings({ guestSharingEnabled: true });
+      assert.notInclude(yield* fs.readFileString(config.settingsPath), "guestSharingEnabled");
+    }).pipe(Effect.provide(layerSettings)),
+  );
+});
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "continue threads after restarts",
+  (it) => {
+    const projectOff = ProjectId.make("project-off");
+    const projectOther = ProjectId.make("project-other");
+    // Scient shipped this off; the first load after it became the default turns it on once.
+    it.effect("turns it on once for everyone, including where it was switched off", () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            continueThreadsAfterServerUpdate: false,
+            projectSettingsOverrides: {
+              [projectOff]: { continueThreadsAfterServerUpdate: false },
+              [projectOther]: {
+                continueThreadsAfterServerUpdate: false,
+                threadTitleInstructions: "Use ticket ids",
+              },
+            },
+          }),
+        );
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const settings = yield* service.getSettings;
+        assert.isTrue(settings.continueThreadsAfterServerUpdate);
+        assert.isTrue(settings.continueThreadsAfterServerUpdateTurnedOn);
+        assert.deepEqual(settings.projectSettingsOverrides, {
+          [projectOther]: { threadTitleInstructions: "Use ticket ids" },
+        });
+        const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+        assert.isUndefined(stored.continueThreadsAfterServerUpdate);
+        assert.deepEqual(stored.projectSettingsOverrides, {
+          [projectOther]: { threadTitleInstructions: "Use ticket ids" },
+        });
+        // Switching it off now is kept, with the record that the switch-on already ran.
+        yield* service.updateSettings({ continueThreadsAfterServerUpdate: false });
+        const off = JSON.parse(yield* fs.readFileString(config.settingsPath));
+        assert.isFalse(off.continueThreadsAfterServerUpdate);
+        assert.isTrue(off.continueThreadsAfterServerUpdateTurnedOn);
+      }).pipe(Effect.provide(layerSettings)),
+    );
+
+    it.effect("keeps it off when it is switched off after it was turned on", () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            continueThreadsAfterServerUpdate: false,
+            continueThreadsAfterServerUpdateTurnedOn: true,
+            projectSettingsOverrides: {
+              [projectOff]: { continueThreadsAfterServerUpdate: false },
+            },
+          }),
+        );
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const settings = yield* service.getSettings;
+        assert.isFalse(settings.continueThreadsAfterServerUpdate);
+        assert.deepEqual(settings.projectSettingsOverrides, {
+          [projectOff]: { continueThreadsAfterServerUpdate: false },
+        });
+        yield* service.updateSettings({ continueThreadsAfterServerUpdate: true });
+        yield* service.updateSettings({ continueThreadsAfterServerUpdate: false });
+        assert.isFalse((yield* service.getSettings).continueThreadsAfterServerUpdate);
+        assert.include(
+          yield* fs.readFileString(config.settingsPath),
+          '"continueThreadsAfterServerUpdate": false',
+        );
+      }).pipe(Effect.provide(layerSettings)),
+    );
+
+    it.effect("is on for a new install", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        assert.isTrue((yield* service.getSettings).continueThreadsAfterServerUpdate);
+      }).pipe(Effect.provide(layerSettings)),
+    );
+  },
+);
