@@ -23,6 +23,10 @@ describe("selected Scient skill names", () => {
     expect(
       collectSelectedScientSkillNames("Explain this example.\n\n[^a]: $$\\text{a $deploy b}$$"),
     ).toEqual([]);
+    // A no-break space is part of a label, as Words reads it.
+    expect(
+      collectSelectedScientSkillNames("Explain.\n\n[^a\u00a0b]: $$\\text{a $deploy b}$$"),
+    ).toEqual([]);
   });
 
   it("leaves a token inside a formula chat reads as formula source", () => {

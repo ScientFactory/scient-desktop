@@ -68,6 +68,9 @@ Scient's behaviour sits in Scient modules mounted at marked seams in `wordsHast.
     TeX: blank lines at its edges and its info-string title are lost.
   - An Insight opener whose callout begins with prose, a display formula and a `---` line reads as
     a setext heading before math is placed, so the callout does not open.
+  - When a display formula's paragraph ends in a setext underline that is not a rule (`==`, `--`),
+    the recovered paragraph after it can run across a blank quote line (with line breaks on) or
+    turn the underline's hard break into a soft one.
 - **Direction.** `rehypeScientBidi` replaces T3's per-block direction pass inside `wordsHast.ts`;
   T3's `markdownTextDirection.ts` stays deleted. Its letter classes stay exported in
   `textDirection.ts` as T3 ships them (knip exception).

@@ -2,8 +2,9 @@ import { markdownMathRanges } from "~/markdown/wordsHast";
 
 // As markdownMathRanges' own check: text without these holds no math.
 const MAY_HOLD_MATH = /[$\\]|(?:`{3,}|~{3,})[ \t]*math\b/;
-// A label holds no whitespace, so the scan for one stops at its line.
-const FOOTNOTE_DEFINITION = /^[ \t>]*\[\^([^\]\s]+)\]:/gm;
+// A label holds no space, tab or line break (other characters, such as a no-break space, it may),
+// so the scan for one stops at its line.
+const FOOTNOTE_DEFINITION = /^[ \t>]*\[\^([^\]\t\n\r ]+)\]:/gm;
 
 /** The labels of the footnote definitions in `text`; each is read within its own line. */
 export function footnoteLabels(text: string): Set<string> {
