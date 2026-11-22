@@ -295,6 +295,30 @@ describe("Whitespace is not styled content", () => {
     );
   });
 
+  it.each([
+    [
+      "two line breaks then sized text",
+      '<span style="font-size:14pt">ab\\\n\\\ncd</span>\n',
+      0,
+      '\\\n\\\n<span style="font-size:14pt">cd</span>\n',
+    ],
+    ["two line breaks then bold text", "**ab\\\n\\\ncd**\n", 0, "\\\n\\\n**cd**\n"],
+    [
+      "two line breaks between two sizes",
+      '<span style="font-size:14pt">x</span><span style="font-size:20pt">ab\\\n\\\ncd</span>\n',
+      1,
+      '<span style="font-size:14pt">x</span>\\\n\\\n<span style="font-size:20pt">cd</span>\n',
+    ],
+  ])(
+    "accepts deleting the text before %s: the whole run of whitespace leaves the tag",
+    (_name, source, start, expected) => {
+      const session = open(source);
+      session.applyTransaction(session.state.tr.delete(1 + start, 1 + start + 2), "user");
+      expect(session.pendingWriteback).toBeNull();
+      expect(session.session.draftSource).toBe(expected);
+    },
+  );
+
   it("accepts a size on two bold words separated by a plain space", () => {
     const session = open("**a** **b**\n");
     select(session, 0, 3);

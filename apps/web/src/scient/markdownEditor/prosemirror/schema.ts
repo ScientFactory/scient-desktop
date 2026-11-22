@@ -76,13 +76,22 @@ function withoutNeutralMarks(marks: readonly Mark[]): readonly Mark[] {
 }
 
 /**
- * Whitespace is not styled content: a space or line break where the styles change loses the
- * `WHITESPACE_NEUTRAL_MARKS`, as the file cannot hold them there. Links and code keep it.
- * The writer and the round-trip guard share this one form.
+ * Whitespace where the styles change loses the `WHITESPACE_NEUTRAL_MARKS` (links and code keep
+ * it), as the file cannot hold them there; shared by the writer and the round-trip guard.
+ * Passes repeat until a whole run of spaces and line breaks is unstyled; marks only go, so it ends.
  */
 export function unstyleBoundaryWhitespace(block: ProseMirrorNode): Fragment {
+  let content = block.content;
+  for (;;) {
+    const next = unstyleWhitespaceNextToChange(content);
+    if (next.eq(content)) return next;
+    content = next;
+  }
+}
+
+function unstyleWhitespaceNextToChange(content: Fragment): Fragment {
   const children: ProseMirrorNode[] = [];
-  block.forEach((child) => children.push(child));
+  content.forEach((child) => children.push(child));
   const unstyled: ProseMirrorNode[] = [];
   children.forEach((child, index) => {
     const sameBefore = Mark.sameSet(child.marks, children[index - 1]?.marks ?? Mark.none);
