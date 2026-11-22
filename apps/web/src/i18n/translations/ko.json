@@ -10604,6 +10604,8 @@
   "6ebd73c7bfb58bb7": "앱",
   "6939d310de8dfe5b": "조직",
   "c424bee294b9f778": "이 환경은 {organization}에서 관리합니다. 일부 설정과 기능은 해당 정책을 따릅니다.",
+  "1aeeabca019f7b70": "Release history",
+  "fd75e107e74066dd": "Read what is new in each Scient version.",
   "6a48fd0a37e725a1": "법적 고지",
   "7435beda88d745df": "Scient에서 사용하는 종속성, 에셋, 선택적 도구에 대한 고지입니다.",
   "7c0512387c3a42ea": "Stable",
@@ -10632,6 +10634,7 @@
   "126a28a1ad4b2d57": "텍스트 생성 모델을 선택하려면 환경을 연결하세요.",
   "5fe5a45199fa9c07": "사용 가능한 텍스트 생성 제공자가 없습니다.",
   "99ceba64591c9257": "진단 보기",
+  "f3bad30c92d2531e": "릴리스 기록",
   "6d59e1e516e53d17": "라이선스 보기",
   "941d08db15f62d17": "보관됨",
   "e122b2428c0d03a5": "모든 환경 열기",
@@ -18720,7 +18723,7 @@
   "82c9dcb2d3988897": "Scient의 새로운 기능",
   "1a08027478190568": "Scient 버전 {version}의 새로운 기능 읽기",
   "638a8d35237365e7": "이 릴리스 노트 닫기",
-  "2e15761642f5bac1": "이 릴리스로 돌아가기",
+  "3c504934db8a6932": "Read release notes for Scient {version}, current version",
   "cffb0f547a0ad0df": "Scient {version} 릴리스 노트 읽기",
   "69613360fde7644e": [
     "Scient의 새로운 기능 · v",
@@ -18731,7 +18734,6 @@
     }
   ],
   "d6beec9ee54bbeb1": "새로운 기능 보기",
-  "f3bad30c92d2531e": "릴리스 기록",
   "e668dfdaefe05856": "Scient의 새로운 기능",
   "7e6f969c89a1de21": [
     "버전 ",

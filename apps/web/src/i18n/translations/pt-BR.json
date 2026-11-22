@@ -10651,6 +10651,8 @@
   "6ebd73c7bfb58bb7": "App",
   "6939d310de8dfe5b": "Organização",
   "c424bee294b9f778": "Este ambiente é gerenciado por {organization}. Algumas configurações e recursos seguem a política dela.",
+  "1aeeabca019f7b70": "Release history",
+  "fd75e107e74066dd": "Read what is new in each Scient version.",
   "6a48fd0a37e725a1": "Jurídico",
   "7435beda88d745df": "Avisos de dependências, recursos e ferramentas opcionais usados pelo Scient.",
   "7c0512387c3a42ea": "Estável",
@@ -10679,6 +10681,7 @@
   "126a28a1ad4b2d57": "Conecte um ambiente para escolher o modelo de geração de texto dele.",
   "5fe5a45199fa9c07": "Nenhum provedor de geração de texto disponível.",
   "99ceba64591c9257": "Ver diagnóstico",
+  "f3bad30c92d2531e": "Histórico de versões",
   "6d59e1e516e53d17": "Ver licenças",
   "941d08db15f62d17": "Arquivado",
   "e122b2428c0d03a5": "Abrir todos os ambientes",
@@ -18804,7 +18807,7 @@
   "82c9dcb2d3988897": "Novidades no Scient",
   "1a08027478190568": "Ler as novidades da versão {version} do Scient",
   "638a8d35237365e7": "Dispensar esta nota de versão",
-  "2e15761642f5bac1": "Voltar para esta versão",
+  "3c504934db8a6932": "Read release notes for Scient {version}, current version",
   "cffb0f547a0ad0df": "Ler as notas da versão {version} do Scient",
   "69613360fde7644e": [
     "Novidades no Scient · v",
@@ -18815,7 +18818,6 @@
     }
   ],
   "d6beec9ee54bbeb1": "Ver as novidades",
-  "f3bad30c92d2531e": "Histórico de versões",
   "e668dfdaefe05856": "Novidades no Scient",
   "7e6f969c89a1de21": [
     "Versão ",

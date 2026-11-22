@@ -10667,6 +10667,8 @@
   "6ebd73c7bfb58bb7": "应用",
   "6939d310de8dfe5b": "组织",
   "c424bee294b9f778": "此环境由 {organization} 管理，部分设置和功能遵循其策略。",
+  "1aeeabca019f7b70": "Release history",
+  "fd75e107e74066dd": "Read what is new in each Scient version.",
   "6a48fd0a37e725a1": "法律信息",
   "7435beda88d745df": "Scient 所用依赖项、资源和可选工具的声明。",
   "7c0512387c3a42ea": "稳定版",
@@ -10695,6 +10697,7 @@
   "126a28a1ad4b2d57": "请连接一个环境以选择其文本生成模型。",
   "5fe5a45199fa9c07": "没有可用的文本生成提供方。",
   "99ceba64591c9257": "查看诊断",
+  "f3bad30c92d2531e": "版本历史",
   "6d59e1e516e53d17": "查看许可证",
   "941d08db15f62d17": "已归档",
   "e122b2428c0d03a5": "打开所有环境",
@@ -18842,7 +18845,7 @@
   "82c9dcb2d3988897": "Scient 新功能",
   "1a08027478190568": "阅读 Scient {version} 版本的新功能",
   "638a8d35237365e7": "关闭此版本说明",
-  "2e15761642f5bac1": "返回此版本",
+  "3c504934db8a6932": "Read release notes for Scient {version}, current version",
   "cffb0f547a0ad0df": "阅读 Scient {version} 的版本说明",
   "69613360fde7644e": [
     "Scient 新功能 · v",
@@ -18853,7 +18856,6 @@
     }
   ],
   "d6beec9ee54bbeb1": "查看新功能",
-  "f3bad30c92d2531e": "版本历史",
   "e668dfdaefe05856": "Scient 的新功能",
   "7e6f969c89a1de21": [
     "版本 ",
