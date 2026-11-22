@@ -25,7 +25,6 @@ import { browserFailure, previewInvoker } from "./agent/broker.ts";
 import { isIdentityPage, isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import {
   OPEN_ATHENS_CHECK_PAGE,
-  openAthensAnswerScript,
   openAthensCheckScript,
   signInReturn,
   universityDetails,
@@ -42,8 +41,8 @@ const PAUSE_MS = 1_500;
 /** A university's sign-in service answers with a page that posts itself onward. */
 const UNIVERSITY_LOOKS = 12;
 const STEADY_LOOKS = 4;
-/** OpenAthens answers its own check in well under a second. */
-const OPEN_ATHENS_LOOKS = 10;
+/** OpenAthens' quiet ask goes to its sign-in service and back, which takes a few seconds. */
+const OPEN_ATHENS_LOOKS = 50;
 
 const decodePage = Schema.decodeUnknownEffect(ProfileDetection);
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
@@ -150,7 +149,7 @@ const keepsLastSeen = (account: AccountSummary, state: AccountSignInState) =>
   universityDetails(account.details) !== undefined &&
   account.signIn?.state === "signed-in";
 
-/** OpenAthens' own answer, read from its page in the person's profile. */
+/** OpenAthens' own answer, read from its page in the person's profile once its quiet ask is back. */
 const askOpenAthens = Effect.fn("AccountsCheck.openAthens")(function* (
   invoke: <A>(
     operation: "evaluate",
@@ -159,17 +158,16 @@ const askOpenAthens = Effect.fn("AccountsCheck.openAthens")(function* (
   ) => Effect.Effect<A, AccountsError>,
   tabId: PreviewTabId,
 ) {
-  yield* invoke<unknown>("evaluate", { expression: openAthensCheckScript }, tabId);
   for (let look = 0; look < OPEN_ATHENS_LOOKS; look++) {
-    yield* Effect.sleep("300 millis");
+    // A look during a page change fails; the next one reads the page that came.
     const answer = yield* invoke<unknown>(
       "evaluate",
-      { expression: openAthensAnswerScript },
+      { expression: openAthensCheckScript },
       tabId,
-    ).pipe(Effect.orElseSucceed(() => null));
-    if (answer === true) return "signed-in" as const;
-    if (answer === false) return "signed-out" as const;
-    if (answer === "unclear") break;
+    ).pipe(Effect.orElseSucceed(() => "wait"));
+    if (answer === "signed-in") return "signed-in" as const;
+    if (answer === "signed-out") return "signed-out" as const;
+    yield* Effect.sleep("300 millis");
   }
   return "unknown" as const;
 });
