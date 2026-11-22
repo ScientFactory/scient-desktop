@@ -588,6 +588,27 @@ describe("managed runtime catalog resolution", () => {
       }),
     );
     assert.deepStrictEqual(MANAGED_RUNTIME_POLICY.muse, { revision: 2, historicalRevisions: [1] });
+    // Repair reads what is installed in full, but only offers what this build can download.
+    const installed = resolveManagedRuntimeCatalogArtifact({
+      catalog: feed,
+      policy,
+      contractRevision: 2,
+    })!;
+    const bundledArtifact = resolveManagedRuntimeCatalogArtifact({
+      catalog: bundled,
+      policy,
+      contractRevision: 2,
+    })!;
+    const repair = (size: number) =>
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact,
+        artifactPolicy: policy,
+        candidateArtifact: bundledArtifact,
+        activeArtifact: { ...managedRuntimeArtifactReceipt(installed), size },
+      });
+    assert.strictEqual(repair(578 * 1024 * 1024)?.version, "1.4.24-R9131.1");
+    // Too large to fetch again, and nothing as new on offer: no repair, rather than a downgrade.
+    assert.isUndefined(repair(1024 * 1024 * 1024 + 1));
   });
 
   it("protects revision 1 through 4 clients while accepting the new Codex contract", () => {

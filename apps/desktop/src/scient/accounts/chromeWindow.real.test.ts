@@ -154,8 +154,39 @@ const RELOAD_SCRIPT = [
   'Add-Type \'using System; using System.Runtime.InteropServices; public static class ScientWindow { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }\'',
   "[void][ScientWindow]::SetForegroundWindow($w); Start-Sleep -Milliseconds 300",
   "if ([ScientWindow]::GetForegroundWindow() -ne $w) { 'not in front'; exit }",
+  // The test counts the page's requests now, then lets the key go.
+  "[Console]::Out.WriteLine('ready'); [Console]::Out.Flush(); [void][Console]::In.ReadLine()",
+  "if ([ScientWindow]::GetForegroundWindow() -ne $w) { 'not in front'; exit }",
   "(New-Object -ComObject WScript.Shell).SendKeys('{F5}'); 'sent'",
 ].join("\n");
+
+/**
+ * Runs RELOAD_SCRIPT for the browser on `profile`; `atKey` runs just before F5 is pressed, so a
+ * request that was already on its way isn't credited to the key. Resolves with the script's last
+ * line: `sent`, or why the key wasn't pressed.
+ */
+const reloadWindow = (profile: string, stop: AbortSignal, atKey: () => void) =>
+  new Promise<string>((resolve) => {
+    let ready = false;
+    const child = NodeChildProcess.execFile(
+      "powershell",
+      ["-NoProfile", "-Command", RELOAD_SCRIPT],
+      { encoding: "utf8", timeout: 15_000, signal: stop, env: { ...env, SCIENT_PROFILE: profile } },
+      (error, stdout) =>
+        resolve(error ? `failed: ${error.message}` : (stdout.trim().split(/\r?\n/).at(-1) ?? "")),
+    );
+    // A script that ended early has closed its input; its last line says why.
+    child.stdin?.on("error", () => undefined);
+    let seen = "";
+    child.stdout?.on("data", (chunk: string) => {
+      seen += chunk;
+      // Whole lines only: `ready` can arrive split across chunks.
+      if (ready || !seen.split(/\r?\n/).slice(0, -1).includes("ready")) return;
+      ready = true;
+      atKey();
+      child.stdin?.end("go\n");
+    });
+  });
 
 /** PowerShell's output, without blocking the test page's server while it runs. */
 const powershell = (script: string, stop: AbortSignal, extra: Record<string, string> = {}) =>
@@ -196,13 +227,15 @@ async function probeStall(input: {
   }
   if (stop.aborted) return;
   // The page can be asked for again before PowerShell has even returned.
-  const beforeReload = pages();
-  const reload = await powershell(RELOAD_SCRIPT, stop, { SCIENT_PROFILE: folder });
+  let beforeReload = pages();
+  const reload = await reloadWindow(folder, stop, () => {
+    beforeReload = pages();
+  });
   if (reload !== "sent") notes.push(`reload not tried: ${reload}`);
   else if (await pageWithin(pageAsked, 20_000, () => pages() > beforeReload, stop)) {
-    notes.push("a reload in the window brought the page");
+    notes.push("the page was asked for within 20 s of F5 in the window");
     return;
-  } else notes.push("a reload in the window brought nothing");
+  } else notes.push("nothing asked for the page in the 20 s after F5 in the window");
   if (stop.aborted) return;
   // A second launch on the profile hands the address to the browser already running on it.
   const beforeAgain = pages();
@@ -216,8 +249,8 @@ async function probeStall(input: {
   });
   notes.push(
     (await pageWithin(pageAsked, 20_000, () => pages() > beforeAgain, stop))
-      ? "opening the page again brought it"
-      : "opening the page again brought nothing",
+      ? "the page was asked for within 20 s of opening it again on the same profile"
+      : "nothing asked for the page in the 20 s after opening it again on the same profile",
   );
   // It hands the address over and exits; one that stays would hold the profile folder.
   let timer: ReturnType<typeof setTimeout> | undefined;

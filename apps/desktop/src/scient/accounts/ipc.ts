@@ -320,6 +320,12 @@ export const withdrawFromMainHandler = Effect.fn("DesktopAccounts.withdrawFromMa
 );
 
 const decodeChromeSignIn = Schema.decodeUnknownOption(ChromeSignInInput);
+const decodeEndChromeSignIn = Schema.decodeUnknownOption(
+  Schema.Struct({
+    keep: Schema.Boolean,
+    attemptId: Schema.String.check(Schema.isMaxLength(128)),
+  }),
+);
 const chromeSignInHandler = Effect.fn("DesktopAccounts.chromeSignInHandler")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
@@ -433,8 +439,11 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
       raw: unknown,
       event?: AccountsInvokeEvent,
     ) {
-      if (!(yield* appWindowSender(event)) || typeof raw !== "boolean") return false;
-      return yield* endChromeSignIn(raw);
+      if (!(yield* appWindowSender(event))) return false;
+      if (typeof raw === "boolean") return yield* endChromeSignIn(raw);
+      const ending = decodeEndChromeSignIn(raw);
+      if (Option.isNone(ending)) return false;
+      return yield* endChromeSignIn(ending.value.keep, ending.value.attemptId);
     }),
   });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });

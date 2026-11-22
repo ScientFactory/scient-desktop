@@ -41,11 +41,13 @@ const scientDigest = "a".repeat(64);
 function scientRelease(
   version = "0.1.0",
   compressed: "none" | "all" | "without-checksum" = "none",
+  copySize = 123456,
 ) {
   const files = (name: string) => {
     const url = `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${name}`;
+    const size = name.endsWith(".zst") ? copySize : 123456;
     return [
-      { name, browser_download_url: url, size: 123456, digest: `sha256:${scientDigest}` },
+      { name, browser_download_url: url, size, digest: `sha256:${scientDigest}` },
       { name: `${name}.sha256`, browser_download_url: `${url}.sha256`, size: 94, digest: null },
     ];
   };
@@ -75,7 +77,10 @@ function scientFetch(
       return new Response(input.checksum ?? `${scientDigest}  ${name}\n`);
     }
     expect(init?.method).toBe("HEAD");
-    return new Response(null, { headers: { "content-length": String(input.size ?? 123456) } });
+    // The release's own size for the asset, unless the test overrides it.
+    const listed = release.assets.find((asset) => asset.browser_download_url === url.toString());
+    const size = input.size ?? listed?.size ?? 123456;
+    return new Response(null, { headers: { "content-length": String(size) } });
   };
 }
 
@@ -161,6 +166,18 @@ describe("Scient Agent first managed release", () => {
         scientFetch({ release: scientRelease("0.1.0", "without-checksum") }),
       ),
     ).rejects.toThrow(/missing scient-agent-.*\.zst or its checksum/u);
+  });
+
+  it("leaves out a compressed copy too large to download, and offers the binary alone", async () => {
+    const result = await refreshManagedRuntimeProvider(
+      currentCatalog,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all", 512 * 1024 * 1024 + 1) }),
+    );
+    const release = validateManagedRuntimeCandidate(result.catalog, "scient");
+    expect(Object.values(release.artifacts).map((artifact) => artifact.compressed)).toEqual(
+      scientArtifactNames.map(() => undefined),
+    );
   });
 
   it("publishes compressed copies added to an already published release", async () => {

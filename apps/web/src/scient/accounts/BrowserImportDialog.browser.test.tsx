@@ -216,7 +216,11 @@ it("lists Chrome and Edge on Windows as protected, each offering a window of the
   await expect.element(windowActions).toHaveLength(2);
   await windowActions.first().click();
   await expect.element(page.getByRole("heading", { name: "Sign in in Edge" })).toBeVisible();
-  expect(state.intoMain).toHaveBeenCalledWith(environmentId, "https://accounts.google.com/");
+  expect(state.intoMain).toHaveBeenCalledWith(
+    environmentId,
+    "https://accounts.google.com/",
+    expect.any(String),
+  );
   expect(state.importCookies).not.toHaveBeenCalled();
 });
 

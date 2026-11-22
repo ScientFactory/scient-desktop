@@ -387,6 +387,62 @@ describe("LocalWhisperRuntime lifecycle", () => {
     expect(disposed).toBe(true);
   });
 
+  it("force-kills a timed-out helper that ignores SIGTERM five seconds later", async () => {
+    const child = new ControlledExitChild();
+    const h = await harness(child);
+    await h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const gate = h.holdNextInference();
+      const stalled = h.runtime
+        .transcribe("/model.bin", CLIP, { signal: new AbortController().signal })
+        .catch(() => undefined);
+      await gate.entered;
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(child.killed).toBe(true);
+      // Nothing else stops it: no disposal, no other request.
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(child.exitCode).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.exitCode).toBe(0);
+      gate.release();
+      await stalled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits, before a model is removed, for a helper an aborted transcription left stopping", async () => {
+    const child = new ControlledExitChild();
+    const h = await harness(child);
+    await h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const gate = h.holdNextInference();
+      const abort = new AbortController();
+      const running = h.runtime
+        .transcribe("/model.bin", CLIP, { signal: abort.signal })
+        .catch(() => undefined);
+      await gate.entered;
+      abort.abort();
+      gate.release();
+      await running;
+      expect(child.killed).toBe(true);
+      expect(child.exitCode).toBeNull();
+      let stopped = false;
+      const stopping = h.runtime.stopIdle().then(() => {
+        stopped = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(child.exitCode).toBe(0);
+      await stopping;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("kills a timed-out helper that keeps running, and disposal waits for it", async () => {
     const child = new ControlledExitChild();
     const h = await harness(child);

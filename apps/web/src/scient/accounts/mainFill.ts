@@ -921,7 +921,11 @@ export async function importIntoMain(
 }
 
 /** A sign-in made in a Chrome window, copied into Main by an import's rules. */
-export async function chromeSignInIntoMain(environmentId: EnvironmentId, url: string) {
+export async function chromeSignInIntoMain(
+  environmentId: EnvironmentId,
+  url: string,
+  attemptId?: string,
+) {
   const signIn = window.desktopBridge?.accounts?.chromeSignIn;
   const rules = await outsideCopyRules(environmentId);
   if (!signIn || !rules) return { outcome: "failed" } as const;
@@ -930,6 +934,7 @@ export async function chromeSignInIntoMain(environmentId: EnvironmentId, url: st
     profileId: DEFAULT_BROWSER_PROFILE_ID,
     url,
     main: rules,
+    ...(attemptId === undefined ? {} : { attemptId }),
   });
   if (result.outcome === "copied") await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
   return result;

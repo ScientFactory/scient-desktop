@@ -29,6 +29,7 @@ import { noteGoogleCopy } from "./googleCopyObservation";
 import { recordImportedSessions } from "./importedSessions";
 import { chromeSignInIntoMain } from "./mainFill";
 import { m } from "~/i18n/messages";
+import { randomUUID } from "~/lib/utils";
 
 const GOOGLE_SIGN_IN_URL = "https://accounts.google.com/";
 /** A button label, resolved where it is shown. */
@@ -167,14 +168,27 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     readonly canQuit: boolean;
     readonly into: string;
     readonly purpose: WindowEvent["purpose"];
-    /** After Done, Cancel still stops a browser that doesn't quit; after Cancel, nothing does. */
-    readonly phase: "signing-in" | "finishing" | "cancelling";
+    /**
+     * After Done, Cancel still stops a browser that doesn't quit, or a copy not yet written;
+     * `committed` once the copy is past that point, when only its result is left to wait for.
+     */
+    readonly phase: "signing-in" | "finishing" | "cancelling" | "committed";
+    /** Names this sign-in to the desktop, before it has even started there. */
+    readonly attemptId: string;
   } | null>(null);
   const end = (keep: boolean) => {
+    if (!open) return;
     setOpen((current) =>
       current ? { ...current, phase: keep ? "finishing" : "cancelling" } : current,
     );
-    void accounts?.endChromeSignIn?.(keep).catch(() => undefined);
+    void accounts
+      ?.endChromeSignIn?.(keep, open.attemptId)
+      .then((ended) => {
+        // A Cancel refused: the copy was already being written, so it is not cancelled.
+        if (!keep && ended === false)
+          setOpen((current) => (current ? { ...current, phase: "committed" } : current));
+      })
+      .catch(() => undefined);
   };
   const start = async (
     profile: { readonly id: string; readonly name: string },
@@ -191,17 +205,19 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
       report(result, profile.name);
       return;
     }
+    const attemptId = randomUUID();
     setOpen({
       browser: browser.name,
       canQuit: browser.canQuit,
       into: profile.name,
       purpose,
       phase: "signing-in",
+      attemptId,
     });
     const result: DesktopChromeSignInResult = await (
       profile.id === DEFAULT_BROWSER_PROFILE_ID
-        ? chromeSignInIntoMain(environmentId, url)
-        : accounts.chromeSignIn({ environmentId, profileId: profile.id, url })
+        ? chromeSignInIntoMain(environmentId, url, attemptId)
+        : accounts.chromeSignIn({ environmentId, profileId: profile.id, url, attemptId })
     ).catch(() => ({ outcome: "failed" }) as const);
     observation.record("accounts.browser_window", windowEvent(result, purpose));
     // Google's cookies went in over no session it accepted: follow how long it accepts them.
@@ -221,7 +237,7 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     <Dialog
       open
       onOpenChange={(next) => {
-        if (!next && open.phase !== "cancelling") end(false);
+        if (!next && open.phase !== "cancelling" && open.phase !== "committed") end(false);
       }}
     >
       <DialogPopup data-accounts-dialog>
@@ -272,16 +288,22 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
           </ul>
         </DialogPanel>
         <DialogFooter>
+          {!open.canQuit && open.phase === "committed" ? (
+            // Without Done (Linux), the copy going ahead needs its own words.
+            <p className="me-auto self-center text-muted-foreground text-sm">
+              {gt("Bringing it into {into}…", { into: open.into })}
+            </p>
+          ) : null}
           <Button
             variant="outline"
-            disabled={open.phase === "cancelling"}
+            disabled={open.phase === "cancelling" || open.phase === "committed"}
             onClick={() => end(false)}
           >
             <T>Cancel</T>
           </Button>
           {open.canQuit ? (
             <Button disabled={open.phase !== "signing-in"} onClick={() => end(true)}>
-              {open.phase === "finishing"
+              {open.phase === "finishing" || open.phase === "committed"
                 ? gt("Bringing it into {into}…", { into: open.into })
                 : gt("Done")}
             </Button>

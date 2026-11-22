@@ -15,6 +15,7 @@ import {
   isSameCursorReleaseDate,
   isValidManagedRuntimeSupersedes,
   MAX_CURSOR_SUPERSEDES,
+  fitsManagedRuntimeDownloadLimit,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
@@ -439,7 +440,7 @@ export function resolveManagedRuntimeCatalogArtifact(input: {
     checksum: release.checksum,
     size: release.size,
   } satisfies Omit<ManagedRuntimeArtifactReceipt, "catalogRevision">;
-  return hydrateManagedRuntimeArtifact(
+  const artifact = hydrateManagedRuntimeArtifact(
     input.policy,
     {
       ...receiptWithoutRevision,
@@ -450,6 +451,8 @@ export function resolveManagedRuntimeCatalogArtifact(input: {
     },
     Option.getOrUndefined(decodeCatalogCompressed(release.compressed)),
   );
+  // A release this build couldn't download is never offered.
+  return artifact && fitsManagedRuntimeDownloadLimit(artifact) ? artifact : undefined;
 }
 
 function isSameManagedRuntimeRelease(
@@ -494,7 +497,11 @@ export function resolveManagedRuntimeCatalogCandidate(input: {
     : bundledArtifact;
 }
 
-/** Latest known qualified repair target, including a newer durable installation receipt offline. */
+/**
+ * Latest known qualified repair target, including a newer durable installation receipt offline.
+ * Repair never goes back: with an installed release newer than any this build can download (a
+ * receipt names no zstd copy, so an installation too large to fetch raw is one), there is none.
+ */
 export function resolveManagedRuntimeRepairArtifact(input: {
   readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
   readonly artifactPolicy?: ManagedRuntimeArtifactPolicy | undefined;
@@ -508,7 +515,8 @@ export function resolveManagedRuntimeRepairArtifact(input: {
       ? hydrateManagedRuntimeArtifact(policy, input.activeArtifact)
       : undefined;
   if (!installed) return candidate;
-  if (!candidate) return installed;
+  const downloadable = fitsManagedRuntimeDownloadLimit(installed) ? installed : undefined;
+  if (!candidate) return downloadable;
   const comparison = compareManagedRuntimeReleases({
     provider: installed.provider,
     current: candidate,
@@ -518,7 +526,7 @@ export function resolveManagedRuntimeRepairArtifact(input: {
     (installed.provider === "cursor" &&
       comparison === "unknown" &&
       isSameCursorReleaseDate(installed.version, candidate.version))
-    ? installed
+    ? downloadable
     : candidate;
 }
 

@@ -20,6 +20,7 @@ import {
   managedRuntimeSmokeEnvironment,
   smokeManagedRuntimeExecutable,
   detectManagedRuntimeTarget,
+  fitsManagedRuntimeDownloadLimit,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
   runtimeFilesystem,
@@ -458,6 +459,8 @@ const artifact = hydrateManagedRuntimeArtifact(
   artifactData.compressed,
 );
 if (!artifact) throw new Error(`${provider} ${targetKey} violates app-owned runtime policy.`);
+if (!fitsManagedRuntimeDownloadLimit(artifact))
+  throw new Error(`${provider} ${targetKey} exceeds the installer's download limit.`);
 if (artifactData.compressed && !artifact.compressed) {
   throw new Error(`${provider} ${targetKey} names a compressed copy this app cannot use.`);
 }
