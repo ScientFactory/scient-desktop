@@ -4388,6 +4388,7 @@ export const layerWsRpc = (
         observeRpcEffect,
         observeRpcStream,
         providerRegistry,
+        providerInstances,
         ...extensionServices,
       });
       // SCIENT-FORK:END

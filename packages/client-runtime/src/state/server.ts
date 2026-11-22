@@ -1747,12 +1747,15 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
       },
     }),
+    // SCIENT-FORK:START — a shared flight answers only the same request: one surface's Remove
+    // plan must never reach another's Update.
     planProviderRuntime: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:plan-provider-runtime",
       tag: WS_METHODS.serverPlanProviderRuntime,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.instanceId, input.action]),
       },
     }),
     startProviderRuntime: createEnvironmentRpcCommand(runtime, {
@@ -1760,9 +1763,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverStartProviderRuntime,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.instanceId, input.action, input.catalogRevision]),
       },
     }),
+    // SCIENT-FORK:END
     cancelProviderRuntime: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:cancel-provider-runtime",
       tag: WS_METHODS.serverCancelProviderRuntime,

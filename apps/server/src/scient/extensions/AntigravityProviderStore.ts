@@ -111,6 +111,15 @@ export const ANTIGRAVITY_NOT_CLI =
   "Update Antigravity in this agent's settings to add its plugins.";
 export const ANTIGRAVITY_CUSTOM_NOT_CLI =
   "This agent's custom Antigravity runtime can't add plugins. Point its path at agy, or clear it in this agent's settings.";
+export const ANTIGRAVITY_SYSTEM_NOT_CLI =
+  "The Antigravity runtime installed on this computer can't add plugins. Choose Use Scient-managed in this agent's settings to add them.";
+/** Why a runtime that is not the agy CLI can't add plugins, by where it came from. */
+const notCliReason = (executable: AntigravityExecutable) =>
+  executable.source === "override"
+    ? ANTIGRAVITY_CUSTOM_NOT_CLI
+    : executable.source === "path"
+      ? ANTIGRAVITY_SYSTEM_NOT_CLI
+      : ANTIGRAVITY_NOT_CLI;
 const INVENTORY_UNAVAILABLE =
   "Scient could not read Antigravity's installed plugins, so Add and Remove are paused. Refresh to try again.";
 
@@ -829,7 +838,6 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const environment = antigravityPluginCommandEnvironment(input.environment);
-    const notCli = input.binaryPath.trim() ? ANTIGRAVITY_CUSTOM_NOT_CLI : ANTIGRAVITY_NOT_CLI;
     yield* fs.makeDirectory(input.stateDir, { recursive: true }).pipe(Effect.ignore);
     const run = (args: ReadonlyArray<string>) =>
       Effect.scoped(
@@ -837,7 +845,7 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
           const executable = yield* input.installation
             .acquire(input.binaryPath, input.environment)
             .pipe(Effect.mapError(() => ({ message: "Antigravity is not installed." })));
-          if (executable.harnessPath !== null) return yield* fail(notCli);
+          if (executable.harnessPath !== null) return yield* fail(notCliReason(executable));
           return yield* runProviderPluginCommand(
             executable.executablePath,
             environment,
@@ -851,7 +859,9 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
         Effect.provideService(Path.Path, path),
       );
     const unavailable = input.installation.resolve(input.binaryPath, input.environment).pipe(
-      Effect.map((executable) => (executable.harnessPath === null ? undefined : notCli)),
+      Effect.map((executable) =>
+        executable.harnessPath === null ? undefined : notCliReason(executable),
+      ),
       Effect.orElseSucceed(() => "Install Antigravity to add its plugins."),
     );
     // The same home agy and the chat runtime resolve, so every instance writing one plugin

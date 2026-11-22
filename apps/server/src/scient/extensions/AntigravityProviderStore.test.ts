@@ -20,6 +20,7 @@ import { ANTIGRAVITY_MARKETPLACES, antigravityCategories } from "./AntigravityPl
 import {
   ANTIGRAVITY_CUSTOM_NOT_CLI,
   ANTIGRAVITY_NOT_CLI,
+  ANTIGRAVITY_SYSTEM_NOT_CLI,
   antigravityPluginCommandEnvironment,
   makeAntigravityInstancePlugins,
   makeAntigravityPluginActions,
@@ -760,31 +761,34 @@ it.live("tells open pages when an update switches the runtime to agy, and only t
         message: null,
       });
       let harnessPath: string | null = path.join(stateDir, "localharness_external");
-      const executable = Effect.sync(() => ({
-        executablePath: path.join(stateDir, "agy"),
-        harnessPath,
-        source: "managed" as const,
-        version: harnessPath === null ? "1.0.0" : "1.4.5",
-        managedVersionDirectory: null,
-      }));
+      const executable = (source: "managed" | "path" | "override") =>
+        Effect.sync(() => ({
+          executablePath: path.join(stateDir, "agy"),
+          harnessPath,
+          source,
+          version: harnessPath === null ? "1.0.0" : "1.4.5",
+          managedVersionDirectory: null,
+        }));
       const http = HttpClient.make((request) =>
         Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 404 }))),
       );
-      const instance = (binaryPath: string) =>
+      const instance = (source: "managed" | "path" | "override") =>
         makeAntigravityInstancePlugins({
           installation: {
-            resolve: () => executable,
-            acquire: () => executable,
+            resolve: () => executable(source),
+            acquire: () => executable(source),
             changes: SubscriptionRef.changes(install),
           },
-          binaryPath,
+          binaryPath: source === "override" ? path.join(stateDir, "acp") : "",
           environment: { HOME: stateDir },
           stateDir,
         }).pipe(Effect.provideService(HttpClient.HttpClient, http));
-      const store = (yield* instance("")).actions.store!;
-      // A custom runtime's own path is what changes, so its reason says so.
-      const custom = (yield* instance(path.join(stateDir, "acp"))).actions.store!;
+      const store = (yield* instance("managed")).actions.store!;
+      // Each older runtime's reason names the step Settings offers for it.
+      const custom = (yield* instance("override")).actions.store!;
       expect((yield* custom.search({})).message).toBe(ANTIGRAVITY_CUSTOM_NOT_CLI);
+      const onPath = (yield* instance("path")).actions.store!;
+      expect((yield* onPath.search({})).message).toBe(ANTIGRAVITY_SYSTEM_NOT_CLI);
       expect((yield* store.search({})).message).toBe(ANTIGRAVITY_NOT_CLI);
       const nextChange = () =>
         store.changes!.pipe(

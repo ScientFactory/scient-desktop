@@ -57,6 +57,16 @@ function providerFromResult(
   return provider;
 }
 
+/** A plan for another action (a shared request's answer) is never started in this one's place. */
+function planForAction(
+  plan: ProviderRuntimePlan,
+  action: ProviderManagedRuntimeAction,
+): ProviderRuntimePlan {
+  if (plan.action !== action)
+    throw new Error("Scient prepared a different runtime action. Try again.");
+  return plan;
+}
+
 function resultValue<A, E>(result: AtomCommandResult<A, E>, fallback: string): A {
   if (result._tag === "Success") return result.value;
   if (isAtomCommandInterrupted(result)) throw new Error("The provider action was cancelled.");
@@ -81,9 +91,12 @@ export function useStartProviderRuntimeAction(): (input: {
     reportFailure: false,
   });
   return async ({ environmentId, instanceId, action }) => {
-    const plan = resultValue(
-      await planProviderRuntime({ environmentId, input: { instanceId, action } }),
-      "Scient could not prepare the provider runtime action.",
+    const plan = planForAction(
+      resultValue(
+        await planProviderRuntime({ environmentId, input: { instanceId, action } }),
+        "Scient could not prepare the provider runtime action.",
+      ),
+      action,
     );
     const started = resultValue(
       await startProviderRuntime({
@@ -192,7 +205,10 @@ export function useProviderLifecycleController(input: {
       environmentId: input.environmentId,
       input: { instanceId, action },
     });
-    return resultValue(result, "Scient could not prepare the provider runtime action.");
+    return planForAction(
+      resultValue(result, "Scient could not prepare the provider runtime action."),
+      action,
+    );
   };
 
   const startRuntime = async (

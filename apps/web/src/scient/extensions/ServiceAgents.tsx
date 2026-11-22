@@ -15,8 +15,8 @@ import { useContext, useRef, useState, type ReactNode } from "react";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { hasManagedAntigravityUpdate } from "../providerConnection/antigravityLifecycleActions";
 import {
   isActiveProviderRuntimeOperation,
   providerLifecycleFailureMessage,
@@ -279,13 +279,42 @@ function TurnOnInAntigravity({
   );
 }
 
+type RuntimeStep = "update" | "install";
+
 /**
- * The update Settings offers, for an Antigravity whose runtime can't add plugins. The store's
+ * The runtime step Settings offers that lets this Antigravity add plugins: Update for Scient's
+ * older copy, Use Scient-managed for one found on this computer, or none (a custom path).
+ */
+function antigravityRuntimeStep(provider: ServerProvider): RuntimeStep | null {
+  const runtime = provider.connection?.runtime;
+  const operation = runtime?.operation;
+  if (
+    isActiveProviderRuntimeOperation(operation) &&
+    (operation?.action === "update" || operation?.action === "install")
+  )
+    return operation.action;
+  if (runtime?.actions.includes("update")) return "update";
+  return runtime?.source === "system" && runtime.actions.includes("install") ? "install" : null;
+}
+
+/**
+ * Settings' own runtime step, for an Antigravity whose runtime can't add plugins. One button
+ * throughout, so keyboard focus stays on it while the step runs and when it fails. The store's
  * change feed turns the row into Add once the new runtime is active.
  */
-function UpdateAntigravity({ provider }: { readonly provider: ServerProvider }) {
+function AntigravityRuntimeStep({
+  provider,
+  step,
+}: {
+  readonly provider: ServerProvider;
+  readonly step: RuntimeStep;
+}) {
   const gt = useGT();
-  const { environmentId, canWrite } = useExtensionsEnvironment();
+  const { environmentId } = useExtensionsEnvironment();
+  const canPlan = useAtomValue(serverEnvironment.planProviderRuntime.permissionAtom(environmentId));
+  const canStart = useAtomValue(
+    serverEnvironment.startProviderRuntime.permissionAtom(environmentId),
+  );
   const startRuntimeAction = useStartProviderRuntimeAction();
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -297,23 +326,19 @@ function UpdateAntigravity({ provider }: { readonly provider: ServerProvider }) 
     currentOptimisticProviderValue(started, provider) ?? provider.connection?.runtime
   )?.operation;
   const active = isActiveProviderRuntimeOperation(operation) ? operation : null;
-  if (starting || active?.action === "update")
-    return (
-      <span role="status" className="shrink-0 text-xs text-muted-foreground">
-        <T>Updating…</T>
-      </span>
-    );
+  const busy = starting || active?.action === step;
   const failed =
     error ??
-    (operation?.action === "update" && operation.status === "failed" ? operation.message : null);
-  const update = async () => {
+    (operation?.action === step && operation.status === "failed" ? operation.message : null);
+  const run = async () => {
+    if (busy || active !== null) return;
     setError(null);
     setStarting(true);
     try {
       const next = await startRuntimeAction({
         environmentId,
         instanceId: provider.instanceId,
-        action: "update",
+        action: step,
       });
       const runtime = next.connection?.runtime;
       setStarted(runtime ? { baseProvider: provider, value: runtime } : null);
@@ -322,16 +347,25 @@ function UpdateAntigravity({ provider }: { readonly provider: ServerProvider }) 
     }
     setStarting(false);
   };
+  const progress = step === "update" ? gt("Updating…") : gt("Installing…");
   return (
     <span className="flex shrink-0 flex-col items-end gap-1">
       <Button
         variant="ghost-primary"
         size="sm"
-        disabled={!canWrite || active !== null}
-        onClick={() => void update()}
+        disabled={!canPlan || !canStart}
+        aria-disabled={busy || active !== null || undefined}
+        onClick={() => void run()}
       >
-        {gt("Update Antigravity")}
+        {busy
+          ? progress
+          : step === "update"
+            ? gt("Update Antigravity")
+            : gt("Use Scient-managed {provider}", { provider: "Antigravity" })}
       </Button>
+      <span role="status" className="sr-only">
+        {busy ? progress : ""}
+      </span>
       <ActionError message={failed} />
     </span>
   );
@@ -368,10 +402,7 @@ function AntigravityServiceRow({
   if (entry.data?.storeUnavailable) {
     // The live snapshot follows an update as it runs; the inventory's copy is an earlier read.
     const live = providers.find((item) => item.instanceId === route.instanceId) ?? provider;
-    const operation = live.connection?.runtime?.operation;
-    const updatable =
-      hasManagedAntigravityUpdate(live) ||
-      (operation?.action === "update" && isActiveProviderRuntimeOperation(operation));
+    const step = antigravityRuntimeStep(live);
     return (
       <CardRow>
         <ProviderInstanceIcon
@@ -384,11 +415,15 @@ function AntigravityServiceRow({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">{route.label}</span>
           <span className="block text-xs text-muted-foreground">
-            {updatable ? gt("Update Antigravity to add its plugins") : entry.data.disabledReason}
+            {step === "update"
+              ? gt("Update Antigravity to add its plugins")
+              : step === "install"
+                ? gt("Use Scient-managed Antigravity to add its plugins")
+                : entry.data.disabledReason}
           </span>
         </span>
-        {updatable ? (
-          <UpdateAntigravity provider={live} />
+        {step ? (
+          <AntigravityRuntimeStep provider={live} step={step} />
         ) : (
           <Button variant="ghost-muted" size="sm" render={<Link to="/settings/providers" />}>
             <T>Open Settings</T>
