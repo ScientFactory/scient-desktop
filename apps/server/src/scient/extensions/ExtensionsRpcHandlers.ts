@@ -29,6 +29,7 @@ import { PluginKeyBindings, pluginKeyAccountsEligibilityKey } from "./PluginKeyB
 import { readPluginKeyTransport } from "./PluginKeyStartup.ts";
 import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
+import { forClientCategories } from "./discover/clientCategories.ts";
 import {
   ConnectorRuntime,
   type ConnectorRuntimeShape,
@@ -384,11 +385,15 @@ export const makeExtensionsRpcHandlers = ({
     [WS_METHODS.extensionsDiscoverSearch]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsDiscoverSearch,
-        discover.search(input),
+        discover.search(input).pipe(Effect.map(forClientCategories(input.knownCategories).page)),
         traceAttributes,
       ),
-    [WS_METHODS.extensionsDiscoverCatalog]: () =>
-      observeRpcEffect(WS_METHODS.extensionsDiscoverCatalog, discover.catalog(), traceAttributes),
+    [WS_METHODS.extensionsDiscoverCatalog]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsDiscoverCatalog,
+        discover.catalog().pipe(Effect.map(forClientCategories(input.knownCategories).catalog)),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsProviderStoreSearch]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsProviderStoreSearch,
@@ -432,7 +437,11 @@ export const makeExtensionsRpcHandlers = ({
         traceAttributes,
       ),
     [WS_METHODS.extensionsDiscoverEntry]: (input) =>
-      observeRpcEffect(WS_METHODS.extensionsDiscoverEntry, discover.entry(input), traceAttributes),
+      observeRpcEffect(
+        WS_METHODS.extensionsDiscoverEntry,
+        discover.entry(input).pipe(Effect.map(forClientCategories(input.knownCategories).entry)),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsPluginInstall]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsPluginInstall,

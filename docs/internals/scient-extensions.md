@@ -1209,7 +1209,7 @@ rejected with a named reason.
 lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
 a short description, categories (`most-used`, then `papers`, `biology`,
-`code`, `data`, `physics-math`, `files`, `communication`, `projects`,
+`code`, `ai-ml`, `data`, `cloud`, `physics-math`, `files`, `communication`, `projects`,
 `figures`, `chemistry`, `earth`, `social-science`, in that home-page order),
 a website, the MCP Registry entry when
 the registry publishes that exact remote, and a bundled icon. Every
@@ -1247,6 +1247,15 @@ name (`/v0.1/servers/<name>/versions/latest`), otherwise `not-found`. Names
 starting `scient.curated/` never reach the registry.
 `installedConnectorId` is resolved live on every call, by registry name or by
 canonical connector URL (parsed, trailing path slash ignored).
+
+**Categories an older client cannot decode.** `ExtensionCategory` is a closed list, so a new
+category would break the Discover catalog for clients built before it. Each Discover request
+(catalog, search, entry) carries `knownCategories`, the categories the client decodes, and the
+RPC handlers (`discover/clientCategories.ts`) name only those: an entry in a newer category is
+listed under the categories it had before that category existed (`ai-ml` under `code` and
+`data`, `cloud` under `code`), and a newer section is left out. A request without the field
+comes from a client that predates it and gets the 13 categories that existed then. Adding a
+category means adding its earlier categories there.
 
 **Icons.** Clients never load remote images. Registry icons are not fetched at runtime;
 Codex store logos use the bounded server-side path above. Every curated server ships with a bundled logo:
