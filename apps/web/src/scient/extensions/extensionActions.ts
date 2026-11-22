@@ -472,13 +472,17 @@ export function useProviderPluginActions(
       ),
     uninstall: async () => {
       if (lock.locked || plugin.canUninstall !== true) return;
+      const name = plugin.displayName ?? plugin.name;
+      // Antigravity keeps one plugin folder per OS user, shared with the Antigravity app.
       const confirmed = await confirmDestructive(
-        m(
-          msg("Remove {name} from {agent}?", {
-            name: plugin.displayName ?? plugin.name,
-            agent: label,
-          }),
-        ),
+        provider.driver === "antigravity"
+          ? m(
+              msg(
+                "Remove {name} from Antigravity? It is removed from Antigravity for your user account on the computer Scient runs on, including the Antigravity app and every Antigravity agent there.",
+                { name },
+              ),
+            )
+          : m(msg("Remove {name} from {agent}?", { name, agent: label })),
       );
       if (!confirmed) return;
       await lock.run("uninstall", () =>

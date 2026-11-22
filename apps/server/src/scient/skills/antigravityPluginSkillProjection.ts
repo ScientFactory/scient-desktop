@@ -10,6 +10,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const maxPluginProjectionEntries = 10_000;
@@ -17,6 +18,41 @@ const maxPluginManifestBytes = 1_000_000;
 const decodePluginProjectionManifest = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ name: Schema.String })),
 );
+const decodePluginSwitches = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      plugins: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+      ),
+    }),
+  ),
+);
+const projectionGeneration = /^[a-f0-9]{64}$/u;
+const decodePluginConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+const encodePluginConfig = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Plugins `agy plugin disable` turned off, read as the skill picker reads them; null when
+ * the user's config cannot be read. */
+async function readDisabledPlugins(userHome: string): Promise<ReadonlySet<string> | null> {
+  const configPath = NodePath.join(userHome, ".gemini", "config", "config.json");
+  const info = await NodeFSP.stat(configPath).catch((error: NodeJS.ErrnoException) =>
+    error.code === "ENOENT" ? undefined : null,
+  );
+  if (info === null || (info?.isFile() && info.size > maxPluginManifestBytes)) return null;
+  if (!info?.isFile()) return new Set();
+  const contents = await NodeFSP.readFile(configPath, "utf8").catch(() => null);
+  if (contents === null) return null;
+  const switches = decodePluginSwitches(contents);
+  return new Set(
+    Object.entries(Option.isSome(switches) ? (switches.value.plugins ?? {}) : {}).flatMap(
+      ([name, plugin]) => (plugin.enabled === false ? [name] : []),
+    ),
+  );
+}
 
 /**
  * Give the managed ACP runtime the skill component of each Antigravity plugin
@@ -39,15 +75,18 @@ export const projectAntigravityPluginSkills = Effect.fn("projectAntigravityPlugi
         if (sourceEntries.length > maxPluginProjectionEntries) {
           throw new Error("Antigravity plugin discovery exceeded its entry limit.");
         }
+        // Unknown switches project nothing, as the skill picker shows nothing for them.
+        const disabled = await readDisabledPlugins(input.userHome);
         const plugins: Array<{
           readonly directoryName: string;
           readonly manifest: string;
           readonly skillsDirectory: string;
         }> = [];
-        for (const entry of sourceEntries.toSorted((left, right) =>
-          left.name.localeCompare(right.name),
-        )) {
+        for (const entry of disabled === null
+          ? []
+          : sourceEntries.toSorted((left, right) => left.name.localeCompare(right.name))) {
           if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+          if (disabled?.has(entry.name)) continue;
           const pluginDirectory = NodePath.join(sourceRoot, entry.name);
           const manifestPath = NodePath.join(pluginDirectory, "plugin.json");
           const skillsDirectory = NodePath.join(pluginDirectory, "skills");
@@ -69,7 +108,7 @@ export const projectAntigravityPluginSkills = Effect.fn("projectAntigravityPlugi
           } catch {
             continue;
           }
-          if (!parsed.name.trim()) continue;
+          if (!parsed.name.trim() || disabled?.has(parsed.name.trim())) continue;
           plugins.push({ directoryName: entry.name, manifest, skillsDirectory });
         }
 
@@ -146,6 +185,102 @@ export const projectAntigravityPluginSkills = Effect.fn("projectAntigravityPlugi
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Antigravity plugin skills are not projected into the profile.", {
+          error,
+        }),
+      ),
+    );
+  },
+);
+
+const isProjectionLink = (profileDirectory: string, target: string) =>
+  NodePath.dirname(target) ===
+    NodePath.resolve(profileDirectory, "antigravity-acp", "skill-plugins") &&
+  projectionGeneration.test(NodePath.basename(target));
+
+/** Where a link at `link` points, resolved; Windows may prefix a junction with `\\?\`. */
+const linkTarget = async (link: string) =>
+  NodePath.resolve(
+    NodePath.dirname(link),
+    (await NodeFSP.readlink(link)).replace(/^\\\\\?\\/u, ""),
+  );
+
+/**
+ * `agy acp --gemini-dir <profile>` reads plugins, sign-ins and switches from the profile: link its
+ * `config/plugins` to ~/.gemini/config/plugins (replacing only Scient's link, never a folder or
+ * another link) and copy the user's plugin switches beside Scient's keys.
+ */
+export const linkAntigravityUserPlugins = Effect.fn("linkAntigravityUserPlugins")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly userHome: string;
+    readonly platform: NodeJS.Platform;
+  }) {
+    yield* Effect.tryPromise({
+      try: async () => {
+        const userPlugins = NodePath.resolve(input.userHome, ".gemini", "config", "plugins");
+        await NodeFSP.mkdir(userPlugins, { recursive: true });
+        const pluginsLink = NodePath.join(input.profileDirectory, "config", "plugins");
+        const existing = await NodeFSP.lstat(pluginsLink).catch((error: NodeJS.ErrnoException) =>
+          error.code === "ENOENT" ? undefined : Promise.reject(error),
+        );
+        if (existing && !existing.isSymbolicLink()) return;
+        if (existing) {
+          const target = await linkTarget(pluginsLink);
+          if (target === userPlugins) return;
+          if (!isProjectionLink(input.profileDirectory, target)) return;
+          await NodeFSP.rm(pluginsLink);
+        }
+        await NodeFSP.mkdir(NodePath.dirname(pluginsLink), { recursive: true, mode: 0o700 });
+        await NodeFSP.symlink(
+          userPlugins,
+          pluginsLink,
+          input.platform === "win32" ? "junction" : "dir",
+        );
+      },
+      catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity's plugins are not linked into the profile.", { error }),
+      ),
+    );
+    yield* Effect.tryPromise({
+      try: async () => {
+        const read = async (file: string) => {
+          const info = await NodeFSP.stat(file).catch(() => undefined);
+          if (!info?.isFile() || info.size > maxPluginManifestBytes) return undefined;
+          const text = await NodeFSP.readFile(file, "utf8");
+          return { text, parsed: Option.getOrUndefined(decodePluginConfig(text)) };
+        };
+        const user = await read(NodePath.join(input.userHome, ".gemini", "config", "config.json"));
+        const switches = Object.entries(user?.parsed?.plugins ?? {}).flatMap(([name, value]) =>
+          isRecord(value) && typeof value.enabled === "boolean"
+            ? [[name, value.enabled] as const]
+            : [],
+        );
+        if (switches.length === 0) return;
+        const profileFile = NodePath.join(input.profileDirectory, "config", "config.json");
+        const profile = await read(profileFile);
+        if (profile !== undefined && profile.parsed === undefined) return;
+        const next: Record<string, unknown> = { ...profile?.parsed };
+        const plugins: Record<string, unknown> = isRecord(next.plugins) ? { ...next.plugins } : {};
+        let changed = false;
+        for (const [name, enabled] of switches) {
+          const current = isRecord(plugins[name]) ? plugins[name] : {};
+          if (current.enabled === enabled) continue;
+          plugins[name] = { ...current, enabled };
+          changed = true;
+        }
+        if (!changed) return;
+        next.plugins = plugins;
+        const temporary = `${profileFile}.${NodeCrypto.randomUUID()}.tmp`;
+        await NodeFSP.mkdir(NodePath.dirname(profileFile), { recursive: true, mode: 0o700 });
+        await NodeFSP.writeFile(temporary, encodePluginConfig(next), { mode: 0o600 });
+        await NodeFSP.rename(temporary, profileFile);
+      },
+      catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity's plugin switches are not copied into the profile.", {
           error,
         }),
       ),

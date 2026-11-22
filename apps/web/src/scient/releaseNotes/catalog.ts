@@ -9,6 +9,116 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.32",
+    publishedAt: "2026-11-21",
+    format: "paragraphs",
+    headline: "A new sidebar rail, projects with several repositories, and journal covers.",
+    highlights: [
+      {
+        id: "icon-rail-0632",
+        title: "Open common pages from the new icon rail",
+        description:
+          "The sidebar’s new icon rail opens Home, Library, Scheduled tasks, Extensions and Code review, with Settings, Usage and Scient Connect at the bottom. When both are available, Code review switches between Pull requests and Issues. Library opens My Library over the whole window, no project needed. A new thread asks “What should we work on?” and picks its project in a chip above the message box. Turn the rail off in Settings → Labs → Sidebar icon rail.",
+      },
+      {
+        id: "multi-repo-0632",
+        title: "Work across several repositories in one project",
+        description:
+          "A plain folder of repositories, or a repository with others it depends on, is now one project. Settings → Projects → Repositories lists them and adds outside folders. Each turn’s changes are grouped by repository, the Diff pane has a repository picker, and thread details commits, pushes or opens a pull request in each. New worktree checks out each repository you select, and Revert repositories too restores them. In a plain folder, files outside the repositories are shared by worktree threads.",
+      },
+      {
+        id: "library-covers-0632",
+        title: "See publishers and journal covers in your Library",
+        description:
+          "Library rows and cards show a publisher icon when the DOI, publisher or link identifies one, or an icon for the type of source. Journals with their own icon, such as The Lancet, Cell and Nature, show it instead. Cards show the current cover when Scient can find it, including covers for some Elsevier, Wiley and Springer Nature journals, as well as Science, PNAS and NEJM Evidence. Covers are saved for offline use.",
+      },
+      {
+        id: "side-threads-0632",
+        title: "Keep subagents and side chats beside your thread",
+        description:
+          "Click a subagent or side chat to open it as a tab in the right panel, keeping your thread in view. ⌘-click, or Ctrl-click on Windows and Linux, opens it in the main view instead; Settings → Chat → Open subagents and side chats in swaps the two. After sending a message in a side chat, choose Add to chat or type @ and part of its title in the thread’s composer, even while the thread is busy.",
+      },
+      {
+        id: "remote-0632",
+        title: "Forward ports and see your machines on a map",
+        description:
+          "In the desktop app, use a thread’s Servers list or Forwarded ports in the command palette to forward a port from a connected computer, so any app on yours reaches it at localhost. Turn off Settings → Sharing & access → Preview tunnel on a computer to disable port forwarding and stream browser tabs from it. On a wide window, switch between Map and List in Settings → Environments. With Linked environments on in Labs, link several machines at once and read a linked machine’s threads.",
+      },
+      {
+        id: "agents-0632",
+        title: "Sign in to MCP servers and spot custom endpoints",
+        description:
+          "When an MCP server you added to Claude or Codex needs a sign-in, the thread shows Sign in; approve access, paste the address you land on and choose Finish sign-in. If ANTHROPIC_BASE_URL sends Claude elsewhere, Settings → Providers shows that server and how it was configured, and request errors can name it. Each Antigravity instance keeps its own Google sign-in and follows your global AGENTS.md and GEMINI.md. For Antigravity, use the separate Antigravity provider, not Scient Agent.",
+      },
+      {
+        id: "reading-0632",
+        title: "Clearer chat text and quicker everyday actions",
+        description:
+          "The default themes use new text colors, chat follows your Interface font size, and agent replies have tighter line spacing. Copy chat tables as Markdown, CSV or HTML, and copy a text file from its preview with Copy contents. Edit from here rewinds chat without a dialog when the thread uses only the project folder and Scient can confirm later turns changed no files. Duplicate a browser tab with its page, and search actions when adding a shortcut in Settings → Shortcuts.",
+      },
+    ],
+    alsoIncluded:
+      "An empty old thread database no longer triggers a restoration warning. When the model name won’t fit, the composer shows the provider’s icon. Scient’s browser sign-in dialog tells you to reload a blank page; on macOS and Windows, Cancel stays after Done. With the icon rail on, a ready update shows Update at the top of the sidebar. Issues can hide projects and show several Linear teams.",
+  },
+  {
+    version: "0.6.31",
+    publishedAt: "2026-11-19",
+    format: "paragraphs",
+    headline: "Linked results for your papers, issues, and ten languages.",
+    highlights: [
+      {
+        id: "linked-results-markdown-0631",
+        title: "Link numbers, tables and figures to your runs",
+        description:
+          "Run a saved script fresh so it writes values, CSV tables or figures to SCIENT_RESULTS_DIR, then use Insert ▸ Result to tie them to a Markdown paper. When the script or observed project files read by a Python run change, affected results are marked with the cause. Re-run to capture a new revision, then apply Update to refresh that script’s results in the document in one undoable edit, or ask an agent to check them. Outputs stay plain Markdown; run records stay on the Compute machine.",
+      },
+      {
+        id: "linked-results-latex-0631",
+        title: "Keep LaTeX papers in sync with your analysis",
+        description:
+          "Insert ▸ Result writes ordinary LaTeX macros, booktabs tables and figure files beside your paper, so it compiles anywhere, including Overleaf, with those generated files and required packages. A status badge beside the build bar flags out-of-date or newer results and when the PDF needs rebuilding, showing what an update will change with Re-run, Update files and Undo update. Macros used in included chapters are checked before updating.",
+      },
+      {
+        id: "issues-0631",
+        title: "Track and link issues beside your conversations",
+        description:
+          "Open the new Issues page for GitHub, GitLab, Azure DevOps, Forgejo and Linear projects. Filter, sort and save reusable views, read and comment on issues, edit labels and assignees, and hover issue links in chat for previews. Choose Link to this thread from an issue to see it beside pull requests in Linked items so both you and your agents keep it in context.",
+      },
+      {
+        id: "languages-0631",
+        title: "Use Scient in ten languages",
+        description:
+          "Choose English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or Swedish in Settings → General → Display → Language, or follow your system default. Desktop menus, dialogs and Scient’s own panels, such as Library, Compute, documents, Overleaf and Accounts, follow the same choice.",
+      },
+      {
+        id: "updates-0631",
+        title: "Keep working while updates prepare",
+        description:
+          "Choosing Restart now saves open workspaces and shows progress right beside the update control, with Retry for recoverable failures. On macOS, Scient prepares and verifies the downloaded update while you keep working, then runs a final save so edits made in the meantime are kept. Unreadable update feeds no longer stall on checking.",
+      },
+      {
+        id: "agents-chat-0631",
+        title: "Edit earlier messages and keep context together",
+        description:
+          "Edit from here now rewinds Cursor sessions and restarts Antigravity with your kept conversation, and ACP agents keep the earlier conversation when you revert. Side chats started with /side keep your attachments and context, pressing Enter while an image compresses sends once it is ready, and failed sends or steers explain why.",
+      },
+      {
+        id: "previews-0631",
+        title: "Inspect remote localhost pages locally",
+        description:
+          "When connected to another computer in the desktop app, localhost preview tabs you open render locally through a tunnel, so the element picker, screenshots and annotations work just as they do locally. Preview pages ask before reading your location, edited HTML files open fresh from Files, and open HTML previews refresh without flashing white.",
+      },
+      {
+        id: "windows-signin-0631",
+        title: "More reliable Windows installs and Claude sign-in",
+        description:
+          "On Windows, the installer now protects eligible custom per-user folders so saving works reliably there, plain file reads no longer fail when the native helper is unavailable, and you can drag file pills into Explorer. A new Claude sign-in can finish after its next account check and verification even if its login process stays open.",
+      },
+    ],
+    alsoIncluded:
+      "The Fork this chat card returns with an editable title and worktree switch, also from /fork-worktree. New direct pairings can renew with use. Choose an fx backend per thread, use Full access on fx 0.0.14+, and update supported fx installs in Settings. Save Pull request views, unassign default shortcuts, set a terminal shell, usage retention or sparse worktrees, plus faster Find in thread.",
+  },
+  {
     version: "0.6.30",
     publishedAt: "2026-11-17",
     format: "paragraphs",

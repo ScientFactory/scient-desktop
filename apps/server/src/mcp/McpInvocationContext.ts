@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
 import type { AgentSkillScope } from "../scient/operations/AgentInvocationContext.ts";
@@ -40,6 +41,7 @@ const ALL_MCP_CAPABILITIES = [
   // The handoff-summary reader retains its own read-only grant alongside native orchestration tools.
   "threads:read",
   // SCIENT-FORK:END
+  "background-wait",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -61,10 +63,6 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
-  // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
-  /** The session's provider implements background waits. */
-  readonly backgroundWait?: boolean;
-  // SCIENT-FORK:END
 }
 
 export interface McpClientCaller {
@@ -76,6 +74,8 @@ export interface McpClientCaller {
    * session as `linkOrigin`, and it changes only that work (`linkOrigin.ts`).
    */
   readonly linked?: boolean | undefined;
+  /** When a peer link's session ends unless it is used again, answered as `T3-Link-Expires-At`. */
+  readonly linkExpiresAt?: DateTime.Utc | undefined;
   /**
    * Narrower modes the client asked for on this request (`T3-Mode-Limit`):
    * another environment passing on the limits of the agent it calls for.
@@ -94,6 +94,12 @@ export interface McpClientCaller {
  * `clientModeCeiling`), so a client gains nothing by sending a broad one.
  */
 export const MODE_LIMIT_HEADER = "t3-mode-limit";
+
+/**
+ * `T3-Link-Expires-At: <ISO time>` answers a peer link's request with when its
+ * session now ends. Using a link renews it, so the linking side keeps this.
+ */
+export const LINK_EXPIRES_AT_HEADER = "t3-link-expires-at";
 
 /**
  * `T3-Sender-Thread: <environmentId>/<threadId>/<title>`, each URI-encoded: the
@@ -192,6 +198,8 @@ export interface McpInvocationScope {
    * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
    */
   readonly origin?: string | undefined;
+  /** False when the calling thread's project is on no forge T3 reads; `/mcp` reads it per request. */
+  readonly forge?: boolean;
 }
 
 /**
@@ -230,15 +238,6 @@ export const hiddenFromSubagents = (): boolean => {
   return scope?.thread?.subagent !== true;
 };
 
-// SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
-/** `McpSchema.EnabledWhen` for the background wait: only thread sessions whose provider has one. */
-export const shownWithBackgroundWait = (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.thread?.backgroundWait === true;
-};
-// SCIENT-FORK:END
-
 /**
  * `McpSchema.EnabledWhen` for tools that act as the calling thread: a client
  * from outside has none. Discovery only; `McpToolAccess` still refuses the
@@ -250,11 +249,27 @@ export const hiddenFromOutsideClients = (): boolean => {
   return scope === undefined || scope.thread !== undefined;
 };
 
+/** `hiddenFromOutsideClients`, and hidden from a thread whose provider cannot hold for background work. */
+export const hiddenWithoutBackgroundWait = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return (
+    scope === undefined || (scope.thread !== undefined && scope.capabilities.has("background-wait"))
+  );
+};
+
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
 export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** `McpSchema.EnabledWhen` for tools that act on the thread's forge, hidden where it has none. */
+export const hiddenWithoutForge = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.forge !== false;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

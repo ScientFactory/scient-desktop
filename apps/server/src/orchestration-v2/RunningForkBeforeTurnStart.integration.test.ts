@@ -27,6 +27,7 @@ import {
 } from "@t3tools/provider-testing/replayTranscript";
 import { PROPOSED_PLAN_PROMPT } from "./testkit/fixtures/shared.ts";
 import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 
 it.live("forks a running Codex turn before Codex reports the turn started", () =>
   Effect.scoped(
@@ -49,9 +50,11 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
       );
       const gate = makeProviderReplayGate(["held-turn-start"]);
       yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
-      const registry = CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript, {
-        replayGate: gate,
-      });
+      const registry = CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
+        // SCIENT-FORK: the recording names its thread after its own title.
+        materializeCodexThreadSetup(transcript, () => "Fork before turn start"),
+        { replayGate: gate },
+      );
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         {
           name: "fork-before-turn-start",

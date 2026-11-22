@@ -2542,6 +2542,32 @@ describe("ProviderConnectionManager finishing from the account", () => {
     }),
   );
 
+  it.effect("does not take a custom endpoint or API key for a finished sign-in", () =>
+    Effect.gen(function* () {
+      const finished = yield* Ref.make(0);
+      const { manager, transitionsRef } = yield* makeHarness({
+        actions: waitingForever(finished),
+        // Claude reads as authenticated once ANTHROPIC_BASE_URL points elsewhere.
+        refreshProvider: (provider, refreshCount) =>
+          refreshCount >= 2
+            ? {
+                ...authenticatedProvider(provider),
+                auth: {
+                  status: "authenticated",
+                  type: refreshCount >= 4 ? "apiKey" : "customEndpoint",
+                  endpoint: "https://proxy.example",
+                },
+              }
+            : provider,
+      });
+      yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      yield* TestClock.adjust("2 minutes");
+      const transitions = yield* SubscriptionRef.get(transitionsRef);
+      assert.strictEqual(transitions.at(-1)?.status, "waiting_for_browser");
+      assert.strictEqual(yield* Ref.get(finished), 0);
+    }),
+  );
+
   it.effect("does not finish an account switch from the account it started with", () =>
     Effect.gen(function* () {
       const finished = yield* Ref.make(0);

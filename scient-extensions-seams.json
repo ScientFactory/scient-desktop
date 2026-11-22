@@ -45,7 +45,8 @@
     "apps/web/src/scient/compute/ScientificComputingSettings.tsx",
     "apps/web/src/scient/compute/ComputeLanguagePanel.tsx",
     "apps/server/src/telemetry/ExtensionAnalytics.ts",
-    "apps/server/src/telemetry/ExtensionAnalytics.test.ts"
+    "apps/server/src/telemetry/ExtensionAnalytics.test.ts",
+    "scripts/dev-identity.mjs"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -135,6 +136,11 @@
       "path": "apps/server/src/provider/Drivers/ClaudeDriver.ts",
       "anchor": "ProviderNativeInventory",
       "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance; resolve account capabilities before the cached Extensions account probe."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/AntigravityDriver.ts",
+      "anchor": "makeAntigravityInstancePlugins",
+      "purpose": "Attach the Antigravity Marketplace store and native plugin actions to the exact instance, run through the agy CLI it resolves."
     },
     {
       "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
@@ -272,7 +278,7 @@
       "purpose": "T3's \"use in another app (MCP)\" palette action lists \"connector\" as a search word; Scient only hides the action without cloud public config. Not part of Scient Extensions."
     },
     {
-      "path": "patches/@cursor__sdk@1.3.1.patch",
+      "path": "patches/@cursor__sdk@1.4.2.patch",
       "anchor": "createLocalExecutor",
       "purpose": "T3's patch to Cursor's bundled SDK (attribution follows cli-config.json); Cursor's minified code names its own connectors. Not part of Scient Extensions."
     },
@@ -315,6 +321,16 @@
       "path": "packages/contracts/src/orchestrationV2.ts",
       "anchor": "toolServerOwner: Schema.optional(",
       "purpose": "Carry whose tool server (Scient's, a delivered connector or the user's) stopped a turn on the provider failure."
+    },
+    {
+      "path": "apps/server/src/provider/codexLaunchArgs.ts",
+      "anchor": "MCP_LIST_DISABLED_FEATURES",
+      "purpose": "T3 keeps Codex's own apps, connectors and plugins features off for exec and its MCP listing. Scient's delivered connectors reach Codex as MCP servers and are unaffected."
+    },
+    {
+      "path": "apps/server/src/textGeneration/CodexTextGeneration.ts",
+      "anchor": "features.connectors=false",
+      "purpose": "T3 turns Codex's own connectors (apps) feature off during text generation, which uses no Scient connectors."
     }
   ],
   "scientMounts": [

@@ -553,6 +553,7 @@ const existingProject = (projectId: ProjectId): ProjectRow => ({
   faviconPath: null,
   projectIcon: null,
   scripts: [],
+  trackedFolders: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
@@ -4024,8 +4025,19 @@ describe("connectors agents run", () => {
       expect(yield* agent(listConnectors({ query: "echo" }))).toEqual({
         connectors: [row],
         found: [
-          { name: echo.name, title: "Echo", addable: false, added: added.connector },
-          { name: docker.name, addable: false, reason: docker.unsupportedReason },
+          {
+            name: echo.name,
+            title: "Echo",
+            hosting: "Not checked by Scient",
+            addable: false,
+            added: added.connector,
+          },
+          {
+            name: docker.name,
+            hosting: "Not checked by Scient",
+            addable: false,
+            reason: docker.unsupportedReason,
+          },
         ],
       });
 

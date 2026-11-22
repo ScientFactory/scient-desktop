@@ -70,6 +70,7 @@ import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "../testkit/CodexReplayThreadSetup.ts";
 
 const isThreadPayload = Schema.is(Schema.Struct({ threadId: Schema.String }));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -777,7 +778,11 @@ it.live.each(
         method: string;
         params: unknown;
       }> = [];
-      const driver = yield* CodexReplay.makeReplayDriver(transcript, {
+      // SCIENT-FORK: upstream's per-thread config read and thread name precede the first turn.
+      const replayed = materializeCodexThreadSetup(transcript, (native) =>
+        native === peerNativeThreadId ? "Independent peer" : "Native running fork",
+      );
+      const driver = yield* CodexReplay.makeReplayDriver(replayed, {
         beforeEmitInbound: (entry) =>
           Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
       });

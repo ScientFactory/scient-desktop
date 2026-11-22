@@ -22,7 +22,11 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
-import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
+import {
+  ProviderCompatibilityPolicy,
+  // SCIENT-FORK: fetched policies apply only when scoped to this Scient release.
+  resolveManifestProviderCompatibility,
+} from "./providerCompatibility.ts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 
 const MODEL_MANIFEST_URL =
@@ -109,6 +113,21 @@ const decodeManifest = Schema.decodeUnknownEffect(ModelManifestSchema);
 
 export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
+
+/** A manifest with no policy for this driver and release falls back to the bundled one. */
+export const providerCompatibility = (
+  manifest: ModelManifestData,
+  driver: ProviderDriverKind,
+  version: string | null,
+) =>
+  // SCIENT-FORK: main's manifest describes main; a release build keeps its bundled policy
+  // unless the fetched one names a Scient release (providerCompatibility.ts).
+  resolveManifestProviderCompatibility({
+    manifest: manifest.compatibility,
+    bundled: BUNDLED_MODEL_MANIFEST.compatibility,
+    driver,
+    version,
+  });
 
 function manifestUpdatedAtMs(manifest: ModelManifestData): number {
   if (manifest.updatedAt === undefined) return 0;

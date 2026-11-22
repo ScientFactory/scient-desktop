@@ -140,6 +140,11 @@ export const PREVIEW_FIND_RESULT_CHANNEL = "desktop:preview-find-result";
 export const PREVIEW_SIGN_IN_BLOCKED_CHANNEL = "desktop:preview-sign-in-blocked";
 export const PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL = "desktop:preview-tunnel-access-request";
 export const PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL = "desktop:preview-tunnel-access-resolve";
+export const PORT_FORWARD_START_CHANNEL = "desktop:port-forward-start";
+export const PORT_FORWARD_STOP_CHANNEL = "desktop:port-forward-stop";
+export const PORT_FORWARD_LIST_CHANNEL = "desktop:port-forward-list";
+export const PORT_FORWARD_CHANGE_CHANNEL = "desktop:port-forward-change";
+export const PORT_FORWARD_SHARES_LOOPBACK_CHANNEL = "desktop:port-forward-shares-loopback";
 
 // Scient local voice transcription (desktop-only).
 export const VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL = "desktop:voice-request-microphone-access";
@@ -180,6 +185,9 @@ export const SPELLING_DICTIONARY_READY_CHANNEL = "scient:spelling:dictionary-rea
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
+export const APPLE_SPEECH_AVAILABLE_CHANNEL = "desktop:apple-speech-available";
+export const APPLE_SPEECH_PREPARE_CHANNEL = "desktop:apple-speech-prepare";
+export const APPLE_SPEECH_TRANSCRIBE_CHANNEL = "desktop:apple-speech-transcribe";
 
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
 export const RENDER_DOCUMENT_PAGE_PDF_CHANNEL = "desktop:render-document-page-pdf";

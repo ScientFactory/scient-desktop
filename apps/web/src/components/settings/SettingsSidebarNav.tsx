@@ -70,13 +70,16 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   revealSettingsSearchTarget,
-  SETTINGS_NAV_GROUPS,
+  settingsNavGroups,
   SETTINGS_NAV_LABELS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
-import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import {
+  useAvailableSettingsSearchItems,
+  useHasSecretProvidersEnvironment,
+} from "./useAvailableSettingsSearchItems";
 // SCIENT-FORK: Scient Accounts reads the settings machine scope.
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
@@ -161,11 +164,19 @@ const SETTINGS_SECTION_ICONS: Readonly<
 };
 
 // SCIENT-FORK:START — Voice settings need the desktop app.
-const SETTINGS_NAV_GROUPS_FOR_PLATFORM = SETTINGS_NAV_GROUPS.map((group) => ({
-  ...group,
-  paths: group.paths.filter((to) => isElectron || to !== "/settings/voice"),
-}));
-const SETTINGS_NAV_ITEMS = SETTINGS_NAV_GROUPS_FOR_PLATFORM.flatMap((group) =>
+const settingsNavGroupsWithoutVoice = (hasSecretProvidersEnvironment: boolean) =>
+  settingsNavGroups(hasSecretProvidersEnvironment).map((group) => ({
+    ...group,
+    paths: group.paths.filter((to) => isElectron || to !== "/settings/voice"),
+  }));
+const SETTINGS_NAV_GROUPS_WITH_SECRETS = settingsNavGroupsWithoutVoice(true);
+const SETTINGS_NAV_GROUPS_WITHOUT_SECRETS = settingsNavGroupsWithoutVoice(false);
+const settingsNavGroupsForPlatform = (hasSecretProvidersEnvironment: boolean) =>
+  hasSecretProvidersEnvironment
+    ? SETTINGS_NAV_GROUPS_WITH_SECRETS
+    : SETTINGS_NAV_GROUPS_WITHOUT_SECRETS;
+// Every page, so a page section list follows whichever page is open.
+const SETTINGS_NAV_ITEMS = SETTINGS_NAV_GROUPS_WITH_SECRETS.flatMap((group) =>
   group.paths.map((to) => ({ to, label: SETTINGS_SECTION_LABELS[to] })),
 );
 // SCIENT-FORK:END
@@ -183,7 +194,7 @@ function scrollResultIntoView(row: HTMLElement | null) {
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
-  return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
+  return <Icon className="size-4 h-5 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
@@ -209,6 +220,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems();
+  const navGroups = settingsNavGroupsForPlatform(useHasSecretProvidersEnvironment());
   const renderPageSections = useScientSettingsNavigation(pathname, SETTINGS_NAV_ITEMS);
   // SCIENT-FORK:START — Scient Accounts: search follows server availability.
   const results = searchSettings(query, searchableItems, m).filter(
@@ -451,7 +463,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 )}
                 <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col gap-4">
                   {/* SCIENT-FORK: Voice settings need the desktop app. */}
-                  {SETTINGS_NAV_GROUPS_FOR_PLATFORM.map((group, index) => (
+                  {navGroups.map((group, index) => (
                     <div
                       key={group.heading}
                       className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"

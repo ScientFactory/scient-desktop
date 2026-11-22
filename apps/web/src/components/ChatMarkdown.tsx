@@ -10,7 +10,9 @@ import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
+  isMarkdownFileLinkLabel,
   isWindowsDrivePathHref,
+  shouldRenderMarkdownImageAsFileLink,
   normalizeMarkdownLinkDestination,
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
@@ -33,6 +35,7 @@ import {
 } from "../scient/markdown/scientMarkdownPipeline";
 // SCIENT-FORK:END
 import {
+  chatMarkdownImageSource,
   decodeMarkdownLinkEscapes,
   remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
@@ -177,7 +180,6 @@ import {
   markdownFileEditorTarget,
   resolveMarkdownFileHostPath,
 } from "../markdownFileHostPath";
-import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -186,6 +188,8 @@ import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { useOpenIssueLink } from "../lib/openIssueLink";
+import { issueTrackerEnvironment } from "../state/issueTrackers";
+import { useEnvironmentQuery } from "../state/query";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -210,7 +214,10 @@ import {
   workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
-import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import {
+  mayContainStandaloneIssueLink,
+  resolveIssueLinkTarget,
+} from "@t3tools/client-runtime/issue-links";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { textDirection } from "~/textDirection";
@@ -842,6 +849,13 @@ function useChatMarkdownState({
         : revealInFileExplorerLabelForOs(revealInFileManager, messages);
   const projects = useProjects();
   const issueProjects = projects.filter((project) => project.environmentId === environmentId);
+  // Only text naming a standalone tracker asks for its bindings, whose read probes the tracker.
+  const issueTrackers =
+    useEnvironmentQuery(
+      issuesEnabled && environmentId !== null && mayContainStandaloneIssueLink(text)
+        ? issueTrackerEnvironment.connections({ environmentId, input: {} })
+        : null,
+    ).data ?? undefined;
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor, messages);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
@@ -1233,6 +1247,7 @@ function useChatMarkdownState({
     openMarkdownMedia,
     projects,
     issueProjects,
+    issueTrackers,
     linkedThreadPullRequestFor,
     resolveThreadPullRequest,
     resolvedTheme,
@@ -1414,6 +1429,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       openExternalLinkInPreview,
       projects,
       issueProjects,
+      issueTrackers,
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       pullRequestsEnabled,
@@ -1446,7 +1462,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       // An autolink's text is its own URL, which is no label.
       const label = written && parseThreadLinkHref(written) === null ? written : null;
       return environmentId ? (
-        <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
+        <MarkdownThreadLink
+          environmentId={environmentId}
+          threadRef={threadRef}
+          link={threadLink}
+          label={label}
+        />
       ) : (
         <span>{label ?? gt("Thread")}</span>
       );
@@ -1504,6 +1525,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           ? resolveIssueLinkTarget({
               url: href,
               projects: issueProjects,
+              trackers: issueTrackers,
             })
           : null;
       const issuePreviewTarget =
@@ -1555,7 +1577,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             if (
               !href ||
               openChangeRequestLink(event, href, undefined, environmentId ?? undefined) ||
-              openIssueLink(event, href, environmentId ?? undefined)
+              openIssueLink(event, href, environmentId ?? undefined, issueTrackers)
             ) {
               return;
             }
@@ -1696,6 +1718,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 },
                 url,
                 environmentId ?? undefined,
+                issueTrackers,
               );
               if (!opened) await openDeferredMarkdownLink(url);
             }}
@@ -1830,18 +1853,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
-    // A `<picture>`'s source for this theme, resolved like any other image.
-    const themeSrc = node?.properties?.[resolvedTheme === "dark" ? "dataDarkSrc" : "dataLightSrc"];
-    const localSrc = typeof themeSrc === "string" ? undefined : node?.properties?.dataLocalSrc;
+    const { authoredSrc: srcString = "", classifiedSrc = "" } =
+      chatMarkdownImageSource(node?.properties ?? { src }, resolvedTheme) ?? {};
     const markdownTitle = node?.properties?.dataMarkdownTitle;
     const standalone = node?.properties?.dataStandalone === true;
-    const authoredSrc =
-      typeof themeSrc === "string" ? themeSrc : typeof localSrc === "string" ? localSrc : src;
     const authoredTitle = typeof markdownTitle === "string" ? markdownTitle : title;
-    const srcString =
-      typeof authoredSrc === "string" ? normalizeMarkdownLinkDestination(authoredSrc) : "";
-    const classifiedSrc =
-      typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
     const altText = alt ?? "";
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
@@ -1878,7 +1894,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         />
       );
     }
-    if (mediaKind === null && imageSource._tag === "WorkspaceFile") {
+    if (shouldRenderMarkdownImageAsFileLink(imageSource, mediaKind)) {
       const fileLinkMeta = resolveMarkdownFileLinkMeta(srcString, cwd, imageBaseDir ?? cwd);
       if (fileLinkMeta) return fileLinkChip(fileLinkMeta, copyMarkdown, srcString);
     }
@@ -2337,8 +2353,9 @@ function ChatMarkdown({
       ref={bindMarkdownRef}
       className={cn(
         "chat-markdown w-full min-w-0 [overflow-wrap:anywhere] [word-break:break-word]",
-        !inline &&
-          "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
+        // SCIENT-FORK:START — chat text at full strength (scient/typography; upstream: 90% opacity).
+        !inline && "text-sm leading-relaxed text-foreground",
+        // SCIENT-FORK:END
         className,
       )}
       // SCIENT-FORK:START — the message direction (scient/bidi).

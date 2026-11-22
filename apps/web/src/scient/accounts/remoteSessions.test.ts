@@ -21,32 +21,39 @@ vi.mock("~/hooks/useSettings", () => ({
     ],
   }),
 }));
-vi.mock("./accountsState", () => ({
-  accountsState: {
-    snapshot: () => "snapshot",
-    profileResend: {
-      run: async (_registry: unknown, input: unknown) => {
-        mocks.resend.push(input);
-        return { _tag: "Success", value: { revision: 1 } };
+vi.mock("./accountsState", async () => {
+  const { promiseCommandRun } = await import("../../../test/promiseCommandRun");
+  return {
+    accountsState: {
+      snapshot: () => "snapshot",
+      profileResend: {
+        run: promiseCommandRun(async (_registry: unknown, input: unknown) => {
+          mocks.resend.push(input);
+          return { _tag: "Success", value: { revision: 1 } };
+        }),
+      },
+      senderKey: {
+        run: promiseCommandRun(async () => ({
+          _tag: "Success",
+          value: { key: "kept-sender-key" },
+        })),
+      },
+      sessionsWithdraw: {
+        run: promiseCommandRun(async () =>
+          mocks.withdrawAnswers
+            ? { _tag: "Success", value: { deleted: 1 } }
+            : { _tag: "Failure", cause: "offline" },
+        ),
+      },
+      profilesUnshared: {
+        run: promiseCommandRun(async (_registry: unknown, input: unknown) => {
+          mocks.unshared.push(input);
+          return { _tag: "Success", value: {} };
+        }),
       },
     },
-    senderKey: {
-      run: async () => ({ _tag: "Success", value: { key: "kept-sender-key" } }),
-    },
-    sessionsWithdraw: {
-      run: async () =>
-        mocks.withdrawAnswers
-          ? { _tag: "Success", value: { deleted: 1 } }
-          : { _tag: "Failure", cause: "offline" },
-    },
-    profilesUnshared: {
-      run: async (_registry: unknown, input: unknown) => {
-        mocks.unshared.push(input);
-        return { _tag: "Success", value: {} };
-      },
-    },
-  },
-}));
+  };
+});
 vi.mock("~/state/environments", () => ({
   readPrimaryEnvironmentId: () => "macbook",
   readEnvironment: () => ({ label: "Lab server" }),

@@ -27,7 +27,7 @@ export function registryContactEmail(): string | null {
 }
 
 /** Adds the contact email to a registry URL that accepts mailto, when one is set. */
-export function withRegistryContact(url: URL): URL {
+function withRegistryContact(url: URL): URL {
   if (!registryContact || !MAILTO_HOSTS.has(url.hostname) || url.searchParams.has("mailto")) {
     return url;
   }

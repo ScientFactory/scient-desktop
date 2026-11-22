@@ -12,6 +12,7 @@ import {
   type ExtensionAudience,
   type ExtensionDeliverySkipReason,
   type ProviderInstanceId,
+  type ProviderStoreEntry,
   type ScientPluginSummary,
   type ServerProvider,
   type ServerProviderMcpServer,
@@ -349,12 +350,13 @@ export function collectProviderExtensionGroups(
     const selected = providers.find((candidate) => candidate.instanceId === worksWith);
     const visiblePlugins = selected
       ? plugins.filter(({ plugin }) =>
-          audienceReaches(providerExtensionAudience(provider, plugin), selected),
+          audienceReaches(providerExtensionAudience(provider, plugin, providers), selected),
         )
       : plugins;
     const mcpServers = (provider.mcpServers ?? []).filter(
       (server) =>
-        !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
+        !selected ||
+        audienceReaches(providerExtensionAudience(provider, server, providers), selected),
     );
     if (
       selected &&
@@ -422,9 +424,92 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
   }
 }
 
+/** OpenAI's host-coupled Codex plugins, which only Codex can run, all come from this marketplace. */
+const CODEX_HOST_MARKETPLACE = "openai-bundled";
+
+/** The Codex home a Codex instance installs plugins into, or the one a Scient Agent reads. */
+function codexPluginHome(provider: Pick<ServerProvider, "pluginHomes">): string | undefined {
+  return provider.pluginHomes?.codex;
+}
+
+/** Two plugin homes are the same unless both are known and differ. */
+const sameHome = (a: string | undefined, b: string | undefined) =>
+  a === undefined || b === undefined || a === b;
+
+/**
+ * The agent that installs a store entry for `provider`: itself, except that Scient Agent takes a
+ * Claude Code plugin through the Claude instance reading the same Claude home (else its own
+ * installer) and a Codex plugin through the Codex instance whose home it reads. `undefined` when
+ * no instance can install it for that agent.
+ */
+export function storeInstallTarget(
+  provider: ServerProvider,
+  kind: ProviderStoreEntry["kind"],
+  providers: ReadonlyArray<ServerProvider>,
+): ServerProvider | undefined {
+  if (provider.driver !== "scient" || kind === "antigravity") return provider;
+  if (kind === "shared") {
+    const home = provider.pluginHomes?.claude;
+    return (
+      providers.find(
+        (item) =>
+          providerAvailable(item) &&
+          item.driver === "claudeAgent" &&
+          (home === undefined || item.pluginHomes?.claude === home),
+      ) ?? provider
+    );
+  }
+  const home = provider.pluginHomes?.codex;
+  return home === undefined
+    ? undefined
+    : providers.find(
+        (item) =>
+          providerAvailable(item) && item.driver === "codex" && codexPluginHome(item) === home,
+      );
+}
+
+/**
+ * A Codex plugin that Scient Agents loading Codex's installed plugins (its skills and servers)
+ * from the same Codex home reach too, when one does; `undefined` leaves it Codex's own.
+ */
+function codexPluginAudience(
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "pluginHomes">,
+  /** The plugin's `<name>@<marketplace>` id; absent for the store as a whole. */
+  id: string | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+): ExtensionAudience | undefined {
+  const home = codexPluginHome(provider);
+  return !id?.endsWith(`@${CODEX_HOST_MARKETPLACE}`) &&
+    providers.some(
+      (agent) =>
+        agent.driver === "scient" &&
+        agent.usesCodexPlugins === true &&
+        sameHome(agent.pluginHomes?.codex, home),
+    )
+    ? {
+        layer: "codex",
+        ownerInstanceId: provider.instanceId,
+        ...(home ? { pluginHome: home } : {}),
+      }
+    : undefined;
+}
+
+/** A Claude Code plugin's audience: the agents reading the Claude home that holds it. */
+function sharedAudience(
+  provider: Pick<ServerProvider, "instanceId" | "pluginHomes">,
+): ExtensionAudience {
+  const home = provider.pluginHomes?.claude;
+  return {
+    layer: "shared",
+    ownerInstanceId: provider.instanceId,
+    ...(home ? { pluginHome: home } : {}),
+  };
+}
+
 export function providerExtensionAudience(
   provider: ServerProvider,
   entry: ServerProviderPlugin | ServerProviderMcpServer,
+  providers: ReadonlyArray<ServerProvider>,
 ): ExtensionAudience {
   const shared =
     provider.driver === "claudeAgent"
@@ -436,7 +521,12 @@ export function providerExtensionAudience(
         ("id" in entry
           ? Boolean(entry.marketplace)
           : Boolean(entry.pluginId?.includes("@") && !entry.pluginId.startsWith("npm:")));
-  if (shared) return { layer: "shared", ownerInstanceId: provider.instanceId };
+  if (shared) return sharedAudience(provider);
+  const codex =
+    provider.driver === "codex" && "id" in entry
+      ? codexPluginAudience(provider, entry.id, providers)
+      : undefined;
+  if (codex) return codex;
   return {
     layer: "agent",
     driver: provider.driver,
@@ -460,20 +550,36 @@ export function providerExtensionAudience(
   };
 }
 
-/** Who a store's plugin is for: Claude's stores serve Claude and Scient Agent, Codex's serve Codex. */
+/**
+ * Who a store's plugin is for: Claude's stores serve Claude and Scient Agent; Codex's serve Codex,
+ * and Scient Agent too when it loads Codex's plugins, except OpenAI's host-coupled ones; the
+ * Antigravity Marketplace serves Antigravity.
+ */
 export function providerStoreAudience(
-  provider: Pick<ServerProvider, "driver" | "instanceId">,
-  kind: "shared" | "codex",
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "pluginHomes">,
+  kind: ProviderStoreEntry["kind"],
+  providers: ReadonlyArray<ServerProvider>,
+  /** One entry's plugin id; absent for the store as a whole. */
+  entryId?: string,
 ): ExtensionAudience {
-  return kind === "shared"
-    ? { layer: "shared", ownerInstanceId: provider.instanceId }
-    : {
-        layer: "agent",
-        driver: provider.driver,
-        instanceId: provider.instanceId,
-        label: "Codex",
-        reason: msg("Uses Codex’s own ChatGPT account"),
-      };
+  if (kind === "shared") return sharedAudience(provider);
+  if (kind === "antigravity")
+    return {
+      layer: "agent",
+      driver: provider.driver,
+      instanceId: provider.instanceId,
+      label: "Antigravity",
+      reason: msg("Installed through Antigravity’s own plugin manager"),
+    };
+  return (
+    codexPluginAudience(provider, entryId, providers) ?? {
+      layer: "agent",
+      driver: provider.driver,
+      instanceId: provider.instanceId,
+      label: "Codex",
+      reason: msg("Uses Codex’s own ChatGPT account"),
+    }
+  );
 }
 
 export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
@@ -482,11 +588,19 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
       return audience.agents === undefined || audience.agents.includes(provider.instanceId);
     case "shared":
       return (
-        provider.driver === "claudeAgent" ||
+        provider.instanceId === audience.ownerInstanceId ||
+        (sameHome(provider.pluginHomes?.claude, audience.pluginHome) &&
+          (provider.driver === "claudeAgent" ||
+            (provider.driver === "scient" &&
+              supportsScientClaudePlugins(provider.version) &&
+              provider.usesClaudePlugins === true)))
+      );
+    case "codex":
+      return (
         provider.instanceId === audience.ownerInstanceId ||
         (provider.driver === "scient" &&
-          supportsScientClaudePlugins(provider.version) &&
-          provider.usesClaudePlugins === true)
+          provider.usesCodexPlugins === true &&
+          sameHome(provider.pluginHomes?.codex, audience.pluginHome))
       );
     case "agent":
       return provider.instanceId === audience.instanceId;
@@ -517,6 +631,8 @@ export function audienceNames(audience: ExtensionAudience, resolve: MessageResol
       );
     case "shared":
       return resolve(msg("Claude and Scient Agent"));
+    case "codex":
+      return resolve(msg("Codex and Scient Agent"));
     case "agent":
       return resolve(msg("{agent} only", { agent: audience.label }));
     case "account":
@@ -541,6 +657,8 @@ export function audienceLabel(audience: ExtensionAudience, resolve: MessageResol
       );
     case "shared":
       return resolve(msg("Works with Claude and Scient Agent"));
+    case "codex":
+      return resolve(msg("Works with Codex and Scient Agent"));
     case "agent":
       return audienceNames(audience, resolve);
     case "account":
@@ -594,7 +712,9 @@ export function audienceSupport(
                 ? resolve(audience.reason)
                 : audience.layer === "account"
                   ? resolve(msg("This agent has no account that offers it"))
-                  : resolve(msg("Uses Claude Code's plugin format")),
+                  : audience.layer === "codex"
+                    ? resolve(msg("Uses Codex’s plugin format"))
+                    : resolve(msg("Uses Claude Code's plugin format")),
           }
         : {}),
     };
@@ -787,4 +907,115 @@ export function splitCommandLine(text: string): ReadonlyArray<string> | null {
   if (quote !== null) return null;
   if (started) parts.push(current);
   return parts;
+}
+
+function canonicalUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.href.replace(/\/$/u, "");
+  } catch {
+    return value;
+  }
+}
+
+/** Whether an agent-store entry is the same service as one of Scient's curated connectors. */
+export function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
+  return (
+    curated.agentStores?.claude === entry.id ||
+    curated.agentStores?.codex === entry.name ||
+    curated.agentStores?.antigravity === entry.id ||
+    curated.name === entry.id ||
+    curated.name === entry.name ||
+    curated.title?.toLowerCase() === entry.displayName.toLowerCase() ||
+    (entry.website !== undefined &&
+      [curated.websiteUrl, ...curated.remotes.map((remote) => remote.url)].some(
+        (url) => url !== undefined && canonicalUrl(url) === canonicalUrl(entry.website!),
+      ))
+  );
+}
+
+/**
+ * The same service listed in several agents' stores: entries whose names agree once case and
+ * punctuation go, and whose websites, when both give one, share a domain.
+ */
+function storeTwinKey(entry: Pick<ProviderStoreEntry, "displayName">): string {
+  return entry.displayName.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Hosts where every subdomain is somebody else's site. */
+const SHARED_HOSTS = [
+  "github.io",
+  "gitlab.io",
+  "vercel.app",
+  "netlify.app",
+  "pages.dev",
+  "workers.dev",
+  "web.app",
+  "firebaseapp.com",
+  "herokuapp.com",
+  "onrender.com",
+  "fly.dev",
+  "azurewebsites.net",
+  "readthedocs.io",
+  "gitbook.io",
+  "notion.site",
+  "substack.com",
+  "webflow.io",
+  "wixsite.com",
+  "blogspot.com",
+];
+/** Second-level labels country suffixes use: co.uk, com.au, ac.il. */
+const COUNTRY_SECOND_LEVEL: Readonly<Record<string, true>> = {
+  co: true,
+  com: true,
+  org: true,
+  net: true,
+  ac: true,
+  gov: true,
+  edu: true,
+  ne: true,
+  or: true,
+  go: true,
+};
+
+/** Hosts of code and packages: a plugin's homepage there says where it lives, not whose it is. */
+const CODE_HOSTS: Readonly<Record<string, true>> = {
+  "github.com": true,
+  "gitlab.com": true,
+  "bitbucket.org": true,
+  "npmjs.com": true,
+  "www.npmjs.com": true,
+  "pypi.org": true,
+};
+
+/**
+ * The site a website belongs to: developers.zoom.us and zoom.us are one site; foo.co.uk and
+ * bar.co.uk, or two github.io pages, are not. A repository page names no site.
+ */
+const siteDomain = (url: string | undefined) => {
+  let host: string;
+  try {
+    if (!url) return undefined;
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/u, "");
+  } catch {
+    return undefined;
+  }
+  if (CODE_HOSTS[host] === true) return undefined;
+  if (SHARED_HOSTS.some((shared) => host === shared || host.endsWith(`.${shared}`))) return host;
+  const labels = host.split(".");
+  const countrySuffix =
+    labels.length >= 3 &&
+    labels.at(-1)!.length === 2 &&
+    COUNTRY_SECOND_LEVEL[labels.at(-2)!] === true;
+  return labels.slice(countrySuffix ? -3 : -2).join(".");
+};
+
+export function areStoreTwins(
+  a: Pick<ProviderStoreEntry, "displayName" | "website">,
+  b: Pick<ProviderStoreEntry, "displayName" | "website">,
+): boolean {
+  if (storeTwinKey(a) !== storeTwinKey(b)) return false;
+  const [domainA, domainB] = [siteDomain(a.website), siteDomain(b.website)];
+  return domainA === undefined || domainB === undefined || domainA === domainB;
 }

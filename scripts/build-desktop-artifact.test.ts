@@ -1240,6 +1240,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/resources/browser-secret/**/*",
       "!apps/desktop/prod-resources/browser-secret",
       "!apps/desktop/prod-resources/browser-secret/**/*",
+      "!apps/desktop/prod-resources/apple-speech",
+      "!apps/desktop/prod-resources/apple-speech/**/*",
       "!apps/desktop/prod-resources/windows-server",
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
@@ -1312,7 +1314,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslPrebuild.asarUnpack, win.asarUnpack);
-      assert.deepStrictEqual(mac.extraResources, [...DESKTOP_EXTRA_RESOURCES]);
+      assert.deepStrictEqual(mac.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        { from: "apps/desktop/prod-resources/apple-speech", to: "apple-speech" },
+      ]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,

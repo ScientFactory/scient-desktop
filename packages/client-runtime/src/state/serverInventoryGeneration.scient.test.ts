@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./runtime.ts";
 import { expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
@@ -181,10 +182,15 @@ const makeInventoryHarness = Effect.fn("TestInventory.makeHarness")(function* (
     );
   });
   const start = (input: RefreshInput) =>
-    server.refreshProviders.run(registry, {
-      environmentId: TARGET.environmentId,
-      input,
-    });
+    runAtomCommand(
+      registry,
+      server.refreshProviders,
+      {
+        environmentId: TARGET.environmentId,
+        input,
+      },
+      { reportFailure: false },
+    );
   const complete = Effect.fn("TestInventory.complete")(function* (
     input: RefreshInput,
     reply: ServerProviderUpdatedPayload,

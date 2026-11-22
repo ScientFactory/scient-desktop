@@ -6,7 +6,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { AccountServiceItem, accountServicesFor } from "./AccountServicePages";
-import { isAccountServiceStoreEntry } from "./accountServices";
+import { isAccountServiceStoreEntry, storeEntryAudience } from "./accountServices";
 import { extensionCategoryDescription, extensionCategoryTitle } from "./extensionCategoryCopy";
 import { Link, Navigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
@@ -27,7 +27,8 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { AddYourOwn } from "./AddYourOwn";
-import { ProviderStoreShelves, StoreInstall } from "./ProviderStorePages";
+import { ProviderStoreShelves } from "./ProviderStorePages";
+import { StoreInstall } from "./StoreInstall";
 import { ConnectorItem, EntryItem, PluginItem } from "./ExtensionItems";
 import {
   BackLink,
@@ -51,6 +52,8 @@ import {
   isExtensionCategory,
   matchesQuery,
   showsKind,
+  areStoreTwins,
+  storeMatches,
 } from "./extensionsView";
 import { AgentSkills } from "../skills/AgentSkills";
 import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
@@ -463,55 +466,44 @@ export function DiscoverPage({ kind }: { readonly kind?: ExtensionKind | undefin
   );
 }
 
-function canonicalUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.hash = "";
-    return url.href.replace(/\/$/u, "");
-  } catch {
-    return value;
-  }
-}
-function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
-  return (
-    curated.agentStores?.codex === entry.name ||
-    curated.name === entry.id ||
-    curated.name === entry.name ||
-    curated.title?.toLowerCase() === entry.displayName.toLowerCase() ||
-    (entry.website !== undefined &&
-      [curated.websiteUrl, ...curated.remotes.map((remote) => remote.url)].some(
-        (url) => url !== undefined && canonicalUrl(url) === canonicalUrl(entry.website!),
-      ))
-  );
-}
-
 interface StoreGroup {
-  readonly key: "claude" | "codex";
+  readonly key: "claude" | "codex" | "antigravity";
   readonly title: string;
   readonly providers: ReadonlyArray<ServerProvider>;
 }
 
+const STORE_GROUP_KIND = {
+  claude: "shared",
+  codex: "codex",
+  antigravity: "antigravity",
+} as const satisfies Record<StoreGroup["key"], ProviderStoreEntry["kind"]>;
+
 /**
- * One section per store: Codex's plugins reach Codex; Claude's marketplaces serve Claude and
- * Scient Agent alike, so their entries share one section whichever agent listed them.
+ * One section per store: Codex's plugins reach Codex and the Antigravity Marketplace's reach
+ * Antigravity; Claude's marketplaces serve Claude and Scient Agent alike, so their entries share
+ * one section whichever agent listed them.
  */
 function storeGroups(
   targets: ReadonlyArray<ServerProvider>,
   resolve: MessageResolver,
 ): ReadonlyArray<StoreGroup> {
   const groups: StoreGroup[] = [];
-  for (const key of ["claude", "codex"] as const) {
+  for (const key of ["claude", "codex", "antigravity"] as const) {
     const providers = targets.filter((provider) =>
-      key === "codex" ? provider.driver === "codex" : provider.driver !== "codex",
+      key === "claude"
+        ? provider.driver !== "codex" && provider.driver !== "antigravity"
+        : provider.driver === key,
     );
     const first = providers.find((provider) => provider.driver === "claudeAgent") ?? providers[0];
     if (!first) continue;
     const name =
       first.driver === "codex"
         ? "Codex"
-        : first.driver === "claudeAgent"
-          ? "Claude"
-          : (first.displayName ?? "Scient Agent");
+        : first.driver === "antigravity"
+          ? "Antigravity"
+          : first.driver === "claudeAgent"
+            ? "Claude"
+            : (first.displayName ?? "Scient Agent");
     groups.push({ key, title: resolve(msg("From {name}’s store", { name })), providers });
   }
   return groups;
@@ -554,10 +546,18 @@ function StoreSection({
 }) {
   const gt = useGT();
   const resolve = useMessages();
-  const audience = providerStoreAudience(
+  const { providers } = useExtensionsEnvironment();
+  // The store's own reach, unless a row built on a ChatGPT app reaches further.
+  const storeAudience = providerStoreAudience(
     group.providers[0]!,
-    group.key === "codex" ? "codex" : "shared",
+    STORE_GROUP_KIND[group.key],
+    providers,
   );
+  const reachesFurther =
+    storeAudience.layer === "agent" &&
+    rows.some(
+      ({ provider, entry }) => storeEntryAudience(provider, entry, providers).layer === "account",
+    );
   // Each store's latest page says whether it has more; one button asks every store in the group.
   const next = group.providers.flatMap((provider): Array<readonly [string, string]> => {
     const latest = pages.filter((page) => page.provider === provider).at(-1);
@@ -587,7 +587,11 @@ function StoreSection({
     <ExtensionsSection
       title={group.title}
       action={
-        <span className="text-xs text-muted-foreground">{audienceLabel(audience, resolve)}</span>
+        <span className="text-xs text-muted-foreground">
+          {reachesFurther
+            ? gt("Codex, and Scient Agent through ChatGPT apps")
+            : audienceLabel(storeAudience, resolve)}
+        </span>
       }
     >
       {messages.map((message) => (
@@ -606,7 +610,7 @@ function StoreSection({
                 name={entry.displayName}
                 iconUrl={entry.iconUrl}
                 tagline={entry.description}
-                audience={audience}
+                audience={storeEntryAudience(provider, entry, providers)}
                 trailing={
                   <StoreInstall provider={provider} entry={entry} refresh={refresh} compact />
                 }
@@ -639,7 +643,7 @@ function categoryStoreTargets(
     (provider) =>
       category !== "most-used" &&
       providerAvailable(provider) &&
-      ["codex", "claudeAgent", "scient"].includes(provider.driver),
+      ["codex", "claudeAgent", "scient", "antigravity"].includes(provider.driver),
   );
 }
 
@@ -752,7 +756,22 @@ function CategoryContents({
     matchesQuery(query, [entry.title, entry.description, entry.name]),
   );
   const ready = picks.data !== null || picks.error !== null;
-  const storeReady = pages.every(({ result }) => !AsyncResult.isInitial(result));
+  // A service several stores list shows once, in the first store's section; its page then lists
+  // every agent's copy.
+  const listed: Array<ProviderStoreEntry> = [];
+  const groupRows = (group: StoreGroup) =>
+    stores.filter(({ provider, entry }) => {
+      if (
+        !group.providers.includes(provider) ||
+        curated.some((pick) => storeMatches(entry, pick)) ||
+        isAccountServiceStoreEntry(entry) ||
+        !matchesQuery(query, [entry.name, entry.displayName, entry.description]) ||
+        listed.some((kept) => areStoreTwins(kept, entry))
+      )
+        return false;
+      listed.push(entry);
+      return true;
+    });
   return (
     <>
       <ExtensionsSection title={gt("Scient’s picks")}>
@@ -786,13 +805,7 @@ function CategoryContents({
               ready={ready}
               slow={slow}
               pages={pages.filter(({ provider }) => group.providers.includes(provider))}
-              rows={stores.filter(
-                ({ provider, entry }) =>
-                  group.providers.includes(provider) &&
-                  !curated.some((pick) => storeMatches(entry, pick)) &&
-                  !isAccountServiceStoreEntry(entry) &&
-                  matchesQuery(query, [entry.name, entry.displayName, entry.description]),
-              )}
+              rows={groupRows(group)}
               more={more}
               onMore={(cursors) =>
                 setMore((current) => {
@@ -811,21 +824,6 @@ function CategoryContents({
               </MutedLine>
             </ExtensionsSection>
           ) : null}
-          <ExtensionsSection title={gt("More from the MCP Registry")}>
-            <MutedLine>
-              <T>Not checked by Scient</T>
-            </MutedLine>
-            <ExtensionGrid label={gt("More from the MCP Registry")}>
-              {ready && storeReady ? (
-                <DiscoverPager
-                  input={{ scope: "registry", category, ...(query ? { query } : {}) }}
-                  seen={new Set(curated.map((entry) => entry.name))}
-                  hide={(entry) => stores.some((store) => storeMatches(store.entry, entry))}
-                  pendingLabel={gt("Searching the MCP Registry…")}
-                />
-              ) : null}
-            </ExtensionGrid>
-          </ExtensionsSection>
         </>
       ) : null}
     </>

@@ -13,10 +13,10 @@ import {
   type OpenPreviewMutation,
 } from "~/browser/openFileInPreview";
 import { workspaceFileHostPath } from "~/components/files/filePath";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { rightPanelHostRef, useRightPanelStore } from "~/rightPanelStore";
 import type { usePreparedConnection } from "~/state/session";
 import { isAbsolutePath } from "@t3tools/shared/path";
-import { claimWorkspaceBasenameLookup } from "@t3tools/client-runtime/workspace-basename-lookup";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import {
   chatFileLinkResolveInput,
@@ -38,9 +38,15 @@ type OpenInPreviewResult = Promise<AtomCommandResult<unknown, unknown>>;
  * a newer link click, or anything done in the panel, supersedes it.
  */
 function claimFileLinkClick(threadRef: ScopedThreadRef): () => boolean {
+  // As for upstream chat file links, the click counts as a user action on the panel it opens.
+  const panelRef = rightPanelHostRef(threadRef);
+  const panelKey = scopedThreadKey(panelRef);
   return claimLinkClick({
-    claimLatest: claimWorkspaceBasenameLookup,
-    readUserActionRevision: () => useRightPanelStore.getState().getUserActionRevision(threadRef),
+    claimLatest: () => {
+      useRightPanelStore.getState().markUserAction(panelRef);
+      return () => scopedThreadKey(rightPanelHostRef(threadRef)) === panelKey;
+    },
+    readUserActionRevision: () => useRightPanelStore.getState().getUserActionRevision(panelRef),
   });
 }
 

@@ -9,6 +9,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import { piContextExtension } from "./contextExtension.ts";
 import {
@@ -212,7 +213,20 @@ describe("Pi orchestration prompt section", () => {
       assert.isDefined(result);
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
+      assert.include(result!.systemPrompt, PULL_REQUEST_LINKING_INSTRUCTIONS);
     }
+  });
+
+  it("sets the guidance section on Pi builds with prompt sections", async () => {
+    const bridge = await loadMcpBridge();
+    const sections: Record<string, string> = {};
+    const result = await bridge.handlers.get("before_agent_start")!(
+      { systemPrompt: "base", systemPromptOptions: { sections } },
+      { ui: { notify: assert.fail } },
+    );
+    assert.isUndefined(result);
+    assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    assert.include(sections.t3_code_orchestration, PULL_REQUEST_LINKING_INSTRUCTIONS);
   });
 });
 

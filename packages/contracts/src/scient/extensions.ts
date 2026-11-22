@@ -655,7 +655,7 @@ export type DiscoverSearchScope = typeof DiscoverSearchScope.Type;
 export const DiscoverSearchInput = Schema.Struct({
   scope: DiscoverSearchScope,
   query: Schema.optional(Schema.String),
-  /** Curated membership or server-owned Registry keyword searches. */
+  /** `curated` only: the category's browsable picks (community servers are search-only). */
   category: Schema.optional(ExtensionCategory),
   /** `registry` only: the registry's paging cursor. */
   cursor: Schema.optional(TrimmedNonEmptyString),

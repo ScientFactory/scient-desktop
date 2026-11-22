@@ -1,4 +1,5 @@
 import type { OrchestrationV2ThreadShell, ProviderInstanceId } from "@t3tools/contracts";
+import { hasPendingBackgroundSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 /**
  * Background subagents can outlive their run and still use its thread credential. Keep the caller
@@ -16,7 +17,4 @@ export const isLiveCallerShell = (
   shell.archivedAt === null &&
   shell.providerInstanceId === providerInstanceId &&
   (shell.activeRunId !== null ||
-    (shell.pendingBackgroundTasks?.some(
-      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
-    ) ??
-      false));
+    hasPendingBackgroundSubagent(shell.pendingBackgroundTasks, providerInstanceId));

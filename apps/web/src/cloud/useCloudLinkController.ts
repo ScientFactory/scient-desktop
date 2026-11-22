@@ -17,7 +17,11 @@ import { m } from "../i18n/messages";
 import { stackedThreadToast } from "../components/ui/toastHelpers";
 import { relayFailureReason } from "./relayFailureReason";
 import { relayEnvironmentDiscovery } from "../state/relay";
-import { readEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentCanConfigureRelay,
+  readEnvironmentScope,
+  useEnvironmentCanConfigureRelay,
+} from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { isCloudEnvironmentLinkError } from "./linkEnvironment";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
@@ -31,7 +35,7 @@ import {
 } from "./linkEnvironmentAtoms";
 import { readCachedCloudLinkState, useCloudLinkState } from "./cloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
-import { isManagedTunnelActive } from "./t3ConnectState";
+import { cloudChangeReplacesLink, isManagedTunnelActive } from "./t3ConnectState";
 // SCIENT-FORK:START — scient/connect: the desktop's own computer is set up by its server.
 import {
   authorizeScientConnect,
@@ -129,6 +133,11 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
   const publishAgentActivity = cloudLinkState.data?.publishAgentActivity ?? false;
   const holdWebhooksWhileOffline = cloudLinkState.data?.holdWebhooksWhileOffline ?? false;
   const linked = !linkRevoked && (cloudLinkState.data?.linked ?? false);
+  const canConfigureRelay = useEnvironmentCanConfigureRelay(environmentId);
+  const needsRelayConfiguration = (desired: CloudLinkDesiredState) =>
+    !canConfigureRelay &&
+    linkData !== null &&
+    cloudChangeReplacesLink(linkData, relayProviderKind, desired);
 
   const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
     setOperationError(null);
@@ -304,15 +313,24 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         ((desired.managedTunnel && !isManagedTunnelActive(currentLinkState, relayProviderKind)) ||
           (desired.publish && !currentLinkState.publishAgentActivity));
       // SCIENT-FORK:END
-      const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
       if (
         // SCIENT-FORK:START
         switchAccount ||
         // SCIENT-FORK:END
-        !currentLinkState.linked ||
-        currentLinkState.linkRevoked === true ||
-        currentManagedTunnel !== desired.managedTunnel
+        cloudChangeReplacesLink(currentLinkState, relayProviderKind, desired)
       ) {
+        if (!readEnvironmentCanConfigureRelay(environmentId)) {
+          reportUpdateFailure(
+            new Error(
+              m(
+                msg(
+                  "This connection needs the relay configuration permission to configure Scient Connect.",
+                ),
+              ),
+            ),
+          );
+          return false;
+        }
         // SCIENT-FORK:START
         const linkResult = await (switchAccount ? switchEnvironmentAccount : linkEnvironment)({
           // SCIENT-FORK:END
@@ -374,6 +392,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
     holdWebhooksWhileOffline,
     operationError,
     tunnelLimit,
+    needsRelayConfiguration,
     reconcileCloudState,
   };
 }

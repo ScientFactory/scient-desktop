@@ -46,12 +46,15 @@ const threadId = ThreadId.make("thread-held-queue");
 it.effect("reads an older client's queue.resume with a runId as queued-run.start", () =>
   Effect.gen(function* () {
     const captured: OrchestrationV2ServerCommand[] = [];
-    yield* dispatchCommand({
-      type: "queue.resume",
-      commandId: CommandId.make("older-client-send"),
-      threadId,
-      runId: RunId.make("second-held-run"),
-    }).pipe(Effect.provide(capturingDispatch(captured)), Effect.result);
+    yield* dispatchCommand(
+      {
+        type: "queue.resume",
+        commandId: CommandId.make("older-client-send"),
+        threadId,
+        runId: RunId.make("second-held-run"),
+      },
+      { managesProviders: true },
+    ).pipe(Effect.provide(capturingDispatch(captured)), Effect.result);
     expect(captured).toEqual([
       {
         type: "queued-run.start",
@@ -71,7 +74,10 @@ it.effect("passes a plain queue.resume through unchanged", () =>
       commandId: CommandId.make("resume-queue"),
       threadId,
     };
-    yield* dispatchCommand(resume).pipe(Effect.provide(capturingDispatch(captured)), Effect.result);
+    yield* dispatchCommand(resume, { managesProviders: true }).pipe(
+      Effect.provide(capturingDispatch(captured)),
+      Effect.result,
+    );
     expect(captured).toEqual([resume]);
   }).pipe(Effect.provide(layerIntake)),
 );

@@ -321,6 +321,37 @@ const SIGN_IN_FAILURE_REASONS = new Set([
 ]);
 const SIGN_IN_PAGES = new Set(["primary", "manual_fallback", "none"]);
 const TOOL_SERVER_OWNERS = new Set(["scient", "connector", "user", "unknown"]);
+const ENDPOINT_SCHEMES = new Set(["http", "https"]);
+const ENDPOINT_SOURCES = new Set(["claude-settings", "environment"]);
+// A DNS name, IPv4 address or bracketed IPv6 address: never a path, link or credential.
+const ENDPOINT_HOST_PATTERN =
+  /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$|^\[[0-9A-Fa-f:.]{2,45}\]$/;
+
+/** The custom API endpoint an account sends its requests to, split so no field is a link. */
+function accountEndpointProperties(
+  input: Readonly<Record<string, unknown>>,
+): Record<string, string | number> {
+  // Read every field first: an unread key would pass through unvalidated.
+  const rawHost = property(input, "endpointHost");
+  // A fully qualified name's root dot names the same host.
+  const host = typeof rawHost === "string" ? rawHost.replace(/\.$/u, "") : rawHost;
+  const scheme = property(input, "endpointScheme");
+  const source = property(input, "endpointSource");
+  const port = property(input, "endpointPort");
+  if (typeof host !== "string" || !ENDPOINT_HOST_PATTERN.test(host)) return {};
+  return {
+    endpointHost: host.toLowerCase(),
+    ...(typeof scheme === "string" && ENDPOINT_SCHEMES.has(scheme)
+      ? { endpointScheme: scheme }
+      : {}),
+    ...(typeof source === "string" && ENDPOINT_SOURCES.has(source)
+      ? { endpointSource: source }
+      : {}),
+    ...(typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65_535
+      ? { endpointPort: port }
+      : {}),
+  };
+}
 const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
@@ -1428,6 +1459,7 @@ function normalizeEvent(
       const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : undefined;
       const plan = shortLabel(property(input, "plan"));
       const accountType = shortLabel(property(input, "accountType"));
+      const endpoint = accountEndpointProperties(input);
       const accountEmail =
         email !== undefined && isAllowedAccountEmail(name, "email", email) ? email : undefined;
       if (accountEmail === undefined && plan === undefined && accountType === undefined)
@@ -1441,6 +1473,7 @@ function normalizeEvent(
           ...(accountEmail === undefined ? {} : { email: accountEmail }),
           ...(plan === undefined ? {} : { plan }),
           ...(accountType === undefined ? {} : { accountType }),
+          ...endpoint,
         },
       };
     }
@@ -1749,6 +1782,8 @@ function normalizeEvent(
             started: "boolean",
             // Whose tool server failed to start, for a failure caused by one.
             toolServerOwner: TOOL_SERVER_OWNERS,
+            // The request went to a custom API endpoint the user configured.
+            customEndpoint: "boolean",
           }),
           ...turnRunProperties(input),
           ...failureCodeProperty(provider, input),

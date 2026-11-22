@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type AtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  type AtomCommand,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { createScientSourcesCommands } from "@t3tools/client-runtime/state/scient-sources-commands";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
@@ -16,7 +20,12 @@ export async function runSourcesCommand<I, A, E>(
   environmentId: EnvironmentId,
   input: I,
 ): Promise<A> {
-  const result = await command.run(appAtomRegistry, { environmentId, input });
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    command,
+    { environmentId, input },
+    { reportFailure: false },
+  );
   libraryWriteSettled(environmentId);
   if (result._tag === "Success") return result.value;
   throw squashAtomCommandFailure(result);

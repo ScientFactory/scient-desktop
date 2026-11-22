@@ -4,11 +4,15 @@ import {
 } from "./scient/threadTimeline/presentation";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { msg } from "gt-react";
+// SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
+import { customEndpointFailureNote } from "./scient/providerConnection/customEndpointFailureNote";
+// SCIENT-FORK:END
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   checkpointSupportsRewind,
   type AssetResource,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -37,6 +41,7 @@ import {
   workEntryIndicatesToolFailure,
 } from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { repositoryCheckpointScopeIds } from "@t3tools/client-runtime/state/thread-repositories";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -334,7 +339,11 @@ export function providerErrorPresentation(
         item.failure.class === "usage_limit"
           ? resolve(msg("Usage limit reached"))
           : item.title?.trim() || resolve(msg("Provider error")),
-      detail: item.failure.message,
+      // SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
+      detail: [item.failure.message, customEndpointFailureNote(item.failure, resolve)]
+        .filter((part) => part !== null)
+        .join("\n\n"),
+      // SCIENT-FORK:END
     };
   }
   const progress =
@@ -1204,19 +1213,28 @@ function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "sta
 }
 
 export function findRevertCheckpoint(
-  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  projection:
+    | Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">
+    | null
+    | undefined,
   turnCount: number,
 ): OrchestrationV2Checkpoint | undefined {
+  if (projection == null) return undefined;
+  // A tracked repository's baseline also sits at ordinal zero; it is never a rewind target.
+  const repositoryScopeIds = repositoryCheckpointScopeIds(projection.checkpointScopes);
   const atTurn = (checkpoint: OrchestrationV2Checkpoint) =>
-    turnCount === 0
+    !repositoryScopeIds.has(checkpoint.scopeId) &&
+    (turnCount === 0
       ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
-      : checkpoint.appRunOrdinal === turnCount;
+      : checkpoint.appRunOrdinal === turnCount);
   // SCIENT-FORK: prefer a captured snapshot; any current boundary still rewinds the conversation.
   return (
-    checkpoints.findLast(
+    projection.checkpoints.findLast(
       (checkpoint) => checkpointSupportsRewind(checkpoint, true) && atTurn(checkpoint),
     ) ??
-    checkpoints.findLast((checkpoint) => isRewindableCheckpoint(checkpoint) && atTurn(checkpoint))
+    projection.checkpoints.findLast(
+      (checkpoint) => isRewindableCheckpoint(checkpoint) && atTurn(checkpoint),
+    )
   );
 }
 

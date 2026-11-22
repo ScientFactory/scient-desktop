@@ -155,6 +155,31 @@ remaining wait when Claude reports a reset time. Claude may keep the turn open u
 reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
 when its displayed wait began.
 
+## Claude shows "Custom API endpoint"
+
+Claude sends its requests to Anthropic unless `ANTHROPIC_BASE_URL` points it somewhere else, such
+as OpenRouter or a local router. When it does, Settings → Providers shows **Custom API endpoint**
+and the line under it names that server and where the setting comes from:
+
+- **Claude's settings**: the `env` section of `~/.claude/settings.json` (or the file in this
+  provider's `CLAUDE_CONFIG_DIR`), a project's `.claude/settings.json`, or a `--settings` launch
+  argument. Another tool may have written it, or it may remain from an earlier Claude Code setup.
+- **Environment variable**: this provider's Environment variables in Scient, or a variable set on
+  your computer.
+
+Signing in to a Claude account does not change where requests go. If you did not mean to use
+another server, remove `ANTHROPIC_BASE_URL` from that place and restart Scient. A failed turn on a
+custom endpoint names the server it went to under the error.
+
+## Steering
+
+A steer waits until Claude finishes the tool calls it is running, then Claude reads it
+in the same turn. The message shows as unread until then. If Claude drops it before
+reading it, the message is sent as the next turn, after any messages queued before it.
+If Claude exits or the server restarts first, the message waits in the queue in that
+same place until you resume it. If you press Stop, Scient shows a notice with the text
+of any steer Claude had not read.
+
 ## Where Claude Skills Are Loaded
 
 Scient looks for local Claude skills in the Claude config directory's `skills` folder and
@@ -178,6 +203,15 @@ To show Claude task lists in the web and desktop apps, add
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step. Unfinished tasks also stay in a bar
 above the composer until they are done, the session changes, or you dismiss them.
+
+## Sign in to an MCP server
+
+When an MCP server you added to Claude needs you to sign in, the thread shows a notice with
+**Sign in**, once per session; on mobile, tap the notice. Approve access on the page it opens. Your
+browser then goes to a page that may not load, especially when Claude runs on another machine:
+copy that page's address, paste it into Scient, and choose **Finish sign-in**. Claude keeps the
+sign-in and reconnects the server, and **Extensions** shows it signed in. Connectors you added on claude.ai are signed in on claude.ai,
+so Scient doesn't ask about them. Signing in needs permission to manage providers.
 
 ## Claude in Chrome
 

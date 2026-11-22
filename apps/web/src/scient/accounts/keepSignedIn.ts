@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { GOOGLE_SITE, type AccountSummary, type EnvironmentId } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
 import {
@@ -103,7 +104,12 @@ export function watchKeepSignedIn(
   if (!visit) return () => undefined;
   const key = `scient:quiet-visits:${environmentId}`;
   const tick = async () => {
-    const snapshot = await accountsState.readSnapshot.run(registry, { environmentId, input: {} });
+    const snapshot = await runAtomCommand(
+      registry,
+      accountsState.readSnapshot,
+      { environmentId, input: {} },
+      { reportFailure: false },
+    );
     if (snapshot._tag !== "Success") return;
     const visits = readVisits(key);
     const now = Date.now();
@@ -122,10 +128,15 @@ export function watchKeepSignedIn(
       }),
     );
     if (ended)
-      await accountsState.sessionEnded.run(registry, {
-        environmentId,
-        input: { accountId: target.accountId },
-      });
+      await runAtomCommand(
+        registry,
+        accountsState.sessionEnded,
+        {
+          environmentId,
+          input: { accountId: target.accountId },
+        },
+        { reportFailure: false },
+      );
   };
   const timer = setInterval(() => void tick(), TICK_MS);
   return () => clearInterval(timer);

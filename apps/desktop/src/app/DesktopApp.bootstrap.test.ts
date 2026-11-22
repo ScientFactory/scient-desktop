@@ -46,6 +46,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
+import * as AppleSpeech from "../speech/AppleSpeech.ts";
 import * as BrowserImport from "../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as LoopbackTunnel from "../preview/LoopbackTunnel.ts";
@@ -279,6 +280,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       }),
       Layer.mock(BrowserImport.BrowserImport, {}),
       Layer.mock(MacPermissions.MacPermissions, {}),
+      Layer.mock(AppleSpeech.AppleSpeech, {}),
       Layer.mock(DesktopWebLinks.DesktopWebLinks, {}),
     );
     const exit = yield* DesktopApp.program.pipe(Effect.provide(services), Effect.exit);

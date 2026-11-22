@@ -28,6 +28,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as NetService from "@t3tools/shared/Net";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -76,6 +77,7 @@ const layerCliAuthority = Layer.mergeAll(
     ),
     Layer.provide(VcsProcess.layer),
     Layer.provide(FetchHttpClient.layer),
+    Layer.provide(FeatureFlags.layerTest()),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
     Layer.provide(
@@ -111,33 +113,60 @@ const readStoredProjects = (baseDir: string) =>
   }).pipe(Effect.provide(ProjectStore.layer.pipe(Layer.provide(layerPersistence(baseDir)))));
 
 // Archives a stored project the way the archive command records it.
-const archiveStoredProject = (baseDir: string, projectId: ProjectId) =>
+const archiveStoredProject = (
+  baseDir: string,
+  projectId: ProjectId,
+  trackedFolders: ReadonlyArray<{ readonly path: string; readonly name: string }> = [],
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
       UPDATE projection_projects
-      SET archived_at = '2026-01-02T00:00:00.000Z'
+      SET archived_at = '2026-01-02T00:00:00.000Z',
+        tracked_folders_json = ${JSON.stringify(trackedFolders)}
       WHERE project_id = ${projectId}
     `;
   }).pipe(Effect.provide(layerPersistence(baseDir)));
 
-it.effect("adds, renames, and removes projects through the V2 project CLI domain", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-cli-" });
-    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-workspace-" });
+it.effect(
+  "adds, renames, and removes projects, and tracks folders on add, through the V2 project CLI domain",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-cli-" });
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-v2-project-workspace-",
+      });
 
-    yield* runCli(["project", "add", workspaceRoot, "--title", "Alpha", "--base-dir", baseDir]);
-    const added = (yield* readStoredProjects(baseDir)).projects[0];
-    assert.equal(added?.title, "Alpha");
-    assert.equal(added?.workspaceRoot, workspaceRoot);
+      yield* runCli(["project", "add", workspaceRoot, "--title", "Alpha", "--base-dir", baseDir]);
+      const added = (yield* readStoredProjects(baseDir)).projects[0];
+      assert.equal(added?.title, "Alpha");
+      assert.equal(added?.workspaceRoot, workspaceRoot);
 
-    yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
-    assert.equal((yield* readStoredProjects(baseDir)).projects[0]?.title, "Beta");
+      yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
+      assert.equal((yield* readStoredProjects(baseDir)).projects[0]?.title, "Beta");
 
-    yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
-    assert.deepEqual((yield* readStoredProjects(baseDir)).projects, []);
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
+      assert.deepEqual((yield* readStoredProjects(baseDir)).projects, []);
+
+      // Repositories inside the folder are found; `--track` adds one from outside it.
+      const shared = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-shared-" });
+      yield* fs.makeDirectory(NodePath.join(workspaceRoot, "api", ".git"), { recursive: true });
+      yield* fs.makeDirectory(NodePath.join(workspaceRoot, "notes"));
+      yield* runCli([
+        "project",
+        "add",
+        workspaceRoot,
+        "--track",
+        `${shared}${NodePath.sep}`,
+        "--base-dir",
+        baseDir,
+      ]);
+      assert.deepEqual((yield* readStoredProjects(baseDir)).projects[0]?.trackedFolders, [
+        { path: NodePath.join(workspaceRoot, "api"), name: "api", discovered: true },
+        { path: shared, name: NodePath.basename(shared) },
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each(["snapshot", "mutation"] as const)(
@@ -167,7 +196,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
           const isMutation = init?.method === "POST";
           if (isMutation) mutations++;
           else snapshotRequests++;
-          if (slowRequest === "mutation" ? isMutation : !isMutation && snapshotRequests === 2) {
+          if (slowRequest === "mutation" ? isMutation : !isMutation) {
             requestReceived.resolve();
             await releaseResponse.promise;
           }
@@ -198,7 +227,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
       releaseResponse.resolve();
       yield* Fiber.join(add);
 
-      assert.equal(snapshotRequests, 2);
+      assert.equal(snapshotRequests, 1);
       assert.equal(mutations, 1);
       assert.deepEqual((yield* readStoredProjects(baseDir)).projects, []);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -248,16 +277,35 @@ const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixt
 });
 
 it.effect.each([
-  { label: "keeps its title", titleArgs: [], expectedTitle: undefined },
-  { label: "applies --title", titleArgs: ["--title", " Back again "], expectedTitle: "Back again" },
+  { label: "keeps its title", args: [], expectedTitle: undefined, named: false },
+  {
+    label: "applies --title",
+    args: ["--title", " Back again "],
+    expectedTitle: "Back again",
+    named: false,
+  },
+  { label: "adds the --track folders to the ones it had", args: [], named: true },
 ])(
   "adding an archived project's folder again unarchives it and $label",
-  ({ titleArgs, expectedTitle }) =>
+  ({ args, expectedTitle, named }) =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
-      yield* archiveStoredProject(baseDir, project.id);
+      const kept = { path: NodePath.join(baseDir, "..", "cli-kept"), name: "Kept" };
+      const added = { path: NodePath.join(baseDir, "..", "cli-named"), name: "cli-named" };
+      yield* fs.makeDirectory(kept.path);
+      yield* fs.makeDirectory(added.path);
+      yield* archiveStoredProject(baseDir, project.id, [kept]);
 
-      yield* runCli(["project", "add", workspaceRoot, ...titleArgs, "--base-dir", baseDir]);
+      yield* runCli([
+        "project",
+        "add",
+        workspaceRoot,
+        ...args,
+        ...(named ? ["--track", kept.path, "--track", added.path] : []),
+        "--base-dir",
+        baseDir,
+      ]);
 
       const projects = (yield* readStoredProjects(baseDir)).projects;
       assert.deepEqual(
@@ -265,8 +313,16 @@ it.effect.each([
           id: entry.id,
           title: entry.title,
           archivedAt: entry.archivedAt,
+          trackedFolders: entry.trackedFolders,
         })),
-        [{ id: project.id, title: expectedTitle ?? project.title, archivedAt: null }],
+        [
+          {
+            id: project.id,
+            title: expectedTitle ?? project.title,
+            archivedAt: null,
+            trackedFolders: named ? [kept, added] : [kept],
+          },
+        ],
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
 );

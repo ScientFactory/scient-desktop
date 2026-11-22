@@ -130,6 +130,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           if (!fs.existsSync(process.env.COMMAND_RELEASE)) return;
           clearInterval(held);
           update({ sessionUpdate: "tool_call_update", toolCallId: "short-1", status: "completed", rawOutput: "synthetic" });
+          // Like agy, the reply that follows a finished command ends with its usage.
+          update({ sessionUpdate: "usage_update", used: 9000, size: 1048576 });
         }, 10);
       } else if (message.params.prompt.some(part => part.text?.includes("Launch batch"))) {
         update({ sessionUpdate: "tool_call", toolCallId: "batch-1", kind: "other", status: "completed", title: "Running start_subagent", rawOutput: "Started two agents." });

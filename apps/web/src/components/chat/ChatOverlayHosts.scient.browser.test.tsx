@@ -1,4 +1,4 @@
-import { MessageId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -16,6 +16,7 @@ import { retainThreadOverlaysForThread } from "./threadOverlayRetention";
 
 type Checkpoints = OrchestrationV2ThreadProjection["checkpoints"];
 
+const environmentId = EnvironmentId.make("environment-a");
 const messageId = MessageId.make("message-2");
 const checkpointAtTurn2 = (status: "ready" | "error") =>
   [{ appRunOrdinal: 2, ordinalWithinScope: 1, status }] as unknown as Checkpoints;
@@ -32,7 +33,12 @@ function Host(props: {
     <AppAtomRegistryProvider>
       <RevertConfirmHost
         threadKey={props.threadKey ?? "thread-a"}
-        checkpoints={props.checkpoints ?? checkpointAtTurn2("ready")}
+        environmentId={environmentId}
+        taskFolderPath={null}
+        projection={{
+          checkpoints: props.checkpoints ?? checkpointAtTurn2("ready"),
+          checkpointScopes: [],
+        }}
         worktreePath={props.worktreePath === undefined ? "/worktree" : props.worktreePath}
         onConfirm={props.onConfirm}
         reverting={props.reverting ?? false}
@@ -158,7 +164,9 @@ describe("the revert dialog with Scient's explanations", () => {
       <AppAtomRegistryProvider>
         <RevertConfirmHost
           threadKey="thread-a"
-          checkpoints={checkpointAtTurn2("error")}
+          environmentId={environmentId}
+          taskFolderPath={null}
+          projection={{ checkpoints: checkpointAtTurn2("error"), checkpointScopes: [] }}
           worktreePath="/worktree"
           onConfirm={onConfirm}
         />

@@ -11,6 +11,7 @@ import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
@@ -107,6 +108,7 @@ import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
+import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -189,6 +191,8 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
+import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -204,6 +208,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -705,6 +710,8 @@ export const buildAppUnderTest = (options?: {
         diffCheckpoints: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         listAuthoredPaths: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         deleteCheckpointRefs: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        resolveCleanHead: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        captureHeadCheckpoint: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
       },
       execute: () =>
         Effect.succeed({
@@ -808,6 +815,7 @@ export const buildAppUnderTest = (options?: {
       listLocalBranchNames: () => Effect.succeed([]),
       // Status refreshes read refs first; no snapshot always rereads local status.
       readRefSnapshot: () => Effect.succeed(null),
+      readLocalStatusRefSnapshot: () => Effect.succeed(null),
       ...options?.layers?.gitVcsDriver,
     });
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
@@ -850,6 +858,17 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(T3ProjectFileLoader.layer),
       ),
       NativeAppIconResolver.layer,
+      // Single-folder threads: no task folder and no other tracked folders.
+      Layer.mock(TaskFolders.TaskFolders)({
+        plan: () => Effect.succeed(null),
+        find: () => Effect.succeed(null),
+        createForProjectFolder: () => Effect.succeed(null),
+        removeIfTaskFolder: () => Effect.succeed(false),
+      }),
+      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+        forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+        submodules: () => Effect.succeed([]),
+      }),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
       Layer.provideMerge(vcsDriverRegistryLayer),
@@ -1060,6 +1079,8 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({
+              // Upstream's adapter registry reads the current manifest for version checks.
+              current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
               forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
               ...options?.layers?.modelManifest,
             }),
@@ -1259,6 +1280,7 @@ export const buildAppUnderTest = (options?: {
           ),
         ),
         Layer.provide(Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({})),
+        Layer.provide(ThreadViewers.layer),
         Layer.provide(
           Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
             getTurnDiff: () =>
@@ -1290,6 +1312,7 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(Layer.succeed(ComputeRecipeNetwork)(false)),
         // SCIENT-FORK:END
         Layer.provide(ManagedPolicy.layerTest()),
+        Layer.provide(FeatureFlags.layerTest()),
         // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
         Layer.provide(SecretResolver.layer.pipe(Layer.provide(serverSettingsLayer))),
       )
@@ -1456,7 +1479,9 @@ export const buildAppUnderTest = (options?: {
           };
         }),
         Layer.provideMerge(makeAuthTestLayer()),
-        Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
+        Layer.provideMerge(
+          Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer, WorkspacePreviewRevisions.layer),
+        ),
         Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(workspaceAndProjectServicesLayer),
         // Reuse the same fixture owners for dependencies introduced by later layers.

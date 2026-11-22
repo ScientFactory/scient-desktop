@@ -7,6 +7,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   ThreadId,
+  withMessageSenderNote,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -479,12 +480,14 @@ export const layer: Layer.Layer<
             skillPlanner,
           }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
           let text = prepared.text;
+          let catalogDropped = false;
           yield* validateScientV2SteerInput({
             prepared,
             attachments: message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
             useFallback: (fallback) => {
               text = fallback;
+              catalogDropped = true;
             },
           }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           // SCIENT-FORK:END
@@ -535,7 +538,7 @@ export const layer: Layer.Layer<
               ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,
-                text,
+                text: withMessageSenderNote(message, text),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
@@ -578,6 +581,8 @@ export const layer: Layer.Layer<
                 }),
               ),
             );
+          // SCIENT-FORK: the accepted steer carried the skill list, unless it went without it.
+          if (!catalogDropped) yield* prepared.recordCatalogDelivered;
         },
         (effect, input) =>
           effect.pipe(

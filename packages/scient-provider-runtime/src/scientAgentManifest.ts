@@ -7,7 +7,7 @@ import {
 import type { ManagedRuntimeTarget } from "./target.ts";
 
 const SCIENT_AGENT_MINIMUM_VERSION = "0.1.0";
-const SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE = "1.0.0";
+const SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE = "2.0.0";
 
 export function isSupportedScientAgentVersion(version: string): boolean {
   return (

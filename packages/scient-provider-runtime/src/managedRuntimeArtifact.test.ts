@@ -88,6 +88,21 @@ describe("managed runtime artifact hydration", () => {
     });
   });
 
+  it("judges a raw-only release by its family's download limit, but not one with a zstd copy", () => {
+    const receipt = managedRuntimeArtifactReceipt(policy);
+    const mib = 1024 * 1024;
+    expect(hydrateManagedRuntimeArtifact(policy, { ...receipt, size: 512 * mib })).toBeDefined();
+    expect(
+      hydrateManagedRuntimeArtifact(policy, { ...receipt, size: 512 * mib + 1 }),
+    ).toBeUndefined();
+    const larger = { ...policy, maxDownloadBytes: 1024 * mib };
+    expect(hydrateManagedRuntimeArtifact(larger, { ...receipt, size: 578 * mib })).toBeDefined();
+    const compressedOnly = { ...policy, compressedArtifactName: "codex.tar.gz.zst" };
+    expect(
+      hydrateManagedRuntimeArtifact(compressedOnly, { ...receipt, size: 600 * mib }),
+    ).toBeDefined();
+  });
+
   it("cannot widen provider, target, source path, or checksum policy", () => {
     const receipt = managedRuntimeArtifactReceipt(policy);
     expect(hydrateManagedRuntimeArtifact(policy, { ...receipt, provider: "grok" })).toBeUndefined();

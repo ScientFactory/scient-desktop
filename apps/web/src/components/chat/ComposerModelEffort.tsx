@@ -162,6 +162,9 @@ export function describeComposerEffort(
     detail: display.label,
     suffix: (
       <span
+        // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+        data-model-trigger-text="true"
+        // SCIENT-FORK:END
         className={cn(
           "flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground",
           // A word space after the model name: the regular trigger's gap is wider than one.

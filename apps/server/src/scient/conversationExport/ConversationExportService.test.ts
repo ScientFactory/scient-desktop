@@ -47,6 +47,7 @@ import { issueAssetUrl, resolveAsset } from "../../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as AssetSigner from "../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
@@ -255,6 +256,7 @@ const AssetTestLayer = ConversationExportFiles.layer.pipe(
         Layer.provide(T3ProjectFileLoader.layer),
       ),
       NativeAppIconResolver.layer,
+      WorkspacePreviewRevisions.layer,
       AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
     ),
   ),
@@ -1196,6 +1198,7 @@ const pdfTestLayer = (exports: ReturnType<typeof exportLayer>) =>
       Layer.provide(T3ProjectFileLoader.layer),
     ),
     NativeAppIconResolver.layer,
+    WorkspacePreviewRevisions.layer,
     AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
   ).pipe(Layer.provideMerge(exports));
 const PdfTestLayer = pdfTestLayer(TestLayer);

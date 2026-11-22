@@ -358,7 +358,7 @@ const make = Effect.gen(function* () {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_client_metadata",
           error_description:
-            "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
+            'Linked environments is off on that machine. Turn it on in its Settings → Labs, or without a desktop, set "linkedEnvironmentsEnabled": true in userdata/settings.json in its Scient home (~/.scient-next by default).',
         });
       }
       const clientId = yield* signClientId(name, redirectUris, peerLink);
@@ -634,6 +634,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     label: client.label,
                     access: client.access,
                     linked: client.peerLink,
+                    linkExpiresAt: client.linkExpiresAt,
                     ...(client.peerLink
                       ? {}
                       : { hostedAppUrl: hostedAppUrl ?? requestUrls(request).issuer }),

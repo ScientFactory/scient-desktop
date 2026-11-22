@@ -9,6 +9,7 @@ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay
 import * as Random from "effect/Random";
 import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
@@ -19,7 +20,7 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -106,9 +107,12 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
+import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
+import * as PeerClientPairingHttp from "./peer/http.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
+import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -148,6 +152,9 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
+import * as TaskFolderStore from "./workspace/TaskFolderStore.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -201,6 +208,10 @@ import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
 // SCIENT-FORK: thread room guest routes.
 import * as ThreadRoomHttp from "./scient/room/http.ts";
+// SCIENT-FORK:START
+import * as SignedUrlRouteMisses from "./scient/http/SignedUrlRouteMisses.ts";
+// SCIENT-FORK:END
+import * as LinkThreadHttp from "./peer/linkThreadHttp.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
@@ -238,6 +249,7 @@ import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsag
 import * as UsageService from "./usage/UsageService.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
+import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
@@ -269,6 +281,7 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
 import { libraryIndexWarmLayer } from "./scient/sources/LibraryIndexWarm.ts";
+import { retiredJournalIconCacheLayer } from "./scient/sources/RetiredJournalIconCache.ts";
 import { paperQueueRecoveryLayer } from "./scient/papers/PaperQueueRecovery.ts";
 import { libraryMovePassLayer } from "./scient/sources/LibraryMovePass.ts";
 import { finishLibraryRestoreAtStart } from "./scient/sources/LibraryRestoreRuns.ts";
@@ -516,6 +529,7 @@ const layerThreadIssueService = ThreadIssueService.layer;
 
 const layerGitManager = GitManager.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
+  Layer.provide(layerPullRequestService.pipe(Layer.provide(RuntimeLayer.layerProjectService))),
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),
   Layer.provideMerge(WorktreeSetupTracker.layer),
   Layer.provideMerge(GitVcsDriver.layer),
@@ -621,6 +635,9 @@ const layerWorkspace = Layer.mergeAll(
   WorkspacePaths.layer,
   layerWorkspaceEntries,
   layerWorkspaceFileSystem,
+  WorkspaceFolders.layer.pipe(
+    Layer.provide(Layer.merge(ProjectStore.layer, TaskFolderStore.layer)),
+  ),
 );
 
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
@@ -673,12 +690,25 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
+const layerTaskFolders = TaskFolders.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      TaskFolderStore.layer,
+      ProjectStore.layer,
+      ProjectionStoreV2.layer,
+      VcsProcess.layer,
+    ),
+  ),
+  Layer.provide(layerGitWorkflow),
+);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   // SCIENT-FORK:START
   // Share the VCS clone owner with ProjectService and finalization observers.
   Layer.provide(layerProjectCloneTracker),
   // SCIENT-FORK:END
   Layer.provide(UsageLimitSources.layerResetFallback),
+  Layer.provide(layerTaskFolders),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderUsageAnalytics.layer),
   Layer.provide(layerCheckpointStore),
@@ -822,7 +852,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // SCIENT-FORK:END
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(ScientSkillsLayerLive),
-  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+  // SCIENT-FORK: task folders share this step, as Scient's layers fill pipe's 20 arguments.
+  Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, ThreadSearch.layer, layerTaskFolders)),
   // One step for these: `pipe` takes at most 20, and Scient's layers fill the rest.
   // The theme layer sits above the settings it writes when a theme is applied.
   Layer.provideMerge(
@@ -900,7 +931,9 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // SCIENT-FORK:END
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
-  Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer, WorkspacePreviewRevisions.layer),
+  ),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -925,6 +958,8 @@ export const layerAnalytics = ScientAnalytics.layer satisfies Layer.Layer<
 const layerRuntimeBaseDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
+  // The same layer the event sink uses; memoized, subscriptions and batch ranking share it.
+  Layer.provideMerge(ThreadViewers.layer),
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
@@ -973,6 +1008,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(AuthHttp.layer),
       Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
+      Layer.provide(PeerClientPairingHttp.layer.pipe(Layer.provide(PeerClientPairing.layerIssuer))),
       Layer.provide(CloudHttp.layer),
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
@@ -986,9 +1022,13 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    // SCIENT-FORK:START — signed-URL requests that match no route are traced and logged redacted too.
+    SignedUrlRouteMisses.layer,
+    // SCIENT-FORK:END
     GuestHttp.layer,
     // SCIENT-FORK: thread room guest routes.
     ThreadRoomHttp.layer,
+    LinkThreadHttp.layer,
     DeviceHubProxy.layer,
     // SCIENT-FORK:START — Scient Extensions: connector proxy (session-token authority) and sign-in callback (state authority).
     ConnectorProxyRoute.layer,
@@ -1006,6 +1046,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     documentCaptureStartupSweepLayer,
     libraryMovePassLayer,
     libraryIndexWarmLayer,
+    retiredJournalIconCacheLayer,
     paperQueueRecoveryLayer,
     // SCIENT-FORK:START — generated-image temp files a crash left behind.
     generatedImageTempSweepLayer,
@@ -1015,6 +1056,7 @@ export const layerMakeRoutes = Layer.mergeAll(
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+    Layer.provide(ProjectionStoreV2.layer),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
@@ -1043,9 +1085,9 @@ export const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(DocumentHostBroker.layer),
-  // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
+  // Links to other environments, shared by clients (WebSocket) and agents (/mcp).
   Layer.provide(
-    PeerForwarding.layer.pipe(
+    Layer.mergeAll(PeerForwarding.layer, PeerThreadRelay.layer, PeerClientPairing.layer).pipe(
       Layer.provideMerge(PeerMcpClient.layer),
       Layer.provideMerge(PeerLinks.layer),
     ),
@@ -1561,6 +1603,7 @@ const layerMakeServer = Layer.unwrap(
       // SCIENT-FORK:END
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
+      Layer.provideMerge(FeatureFlags.layer),
       Layer.provide(Layer.succeed(HostProcess.InvokedAs, invokedAs)),
     );
   }),

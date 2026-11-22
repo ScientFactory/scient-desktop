@@ -41,18 +41,21 @@ import { continuationTurnInput } from "./scient-provider/ContinuationTurn.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  CommandId,
   isOrchestrationV2WorkActive,
   ModelSelection,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2PromptSuggestion,
+  type OrchestrationV2RestartCancelledBackgroundWork as Work,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   ProviderInstanceId,
   ProviderSessionId,
+  type RunId,
   ThreadId,
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
@@ -62,8 +65,8 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -93,7 +96,15 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import type { McpThreadCaller } from "../mcp/McpInvocationContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import {
+  awaitingProviderThreadId,
+  cancelledRosterTaskWork,
+  cancelledTurnItemWork,
+  latestStartedRun,
+  mergeRestartCancelledBackgroundWork,
+} from "./RestartBackgroundNote.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -194,6 +205,15 @@ export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.T
 const releasedToolCallTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
   "command_execution",
   "dynamic_tool",
+];
+const lostWorkItemTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
+  ...releasedToolCallTypes,
+  "subagent",
+];
+const lostTurnItemStatuses: ReadonlyArray<OrchestrationV2TurnItem["status"]> = [
+  "interrupted",
+  "failed",
+  "cancelled",
 ];
 const activeTurnItemStatuses: ReadonlyArray<OrchestrationV2TurnItem["status"]> = [
   "pending",
@@ -371,6 +391,17 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<ReadonlyArray<ThreadId>>;
+  /**
+   * Forgets that the thread has this provider thread loaded, so its next resume reaches the
+   * adapter. Leaves the attachment, idle unload and MCP credential alone, unlike detach.
+   */
+  readonly forgetLoadedProviderThread: (input: {
+    readonly providerSessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly modelSelection: ModelSelection;
+    readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  }) => Effect.Effect<void>;
   /** The thread's latest predicted next prompt, then each replacement. */
   readonly subscribePromptSuggestion: (
     threadId: ThreadId,
@@ -975,13 +1006,14 @@ export const layerWithOptions = (
               Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
               Effect.orElseSucceed(() => false),
             );
-            // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
+            // SCIENT-FORK:START — background-wait recovery: a session whose runtime can wait gets the grant.
             const backgroundWait =
               "awaitBackgroundTasks" in adapter
                 ? adapter.awaitBackgroundTasks !== undefined
                 : "backgroundWait" in adapter && adapter.backgroundWait !== undefined
                   ? yield* adapter.backgroundWait
                   : false;
+            if (backgroundWait) capabilities.add("background-wait");
             // SCIENT-FORK:END
             const existing = yield* mcpSessions.read(threadId);
             if (existing !== undefined) {
@@ -1003,9 +1035,6 @@ export const layerWithOptions = (
                 resolved.thread.providerInstanceId === providerInstanceId &&
                 // A credential issued while the lineage read failed is replaced once it works.
                 (resolved.thread.subagent === true) === subagent &&
-                // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
-                (resolved.thread.backgroundWait === true) === backgroundWait &&
-                // SCIENT-FORK:END
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
@@ -1069,9 +1098,6 @@ export const layerWithOptions = (
               browserToolsAvailable,
               capabilities,
               subagent,
-              // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
-              backgroundWait,
-              // SCIENT-FORK:END
               ...(capabilities.has("skills:read")
                 ? {
                     skillScope: {
@@ -1508,8 +1534,20 @@ export const layerWithOptions = (
             const projection = yield* projectionStore.getThreadRecords(threadId, [
               "providerThreads",
             ]);
-            for (const providerThread of projection.providerThreads) {
-              if (providerThread.providerSessionId !== providerSessionId) continue;
+            const sessionThreads = projection.providerThreads.filter(
+              (providerThread) => providerThread.providerSessionId === providerSessionId,
+            );
+            // Read before subscribers fail: a run's consumer may end this work first.
+            const openItems =
+              input.reason === "runtime_error" && sessionThreads.length > 0
+                ? (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+                    turnItemTypes: lostWorkItemTypes,
+                    turnItemStatuses: activeTurnItemStatuses,
+                  })).turnItems
+                : [];
+            for (const providerThread of sessionThreads) {
+              const noteLostWork =
+                input.reason === "runtime_error" && providerThread.ownerNodeId === null;
               released.push({
                 threadId,
                 providerSessionId,
@@ -1518,6 +1556,14 @@ export const layerWithOptions = (
                 taskIds: new Set(
                   (providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId),
                 ),
+                lostTasks: noteLostWork ? (providerThread.pendingBackgroundTasks ?? []) : [],
+                lostItems: noteLostWork
+                  ? openItems.filter(
+                      (item) =>
+                        item.providerThreadId === providerThread.id &&
+                        (item.type !== "subagent" || item.origin === "provider_native"),
+                    )
+                  : [],
               });
             }
           }
@@ -1608,23 +1654,36 @@ export const layerWithOptions = (
         // after each pass: queued events can also store more cut-off items.
         let pending = yield* readCutOff;
         for (let pass = 0; pass < 3 && pending.length > 0; pass++) {
+          const { nodes } = yield* projectionStore.getThreadRecords(threadId, ["nodes"], {
+            nodeIds: pending.flatMap((item) => (item.nodeId === null ? [] : [item.nodeId])),
+          });
           for (const item of pending) {
             const now = yield* DateTime.now;
-            yield* eventSink.writeIfTurnItemUnchanged({
-              expected: item,
-              events: [
-                {
-                  id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-                  type: "turn-item.updated",
-                  threadId,
-                  ...(item.runId === null ? {} : { runId: item.runId }),
-                  ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-                  driver,
-                  occurredAt: now,
-                  payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
-                },
-              ],
+            const node = nodes.find((candidate) => candidate.id === item.nodeId);
+            const events: Array<OrchestrationV2DomainEvent> = [];
+            if (node !== undefined && isOrchestrationV2WorkActive(node.status)) {
+              events.push({
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                type: "node.updated",
+                threadId,
+                ...(node.runId === null ? {} : { runId: node.runId }),
+                nodeId: node.id,
+                driver,
+                occurredAt: now,
+                payload: { ...node, status: "interrupted", completedAt: now },
+              });
+            }
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "turn-item.updated",
+              threadId,
+              ...(item.runId === null ? {} : { runId: item.runId }),
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              driver,
+              occurredAt: now,
+              payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
             });
+            yield* eventSink.writeIfTurnItemUnchanged({ expected: item, events });
           }
           pending = yield* readCutOff;
         }
@@ -1726,6 +1785,75 @@ export const layerWithOptions = (
         });
       });
 
+      // Like restart recovery: an unexpected exit records the work it cancelled on the run that
+      // started it and wakes that run, so the agent restarts awaited work instead of waiting on it.
+      const writeReleasedWorkNote = Effect.fn("ProviderSessionManager.writeReleasedWorkNote")(
+        function* (released: ReleasedProviderThread) {
+          const { threadId, providerSessionId, lostTasks, lostItems } = released;
+          if (lostTasks.length === 0 && lostItems.length === 0) return;
+          const { runs, turnItems } = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["runs", "turnItems"],
+            { turnItemTypes: lostWorkItemTypes, turnItemStatuses: lostTurnItemStatuses },
+          );
+          // Either this release or the run's consumer ended it; a late completion means it finished.
+          const lostItemIds = new Set(lostItems.map((item) => item.id));
+          const lost = [
+            ...lostTasks.map((task) => ({
+              providerThreadId: released.providerThreadId,
+              work: cancelledRosterTaskWork(task),
+            })),
+            ...turnItems.flatMap((item) => {
+              const work = lostItemIds.has(item.id) ? cancelledTurnItemWork(item) : undefined;
+              const providerThreadId = awaitingProviderThreadId(item, runs);
+              return work === undefined || providerThreadId == null
+                ? []
+                : [{ providerThreadId, work }];
+            }),
+          ];
+          const workByRun = new Map<RunId, { run: OrchestrationV2Run; work: Array<Work> }>();
+          for (const { providerThreadId, work } of lost) {
+            const run = latestStartedRun(runs, providerThreadId);
+            if (run === undefined) continue;
+            const entry = workByRun.get(run.id) ?? { run, work: [] };
+            entry.work.push(work);
+            workByRun.set(run.id, entry);
+          }
+          if (workByRun.size === 0) return;
+          const now = yield* DateTime.now;
+          const events: Array<OrchestrationV2DomainEvent> = [];
+          const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = [];
+          for (const { run, work } of workByRun.values()) {
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "run.background-work-cancelled",
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                runId: run.id,
+                restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
+                  run.restartCancelledBackgroundWork ?? [],
+                  work,
+                ),
+              },
+            });
+            effects.push({
+              id: `effect:restart-continuation:${run.id}`,
+              commandId: CommandId.make(`command:provider-exit-continuation:${run.id}`),
+              threadId,
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: run.id,
+                cause: "provider_exit",
+              },
+            });
+          }
+          yield* eventSink.writeWithEffects({ events, effects });
+        },
+      );
+
       const writeReleasedBackgroundWorkEvents = (
         released: ReadonlyArray<ReleasedProviderThread>,
         releasedAt: DateTime.Utc,
@@ -1736,6 +1864,7 @@ export const layerWithOptions = (
             writeReleasedRosterEvents(providerThread).pipe(
               Effect.andThen(writeReleasedToolCallEvents(providerThread, releasedAt)),
               Effect.andThen(writeReleasedSubagentEvents(providerThread, releasedAt)),
+              Effect.andThen(writeReleasedWorkNote(providerThread)),
             ),
           { discard: true },
         );
@@ -3530,13 +3659,15 @@ export const layerWithOptions = (
         };
       };
 
-      const startEventPump = (entry: LiveSessionEntry) => {
+      const startEventPump = (entry: LiveSessionEntry, sessionClosed: Deferred.Deferred<void>) => {
         let stoppedByProvider = false;
         let lastSessionStatus = entry.runtime.providerSession.status;
         const retryStalls = makeRetryStallWatch(entry);
         // SCIENT-FORK:START — the pump reads the native stream, including text batches.
         return (entry.runtime.textSnapshots?.events ?? entry.runtime.events).pipe(
           // SCIENT-FORK:END
+          // Several adapters never end their event stream, and a parked pump retains the whole session.
+          Stream.interruptWhen(Deferred.await(sessionClosed)),
           Stream.runForEach((nativeEvent) => {
             if (shutdownSignal.received) return Effect.void;
             // SCIENT-FORK:START — running-fork text batches go only to their exact consumer.
@@ -4050,6 +4181,12 @@ export const layerWithOptions = (
                   return yield* Effect.uninterruptibleMask((restore) =>
                     Effect.gen(function* () {
                       const sessionScope = yield* Scope.make();
+                      // Added before the adapter's finalizers so it runs after them: the pump drains shutdown events first.
+                      const sessionClosed = yield* Deferred.make<void>();
+                      yield* Scope.addFinalizer(
+                        sessionScope,
+                        Deferred.done(sessionClosed, Exit.void),
+                      );
                       let published = false;
                       // SCIENT-FORK:START — layer-owned opening authority and physical close.
                       cleanupOpening = dropReservation.pipe(
@@ -4249,7 +4386,7 @@ export const layerWithOptions = (
                               }).pipe(Effect.ignore),
                             ),
                           );
-                          yield* startEventPump(entry);
+                          yield* startEventPump(entry, sessionClosed);
                           yield* scheduleIdleRelease(input.providerSessionId);
                           return exposedRuntime;
                         }),
@@ -4610,6 +4747,22 @@ export const layerWithOptions = (
               ),
             ),
         ),
+        forgetLoadedProviderThread: (input) =>
+          Ref.update(sessions, (current) => {
+            const key = sessionKey(input.providerSessionId);
+            const entry = current.get(key);
+            // Only the matching load: a different key belongs to a later load of this thread.
+            if (
+              entry === undefined ||
+              entry.loadedProviderThreadKeyByThread.get(input.threadId) !==
+                providerThreadLoadKey({ ...input, runtime: entry.runtime })
+            ) {
+              return current;
+            }
+            const loadedProviderThreadKeyByThread = new Map(entry.loadedProviderThreadKeyByThread);
+            loadedProviderThreadKeyByThread.delete(input.threadId);
+            return new Map(current).set(key, { ...entry, loadedProviderThreadKeyByThread });
+          }),
         // Stored suggestions can outlive a deleted thread, so check the thread before serving one.
         subscribePromptSuggestion: (threadId) =>
           SubscriptionRef.changes(promptSuggestionStore).pipe(

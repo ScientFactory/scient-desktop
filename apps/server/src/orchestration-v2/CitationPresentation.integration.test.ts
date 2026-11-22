@@ -55,6 +55,7 @@ import {
   principal,
 } from "../scient/conversationImport/conversationImport.test-fixtures.ts";
 import { forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 
 const transcriptJson = Schema.fromJsonString(ProviderReplayTranscript);
 const encodeTranscriptJson = Schema.encodeEffect(transcriptJson);
@@ -215,9 +216,11 @@ it.live(
               sandboxPolicy: { type: "dangerFullAccess" },
             },
           },
-          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript, {
-            replayGate: gate,
-          }),
+          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
+            // SCIENT-FORK: the recording names its thread after its own title.
+            materializeCodexThreadSetup(transcript, () => "Citations"),
+            { replayGate: gate },
+          ),
           {
             layerServerConfig: Layer.succeed(ServerConfig, config),
             databaseLayer: database,

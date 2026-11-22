@@ -31,6 +31,8 @@ export function resolveMuseArtifactPolicy(
     checksum: { algorithm: "sha256" },
     minimumVersion: MUSE_MINIMUM_VERSION,
     archiveFormat: "raw",
+    // Contract 2: Muse 1.4.24's Windows executables are 532 and 578 MiB.
+    maxDownloadBytes: 1024 * 1024 * 1024,
     executablePath: target.platform === "win32" ? "muse.exe" : "muse",
     smokeArgs: ["--version"],
     smokeVersionFormat: "muse",

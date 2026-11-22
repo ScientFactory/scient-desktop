@@ -227,11 +227,22 @@ export function serve({ name, version, title, instructions, tools }) {
       return toResult(tool, await tool.handler(args, { signal }));
     } catch (error) {
       if (signal.aborted) return errorResult("The call was cancelled.");
-      if (error instanceof ToolError) return errorResult(error.message);
-      log(`${tool.name} failed:`, error);
+      if (error instanceof ToolError) {
+        if (
+          error.message.trimStart().startsWith(SIGN_IN_EXPIRED) &&
+          tool.annotations?.readOnlyHint !== true
+        ) {
+          return errorResult(
+            "The session ended during a call that may change data. Its outcome is unknown. " +
+              "Check whether it took effect before retrying; sign in separately.",
+          );
+        }
+        return errorResult(error.message);
+      }
+      log(`${tool.name} failed unexpectedly; exception details omitted.`);
       return errorResult(
-        `${tool.name} failed unexpectedly: ${error?.message ?? String(error)}. ` +
-          "The connector's log has details.",
+        `${tool.name} failed unexpectedly. Private exception details were omitted. ` +
+          "Check the request and connector implementation.",
       );
     }
   }
@@ -292,7 +303,7 @@ export function serve({ name, version, title, instructions, tools }) {
     } catch (error) {
       if (controller.signal.aborted) return undefined;
       if (error instanceof ProtocolError) return failure(id, error.code, error.message, error.data);
-      log(`${method} failed:`, error);
+      log(`${method} failed; exception details omitted.`);
       return failure(id, -32603, "Internal error");
     } finally {
       inFlight.delete(id);
@@ -339,7 +350,7 @@ export function serve({ name, version, title, instructions, tools }) {
     process.exit(0);
   });
   process.stdout.on("error", () => process.exit(0)); // The client went away.
-  process.on("unhandledRejection", (error) => log("Unhandled rejection:", error));
-  process.on("uncaughtException", (error) => log("Uncaught exception:", error));
+  process.on("unhandledRejection", () => log("Unhandled rejection; details omitted."));
+  process.on("uncaughtException", () => log("Uncaught exception; details omitted."));
   log(`${name} ${version} ready (${tools.length} tools).`);
 }

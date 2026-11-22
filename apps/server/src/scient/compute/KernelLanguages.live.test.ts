@@ -191,10 +191,14 @@ const errorOf = (events: ReadonlyArray<ComputeTransportEvent>) => {
 const completion = (events: ReadonlyArray<ComputeTransportEvent>) =>
   events.findLast((event) => event._tag === "completed");
 
-/** Interrupts a long run and restarts, returning the next generation. */
+/**
+ * Interrupts a long run and restarts, returning the next generation. With `runningMarker`, the
+ * run prints it first and the interrupt waits for it, so the signal reaches running code.
+ */
 const interruptAndRestart = Effect.fn("KernelLanguages.interruptAndRestart")(function* (
   session: Session,
   longRunning: string,
+  runningMarker?: string,
 ) {
   const requestId = ComputeRequestId.make(`request-${++requests}`);
   yield* session.channel.execute({
@@ -206,13 +210,28 @@ const interruptAndRestart = Effect.fn("KernelLanguages.interruptAndRestart")(fun
     session.events,
     (event) => event._tag === "accepted" && event.requestId === requestId,
   );
-  yield* session.channel.interrupt({
+  if (runningMarker !== undefined) {
+    yield* takeMatching(
+      session.events,
+      (event) =>
+        event._tag === "output" &&
+        event.requestId === requestId &&
+        text([event]).includes(runningMarker),
+    ).pipe(Effect.timeout("2 minutes"));
+  }
+  const outcome = yield* session.channel.interrupt({
     requestId,
     expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
   });
+  // The answer can be `timeout` for a run that still ends cancelled; the end decides.
   const interrupted = yield* takeMatching(
     session.events,
     (event) => event._tag === "completed" && event.requestId === requestId,
+  ).pipe(
+    Effect.timeout("30 seconds"),
+    Effect.catch(() =>
+      Effect.die(new Error(`The run did not end after its interrupt answered ${outcome}.`)),
+    ),
   );
   expect(interrupted).toMatchObject({ outcome: "cancelled" });
   const nextGeneration = nextComputeSessionGeneration(INITIAL_COMPUTE_SESSION_GENERATION);
@@ -353,7 +372,11 @@ describe.runIf(enabled)("kernel language integration", () => {
           expect(variables.variables).toContainEqual(
             expect.objectContaining({ name: "x", typeName: "Int64", preview: "42" }),
           );
-          const next = yield* interruptAndRestart(session, "while true; sleep(0.01); end");
+          const next = yield* interruptAndRestart(
+            session,
+            'println("scient-running"); flush(stdout); while true; sleep(0.01); end',
+            "scient-running",
+          );
           expect(text(yield* execute(session, "isdefined(Main, :x)", next))).toContain("false");
           yield* session.channel.shutdown({ expectedGeneration: next });
           if (!userDepotExisted) expect(NodeFS.existsSync(userDepot)).toBe(false);
@@ -493,7 +516,12 @@ describe.runIf(Boolean(BARE_PYTHON))("running on what people have", () => {
             query: { offset: 0, limit: 10, sort: null, search: "" },
           });
           expect(table.rowCount).toBe(2);
-          const next = yield* interruptAndRestart(session, "import time\ntime.sleep(60)");
+          // On Windows an interrupt doesn't wake one long time.sleep, so the run sleeps in steps.
+          const next = yield* interruptAndRestart(
+            session,
+            'import time\nprint("scient-running", flush=True)\nwhile True:\n    time.sleep(0.01)',
+            "scient-running",
+          );
           // Display setup, Variables and figures all come back after a restart.
           expect(hasMedia(yield* run(figure, next), "image/png")).toBe(true);
           yield* run("kept = 1", next);

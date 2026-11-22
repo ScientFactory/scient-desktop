@@ -5,6 +5,9 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
+  type TaskFolderError,
+  type Project as ProjectRecord,
+  type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
@@ -14,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
+import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -31,6 +35,7 @@ import {
   resolveProjectFileBackedSetting,
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -65,9 +70,12 @@ function worktreeCheckHint(
     | ThreadLaunch.ThreadLaunchBaseRefError
     | ThreadLaunch.ThreadLaunchBranchExistsError
     | ThreadLaunch.ThreadLaunchBranchConflictError
-    | ThreadLaunch.ThreadLaunchNotRepositoryError,
+    | ThreadLaunch.ThreadLaunchNotRepositoryError
+    | TaskFolderError,
   strategy: { readonly startFromOrigin?: boolean | undefined },
 ) {
+  if (error._tag === "TaskFolderError")
+    return "Pass `repositories` paths from the project's tracked Git folders.";
   if (error._tag === "ThreadLaunchNotRepositoryError")
     return `Use workspaceStrategy: {type: "root"}, or pass the projectId of a Git repository.`;
   if (error._tag === "ThreadLaunchBranchExistsError")
@@ -120,47 +128,57 @@ const projectFileThreadEnvMode = Effect.fn("mcp.projectFileThreadEnvMode")(funct
   ).value;
 });
 
+// Anchored to the fatal line: other diagnostics, such as a dubious-ownership refusal, quote the path.
+const NON_REPOSITORY_FATAL =
+  /^fatal: (?:not a git repository|gitfile does not point to a valid repository)/im;
+
 /** Branches from the checkout's current branch, as the composer does; a checkout with no commit or a detached HEAD stays shared. */
 export const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(function* (
   workspaceRoot: string,
 ): Effect.fn.Return<
   OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined,
   OrchestratorMcpFailure,
-  GitVcsDriver.GitVcsDriver
+  GitVcsDriver.GitVcsDriver | FileSystem.FileSystem
 > {
   const git = yield* GitVcsDriver.GitVcsDriver;
-  // SCIENT-FORK:START — only Git's own answer means no commit; a probe that never ran is no proof.
-  const revParse = (revision: string) =>
-    git
-      .execute({
-        operation: "mcp.defaultWorktreeStrategy",
-        cwd: workspaceRoot,
-        args: ["rev-parse", "--verify", "--quiet", revision],
-        env: { LC_ALL: "C" },
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-      })
-      .pipe(Effect.orElseSucceed(() => null));
-  const commit = yield* revParse("HEAD^{commit}");
-  // Exit 128 is no repository only with Git's own search message: a checkout Git refuses (such
-  // as dubious ownership) or a worktree whose gitdir is gone exits 128 too.
-  const notRepository =
-    commit?.exitCode === 128 &&
-    commit.stderr
-      .split("\n")
-      .some((line) => line.startsWith("fatal: not a git repository (or any"));
-  // A HEAD whose commit object is missing exits 1 like an unborn one; only a HEAD that names
-  // nothing is unborn.
-  const unborn = commit?.exitCode === 1 && (yield* revParse("HEAD"))?.exitCode === 1;
-  const noCommit = notRepository || unborn;
-  if (noCommit) return undefined;
-  if (commit === null || commit.exitCode !== 0)
+  const unreadable = new OrchestratorMcpFailure({
+    code: "orchestration_error",
+    message:
+      "Could not read the project's current branch for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
+  });
+  const commit = yield* git
+    .execute({
+      operation: "mcp.defaultWorktreeStrategy",
+      cwd: workspaceRoot,
+      // Not peeled: a branch whose tip object is missing still resolves, so only an unborn HEAD exits 1.
+      args: ["rev-parse", "--verify", "--quiet", "HEAD"],
+      // SCIENT-FORK: the C locale keeps Git's "not a repository" text matchable for every user.
+      env: { LC_ALL: "C" },
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    })
+    .pipe(Effect.orElseSucceed(() => null));
+  // Only Git saying "no commit yet" (exit 1) or "not a repository" keeps the launch shared.
+  if (commit?.exitCode === 1) return undefined;
+  if (commit !== null && NON_REPOSITORY_FATAL.test(commit.stderr)) {
+    // SCIENT-FORK:START — a `.git` Git cannot read (a worktree whose gitdir is gone) is a broken
+    // checkout, not a plain folder: refuse instead of running the launch in its files.
+    const fileSystem = yield* FileSystem.FileSystem;
+    // lstat, so a `.git` symlink to an unmounted disk still counts; only "not found" is a plain folder.
+    const gitEntry = yield* fileSystem.lstat(`${workspaceRoot}/.git`).pipe(
+      Effect.as(true),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      Effect.orElseSucceed(() => true),
+    );
+    if (!gitEntry) return undefined;
     return yield* new OrchestratorMcpFailure({
       code: "orchestration_error",
       message:
         "Could not read the project's current commit for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
     });
-  // SCIENT-FORK:END
+    // SCIENT-FORK:END
+  }
+  if (commit?.exitCode !== 0) return yield* unreadable;
   // symbolic-ref skips the index, so a held index lock cannot drop the launch into the shared checkout.
   const head = yield* git
     .execute({
@@ -173,12 +191,7 @@ export const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(
     .pipe(Effect.orElseSucceed(() => null));
   if (head?.exitCode === 1) return undefined;
   const branch = head?.exitCode === 0 ? head.stdout.trim() : "";
-  if (branch.length === 0)
-    return yield* new OrchestratorMcpFailure({
-      code: "orchestration_error",
-      message:
-        "Could not read the project's current branch for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
-    });
+  if (branch.length === 0) return yield* unreadable;
   return { type: "worktree" as const, baseRef: branch };
 });
 
@@ -212,6 +225,31 @@ const mutation = Effect.gen(function* () {
     });
   return yield* Project.ProjectService;
 });
+
+/** Settings, not the project record, hold the default model and actions that new threads use. */
+const withSavedProjectSettings = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+    Effect.flatMap((service) => service.getSettings),
+    Effect.mapError(unavailable),
+  );
+  return (project: ProjectRecord) => {
+    const resolved = resolveProjectSettings(settings, project.id, project);
+    return {
+      ...project,
+      defaultModelSelection:
+        resolved.sources.defaultModelSelection === "project"
+          ? resolved.settings.defaultModelSelection
+          : null,
+      scripts: resolveProjectScripts(settings, project),
+    };
+  };
+});
+
+// The project is already committed, so a failed Settings read must not report the create as failed.
+const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
+  Effect.orElseSucceed(() => (project: ProjectRecord) => project),
+);
+
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   scient_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
@@ -231,6 +269,23 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
+        if (input.generateTitle === true && !input.message?.trim() && attachments.length === 0)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Title generation requires a message or attachments. No thread was created.",
+          });
+        const schemaProblem =
+          input.outputSchema === undefined
+            ? null
+            : outputRequestProblem(input.outputSchema, {
+                text: input.message ?? "",
+                attachments: input.attachments,
+              });
+        if (schemaProblem !== null || (input.outputSchema !== undefined && !input.message))
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: schemaProblem ?? "outputSchema needs a message that asks for the result.",
+          });
         if (attachments.some((attachment) => !Claims.attachmentIsPendingUpload(attachment)))
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
@@ -296,10 +351,38 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         if (!replaying && input.modelSelection !== undefined) {
           const { instanceId, model } = input.modelSelection;
-          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
-          const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-          if (provider !== undefined)
-            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          // The thread runs in this folder, whose own provider config can add models.
+          const cwd =
+            input.workspaceStrategy?.type === "existing_worktree"
+              ? input.workspaceStrategy.worktreePath
+              : project?.workspaceRoot;
+          const requireModel = (
+            providers: ReadonlyArray<ServerProvider>,
+          ): Effect.Effect<void, OrchestratorMcpFailure> => {
+            const provider = OrchestrationMcp.withWorkspaceModels(providers, cwd).find(
+              (candidate) => candidate.instanceId === instanceId,
+            );
+            return provider === undefined
+              ? Effect.void
+              : OrchestrationMcp.requireAdvertisedModel(provider, model);
+          };
+          const checked = requireModel(yield* registry.getProviders);
+          yield* cwd === undefined
+            ? checked
+            : checked.pipe(
+                Effect.catchIf(
+                  (error) => error.code === "model_unavailable",
+                  () =>
+                    Project.ProjectService.pipe(
+                      Effect.flatMap((projects) => projects.workspaceScanDirectory(cwd)),
+                      Effect.flatMap((scanCwd) =>
+                        registry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
+                      ),
+                      Effect.flatMap(requireModel),
+                    ),
+                ),
+              );
         }
         const projectSettings =
           replaying || project === undefined
@@ -397,6 +480,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           threadId,
           projectId,
           title: input.title,
+          ...(input.generateTitle === undefined ? {} : { generateTitle: input.generateTitle }),
+          ...(input.generateTitle === true ? {} : { titleRenamed: true }),
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
@@ -409,6 +494,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
                   text: input.message ?? "",
                   attachments,
+                  ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
                 },
               }),
           createdBy: "agent",
@@ -458,9 +544,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       const projects = yield* access;
       // Identities are resolved: linked environments find this side's project by repository.
-      return yield* projects
+      const page = yield* projects
         .listPage({ cursor: input.cursor ?? 0, limit: input.limit ?? 20 })
         .pipe(Effect.mapError(unavailable));
+      return { ...page, projects: page.projects.map(yield* withSavedProjectSettings) };
     }),
   ),
   scient_project_read: McpToolAccess.reads((input) =>
@@ -472,7 +559,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
-      return result.value;
+      return (yield* withSavedProjectSettings)(result.value);
     }),
   ),
   scient_project_create: McpToolAccess.writesEnvironment(
@@ -483,6 +570,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           // Only updates record model defaults; reject defaults that creation would silently drop.
           if (
             input.scripts !== undefined ||
+            input.trackedFolders !== undefined ||
             input.createWorkspaceRootIfMissing !== undefined ||
             input.defaultModelSelection !== undefined
           )
@@ -510,14 +598,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               ),
             );
           return {
-            ...project,
+            ...(yield* withSavedProjectSettingsAfterCreate)(project),
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
+        if (input.defaultModelSelection !== undefined && input.defaultModelSelection !== null)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Creating a project does not set its default model; set defaultModelSelection afterwards with scient_project_update.",
+          });
         const commandId = yield* newCommandId();
-        return yield* projects
+        const created = yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
           .pipe(Effect.mapError(projectFailure));
+        return (yield* withSavedProjectSettingsAfterCreate)(created);
       }),
     // Linked work may bring the repository it works in; an existing
     // registered workspace is still refused.
@@ -526,9 +621,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   scient_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      return yield* projects
+      const updated = yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
+      return (yield* withSavedProjectSettings)(updated);
     }),
   ),
   scient_project_delete: McpToolAccess.writesEnvironment((input) =>

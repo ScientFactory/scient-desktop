@@ -2,7 +2,11 @@
  * One-shot text generation must carry no workspace instructions, skills, tools, extensions, or
  * persisted session. Apply model/effort natively, consume ordered events, and bound total duration.
  */
-import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
+import { ProviderDriverKind, TextGenerationError, type ModelSelection } from "@t3tools/contracts";
+import {
+  brokenVersionDetail,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
 import {
   investigationUnsupported,
   type Operation,
@@ -25,10 +29,9 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
-import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Option from "effect/Option";
 import { applyPiModelSelection } from "./modelSelection.ts";
-import { MINIMUM_PI_VERSION, runPiVersionCommand } from "./status.ts";
+import { runPiVersionCommand } from "./status.ts";
 import { resolvePiModelSlug } from "./rpc.ts";
 import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "./rpcClient.ts";
 
@@ -73,8 +76,10 @@ export const makePiRunJson = (run: {
   readonly makeRpcClient: PiRpcClientFactory;
   readonly options: PiTextGenerationOptions;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  /** The host's version policy; releases it rates broken never run. */
+  readonly compatibility: ProviderCompatibilityLookup;
 }) => {
-  const { settings, environment, makeRpcClient, options, spawner } = run;
+  const { settings, environment, makeRpcClient, options, spawner, compatibility } = run;
   return <S extends Schema.Top>(input: {
     operation: Operation;
     cwd: string;
@@ -101,11 +106,16 @@ export const makePiRunJson = (run: {
             Option.isSome(output) && output.value.code === 0
               ? parseGenericCliVersion(`${output.value.stdout}\n${output.value.stderr}`)
               : null;
-          if (version === null || compareSemverVersions(version, MINIMUM_PI_VERSION) < 0)
-            return yield* new TextGenerationError({
-              operation: input.operation,
-              detail: `Pi ${MINIMUM_PI_VERSION} or newer is required for text generation model and thinking options. Update Pi and try again.`,
-            });
+          const broken =
+            version === null
+              ? "Scient could not determine the Pi version. Update Pi and try again."
+              : brokenVersionDetail({
+                  name: "Pi",
+                  version,
+                  advisory: yield* compatibility(ProviderDriverKind.make("pi"), version),
+                });
+          if (broken !== undefined)
+            return yield* new TextGenerationError({ operation: input.operation, detail: broken });
         }
         const resolved = resolvePiLaunchArgs(settings.launchArgs);
         if (!resolved.ok)

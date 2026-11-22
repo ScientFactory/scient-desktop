@@ -239,8 +239,13 @@ const runConjunction = (refusal = false) =>
               };
               break;
             // T3 12b29eb71d: Codex reads its configured reasoning summary before turn/start.
+            // T3 06eda8e36e also reads it for the stdio MCP servers a new or resumed thread gets.
             case "config/read":
               result = { config: {}, origins: {} };
+              break;
+            // T3 767f194fd9: the native thread name follows the thread's title.
+            case "thread/name/set":
+              result = {};
               break;
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
@@ -457,19 +462,22 @@ const runConjunction = (refusal = false) =>
           createdBy: "user",
           creationSource: "web",
         });
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "message.dispatch",
-          threadId,
-          commandId: CommandId.make(`${name}:send`),
-          messageId: MessageId.make(`${name}:message`),
-          text: currentText,
-          selectedScientSkillNames: ["project-method"],
-          attachments: uploaded,
-          modelSelection: selection,
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "message.dispatch",
+            threadId,
+            commandId: CommandId.make(`${name}:send`),
+            messageId: MessageId.make(`${name}:message`),
+            text: currentText,
+            selectedScientSkillNames: ["project-method"],
+            attachments: uploaded,
+            modelSelection: selection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          },
+          { managesProviders: true },
+        );
         const projection = yield* orchestrator.getThreadProjection(threadId);
         const message = projection.messages.find((item) => item.id === `${name}:message`);
         assert.ok(message);
@@ -492,7 +500,9 @@ const runConjunction = (refusal = false) =>
         assert.deepEqual(methods, [
           "initialize",
           "initialized",
+          "config/read",
           "thread/start",
+          "thread/name/set",
           "config/read",
           "turn/start",
         ]);
@@ -639,19 +649,22 @@ const runConjunction = (refusal = false) =>
         const commandId = CommandId.make(`${name}:overflow`);
         const messageId = MessageId.make(`${name}:overflow`);
         const rawAtCap = `${currentText}${"x".repeat(120_000 - currentText.length)}`;
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "message.dispatch",
-          threadId,
-          commandId,
-          messageId,
-          text: rawAtCap,
-          selectedScientSkillNames: [],
-          attachments: secondUploads,
-          modelSelection: selection,
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "message.dispatch",
+            threadId,
+            commandId,
+            messageId,
+            text: rawAtCap,
+            selectedScientSkillNames: [],
+            attachments: secondUploads,
+            modelSelection: selection,
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          },
+          { managesProviders: true },
+        );
         const queued = yield* orchestrator.getThreadProjection(threadId);
         const queuedRun = queued.runs.find((run) => run.userMessageId === messageId);
         assert.ok(queuedRun);
@@ -834,9 +847,14 @@ const runConjunction = (refusal = false) =>
           assert.ok(retryPath);
           expectedRetryText = expectedRetryText.replace(previousPath, retryPath);
         }
+        // The first offer listed the session's skills; this later message in the same session says
+        // the list is unchanged. Everything else is the same captured request.
+        const skillNote = /\[Scient skills for this turn[\s\S]*?\]\n/u;
+        assert.include(priorText.text, "- project-method: Controlled conjunction evidence.");
+        assert.include(retryText.text, "unchanged since the list an earlier turn gave (1 skill;");
         assert.equal(
-          retryText.text,
-          expectedRetryText,
+          retryText.text.replace(skillNote, ""),
+          expectedRetryText.replace(skillNote, ""),
           "Retry delivers the complete same captured request with its own claimed file and image paths",
         );
         assert.deepEqual(

@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "{{NAME}}",
   "display_name": "{{DISPLAY_NAME}}",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Search scholarly works in OpenAlex and read their details. Replace with what this connector does.",
   "author": {
     "name": "Made with Scient"

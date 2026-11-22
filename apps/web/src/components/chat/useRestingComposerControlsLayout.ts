@@ -17,6 +17,9 @@ export function useRestingComposerControlsLayout(
     hiddenCount: number;
     iconOnlyCount?: number;
     visible: boolean;
+    // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+    modelNameHidden?: boolean;
+    // SCIENT-FORK:END
   }>({ hiddenCount: 0, visible: true });
 
   const measure = () => {
@@ -37,6 +40,9 @@ export function useRestingComposerControlsLayout(
         hostWidth,
         previous: current,
       });
+      // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+      if (next.modelNameHidden !== current.modelNameHidden) return next;
+      // SCIENT-FORK:END
       return next.hiddenCount === current.hiddenCount &&
         next.iconOnlyCount === current.iconOnlyCount &&
         next.visible === current.visible
@@ -81,5 +87,8 @@ export function useRestingComposerControlsLayout(
     hiddenBlockCount: layout.hiddenCount,
     iconOnlyBlockCount: layout.iconOnlyCount ?? 0,
     controlsVisible: layout.visible,
+    // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+    modelNameHidden: layout.modelNameHidden === true,
+    // SCIENT-FORK:END
   };
 }

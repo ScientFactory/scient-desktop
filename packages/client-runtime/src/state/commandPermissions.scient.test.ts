@@ -114,13 +114,13 @@ describe("Sources command permissions", () => {
         registry.set(sessions(env), AsyncResult.success(readOnly));
         for (const command of Object.values(commands))
           expect(registry.get(command.permissionAtom(env))).toBe(false);
-        expectRefused(yield* Effect.promise(() => commands.remove.run(registry, removal.target)));
+        expectRefused(yield* Effect.exit(commands.remove.run(registry, removal.target)));
         expect(fetchFn).not.toHaveBeenCalled();
 
         registry.set(sessions(env), AsyncResult.success(operate));
         for (const command of Object.values(commands))
           expect(registry.get(command.permissionAtom(env))).toBe(true);
-        const sent = yield* Effect.promise(() => commands.remove.run(registry, removal.target));
+        const sent = yield* Effect.exit(commands.remove.run(registry, removal.target));
         expect(sent._tag).toBe("Success");
         expect(fetchFn).toHaveBeenCalledOnce();
       }),
@@ -134,7 +134,7 @@ describe("Sources command permissions", () => {
         registry.set(sessions(env), AsyncResult.success(operate));
         expect(registry.get(commands.remove.permissionAtom(env))).toBe(true);
         registry.set(sessions(env), AsyncResult.success(readOnly));
-        expectRefused(yield* Effect.promise(() => commands.remove.run(registry, removal.target)));
+        expectRefused(yield* Effect.exit(commands.remove.run(registry, removal.target)));
         expect(fetchFn).not.toHaveBeenCalled();
       }),
     ),

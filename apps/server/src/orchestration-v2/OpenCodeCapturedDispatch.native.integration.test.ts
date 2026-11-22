@@ -327,7 +327,7 @@ it.live(
                   connectCount++;
                   return {
                     url,
-                    version: OpenCodeRuntime.MINIMUM_OPENCODE_VERSION,
+                    version: "1.14.19",
                     external: false,
                     exitCode: null,
                   };

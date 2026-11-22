@@ -74,7 +74,8 @@ import {
 const CHANNEL_CHANGE_RETRY_DELAY = Duration.seconds(1);
 const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
+// SCIENT-FORK: a check is one small file from the update mirror; hourly finds releases sooner.
+const AUTO_UPDATE_POLL_INTERVAL = "1 hour";
 const UPDATE_CHECK_WAIT = Duration.seconds(90);
 // SCIENT-FORK:START — offered updates download in the background; failures of one release retry
 // on this schedule, and the last delay repeats.
@@ -643,6 +644,12 @@ export const make = Effect.gen(function* () {
           `${policy.message ?? "Nightly updates are turned off on this machine."} Switch to the stable channel to keep getting updates.`,
         )
       : Option.none();
+
+  // SCIENT-FORK:START — no off-track notice. Without a floor, Scient still offers a newer build of
+  // the saved track to a build from another one (see `offerable`), so no offer means up to date.
+  const noOfferState = (state: DesktopUpdateState, checkedAt: string) =>
+    Effect.succeed(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+  // SCIENT-FORK:END
 
   const resolveStateDisabledReason = (channel: DesktopUpdateChannel) =>
     resolveDisabledReason.pipe(Effect.map(Option.orElse(() => channelBlockedReason(channel))));
@@ -1532,7 +1539,7 @@ export const make = Effect.gen(function* () {
               channel: state.channel,
             });
             const checkedAt = yield* currentIsoTimestamp;
-            yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+            yield* setState(yield* noOfferState(state, checkedAt));
             yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
             return;
           }
@@ -1603,7 +1610,7 @@ export const make = Effect.gen(function* () {
     if (yield* installerReserved) return;
     const checkedAt = yield* currentIsoTimestamp;
     const state = yield* Ref.get(updateStateRef);
-    yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+    yield* setState(yield* noOfferState(state, checkedAt));
     yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
     yield* logUpdaterInfo("no updates available");
   }).pipe(Effect.withSpan("desktop.updates.handleUpdateNotAvailable"));
@@ -1639,7 +1646,7 @@ export const make = Effect.gen(function* () {
 
     if (Option.isNone(activeAction)) {
       const checkedAt = yield* currentIsoTimestamp;
-      yield* updateState((current) => ({
+      yield* updateState(({ trackMismatch: _trackMismatch, ...current }) => ({
         ...current,
         status: "error",
         message: error.message,

@@ -1437,7 +1437,6 @@
   "src/scient/sources/AddByIdentifier.browser.test.tsx": 1.025,
   "src/scient/sources/askLibrary.test.ts": 0.005,
   "src/scient/sources/bulkParts.test.ts": 0.047,
-  "src/scient/sources/bundledJournalIcons.test.ts": 0.017,
   "src/scient/sources/citationNavigationModel.test.ts": 0.037,
   "src/scient/sources/compareSources.test.ts": 0.008,
   "src/scient/sources/errorMessage.test.ts": 0.006,
@@ -1623,5 +1622,6 @@
   "src/vscodeThemeImport.test.ts": 0.186,
   "src/workspaceBasenameLookup.test.ts": 0.019,
   "src/worktreeCleanup.test.ts": 0.019,
-  "src/wslPaths.test.ts": 0.013
+  "src/wslPaths.test.ts": 0.013,
+  "src/scient/sources/publisherMarks.test.ts": 0.05
 }

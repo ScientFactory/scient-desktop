@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { ompTarget } from "../omp/OmpTarget.ts";
 import {
+  scientAgentEnableSources,
   scientAgentHostCommands,
   scientAgentProcessEnvironment,
   scientAgentTarget,
@@ -36,7 +37,7 @@ describe("scientAgentTarget.identify", () => {
   });
 
   it("refuses a Scient Agent release outside the supported range", () => {
-    expect(scientAgentTarget.identify(runtimeInfo({ version: "1.0.0" }))).toBeUndefined();
+    expect(scientAgentTarget.identify(runtimeInfo({ version: "2.0.0" }))).toBeUndefined();
     expect(scientAgentTarget.identify(runtimeInfo({ version: "0.0.9" }))).toBeUndefined();
     expect(scientAgentTarget.identify(runtimeInfo({ version: "latest" }))).toBeUndefined();
   });
@@ -64,9 +65,10 @@ describe("scientAgentTarget.identify", () => {
   it("refuses a build on an Oh My Pi release the server is not qualified against", () => {
     const onUpstream = (version: string) =>
       scientAgentTarget.identify(runtimeInfo({ upstream: { name: "oh-my-pi", version } }));
-    expect(onUpstream("19.0.0")).toBeUndefined();
+    expect(onUpstream("20.0.0")).toBeUndefined();
     expect(onUpstream("18.2.7")).toBeUndefined();
     expect(onUpstream("18.2.8")).toEqual({ version: "0.1.0", runtimeVersion: "18.2.8" });
+    expect(onUpstream("19.0.1")).toEqual({ version: "0.1.0", runtimeVersion: "19.0.1" });
   });
 
   it("refuses upstream metadata that is not an Oh My Pi release", () => {
@@ -162,5 +164,15 @@ describe("scientAgentHostCommands", () => {
     ]);
     expect(scientAgentHostCommands(runtimeInfo())).toEqual([]);
     expect(scientAgentHostCommands("omp/18.4.8\n")).toEqual([]);
+  });
+});
+
+describe("scientAgentEnableSources", () => {
+  it("reads the discovery sources a release can load, and none from an older one", () => {
+    expect(
+      scientAgentEnableSources(runtimeInfo({ enableSources: ["claude-plugins", "codex-plugins"] })),
+    ).toEqual(["claude-plugins", "codex-plugins"]);
+    expect(scientAgentEnableSources(runtimeInfo())).toEqual([]);
+    expect(scientAgentEnableSources("omp/18.4.8\n")).toEqual([]);
   });
 });

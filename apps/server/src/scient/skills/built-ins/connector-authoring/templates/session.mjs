@@ -260,7 +260,7 @@ export function createSession({
         const next = new URL(location, url);
         await response.body?.cancel().catch(() => {});
         if (looksLikeLogin(next)) {
-          throw signInExpired(site, `sent to the sign-in page ${next.origin}${next.pathname}`);
+          throw signInExpired(site, "sent to the sign-in page");
         }
         const toGet =
           response.status === 303 ||

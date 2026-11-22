@@ -247,6 +247,14 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       resolve: () => resolveSelected(),
+      compatibility: (version) =>
+        Effect.succeed(
+          ModelManifest.providerCompatibility(
+            ModelManifest.BUNDLED_MODEL_MANIFEST,
+            ProviderDriverKind.make("antigravity"),
+            version,
+          ),
+        ),
       acquire: (binaryPath, environment) =>
         Effect.gen(function* () {
           acquisitions.push({ binaryPath, path: environment?.PATH });
@@ -929,7 +937,10 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           h.second.harnessPath,
         ]);
         for (const launch of nativeLaunches) {
-          expect(launch.args).toEqual(hostPlatform === "linux" ? ["--uid="] : []);
+          expect(launch.args).toEqual([
+            ...(hostPlatform === "linux" ? ["--uid="] : []),
+            "--alsologtostderr",
+          ]);
           expect(launch.profileDirectory).toBe(h.profileDirectory);
           expect(launch.forceFileStorage).toBe("1");
           expect(launch.extendEnv).toBe(false);

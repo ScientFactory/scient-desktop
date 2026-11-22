@@ -32,6 +32,9 @@ import {
 import type { useComposerProviderModel } from "./useComposerProviderModel";
 import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
 import type { ComponentProps } from "react";
+// SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+import { MODEL_TRIGGER_TEXT_MIN_WIDTH_CLASS_NAME } from "../../scient/modelPicker/modelNameFit";
+// SCIENT-FORK:END
 
 /**
  * The composer footer controls: the model picker (which also holds effort, speed and
@@ -78,6 +81,9 @@ export function ComposerControlsBar(props: {
   composerControlsHidden: boolean;
   restingHiddenBlockCount: number;
   iconOnlyBlockCount: number;
+  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+  modelNameHidden: boolean;
+  // SCIENT-FORK:END
   showProviderUnavailable: boolean;
   providerSetupInstanceId: ProviderInstanceId | undefined;
   onOpenProviderSetup: ChatComposerProps["onOpenProviderSetup"];
@@ -216,6 +222,9 @@ export function ComposerControlsBar(props: {
       workspaceCwd={props.workspaceCwd}
       compact={false}
       iconOnly={props.voiceBusy}
+      // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+      modelNameHidden={props.modelNameHidden}
+      // SCIENT-FORK:END
       isComposerOwned
       // The trigger grows away from this edge when its model or effort label changes.
       popupAlign={composerControlsCollapsed ? "start" : "end"}
@@ -245,6 +254,9 @@ export function ComposerControlsBar(props: {
         "group/model-trigger",
         MODEL_TRIGGER_STATES,
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
+        // SCIENT-FORK:START — the icon-only trigger still measures the minimum above.
+        MODEL_TRIGGER_TEXT_MIN_WIDTH_CLASS_NAME,
+        // SCIENT-FORK:END
         // SCIENT-FORK:START — icon-only while dictation owns the composer.
         props.voiceBusy && "min-w-0",
         // SCIENT-FORK:END

@@ -37,6 +37,48 @@ describe("createProviderAccountAnalyticsMapper", () => {
     expect(mapper.observe(snapshot)).toEqual([]);
   });
 
+  it("reports a custom endpoint split into host, port, scheme and where it was set", () => {
+    const mapper = createProviderAccountAnalyticsMapper();
+    const claude = (endpoint: string) =>
+      provider({
+        driver: "claudeAgent" as ServerProvider["driver"],
+        auth: {
+          status: "authenticated",
+          type: "customEndpoint",
+          label: "Custom API endpoint",
+          endpoint,
+          endpointSource: "claude-settings",
+        },
+      });
+    expect(mapper.observe([claude("http://127.0.0.1:3456")])).toEqual([
+      {
+        name: "install.account_observed",
+        properties: {
+          provider: "claudeAgent",
+          accountType: "customEndpoint",
+          endpointHost: "127.0.0.1",
+          endpointPort: 3456,
+          endpointScheme: "http",
+          endpointSource: "claude-settings",
+        },
+      },
+    ]);
+    // A moved endpoint is a new observation; the same one is not.
+    expect(mapper.observe([claude("http://127.0.0.1:3456")])).toEqual([]);
+    expect(mapper.observe([claude("https://proxy.example")])).toEqual([
+      {
+        name: "install.account_observed",
+        properties: {
+          provider: "claudeAgent",
+          accountType: "customEndpoint",
+          endpointHost: "proxy.example",
+          endpointScheme: "https",
+          endpointSource: "claude-settings",
+        },
+      },
+    ]);
+  });
+
   it("reports each model subscription an agent is connected to", () => {
     const mapper = createProviderAccountAnalyticsMapper();
     const events = mapper.observe([

@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 
 import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
@@ -408,10 +409,13 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
 export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer(
   Effect.gen(function* () {
     // Built documents return signed asset links.
-    const withAssetSigner = Effect.provideService(
-      AssetSigner.AssetSigner,
-      yield* AssetSigner.AssetSigner,
-    );
+    const signer = yield* AssetSigner.AssetSigner;
+    const revisions = yield* WorkspacePreviewRevisions.WorkspacePreviewRevisions;
+    const withAssetSigner = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(AssetSigner.AssetSigner, signer),
+        Effect.provideService(WorkspacePreviewRevisions.WorkspacePreviewRevisions, revisions),
+      );
     return {
       scient_pdf_build: (input) =>
         observeAnalyticsEffect(buildScientPdfForInvocation(input).pipe(withAssetSigner), {

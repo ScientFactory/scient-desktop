@@ -80,6 +80,7 @@ const representativeProperties = {
   failureReason: "no_signin_page",
   signInPage: "manual_fallback",
   toolServerOwner: "connector",
+  customEndpoint: true,
   progressPercent: 37,
   bytesPerSecond: 410_000,
   resumedBytes: 41_000_000,

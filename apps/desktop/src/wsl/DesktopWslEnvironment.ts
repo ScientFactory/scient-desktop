@@ -94,12 +94,21 @@ export class DesktopWslEnvironment extends Context.Service<
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     // Use the distro IP to avoid unreliable wslhost localhost forwarding.
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
+    // A null t3Home means the distro's login shell has no absolute T3CODE_HOME, so ~/.t3 applies.
+    // SCIENT-FORK: Scient passes null; its WSL state has its own home (scientWslBackendEnv).
     readonly prepareRuntime: (
       distro: string | null,
       archive: WslRuntimeArchive,
+      t3Home: string | null,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
-    readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+    readonly pruneRuntimes: (
+      distro: string | null,
+      runtimeId: string,
+      t3Home: string | null,
+    ) => Effect.Effect<void>;
+    // SCIENT-FORK:START scient-wsl-runtime-cache
     readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+    // SCIENT-FORK:END scient-wsl-runtime-cache
     readonly ensureNodePty: (
       distro: string | null,
       linuxAppRoot: string,
@@ -254,16 +263,22 @@ const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
 const sanitizeWslRuntimeId = (value: string): string => value.replace(/[^A-Za-z0-9._-]/g, "_");
 
+const runtimeParentAssignment = (t3Home: string | null): string =>
+  t3Home === null
+    ? 'runtime_parent="$HOME/.t3/wsl-runtime"'
+    : `runtime_parent=${shellQuote(`${t3Home}/wsl-runtime`)}`;
+
 // A null archive path asks for a staging directory to copy the archive into, unless the cache is ready.
 export const buildWslRuntimeInstallScript = (
   linuxArchivePath: string | null,
   runtimeId: string,
   archiveSha256: string,
+  t3Home: string | null,
 ): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   const readyCheck = [
     "set -eu",
-    'runtime_parent="$HOME/.t3/wsl-runtime"',
+    runtimeParentAssignment(t3Home),
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
     // SCIENT-FORK:START scient-wsl-runtime-cache
@@ -382,11 +397,11 @@ export const buildWslRuntimeInstallScript = (
 // Two hours exceeds cold-install time while bounding orphan retention.
 const ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES = 120;
 
-export const buildWslRuntimePruneScript = (runtimeId: string): string => {
+export const buildWslRuntimePruneScript = (runtimeId: string, t3Home: string | null): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    'runtime_parent="$HOME/.t3/wsl-runtime"',
+    runtimeParentAssignment(t3Home),
     `current_runtime="$runtime_parent/${safeRuntimeId}"`,
     '[ -d "$runtime_parent" ] || exit 0',
     // Serialize pruning so backends cannot select and delete different previous caches.
@@ -433,6 +448,7 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   ].join("\n");
 };
 
+// SCIENT-FORK:START scient-wsl-runtime-cache
 // Invalidate trees that pass install checks but fail launch probes, or each launch reuses the broken cache.
 export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
@@ -441,6 +457,7 @@ export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
     `rm -f "$HOME/.t3/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
   ].join("\n");
 };
+// SCIENT-FORK:END scient-wsl-runtime-cache
 
 const parseAbsolutePathField = (stdout: string, field: string): string | null => {
   const prefix = `${field}:`;
@@ -795,11 +812,12 @@ type WslRuntimeInstallOutcome =
 const runWslRuntimeInstall = Effect.fn("desktop.wsl.runRuntimeInstall")(function* (
   distro: string | null,
   archive: WslRuntimeArchive,
+  t3Home: string | null,
   linuxArchivePath: string | null,
 ): Effect.fn.Return<WslRuntimeInstallOutcome, never, ChildProcessSpawner.ChildProcessSpawner> {
   const install = yield* runWslShell(
     distro,
-    buildWslRuntimeInstallScript(linuxArchivePath, archive.runtimeId, archive.sha256),
+    buildWslRuntimeInstallScript(linuxArchivePath, archive.runtimeId, archive.sha256, t3Home),
     RUNTIME_INSTALL_TIMEOUT,
     { resolveNode: false },
   );
@@ -838,9 +856,10 @@ const installWslRuntimeFromHostCopy = Effect.fn("desktop.wsl.installRuntimeFromH
   function* (
     distro: string | null,
     archive: WslRuntimeArchive,
+    t3Home: string | null,
     archiveBytes: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
   ): Effect.fn.Return<PrepareWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
-    const staged = yield* runWslRuntimeInstall(distro, archive, null);
+    const staged = yield* runWslRuntimeInstall(distro, archive, t3Home, null);
     if (!staged.ok || parseWslRuntimeRoot(staged.stdout) !== null) {
       return toPrepareWslRuntimeResult(staged);
     }
@@ -881,7 +900,7 @@ const installWslRuntimeFromHostCopy = Effect.fn("desktop.wsl.installRuntimeFromH
         } as const;
       }
       return toPrepareWslRuntimeResult(
-        yield* runWslRuntimeInstall(distro, archive, linuxArchivePath),
+        yield* runWslRuntimeInstall(distro, archive, t3Home, linuxArchivePath),
       );
     });
 
@@ -898,6 +917,7 @@ const installWslRuntimeFromHostCopy = Effect.fn("desktop.wsl.installRuntimeFromH
 const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(function* (
   distro: string | null,
   archive: WslRuntimeArchive,
+  t3Home: string | null,
   windowsToWslPath: (
     distro: string | null,
     windowsPath: string,
@@ -913,21 +933,23 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
     return yield* installWslRuntimeFromHostCopy(
       distro,
       archive,
+      t3Home,
       fileSystem.stream(archive.windowsPath),
     );
   }
   return toPrepareWslRuntimeResult(
-    yield* runWslRuntimeInstall(distro, archive, linuxArchivePath.value),
+    yield* runWslRuntimeInstall(distro, archive, t3Home, linuxArchivePath.value),
   );
 });
 
 const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function* (
   distro: string | null,
   runtimeId: string,
+  t3Home: string | null,
 ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
   const result = yield* runWslShell(
     distro,
-    buildWslRuntimePruneScript(runtimeId),
+    buildWslRuntimePruneScript(runtimeId, t3Home),
     RUNTIME_PRUNE_TIMEOUT,
     { resolveNode: false },
   );
@@ -941,6 +963,7 @@ const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function
   });
 });
 
+// SCIENT-FORK:START scient-wsl-runtime-cache
 const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(function* (
   distro: string | null,
   runtimeId: string,
@@ -960,6 +983,7 @@ const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(
     detail: detail || `exit ${result.exitCode}`,
   });
 });
+// SCIENT-FORK:END scient-wsl-runtime-cache
 
 const probeWslDistros: Effect.Effect<
   readonly WslDistro[],
@@ -1160,9 +1184,16 @@ export interface DesktopWslEnvironmentTestStub {
   readonly prepareRuntime?: (
     distro: string | null,
     archive: WslRuntimeArchive,
+    t3Home: string | null,
   ) => PrepareWslRuntimeResult;
-  readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly pruneRuntimes?: (
+    distro: string | null,
+    runtimeId: string,
+    t3Home: string | null,
+  ) => Effect.Effect<void>;
+  // SCIENT-FORK:START scient-wsl-runtime-cache
   readonly invalidateRuntime?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  // SCIENT-FORK:END scient-wsl-runtime-cache
   readonly ensureNodePty?: (
     distro: string | null,
     linuxAppRoot: string,
@@ -1193,22 +1224,28 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       getDistroIp: Effect.fn("DesktopWslEnvironment.getDistroIp")(function (distro) {
         return Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>());
       }),
-      prepareRuntime: Effect.fn("DesktopWslEnvironment.prepareRuntime")(function (distro, archive) {
-        return Effect.succeed(
-          stub.prepareRuntime?.(distro, archive) ?? {
-            ok: false,
-            reason: "prepareRuntime stub not configured",
-          },
-        );
-      }),
-      pruneRuntimes: Effect.fn("DesktopWslEnvironment.pruneRuntimes")(function (distro, runtimeId) {
-        return stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void;
-      }),
+      prepareRuntime: Effect.fn("DesktopWslEnvironment.prepareRuntime")(
+        function (distro, archive, t3Home) {
+          return Effect.succeed(
+            stub.prepareRuntime?.(distro, archive, t3Home) ?? {
+              ok: false,
+              reason: "prepareRuntime stub not configured",
+            },
+          );
+        },
+      ),
+      pruneRuntimes: Effect.fn("DesktopWslEnvironment.pruneRuntimes")(
+        function (distro, runtimeId, t3Home) {
+          return stub.pruneRuntimes?.(distro, runtimeId, t3Home) ?? Effect.void;
+        },
+      ),
+      // SCIENT-FORK:START scient-wsl-runtime-cache
       invalidateRuntime: Effect.fn("DesktopWslEnvironment.invalidateRuntime")(
         function (distro, runtimeId) {
           return stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void;
         },
       ),
+      // SCIENT-FORK:END scient-wsl-runtime-cache
       ensureNodePty: Effect.fn("DesktopWslEnvironment.ensureNodePty")(
         function (distro, linuxAppRoot, options) {
           return Effect.succeed(
@@ -1285,19 +1322,21 @@ export const layer = Layer.effect(
       windowsToWslPath,
       getUserHome,
       getDistroIp,
-      prepareRuntime: Effect.fn("desktop.wsl.prepareRuntime")(function (distro, archive) {
+      prepareRuntime: Effect.fn("desktop.wsl.prepareRuntime")(function (distro, archive, t3Home) {
         return provideSpawner(
-          prepareWslRuntimeImpl(distro, archive, windowsToWslPath).pipe(
+          prepareWslRuntimeImpl(distro, archive, t3Home, windowsToWslPath).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
           ),
         );
       }),
-      pruneRuntimes: Effect.fn("desktop.wsl.pruneRuntimes")(function (distro, runtimeId) {
-        return provideSpawner(pruneWslRuntimesImpl(distro, runtimeId));
+      pruneRuntimes: Effect.fn("desktop.wsl.pruneRuntimes")(function (distro, runtimeId, t3Home) {
+        return provideSpawner(pruneWslRuntimesImpl(distro, runtimeId, t3Home));
       }),
+      // SCIENT-FORK:START scient-wsl-runtime-cache
       invalidateRuntime: Effect.fn("desktop.wsl.invalidateRuntime")(function (distro, runtimeId) {
         return provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId));
       }),
+      // SCIENT-FORK:END scient-wsl-runtime-cache
       ensureNodePty: Effect.fn("desktop.wsl.ensureNodePty")(
         function (distro, linuxAppRoot, options) {
           return provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options));

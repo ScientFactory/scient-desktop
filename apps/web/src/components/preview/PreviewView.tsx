@@ -88,7 +88,11 @@ import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import type { MessageResolver } from "~/i18n/messages";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
-import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
+import {
+  alternatePreviewRuntime,
+  useDesktopLoadsLoopback,
+  useRendersServerTabNatively,
+} from "~/browser/previewRuntime";
 import { useBrowserPdfExportOwner } from "~/scient/documentExport/browserPdfExportOwner";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
 import { cn } from "~/lib/utils";
@@ -237,6 +241,7 @@ export function PreviewView({
   const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? null;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
+  const desktopLoadsLoopback = useDesktopLoadsLoopback(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
@@ -273,7 +278,7 @@ export function PreviewView({
   }, [serverToolbarShown]);
   const [serverControlledTabId, setServerControlledTabId] = useState<string | null>(null);
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
-  const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
+  const [serverStreamSettledTabId, setServerStreamSettledTabId] = useState<string | null>(null);
   // A desktop page that mounted before its tab went headless leaves its stale state here.
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
@@ -305,7 +310,7 @@ export function PreviewView({
   );
   // SCIENT-FORK:END
   const serverStreamPending =
-    isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
+    isServerTab && !showEmptyState && !isUnreachable && serverStreamSettledTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
@@ -548,6 +553,7 @@ export function PreviewView({
     threadRef.environmentId,
     primaryEnvironmentId,
     serverBrowser,
+    desktopLoadsLoopback,
     snapshot,
   );
   const moveLabel =
@@ -1073,6 +1079,7 @@ export function PreviewView({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      data-preview-view
     >
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech
@@ -1254,7 +1261,8 @@ export function PreviewView({
                 tabId={snapshot.tabId}
                 pdfUrl={clientPdfUrl}
                 visible={visible}
-                onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
+                onFirstFrame={() => setServerStreamSettledTabId(runtimeTabId)}
+                onNoFrames={() => setServerStreamSettledTabId(runtimeTabId)}
                 onControl={(control) =>
                   setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
                 }

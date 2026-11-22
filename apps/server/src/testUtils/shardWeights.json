@@ -1203,9 +1203,6 @@
   "src/scient/sources/ConnectorIdentifierLookup.test.ts": 0.05,
   "src/scient/sources/documentCitationContext.test.ts": 0.041,
   "src/scient/sources/IsbnIdentifierLookup.test.ts": 0.037,
-  "src/scient/sources/JournalIconImage.test.ts": 2.205,
-  "src/scient/sources/JournalIconResolver.test.ts": 5.076,
-  "src/scient/sources/JournalPublisherArtwork.test.ts": 0.004,
   "src/scient/sources/LibraryCitation.test.ts": 0.475,
   "src/scient/sources/LibraryMove.test.ts": 1.428,
   "src/scient/sources/LibraryNoticeWatch.test.ts": 0.207,
@@ -1386,5 +1383,7 @@
   "src/workspace/WorkspaceFileSystem.test.ts": 9.81,
   "src/workspace/WorkspacePaths.test.ts": 0.014,
   "src/workspace/WorkspaceSearchIndex.test.ts": 3.844,
-  "src/ws.test.ts": 7.317
+  "src/ws.test.ts": 7.317,
+  "src/scient/sources/JournalCoverImage.test.ts": 2.205,
+  "src/scient/sources/JournalCoverResolver.test.ts": 0.3
 }

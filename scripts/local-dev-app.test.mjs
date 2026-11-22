@@ -29,6 +29,7 @@ import {
   stopApp,
   unloadLocalDevAppService,
   uninstallDevelopmentAppBundle,
+  shareDevelopmentIdentity,
   shareDevelopmentVoiceRuntime,
 } from "./local-dev-app.mjs";
 
@@ -839,5 +840,66 @@ describe("local dev app voice runtime", () => {
         },
       }),
     );
+  });
+});
+
+describe("local dev app identity", () => {
+  const identity = (importDevIdentity) => async () => ({
+    importDevIdentity,
+    describeImport: (result) =>
+      result.status === "imported" ? `copied ${String(result.secrets)}` : undefined,
+  });
+
+  it("copies into this checkout's dev state and never stops the app from starting", async () => {
+    const lines = [];
+    const targets = [];
+    await shareDevelopmentIdentity(
+      { stateRoot: "/repo/.scient-next" },
+      {
+        loadIdentity: identity(async ({ targetStateDir }) => {
+          targets.push(targetStateDir);
+          return { status: "imported", secrets: 3 };
+        }),
+        writeLine: (line) => lines.push(line),
+      },
+    );
+    assert.deepEqual(targets, [NodePath.join("/repo/.scient-next", "scient-next-dev")]);
+    assert.deepEqual(lines, ["copied 3"]);
+
+    await shareDevelopmentIdentity(
+      { stateRoot: "/repo/.scient-next" },
+      {
+        loadIdentity: identity(async () => {
+          throw new Error("disk full");
+        }),
+        writeLine: (line) => lines.push(line),
+      },
+    );
+    assert.match(lines[1], /Could not copy your dev identity \(disk full\)/u);
+
+    // The stable controller's copy of this launcher has no identity module.
+    await shareDevelopmentIdentity(
+      { stateRoot: "/repo/.scient-next" },
+      {
+        loadIdentity: async () => {
+          throw new Error("Cannot find module");
+        },
+        writeLine: (line) => lines.push(line),
+      },
+    );
+    assert.equal(lines.length, 2);
+  });
+
+  it("does not start the identity home while a seed fills it", async () => {
+    let error;
+    try {
+      await shareDevelopmentIdentity(
+        { stateRoot: "/home/.scient-next" },
+        { loadIdentity: identity(async () => ({ status: "home-seeding" })), writeLine: () => {} },
+      );
+    } catch (cause) {
+      error = cause;
+    }
+    assert.match(String(error), /seed is filling this identity home/u);
   });
 });

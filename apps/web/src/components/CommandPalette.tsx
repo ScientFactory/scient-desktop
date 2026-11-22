@@ -295,6 +295,10 @@ import {
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
 import { useCommandPaletteThemeItems } from "./CommandPaletteThemeItems";
 import {
+  PORT_FORWARD_GROUP_PREFIX,
+  useCommandPalettePortForwardItem,
+} from "./CommandPalettePortForwardItems";
+import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
@@ -319,7 +323,10 @@ import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
-import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  isPickableProjectMember,
+  pickableProjectGroups,
+} from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
@@ -628,6 +635,10 @@ function OpenCommandPaletteDialog(props: {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
+  const portForwardItem = useCommandPalettePortForwardItem({
+    activeThread: activeThread ?? null,
+    query: deferredQuery,
+  });
   const currentView = viewStack.at(-1)?.view ?? null;
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -1005,15 +1016,16 @@ function OpenCommandPaletteDialog(props: {
         pin: projectPin,
         runProject: async (project) => {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-          const contextualRefBelongsToGroup =
+          const contextualProjectIsEligible =
             contextualProjectRef !== null &&
-            group?.memberProjectRefs.some(
-              (projectRef) =>
-                projectRef.environmentId === contextualProjectRef.environmentId &&
-                projectRef.projectId === contextualProjectRef.projectId,
+            group?.memberProjects.some(
+              (member) =>
+                member.environmentId === contextualProjectRef.environmentId &&
+                member.id === contextualProjectRef.projectId &&
+                isPickableProjectMember(member),
             );
           await handleNewThread(
-            contextualRefBelongsToGroup
+            contextualProjectIsEligible
               ? contextualProjectRef
               : scopeProjectRef(project.environmentId, project.id),
           );
@@ -1584,6 +1596,8 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (portForwardItem) actionItems.push(portForwardItem);
+
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"
       ? paletteRouteTarget.threadRef
@@ -2056,11 +2070,13 @@ function OpenCommandPaletteDialog(props: {
         ? addProjectEntryGroups()
         : currentView?.groups[0]?.value === NEW_THREAD_IN_GROUP
           ? newThreadInGroups
-          : currentView?.groups[0]?.value === "themes"
-            ? changeThemeItem.groups
-            : currentView?.groups[0]?.value === "appearance"
-              ? changeAppearanceItem.groups
-              : (currentView?.groups ?? rootGroups);
+          : currentView?.groups[0]?.value.startsWith(PORT_FORWARD_GROUP_PREFIX) && portForwardItem
+            ? portForwardItem.groups
+            : currentView?.groups[0]?.value === "themes"
+              ? changeThemeItem.groups
+              : currentView?.groups[0]?.value === "appearance"
+                ? changeAppearanceItem.groups
+                : (currentView?.groups ?? rootGroups);
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;

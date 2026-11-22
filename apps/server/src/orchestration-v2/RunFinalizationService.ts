@@ -6,6 +6,9 @@ import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+// SCIENT-FORK:START repository-refresh-per-cwd
+import * as Semaphore from "effect/Semaphore";
+// SCIENT-FORK:END repository-refresh-per-cwd
 
 import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -14,6 +17,8 @@ import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+
+const REPOSITORY_REFRESH_CONCURRENCY = 4;
 
 export class RunFinalizationError extends Schema.TaggedError<RunFinalizationError>()(
   "RunFinalizationError",
@@ -38,8 +43,17 @@ export class RunFinalizationObserver extends Context.Reference<{
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, RunFinalizationRefreshError>;
+  /** Local status of the tracked repositories a run checkpointed. Returns before it finishes. */
+  readonly refreshRepositories: (input: {
+    readonly threadId: ThreadId;
+    readonly cwds: ReadonlyArray<string>;
+  }) => Effect.Effect<void>;
 }>("t3/orchestration-v2/RunFinalizationObserver", {
-  defaultValue: () => ({ refresh: () => Effect.void, refreshAfterTurn: () => Effect.void }),
+  defaultValue: () => ({
+    refresh: () => Effect.void,
+    refreshAfterTurn: () => Effect.void,
+    refreshRepositories: () => Effect.void,
+  }),
 }) {}
 
 export class RunFinalizationService extends Context.Service<
@@ -91,6 +105,17 @@ const make = Effect.gen(function* () {
         FiberSet.run(refreshes),
       );
     }
+    const repositoryScopeIds = new Set(
+      projection.checkpoints.flatMap((checkpoint) =>
+        checkpoint.runId === input.runId ? [checkpoint.scopeId] : [],
+      ),
+    );
+    const cwds = projection.checkpointScopes.flatMap((scope) =>
+      typeof scope.repositoryPath === "string" && repositoryScopeIds.has(scope.id)
+        ? [scope.cwd]
+        : [],
+    );
+    if (cwds.length > 0) yield* observer.refreshRepositories({ threadId: input.threadId, cwds });
   });
   return RunFinalizationService.of({ finalize });
 });
@@ -107,6 +132,11 @@ export const layerObserver = Layer.effect(
     const projects = yield* ProjectService.ProjectService;
     const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
     const pullRequestLookups = yield* FiberMap.make<string>();
+    // SCIENT-FORK:START repository-refresh-per-cwd — keyed by folder, so a newer request replaces
+    // only the folders it re-reads and a rewind's other folders still refresh; also offered upstream.
+    const repositoryRefreshes = yield* FiberMap.make<string>();
+    const repositoryRefreshPermits = yield* Semaphore.make(REPOSITORY_REFRESH_CONCURRENCY);
+    // SCIENT-FORK:END repository-refresh-per-cwd
     const identityRefreshes = yield* FiberMap.make<ProjectId>();
     // A turn can add the first remote (`git remote add`, `gh repo create --push`), which the
     // enrichment and resolver caches would otherwise keep reporting as missing for a minute.
@@ -132,6 +162,31 @@ export const layerObserver = Layer.effect(
     );
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
+      // A project can track dozens of repositories, so the next turn must not wait for them all.
+      // A newer turn's refresh replaces a running one.
+      refreshRepositories: Effect.fn("RunFinalizationService.refreshRepositories")(function* ({
+        threadId,
+        cwds,
+      }) {
+        // SCIENT-FORK:START repository-refresh-per-cwd
+        yield* Effect.forEach(
+          cwds,
+          (cwd) =>
+            vcsStatus.refreshLocalStatus(cwd).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("failed to refresh repository status after run completion", {
+                  threadId,
+                  cwd,
+                  detail: error.message,
+                }),
+              ),
+              repositoryRefreshPermits.withPermits(1),
+              FiberMap.run(repositoryRefreshes, cwd),
+            ),
+          { discard: true },
+        );
+        // SCIENT-FORK:END repository-refresh-per-cwd
+      }),
       refresh: Effect.fn("RunFinalizationService.refresh")(
         function* ({ cwd, threadId, runId }) {
           const [, local] = yield* Effect.all(

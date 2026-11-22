@@ -65,6 +65,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
   codexContinuationIdentity,
+  codexHomeLaunchArgs,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -169,6 +170,8 @@ const withInstanceIdentity =
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
     readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
+    /** The Codex home whose plugins.cache and config.toml this instance installs into. */
+    readonly pluginHome: string;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
@@ -177,6 +180,7 @@ const withInstanceIdentity =
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },
+    pluginHomes: { codex: input.pluginHome },
     skills: snapshot.skills.map((skill) => ({ ...skill, canSetEnabled: true })),
     connection: {
       methods: snapshot.auth.required === false ? [] : ["codex_browser", "codex_device_code"],
@@ -261,6 +265,7 @@ export const CodexDriver: ScientProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
       runtime: managedRuntime.summary,
+      pluginHome: homeLayout.sharedHomePath,
     });
     const effectiveConfig = {
       ...config,
@@ -270,6 +275,7 @@ export const CodexDriver: ScientProviderDriver<
         yield* HostProcess.HomeDirectory,
       ),
       homePath: homeLayout.effectiveHomePath ?? "",
+      launchArgs: codexHomeLaunchArgs(pathService, homeLayout, config.launchArgs),
     } satisfies CodexSettings;
     // SCIENT-FORK: Scient-managed Codex runtimes are updated by Scient, not by the native updater.
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(

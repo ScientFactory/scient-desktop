@@ -20,6 +20,7 @@ import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl } from "./AssetAccess.ts";
 import * as AssetSigner from "./AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 
@@ -33,6 +34,7 @@ const testLayer = Layer.mergeAll(
     Layer.provide(T3ProjectFileLoader.layer),
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(configLayer)),
+  WorkspacePreviewRevisions.layer,
   AssetSigner.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(configLayer))),
   ),

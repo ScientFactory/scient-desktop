@@ -79,6 +79,7 @@ import {
 } from "@t3tools/provider-core/server/attachmentPrompt";
 import type { ServerConfig } from "../../config.ts";
 import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
+import { buildWorkspaceInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
@@ -359,11 +360,22 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           return yield* new NativeSessionOperationError({
             detail: "The tool session belongs to another provider instance.",
           });
+        const extensionId = yield* options.random.uuidV4();
+        // The thread's folder list, which the extension reads at each agent start; rewritten
+        // when a turn's folders change. Its name is one the crash cleanup above removes.
+        const workspacePath = path.join(root, `scient-context-${extensionId}.txt`);
+        const workspaceText = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+          buildWorkspaceInstructions({ cwd: policy.cwd ?? cwd, workspace: policy.workspace });
+        let writtenWorkspace = workspaceText(input.runtimePolicy);
+        yield* Effect.acquireRelease(
+          fs.writeFileString(workspacePath, writtenWorkspace, { mode: 0o600 }),
+          () => fs.remove(workspacePath, { force: true }).pipe(Effect.ignore),
+        );
         const extension = yield* writeOmpExtensionFiles({
           target,
           directory: root,
-          name: `scient-extension-${yield* options.random.uuidV4()}`,
-          source: (bootstrapPath) => ompScientExtensionSource(target, bootstrapPath),
+          name: `scient-extension-${extensionId}`,
+          source: (bootstrapPath) => ompScientExtensionSource(target, bootstrapPath, workspacePath),
           bootstrap: {
             endpoint: mcp?.endpoint ?? null,
             authorization: mcp?.authorizationHeader ?? null,
@@ -1918,6 +1930,20 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 return yield* new NativeSessionOperationError({
                   detail: `${target.name} supports only full access and has no native sandbox.`,
                 });
+              const workspace = workspaceText(turnInput.runtimePolicy);
+              if (workspace !== writtenWorkspace) {
+                yield* fs.writeFileString(workspacePath, workspace, { mode: 0o600 }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new NativeSessionOperationError({
+                        detail: `Could not update ${target.name}'s list of the thread's folders.`,
+                        breaksSession: false,
+                        cause,
+                      }),
+                  ),
+                );
+                writtenWorkspace = workspace;
+              }
               const model =
                 turnInput.modelSelection.model === "default"
                   ? state.model === undefined

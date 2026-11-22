@@ -85,6 +85,7 @@ export * from "./threadTitle.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
+export * from "./workspaceFolders.ts";
 export * from "./filesystem.ts";
 export * from "./fileOpening.ts";
 export * from "./agentSessions.ts";
@@ -187,6 +188,9 @@ export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:START — Scient Agent voice contracts: live calls and ChatGPT dictation (new files, no upstream edits).
 export * from "./scient/liveVoice.ts";
 export * from "./scient/chatGptDictation.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in contracts (new file, no upstream edits).
+export * from "./scient/pluginSignIn.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";

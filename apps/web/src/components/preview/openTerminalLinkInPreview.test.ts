@@ -12,6 +12,14 @@ vi.mock("~/previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => true,
 }));
 
+// SCIENT-FORK:START — Scient Accounts picks the profile through the app's connection, which a
+// unit test has no page for; the default profile is what it picks with no Accounts row.
+vi.mock("~/scient/accounts/openProfile", () => ({
+  openProfileId: async (_threadRef: unknown, _url: unknown, defaults: { profileId: string }) =>
+    defaults.profileId,
+}));
+// SCIENT-FORK:END
+
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
     getState: () => ({ openBrowser: vi.fn() }),

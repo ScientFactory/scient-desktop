@@ -202,6 +202,23 @@ seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
 `desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
 installation remain inherited. Do not copy the updater into a second component
 or restore upstream's muted active-state styling during alignment.
+Scient's sidebar icon rail (`apps/web/src/scient/sidebar/SidebarNavRail.tsx`, on by default,
+`sidebarNavRailEnabled` in Settings → Labs) moves the footer's utility buttons into a column along
+the sidebar's edge; `Sidebar.tsx`, `AppSidebarLayout.tsx`, `SidebarChrome.tsx`,
+`LabsSettingsPanel.tsx` and `settingsSearch.ts` carry marked mounts, and the footer row and the
+rail share `scient/sidebar/useSidebarUtilityActions.ts`. The rail's one Code review item opens pull
+requests or issues; both pages' titles are `scient/codeReview/CodeReviewTitle.tsx`, a switch
+between them, mounted in `PullRequestsColumn.tsx` and `IssuesPage.tsx`. With the rail on,
+`SidebarChromeHeader` renders the same update control in the brand's place
+(`placement="header"`): the brand while idle, without the idle check icon or its animation latch;
+the compact Update after the Scient symbol when there is something to act on; its cards open
+below. The header control keeps owning `useUpdateEverything`, so the other-updates circle reaches
+the rail through a portal (`scient/sidebar/railOtherUpdatesSlot.ts`) rather than a second control.
+An empty draft asks one question, "What should we work on?", and picks its project in a chip
+above the composer; marked regions in `DraftHeroHeadline.tsx` restyle upstream's project combobox
+as that chip and add **No project** as its last item in place of the line under the heading.
+Upstream's `DraftHeroProjectHeading.tsx`, which puts the picker in the sentence, stays unmounted
+(a knip entry) so its changes still merge.
 Scient downloads an offered update in the background (`autoDownloadLoop` in
 `DesktopUpdates.ts`), through the same action reservation as a user's download. A failed
 download of one release retries after 1, 5 and 15 minutes, then hourly and every 4 hours; a
@@ -707,6 +724,70 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`15d945faef4c14099ba3d82bcdb84e91b5a3c3cd` is recorded in
+[the 2026-11-22 c1464d6774 receipt](docs/internals/t3-upstream-sync-20261122-c1464d6774.md).
+Literal merge `c9d735b520b813fbdf3b8da35d8bcaae769a1649` has owned base
+`f1bfa5622ea6f2d08c6b203cb04ca7304acab19a` and the frozen official target as parents, retaining
+the 87 official commits after `c1464d6774`. The range is fixes and speed-ups: slash commands wait
+during a turn, dictation after a thread switch reaches its thread, cleaner office text, fewer Git
+reads, and one `T3CODE_FEATURE_FLAGS` list. Scient for GitHub stays the default app sign-in and
+Secrets stays hidden. Release remains separate.
+
+The previous committed alignment through
+`c1464d6774cf4c690aba3fb20b8094a35396d130` is recorded in
+[the 2026-11-21 c5514042ad receipt](docs/internals/t3-upstream-sync-20261121-c5514042ad.md).
+Literal merge `7682072b3125ea5850eb816349a405d801e8c0a8` has owned base
+`2686e308b4dfd27b06bab7ea3ee7388f5e370939` and the frozen official target as parents, retaining
+the 119 official commits after `c5514042ad`. The range lets a project cover several repositories,
+links a machine through another environment, adds a TanStack Source forge behind a flag, Copy as
+HTML for chat tables and Duplicate and Reload for browser tabs, and moves to Effect 4.1.5. Task
+folders go through Scient's guarded cleanup and rewind; New thread keeps Scient's project picker.
+The alignment is Scient PR #1051. Release remains separate.
+
+An earlier committed alignment through
+`c5514042adfb2cb2323c75b449ffd5e950c6a40b` is recorded in
+[the 2026-11-21 f2d4df0367 receipt](docs/internals/t3-upstream-sync-20261121-f2d4df0367.md).
+Literal merge `649f43e495936493337c6091b430a807ba01e7e1` has owned base
+`f50f249d2b8015de70d23aa3d319a8c532239cb8` and the frozen official target as parents, retaining
+the 112 official commits after `f2d4df0367`. The range adds a map of linked environments, reading
+their threads, MCP sign-in from an agent's warning, multi-value secret cards, Cursor agents out of
+process and typed turn results, plus many fixes. Scient keeps its WSL home, its cross-track update
+offers and its watcher-driven HTML previews, and keeps T3's Apple Speech dictation dormant with
+the rest of T3 voice. Release remains separate.
+
+An earlier committed alignment through
+`f2d4df0367451f1771e94619021dfbb9982b463f` is recorded in
+[the 2026-11-20 f6d941fa4f receipt](docs/internals/t3-upstream-sync-20261120-f6d941fa4f.md).
+Literal merge `7baaaf047c8c698fa9ea8c383184b73c1a5922a5` has owned base
+`94197d30deac94197f89d566932d5a5f4f73c792` and the frozen official target as parents, retaining
+the 35 official commits after `f6d941fa4f`. The range is mostly fixes to Antigravity sign-in,
+rules and its managed CLI, credential scoping, delegation and chat, plus linking several
+environments at once. Google-account Antigravity instances keep their own sign-in, so limits need
+no keychain. The alignment is Scient PR #1038. Release remains separate.
+
+An earlier committed alignment through
+`f6d941fa4fa41741a881b8f646c6737d845ea91c` is recorded in
+[the 2026-11-20 0317d4f4e5 receipt](docs/internals/t3-upstream-sync-20261120-0317d4f4e5.md).
+Literal merge `c3ab5cc489c6598120ecbf6c571da9db1f7e2016` has owned base
+`d46a10f5132d3739289f53ba2cddd8e55350f173` and the frozen official target as parents, retaining
+the 161 official commits after `0317d4f4e5`. The range is mostly fixes to Antigravity, delegation
+and subagents, remote environments and chat, plus side chats added to their main thread,
+forwarding another environment's ports and a setting that turns off the preview tunnel. Scient
+keeps its managed Antigravity 1.4.5 harness supported instead of T3's 1.5 floor. T3's migrations
+100-102 are Scient's 104-106. The alignment is Scient PR #1035. Release remains separate.
+
+An earlier committed alignment through
+`0317d4f4e5d7d3b5aba37bed0d61c304fb24d7ae` is recorded in
+[the 2026-11-19 0226239a41 receipt](docs/internals/t3-upstream-sync-20261119-0226239a41.md).
+Literal merge `52bd8cf7bccbb78bde2af1e22937478e0f1695c0` has owned base
+`10eee98aca9ed033f2ccb06055f765dff321551f` and the frozen official target as parents, retaining
+the 121 official commits after `0226239a41`. The range lowers server memory use, keeps
+Antigravity threads working while background commands and subagents run, keeps a steer Claude
+had not read for Resume, gives agents pull request and CI tools, and makes setting up a Scient
+Connect link need the `relay:configure` permission. T3's migration 99 is Scient's 103. The
+alignment is Scient PR #1029. Release remains separate.
+
+An earlier committed alignment through
 `0226239a41e1fd0649fdd2562421d8950db7f39c` is recorded in
 [the 2026-11-18 8cf97b5f06 receipt](docs/internals/t3-upstream-sync-20261118-8cf97b5f06.md),
 whose 2026-11-19 extension adds the 41 official commits after `8cf97b5f06` in literal merge
@@ -719,7 +800,7 @@ languages, adding Swedish; Scient's wording inside T3's screens is translated wi
 Scient's own modules stay English. Fixes include service-worker pages identifying as Chrome and
 Run now keeping a paused one-time task. The alignment is Scient PR #1021. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `42763ff8b12bfb534363df4dd5f8f5f759f54990` is recorded in
 [the 2026-11-18 42763ff8b1 receipt](docs/internals/t3-upstream-sync-20261118-42763ff8b1.md).
 Literal merge `07c3ec51f70ae063b45fadadeccd7df07e45befd` has owned base
@@ -1718,10 +1799,19 @@ generation runner. Retain these narrow mounts without forking the native engine.
 Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
 and targets outside the qualified native set; removing a fallback requires native
 replacement qualification, not merely an available Google archive. T3 now installs Google's
-native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release as the offline
-floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
-native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
-qualification first.
+native CLI and dropped its pinned ACP release. Scient installs the CLI too, but from its own
+catalog's `antigravity` key (1.5.12 and later, through T3's CLI install path), and keeps the
+paired release as the floor where no qualified CLI is listed
+(`scient/providerLifecycle/antigravityAcpCatalog.ts`); T3's own CLI channel runs only where no
+catalog is supplied. `startRelease` treats the CLI as newer than any paired release, and
+`prepareAntigravityProfile` takes `nativePlugins` so a CLI launch skips Scient's projection.
+T3 also removed harness support and rates Antigravity below 1.5 broken; Scient's manifest keeps
+1.4.5 supported, and the driver, prompt and permission seams keep the harness path (its own
+`yolo`/`auto_edit` modes, video linking, runtime-policy approvals when no native Auto is
+offered). Google-account instances keep their sign-in in the instance profile (T3's
+`SSH_CONNECTION` marker), and usage limits never read the agy CLI's shared OS keyring item, which
+T3 offers only for Gemini Enterprise: on macOS the read waits on a Keychain prompt and holds a
+file-system worker, which stalled the server's file operations.
 
 Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
 worth proposing to T3:
@@ -2528,6 +2618,23 @@ stuck, including when the setup ahead of it fails later. `Orchestrator.ts` only 
 predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWorkspace.test.ts`.
 T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
 equal change, use its version and delete the blocks, modules and tests.
+
+## MCP sign-in from a chat notice
+
+T3's #39921 signs an agent's MCP server in from its notice and finishes only with a pasted callback
+address. Scient makes `ProviderMcpSignInCompleteInput.callbackUrl` optional: without it, Codex's
+`complete` waits up to five minutes for `mcpServer/oauthLogin/completed`, Claude's succeeds only
+when the server is already connected, and `McpSignInAction` starts that wait when it opens the
+page. `McpSignIn` refreshes the provider instance after a sign-in so Extensions updates. All edits
+carry SCIENT-FORK markers; tests are `CodexAdapterV2.mcpSignIn.scient.test.ts`,
+`McpSignIn.scient.test.ts` and `McpSignInAction.scient.browser.test.tsx`. The same change suits T3
+and can be offered upstream; when T3 finishes local sign-ins itself, take its version and delete
+the blocks and tests.
+
+Antigravity plugin sign-in reuses that notice slot with a Scient `pluginSignIn` field on
+`system_notice`, Scient's `scient.pluginSignIn.open` RPC, the ACP flavor hooks `scientToolNotice`
+and `scientPluginSignIn`, and `ProviderAdapterV2SessionRuntime.scientPluginSignIn`; see the Antigravity
+section of `docs/internals/scient-extensions.md`.
 
 ## Security policy
 

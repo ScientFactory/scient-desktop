@@ -375,6 +375,13 @@ export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "app";
 // SCIENT-FORK:END
 /**
+ * Where a plain click opens a subagent, a side chat or a linked environment's thread: beside the
+ * thread you are in, or in its place. A modified click opens it in the other one.
+ */
+export const SideThreadOpenTarget = Schema.Literals(["panel", "main"]);
+export type SideThreadOpenTarget = typeof SideThreadOpenTarget.Type;
+const DEFAULT_SIDE_THREAD_OPEN_TARGET: SideThreadOpenTarget = "panel";
+/**
  * What the address bar searches with when the input is not an address.
  * "custom" uses `browserCustomSearchUrl`, a template with `%s` for the query.
  */
@@ -599,12 +606,18 @@ export const ClientSettingsSchema = Schema.Struct({
   followUpBehavior: Schema.Literals(["queue", "steer"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("steer")),
   ),
+  sideThreadOpenTarget: SideThreadOpenTarget.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDE_THREAD_OPEN_TARGET)),
+  ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  // SCIENT-FORK:START — the sidebar's icon rail, on by default.
+  sidebarNavRailEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // SCIENT-FORK:END
   toolCallVisibility: ToolCallVisibility.pipe(
     Schema.withDecodingDefault(Effect.succeed("showAll" as const)),
   ),
@@ -1538,6 +1551,8 @@ export const ServerSettings = Schema.Struct({
    * The user browser panel and baseline Sources/document capabilities are independent of this setting.
    */
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Lets clients reach this machine's loopback ports over `/api/preview/tunnel`. */
+  enablePreviewTunnel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
@@ -2065,6 +2080,7 @@ export const ServerSettingsPatch = Schema.Struct({
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),
   requireConnectDeviceApproval: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  enablePreviewTunnel: Schema.optionalKey(Schema.Boolean),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
@@ -2251,7 +2267,7 @@ export function requiredScopesForServerSettingsPatch(
   let changesAccess = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    if (key === "requireConnectDeviceApproval") {
+    if (key === "requireConnectDeviceApproval" || key === "enablePreviewTunnel") {
       changesAccess = true;
     } else if (
       key === "providers" ||
@@ -2354,10 +2370,14 @@ export const ClientSettingsPatch = Schema.Struct({
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
+  sideThreadOpenTarget: Schema.optionalKey(SideThreadOpenTarget),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:START
+  sidebarNavRailEnabled: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
   toolCallVisibility: Schema.optionalKey(ToolCallVisibility),
   screenReaderAnnouncements: Schema.optionalKey(ScreenReaderAnnouncements),
   screenReaderWindowTitle: Schema.optionalKey(Schema.Boolean),

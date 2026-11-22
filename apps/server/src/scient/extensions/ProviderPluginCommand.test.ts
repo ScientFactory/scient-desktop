@@ -41,7 +41,7 @@ describe("Scient Agent plugin process source gate", () => {
         const gate = yield* makeOmpExecutableGate();
         for (const [version, expected] of [
           ["0.1.2", ""],
-          ["0.1.3", "claude-plugins"],
+          ["0.1.3", "claude-plugins,codex-plugins"],
         ] as const) {
           const executable = path.join(root, `agent-${version}`);
           const info = {

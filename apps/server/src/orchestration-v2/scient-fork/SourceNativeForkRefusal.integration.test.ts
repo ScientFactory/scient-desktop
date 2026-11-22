@@ -41,6 +41,7 @@ import {
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
 import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { liveCodexThreadSetup } from "../testkit/CodexReplayThreadSetup.ts";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFrame = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -182,7 +183,13 @@ it.live(
           materializeReplayTranscriptWorkspace(recorded, cwd),
         );
         const entries = [...transcript.entries];
-        const replayTranscript = { ...transcript, entries };
+        // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+        const replayTranscript = {
+          ...transcript,
+          entries: liveCodexThreadSetup(transcript, entries, (native) =>
+            native === "native-source-thread" ? "Source" : "Source (2)",
+          ),
+        };
         const driver = yield* CodexReplay.makeReplayDriver(replayTranscript);
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
@@ -377,7 +384,7 @@ it.live(
           );
           assert.equal(
             replayState.cursor,
-            entries.length,
+            replayTranscript.entries.length,
             "The portable terminal must consume the complete strict transcript",
           );
         }).pipe(Effect.provide(layer));

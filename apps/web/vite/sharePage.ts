@@ -31,7 +31,6 @@ export function sharePageConfig(root: string) {
       "import.meta.env.VITE_HOSTED_APP_URL": '""',
       "import.meta.env.VITE_HOSTED_APP_CHANNEL": '""',
       "import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY": '""',
-      "import.meta.env.T3CODE_FEATURE_SECRETS": '""',
       "import.meta.env.VITE_RELEASE_CHANNEL": '""',
       "import.meta.env.APP_VERSION": JSON.stringify(pkg.version),
     },

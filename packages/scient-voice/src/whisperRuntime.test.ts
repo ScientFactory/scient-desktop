@@ -5,12 +5,13 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { NormalizedVoiceClip } from "./errors.ts";
 import {
   buildRuntimeEnvironment,
   buildWhisperServerArguments,
+  defaultWhisperThreads,
   LocalWhisperRuntime,
   isWhisperRuntimePlatformSupported,
   lowerWhisperProcessPriority,
@@ -46,6 +47,10 @@ describe("pure runtime helpers", () => {
       "auto",
       "--no-timestamps",
     ]);
+  });
+
+  it("leaves half the CPUs to other programs, with at most four threads", () => {
+    expect([1, 2, 3, 4, 8, 16].map(defaultWhisperThreads)).toEqual([1, 1, 1, 2, 4, 4]);
   });
 
   it("scales the inference timeout by 3x with a floor and a hard cap", () => {
@@ -100,6 +105,7 @@ describe("pure runtime helpers", () => {
 class FakeChild extends NodeEvents.EventEmitter {
   pid = 999_999; // improbable pid; NodeOS.setPriority will safely no-op
   exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
   killed = false;
   readonly stdout = { on: (): undefined => undefined };
   readonly stderr = { on: (): undefined => undefined };
@@ -125,6 +131,18 @@ class ControlledExitChild extends FakeChild {
     if (this.exitCode !== null) return;
     this.exitCode = 0;
     this.emit("exit", 0, null);
+  }
+}
+
+/** Ends on SIGTERM as a signalled process does: a signal and no exit code. */
+class SignalledExitChild extends FakeChild {
+  override kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    if (this.signalCode === null) {
+      this.killed = true;
+      this.signalCode = signal;
+      this.emit("exit", null, signal);
+    }
+    return true;
   }
 }
 
@@ -367,6 +385,50 @@ describe("LocalWhisperRuntime lifecycle", () => {
     child.finishExit();
     await disposal;
     expect(disposed).toBe(true);
+  });
+
+  it("kills a timed-out helper that keeps running, and disposal waits for it", async () => {
+    const child = new ControlledExitChild();
+    const h = await harness(child);
+    await h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const gate = h.holdNextInference();
+      const stalled = h.runtime
+        .transcribe("/model.bin", CLIP, { signal: new AbortController().signal })
+        .catch(() => undefined);
+      await gate.entered;
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(child.killed).toBe(true);
+      expect(child.exitCode).toBeNull();
+      let disposed = false;
+      const disposal = h.runtime.dispose().then(() => {
+        disposed = true;
+      });
+      gate.release();
+      await stalled;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(disposed).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(child.exitCode).toBe(0);
+      await disposal;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("finishes disposal at once for a helper a signal already ended", async () => {
+    const h = await harness(new SignalledExitChild());
+    await h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal });
+    const gate = h.holdNextInference();
+    const running = h.runtime
+      .transcribe("/model.bin", CLIP, { signal: new AbortController().signal })
+      .catch(() => undefined);
+    await gate.entered;
+    const disposal = h.runtime.dispose();
+    gate.release();
+    await running;
+    await expect(disposal).resolves.toBeUndefined();
   });
 
   it("fails installation checks when the executable is missing", async () => {

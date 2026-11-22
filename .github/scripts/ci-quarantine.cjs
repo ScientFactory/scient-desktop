@@ -441,6 +441,7 @@ async function run({ github, context, core, registerText }) {
 
 module.exports = {
   ADVISORY_JOBS,
+  AFTER_FAILURE,
   CONSEQUENCES,
   WITNESSES,
   RUN_DESPITE_FAILURE,

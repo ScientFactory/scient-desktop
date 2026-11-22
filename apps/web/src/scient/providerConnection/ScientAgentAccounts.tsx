@@ -87,7 +87,11 @@ export function ScientAgentAccounts(props: {
     value: "",
   });
   const [pending, setPending] = useState<Pending>(null);
-  const [error, setError] = useState<string | null>(null);
+  // `signIn` names the account whose sign-in start failed, so that failure alone
+  // can be told apart from the failed sign-in the server records for it.
+  const [error, setError] = useState<{ readonly text: string; readonly signIn?: string } | null>(
+    null,
+  );
   const { copyToClipboard } = useCopyToClipboard();
   const gt = useGT();
 
@@ -101,7 +105,8 @@ export function ScientAgentAccounts(props: {
   const signInKey = { environmentId: props.environmentId, instanceId: props.provider.instanceId };
   const providerName = props.provider.displayName?.trim() || "Scient Agent";
   const browser = useProviderSignInBrowser(signInKey, active, providerName);
-  const shownError = error ?? (browser.opening?.status === "failed" ? browser.opening.error : null);
+  const shownError =
+    error?.text ?? (browser.opening?.status === "failed" ? browser.opening.error : null);
   // Without a list there is nothing to choose from, but a sign-in that is
   // running or just failed is still shown.
   if (listed === undefined && active === null && failed === null) return null;
@@ -111,9 +116,22 @@ export function ScientAgentAccounts(props: {
   const nameOf = (id: string | undefined) =>
     accounts.find((account) => account.id === id)?.name ?? gt("the account");
   const busy = pending !== null || props.disabled === true;
+  // A sign-in the agent refused fails twice: the click's own reply, and the
+  // failed sign-in the server records. Say it once, naming the account.
+  const repeatedFailure =
+    failed !== null &&
+    failed.message.length > 0 &&
+    error?.signIn !== undefined &&
+    error.signIn === failed.account &&
+    error.text.includes(failed.message)
+      ? `${nameOf(failed.account)}: ${failed.message}`
+      : null;
 
-  const fail = (failure: unknown, fallback: string) =>
-    setError(providerLifecycleFailureMessage(failure, fallback));
+  const fail = (failure: unknown, fallback: string, signIn?: string) =>
+    setError({
+      text: providerLifecycleFailureMessage(failure, fallback),
+      ...(signIn === undefined ? {} : { signIn }),
+    });
 
   const signIn = async (account: ProviderConnectionAccount) => {
     setError(null);
@@ -148,6 +166,7 @@ export function ScientAgentAccounts(props: {
       fail(
         failure,
         m(msg("Scient could not start the {account} sign-in.", { account: account.name })),
+        account.id,
       );
     }
   };
@@ -311,7 +330,7 @@ export function ScientAgentAccounts(props: {
               value={query}
             />
           )}
-          <div className="max-h-64 overflow-y-auto overscroll-contain rounded-lg border">
+          <div className="max-h-64 overflow-y-auto overscroll-contain rounded-lg border bg-background">
             <AccountGroup
               accounts={sections.yours}
               busy={busy}
@@ -344,7 +363,7 @@ export function ScientAgentAccounts(props: {
           </div>
         </>
       )}
-      {failed ? (
+      {failed && repeatedFailure === null ? (
         <p className="text-xs leading-relaxed text-muted-foreground" role="status">
           {nameOf(failed.account)}: {failed.message}
         </p>
@@ -355,7 +374,7 @@ export function ScientAgentAccounts(props: {
           className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive"
         >
           <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>{shownError}</span>
+          <span>{repeatedFailure ?? shownError}</span>
         </div>
       ) : null}
     </section>
@@ -376,7 +395,8 @@ function AccountGroup(props: {
     props.pending?.kind === kind && props.pending.account === account.id;
   return (
     <div>
-      <p className="sticky top-0 border-b bg-muted/60 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur">
+      {/* Opaque: rows scroll under it, and dark themes' muted color is nearly transparent. */}
+      <p className="sticky top-0 z-10 border-b bg-background bg-linear-to-b from-muted to-muted px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {props.label}
       </p>
       <ul className="divide-y">

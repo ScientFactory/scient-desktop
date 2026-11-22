@@ -9,14 +9,7 @@ import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../../../test/render";
 
-const { openFile } = vi.hoisted(() => ({ openFile: vi.fn() }));
-vi.mock(import("~/rightPanelStore"), async (original) => {
-  const actual = await original();
-  const getState = actual.useRightPanelStore.getState;
-  actual.useRightPanelStore.getState = (() => ({ ...getState(), openFile })) as never;
-  return actual;
-});
-
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useFileCitationTarget } from "~/scient/markdownEditor/fileCitationNavigation";
 
 import { workspacePdfSource } from "../pdfSource";
@@ -66,6 +59,14 @@ function Route(props: { href: string }) {
   useFileCitationTarget(ref, { href: props.href, key: "k1" }, "/project", (_id, run) => run());
   return null;
 }
+
+// A spy, not a module mock: the store and the closed-view store import each other, so a mock
+// that awaits the original module would wait on itself.
+const openFile = vi.fn();
+const storeState = useRightPanelStore.getState;
+vi.spyOn(useRightPanelStore, "getState").mockImplementation(
+  () => ({ ...storeState(), openFile }) as never,
+);
 
 function setup() {
   clearPdfReveals();

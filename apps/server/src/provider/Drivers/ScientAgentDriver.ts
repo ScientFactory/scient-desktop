@@ -5,6 +5,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderConnectionActionError } from "../../scient/providerLifecycle/ProviderConnectionActions.ts";
 import {
   makeScientAgentConnectionActions,
+  isOfferedScientAgentAccount,
   readScientAgentAccounts,
 } from "../../scient/providerLifecycle/ScientAgentConnectionActions.ts";
 import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts";
@@ -64,7 +66,8 @@ import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMc
 import {
   hasChatGptAccount,
   readScientAgentChatGptApps,
-  scientAgentRunsChatGptApps,
+  scientAgentCapabilities,
+  type ScientAgentCapabilities,
   SCIENT_AGENT_CHATGPT_APPS_ALL,
   SCIENT_AGENT_CHATGPT_APPS_ENV,
 } from "../../scient/extensions/ScientAgentChatGptApps.ts";
@@ -147,6 +150,16 @@ export const ScientAgentDriver: ScientProviderDriver<
         path.join(yield* HostProcess.HomeDirectory, ".claude"),
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
+    // The Codex home whose installed plugins the codex-plugins source reads. A given CODEX_HOME is
+    // expanded as Codex expands its home and passed on resolved, so both read the same folder.
+    const userHome = yield* HostProcess.HomeDirectory;
+    const configuredCodexHome = processEnv.CODEX_HOME?.trim();
+    const codexHome = path.resolve(
+      configuredCodexHome
+        ? expandHomePath(configuredCodexHome, userHome)
+        : path.join(userHome, ".codex"),
+    );
+    if (configuredCodexHome) processEnv.CODEX_HOME = codexHome;
     // Image generation waits for the provider check to find an account that can make images.
     const writeHostConfig = (imageAccount: boolean) =>
       writeScientAgentHostConfig(root, {
@@ -203,15 +216,24 @@ export const ScientAgentDriver: ScientProviderDriver<
     // client that predates the account method still decodes this provider.
     const stamp = (
       snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts" | "checkFailure">,
-      runsChatGptApps = false,
+      capabilities = { runsApps: false, codexPlugins: false },
     ): ServerProvider => {
       const { accounts, checkFailure, ...draft } = snapshot;
       return {
-        ...stampIdentity(draft),
+        // The models of an account Scient does not offer, which Scient Agent may still report.
+        ...stampIdentity({
+          ...draft,
+          models: draft.models.filter((model) => isOfferedScientAgentAccount(model.slug)),
+        }),
         usesClaudePlugins: supportsScientClaudePlugins(draft.version),
+        usesCodexPlugins: capabilities.codexPlugins,
+        pluginHomes: {
+          claude: claudeHome,
+          ...(capabilities.codexPlugins ? { codex: codexHome } : {}),
+        },
         // The apps of the agent's own ChatGPT sign-in, which only it holds and only a build
         // that runs them can use.
-        accountAppsAvailable: runsChatGptApps && hasChatGptAccount(accounts),
+        accountAppsAvailable: capabilities.runsApps && hasChatGptAccount(accounts),
         connection: {
           methods: [],
           canDisconnect: false,
@@ -276,6 +298,11 @@ export const ScientAgentDriver: ScientProviderDriver<
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
+    // What this build last reported it can do, so one failed runtime-info read changes nothing.
+    const lastCapabilities = yield* Ref.make<
+      | { readonly version: string | null; readonly capabilities: ScientAgentCapabilities }
+      | undefined
+    >(undefined);
     const checkProvider = (cwd?: string) =>
       checkOmpProviderStatus(
         scientAgentTarget,
@@ -305,25 +332,37 @@ export const ScientAgentDriver: ScientProviderDriver<
                         snapshot.accounts,
                       )
                     : Effect.undefined,
-                  hasChatGptAccount(snapshot.accounts)
-                    ? scientAgentRunsChatGptApps(
-                        launchConfig.binaryPath,
-                        processEnv,
-                        serverConfig.stateDir,
-                      ).pipe(
-                        Effect.provideService(OmpExecutableGate, executableGate),
-                        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                        Effect.provideService(FileSystem.FileSystem, fs),
-                        Effect.provideService(Path.Path, path),
-                      )
-                    : Effect.succeed(false),
+                  scientAgentCapabilities(
+                    launchConfig.binaryPath,
+                    processEnv,
+                    serverConfig.stateDir,
+                  ).pipe(
+                    Effect.provideService(OmpExecutableGate, executableGate),
+                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                  ),
                 ],
                 { concurrency: "unbounded" },
               ).pipe(
-                Effect.map(([skills, usageLimits, runsChatGptApps]) =>
-                  stamp(
-                    { ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) },
-                    runsChatGptApps,
+                Effect.flatMap(([skills, usageLimits, read]) =>
+                  // A failed read keeps what this same build last reported.
+                  Ref.modify(lastCapabilities, (last) => {
+                    const known =
+                      read ?? (last?.version === snapshot.version ? last.capabilities : undefined);
+                    return [
+                      known,
+                      known === undefined
+                        ? last
+                        : { version: snapshot.version, capabilities: known },
+                    ];
+                  }).pipe(
+                    Effect.map((capabilities) =>
+                      stamp(
+                        { ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) },
+                        capabilities,
+                      ),
+                    ),
                   ),
                 ),
               )

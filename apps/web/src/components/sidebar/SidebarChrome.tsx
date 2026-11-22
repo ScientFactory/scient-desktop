@@ -12,7 +12,9 @@ import {
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
-import { Link, useLocation, useNavigate } from "@tanstack/react-router";
+// SCIENT-FORK:START — the utility actions moved to scient/sidebar/useSidebarUtilityActions.
+import { Link, useLocation } from "@tanstack/react-router";
+// SCIENT-FORK:END
 
 import { useAtomValue } from "@effect/atom-react";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -23,8 +25,9 @@ import {
   type HistoryDirection,
 } from "../../navigationHistory";
 import { primaryServerKeybindingsAtom } from "../../state/server";
+// SCIENT-FORK:START — the environment checks moved with the utility actions.
 import { cn } from "../../lib/utils";
-import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
+// SCIENT-FORK:END
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -35,19 +38,21 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+// SCIENT-FORK:START — the mobile-close helper moved with the utility actions.
 import {
   SidebarFooter,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarTrigger,
-  useSidebar,
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
-import { readIssueListPreferences } from "../issue/issueListPreferences";
+// SCIENT-FORK:END
 import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+// SCIENT-FORK:START — the footer row and the Scient icon rail share the utility actions.
+import { useSidebarUtilityActions } from "../../scient/sidebar/useSidebarUtilityActions";
+// SCIENT-FORK:END
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -56,21 +61,21 @@ import { observeResize } from "~/lib/observeResize";
 
 import { APP_BASE_NAME } from "../../branding";
 import { ScientReleaseCard } from "../../scient/releaseNotes/ScientReleaseNotes";
-import { requestConversationImport } from "../../scient/conversationImport/requests";
-// SCIENT-FORK:START — Scient Cloud conversations.
-import { useCloudConversationsAvailable } from "../../scient/cloud/cloudConversationsAvailable";
-// SCIENT-FORK:END
 // SCIENT-FORK:START — Send feedback to Scient.
 import { FeedbackIcon } from "../../scient/feedback/FeedbackCoordinator";
-import { feedbackAvailable } from "../../scient/feedback/FeedbackDialog";
-import { requestFeedback } from "../../scient/feedback/feedbackStore";
 // SCIENT-FORK:END
 import { ScientSymbol } from "../ScientSymbol";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
+  // SCIENT-FORK:START
+  updateInBrand = false,
+  // SCIENT-FORK:END
 }: {
   isElectron: boolean;
+  // SCIENT-FORK:START — icon rail: the update button takes the brand name's place while an update waits.
+  updateInBrand?: boolean;
+  // SCIENT-FORK:END
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -83,9 +88,21 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
+  // SCIENT-FORK:START — the brand, or with the icon rail the update control around it.
+  const brand = (
+    <SidebarBrand
+      onBackdrop={backdropVariant !== null}
+      stageVariant={backdropVariant}
+      stageLabel={backdropVariant ? stageLabel : null}
+    />
+  );
+  // SCIENT-FORK:END
 
   return (
     <div
+      // SCIENT-FORK:START — the icon rail's styles find the header by this attribute.
+      data-sidebar-chrome-header=""
+      // SCIENT-FORK:END
       className={cn(
         "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3",
         isElectron && "drag-region",
@@ -104,11 +121,25 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
         {/* SCIENT-FORK: min-w-0 keeps the brand shrinkable so its stage label truncates. */}
         <div className="flex min-w-0 items-center gap-1">
-          <SidebarBrand
-            onBackdrop={backdropVariant !== null}
-            stageVariant={backdropVariant}
-            stageLabel={backdropVariant ? stageLabel : null}
-          />
+          {/* SCIENT-FORK:START */}
+          {updateInBrand ? (
+            <SidebarUpdatePill
+              placement="header"
+              onStage={backdropVariant !== null}
+              idleContent={brand}
+              activeLeading={
+                <SidebarBrand
+                  onBackdrop={backdropVariant !== null}
+                  stageVariant={backdropVariant}
+                  stageLabel={null}
+                  withName={false}
+                />
+              }
+            />
+          ) : (
+            brand
+          )}
+          {/* SCIENT-FORK:END */}
           {isElectron ? (
             <div className="hidden items-center md:flex">
               <HistoryNavigationButton direction="back" />
@@ -194,10 +225,16 @@ function SidebarBrand({
   onBackdrop,
   stageVariant,
   stageLabel,
+  // SCIENT-FORK:START
+  withName = true,
+  // SCIENT-FORK:END
 }: {
   readonly onBackdrop: boolean;
   readonly stageVariant: SidebarStageBackdropVariant | null;
   readonly stageLabel: string | null;
+  // SCIENT-FORK:START — false keeps only the symbol, which the icon rail's Update button follows.
+  readonly withName?: boolean;
+  // SCIENT-FORK:END
 }) {
   const gt = useGT();
   return (
@@ -211,7 +248,11 @@ function SidebarBrand({
       to="/"
     >
       <ScientSymbol className="size-4" />
-      <span className="truncate text-base font-semibold tracking-tight">{APP_BASE_NAME}</span>
+      {/* SCIENT-FORK:START */}
+      {withName ? (
+        <span className="truncate text-base font-semibold tracking-tight">{APP_BASE_NAME}</span>
+      ) : null}
+      {/* SCIENT-FORK:END */}
       {stageLabel ? (
         <span className="sidebar-brand-stage sidebar-brand-stage-label truncate text-2xs font-medium">
           {stageLabel}
@@ -262,63 +303,28 @@ function SidebarUtilityItem({
 
 // SCIENT-FORK: exported for Scient's update-pill and utility-row tests.
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
-  const navigate = useNavigate();
+  // SCIENT-FORK:START — the footer row and the Scient icon rail share the utility actions.
   const navigateToMainApp = useNavigateToMainApp();
   const gt = useGT();
-  const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
-  const pullRequestsSupported = usePullRequestsSupported();
-  const issuesSupported = useIssuesSupported();
-  const closeMobileSidebar = () => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-  };
-  const handlePullRequestsClick = () => {
-    closeMobileSidebar();
-    void navigate({
-      to: "/pull-requests",
-      search: readPullRequestListPreferences(),
-    });
-  };
-  const handleIssuesClick = () => {
-    closeMobileSidebar();
-    void navigate({ to: "/issues", search: readIssueListPreferences() });
-  };
-  const handleSettingsClick = () => {
-    closeMobileSidebar();
-    void navigate({ to: "/settings" });
-  };
-
-  // SCIENT-FORK:START - conversation import remains available in the sidebar.
-  const handleImportClick = () => {
-    closeMobileSidebar();
-    requestConversationImport();
-  };
+  const {
+    closeMobileSidebar,
+    pullRequestsSupported,
+    issuesSupported,
+    cloudAvailable,
+    canSendFeedback,
+    handlePullRequestsClick,
+    handleIssuesClick,
+    handleSettingsClick,
+    handleImportClick,
+    handleCloudClick,
+    handleFeedbackClick,
+    handleUsageClick,
+  } = useSidebarUtilityActions();
+  // Usage's handler moved into useSidebarUtilityActions with the others.
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — conversations the person's computers copied to Scient Cloud.
-  const cloudAvailable = useCloudConversationsAvailable();
-  const handleCloudClick = () => {
-    closeMobileSidebar();
-    void navigate({ to: "/cloud" });
-  };
-  // SCIENT-FORK:END
-  // SCIENT-FORK:START — Send feedback to Scient.
-  const canSendFeedback = feedbackAvailable();
-  const handleFeedbackClick = () => {
-    closeMobileSidebar();
-    requestFeedback({ source: "sidebar" });
-  };
-  // SCIENT-FORK:END
-
-  const handleUsageClick = () => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/usage" });
-  };
 
   const handleBackClick = () => {
     closeMobileSidebar();
@@ -435,7 +441,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+// SCIENT-FORK:START — with the icon rail on, the rail holds the utility buttons and the footer
+// keeps only notices.
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  utilities = true,
+}: {
+  utilities?: boolean;
+}) {
+  // SCIENT-FORK:END
   return (
     <SidebarFooter>
       <div className="contents group-data-[collapsible=icon]:hidden">
@@ -443,7 +456,17 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
         <SidebarProviderUpdatePill />
         <SidebarUpdateArchitectureWarning />
       </div>
-      <SidebarUtilityMenu />
+      {/* SCIENT-FORK:START */}
+      {utilities ? (
+        <SidebarUtilityMenu />
+      ) : (
+        <div className="pl-1">
+          <SidebarMenu className="flex-row items-center">
+            <SidebarThreadUndoNotice />
+          </SidebarMenu>
+        </div>
+      )}
+      {/* SCIENT-FORK:END */}
     </SidebarFooter>
   );
 });

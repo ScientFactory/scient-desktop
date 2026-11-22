@@ -410,17 +410,6 @@
       }
     },
     {
-      "name": "@react-native-ai/apple",
-      "sourceUrl": "https://github.com/callstackincubator/ai",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": [
-          "Copyright (c) 2024-2025 Szymon Rybczak",
-          "Copyright (c) 2025-present Callstack"
-        ]
-      }
-    },
-    {
       "name": "react-remove-scroll-bar",
       "generatedNotice": {
         "licenseId": "MIT",
@@ -890,6 +879,30 @@
   ],
   "customNotices": [
     {
+      "bundles": ["desktop", "mobile"],
+      "license": "MIT",
+      "name": "Apple Speech engine (adapted from @react-native-ai/apple)",
+      "sourceUrl": "https://github.com/callstackincubator/ai",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": [
+            "Copyright (c) 2024-2025 Szymon Rybczak",
+            "Copyright (c) 2025-present Callstack"
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop", "mobile", "web"],
+      "license": "MIT",
+      "name": "GitHub gemoji alias data",
+      "sourceUrl": "https://github.com/github/gemoji/blob/fadaeaf1f1a9be82b321316a6c5502e43138b2f6/db/emoji.json",
+      "generatedNotices": [
+        { "licenseId": "MIT", "copyrights": ["Copyright (c) 2019 GitHub, Inc."] }
+      ]
+    },
+    {
       "bundles": ["assets", "desktop", "web"],
       "license": "MIT",
       "name": "Devicon scientific computing icons",
@@ -1160,11 +1173,11 @@
       "noticeFile": "apps/web/src/components/files/office/LICENSE.opencode"
     },
     {
-      "name": "Journal and publisher marks",
+      "name": "Publisher icons",
       "bundles": ["assets", "desktop", "web"],
-      "license": "CC0-1.0 AND LicenseRef-PD-textlogo",
-      "sourceUrl": "https://commons.wikimedia.org/wiki/Template:PD-textlogo",
-      "noticeFile": "apps/web/src/assets/journals/NOTICE"
+      "license": "LicenseRef-Publisher-Trademarks",
+      "sourceUrl": "https://github.com/ScientFactory/scient-desktop/blob/main/apps/web/src/assets/publishers/NOTICE",
+      "noticeFile": "apps/web/src/assets/publishers/NOTICE"
     }
   ]
 }

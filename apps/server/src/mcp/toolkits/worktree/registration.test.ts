@@ -24,6 +24,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 import * as WorkspaceBindingResolver from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingResolutionError } from "../../../scient/projectScope/WorkspaceBinding.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as GitManager from "../../../git/GitManager.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -34,11 +35,14 @@ import * as IssueService from "../../../issue/IssueService.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+// SCIENT-FORK: the custom models agent tools test models through their agents.
+import * as ProviderInstanceRegistry from "../../../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -64,6 +68,7 @@ import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import * as TaskFolders from "../../../workspace/TaskFolders.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -74,6 +79,8 @@ const StubServicesLive = Layer.mergeAll(
   AccountsTestkit.layer,
   // SCIENT-FORK:END
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
+  // T3's pull request tools read the checkout through GitManager.
+  Layer.mock(GitManager.GitManager)({}),
   Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(ProviderSessionManagerV2)({
     resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),
@@ -90,7 +97,8 @@ const StubServicesLive = Layer.mergeAll(
       ),
   }),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
-  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+  // Every MCP request asks which thread it serves, to list forge tools only where they work.
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
@@ -111,6 +119,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(AssetSigner.AssetSigner)({}),
+  Layer.mock(WorkspacePreviewRevisions.WorkspacePreviewRevisions)({}),
   layerRepositories,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
@@ -122,6 +131,9 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(LatexBuildService.LatexBuildService)({}),
   Layer.mock(OverleafSync.OverleafSync)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
+  // SCIENT-FORK: the custom models agent tools test models through their agents.
+  Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),

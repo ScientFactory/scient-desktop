@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import { managedRuntimeFailedCheck, markManagedRuntimeCheck } from "./runtimeFiles.ts";
-import { makeRuntimeFilesystem } from "./runtimeFilesystem.ts";
+import { makeRuntimeFilesystem, runtimeFilesystem } from "./runtimeFilesystem.ts";
 import { tryAcquireManagedRuntimeMutationLock } from "./runtimeMutationLock.ts";
 import {
   ManagedProviderRuntime,
@@ -842,6 +842,71 @@ describe("ManagedProviderRuntime contract", () => {
     expect(await NodeFSP.readFile(external, "utf8")).toBe("external");
   });
 
+  it("gives the removal rename a longer Windows sharing-violation budget", async () => {
+    const renames: Array<{ readonly to: string; readonly budget: number | undefined }> = [];
+    const { runtime } = await makeRuntime({
+      filesystem: {
+        rename: async (from, to, options) => {
+          renames.push({ to, budget: options?.windowsRetryBudgetMs });
+          await runtimeFilesystem.rename(from, to, options);
+        },
+        remove: (path, options) => runtimeFilesystem.remove(path, options),
+      },
+    });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+    renames.length = 0;
+
+    await runtime.remove();
+
+    expect(renames).toEqual([{ to: expect.stringMatching(/\.removing-/u), budget: 60_000 }]);
+    expect((await runtime.status(recipe)).installed).toBe(false);
+  });
+
+  it("leaves the runtime installed when removal is cancelled during its Windows wait", async () => {
+    const cancellation = new AbortController();
+    let removalRenames = 0;
+    let backingOff: (() => void) | undefined;
+    const backedOff = new Promise<void>((resolve) => {
+      backingOff = resolve;
+    });
+    const sharingViolation = Object.assign(new Error("EPERM"), { code: "EPERM" });
+    const { runtime } = await makeRuntime({
+      // The real Windows retry loop: the removal rename hits a sharing violation, and its
+      // backoff sleep lasts until cancelled.
+      filesystem: makeRuntimeFilesystem({
+        platform: "win32",
+        rename: async (from, to) => {
+          if (to.includes(".removing-") && cancellation.signal.aborted === false) {
+            removalRenames += 1;
+            throw sharingViolation;
+          }
+          await NodeFSP.rename(from, to);
+        },
+        sleep: (_delay, signal) =>
+          new Promise<void>((_, reject) => {
+            backingOff?.();
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      }),
+    });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+
+    const removal = runtime.remove({ signal: cancellation.signal });
+    await backedOff;
+    cancellation.abort(new Error("cancelled by the user"));
+
+    await expect(removal).rejects.toThrow("cancelled by the user");
+    expect(removalRenames).toBe(1);
+    const status = await runtime.status(recipe);
+    expect(status.installed).toBe(true);
+    expect(status.activeVersion).toBe("1.0.0");
+    // The lock was released: a later removal runs and completes.
+    await runtime.remove();
+    expect((await runtime.status(recipe)).installed).toBe(false);
+  });
+
   it("rejects unsupported artifacts before creating managed state", async () => {
     const { root, runtime, events } = await makeRuntime();
 
@@ -1073,6 +1138,29 @@ describe("ManagedProviderRuntime mutation lock ownership", () => {
       if (lockedRoot) await NodeFSP.chmod(lockedRoot, 0o700);
       warn.mockRestore();
     }
+  });
+});
+
+describe("ManagedProviderRuntime download limit", () => {
+  it("downloads within the family's reviewed limit", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
+    temporaryRoots.push(root);
+    const limits: Array<number | undefined> = [];
+    const runtime = new ManagedProviderRuntime(
+      root,
+      { providerDirectory: "test-provider", displayName: "Test Provider" },
+      {
+        download: async ({ destination, maxBytes }) => {
+          limits.push(maxBytes);
+          await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+          await NodeFSP.writeFile(destination, "working-runtime", { flag: "wx" });
+        },
+        verify: async () => undefined,
+        smoke: async () => undefined,
+      },
+    );
+    await install(runtime, artifact("1.0.0", { maxDownloadBytes: 1024 * 1024 * 1024 }));
+    expect(limits).toEqual([1024 * 1024 * 1024]);
   });
 });
 

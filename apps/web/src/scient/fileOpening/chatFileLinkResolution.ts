@@ -152,7 +152,7 @@ export function settleWithin<T>(pending: Promise<T>, waitMs: number, fallback: T
  * panel since, supersedes it, so a slow answer never replaces a newer choice.
  */
 export function claimLinkClick(input: {
-  /** Claims the shared click sequence; the result says whether it is still the latest. */
+  /** Claims the click; the result says whether that claim still holds. */
   readonly claimLatest: () => () => boolean;
   /** The panel's count of user actions, read at the click and again later. */
   readonly readUserActionRevision: () => number;

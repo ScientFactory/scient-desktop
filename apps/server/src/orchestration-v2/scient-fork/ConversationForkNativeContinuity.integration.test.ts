@@ -55,6 +55,14 @@ import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import {
+  liveCodexThreadSetup,
+  materializeCodexThreadSetup,
+} from "../testkit/CodexReplayThreadSetup.ts";
+
+// SCIENT-FORK: native thread names follow their app threads' titles (upstream 767f194fd9).
+const forkThreadNames = (nativeThreadId: string) =>
+  nativeThreadId === "native-source-thread" ? "Source" : "Source (2)";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFrame = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -237,7 +245,12 @@ it.live.each(
         };
       }
       const replayTranscript = { ...transcript, entries };
-      const driver = yield* CodexReplay.makeReplayDriver(replayTranscript);
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const driverTranscript = {
+        ...transcript,
+        entries: liveCodexThreadSetup(transcript, entries, forkThreadNames),
+      };
+      const driver = yield* CodexReplay.makeReplayDriver(driverTranscript);
       const targetModelSelection =
         scenario === "changed-instance"
           ? { ...modelSelection, instanceId: ProviderInstanceId.make("codex-alternative") }
@@ -245,7 +258,7 @@ it.live.each(
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },
         makeCodexProviderAdapterRegistryReplayLayer({
-          transcript: replayTranscript,
+          transcript: driverTranscript,
           driver,
           instanceIds: [modelSelection.instanceId, targetModelSelection.instanceId],
         }),
@@ -920,7 +933,10 @@ it.live(
         };
         const beforeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
-          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(before),
+          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
+            // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+            materializeCodexThreadSetup(before, forkThreadNames),
+          ),
           { databaseLayer, configureMcp: false },
         );
         const accepted = yield* Effect.scoped(
@@ -967,7 +983,9 @@ it.live(
         };
         const afterLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
-          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(after),
+          CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
+            materializeCodexThreadSetup(after, forkThreadNames),
+          ),
           { databaseLayer, configureMcp: false, recoverOnStartup: true },
         );
         yield* Effect.scoped(
@@ -1022,10 +1040,15 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
       );
       const entries = [...decoded.entries];
       const transcript = { ...decoded, entries };
-      const driver = yield* CodexReplay.makeReplayDriver(transcript);
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const driverTranscript = {
+        ...decoded,
+        entries: liveCodexThreadSetup(decoded, entries, forkThreadNames),
+      };
+      const driver = yield* CodexReplay.makeReplayDriver(driverTranscript);
       const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },
-        makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
+        makeCodexProviderAdapterRegistryReplayLayer({ transcript: driverTranscript, driver }),
         { configureMcp: false },
       );
       yield* Effect.gen(function* () {
@@ -1302,7 +1325,6 @@ it.live.each(
         },
         { type: "emit_inbound", label: "thread/revert/fork-baseline", frame: revertedFrame },
       );
-      const replayTranscript = { ...transcript, entries };
       const gate = makeProviderReplayGate(queuedAttachment ? ["turn/completed/fork"] : []);
       yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
       if (queuedAttachment) {
@@ -1316,13 +1338,18 @@ it.live.each(
           frame: decodeFrame(encoded.replace('"status":"completed"', '"status":"interrupted"')),
         };
       }
-      const driver = yield* CodexReplay.makeReplayDriver(replayTranscript, {
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const driverTranscript = {
+        ...transcript,
+        entries: liveCodexThreadSetup(transcript, entries, forkThreadNames),
+      };
+      const driver = yield* CodexReplay.makeReplayDriver(driverTranscript, {
         beforeEmitInbound: (entry) =>
           Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
       });
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },
-        makeCodexProviderAdapterRegistryReplayLayer({ transcript: replayTranscript, driver }),
+        makeCodexProviderAdapterRegistryReplayLayer({ transcript: driverTranscript, driver }),
         { configureMcp: false },
       );
       yield* Effect.gen(function* () {
@@ -1598,7 +1625,7 @@ it.live.each(
         );
         const replayState = yield* Ref.get(driver.state);
         assert.isNull(replayState.failure);
-        assert.equal(replayState.cursor, entries.length);
+        assert.equal(replayState.cursor, driverTranscript.entries.length);
       }).pipe(Effect.ensuring(Effect.sync(() => gate.releaseAll())), Effect.provide(layer));
     }),
   ).pipe(Effect.provide(NodeServices.layer)),

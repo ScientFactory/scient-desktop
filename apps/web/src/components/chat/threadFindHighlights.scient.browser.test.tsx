@@ -41,6 +41,9 @@ describe("find highlight caching", () => {
       '<div data-timeline-row-id="first"><div data-thread-find-fold><p data-thread-find-text>' +
       "COD4 ".repeat(1500) +
       "</p></div></div>";
+    // Scroll, resize and text changes re-place every match on a later frame; hold those
+    // frames so only the cycle itself measures.
+    using _frames = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
     using bounds = vi.spyOn(Range.prototype, "getBoundingClientRect");
     container.style.width = "800px";
     const fold = container.querySelector<HTMLElement>("[data-thread-find-fold]")!;

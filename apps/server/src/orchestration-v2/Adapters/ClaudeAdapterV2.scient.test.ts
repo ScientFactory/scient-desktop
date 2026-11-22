@@ -315,6 +315,9 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -470,6 +473,9 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
                 setPermissionMode: () =>
@@ -582,7 +588,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
           },
         });
 
-        assert.equal(offeredMessages[1]?.priority, "now");
+        assert.equal(offeredMessages[1]?.priority, "next");
         assert.deepEqual(offeredMessages[1]?.message.content, [
           expectedImageBlock,
           {
@@ -1008,6 +1014,9 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -1187,6 +1196,9 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -1277,6 +1289,9 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                    mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                    reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
@@ -2551,6 +2566,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -2688,6 +2706,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                    mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                    reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
@@ -4058,6 +4079,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -4573,6 +4597,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                    mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                    reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
@@ -4940,3 +4967,112 @@ it.effect.each(
     }).pipe(Effect.provide(adapterServices)),
   ),
 );
+
+describe("ClaudeAdapterV2 custom API endpoint failures", () => {
+  it.effect.each([
+    {
+      name: "a custom endpoint",
+      baseUrl: "https://user:secret@gateway.example.test/v1?key=abc",
+      expected: { origin: "https://gateway.example.test", source: "environment" as const },
+    },
+    { name: "Anthropic's own API", baseUrl: "https://api.anthropic.com", expected: undefined },
+    {
+      name: "a turn that failed before any request",
+      baseUrl: "https://gateway.example.test/v1",
+      expected: undefined,
+      setupFailure: true,
+    },
+  ])("records where a failed request went: $name", ({ baseUrl, expected, setupFailure }) =>
+    Effect.gen(function* () {
+      // Windows without ProgramData or ProgramFiles has no managed settings to read, so the
+      // host's own policy cannot change the result.
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: {
+          CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+          ANTHROPIC_BASE_URL: baseUrl,
+        },
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("custom-endpoint-failure"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        setupFailure === true
+          ? makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000799",
+              result: "",
+              terminalReason: "turn_setup_failed",
+              isError: true,
+            })
+          : makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000799",
+              result: "API Error: 404 model not found",
+              terminalReason: "api_error",
+              apiErrorStatus: 404,
+              isError: true,
+            }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      // The provider's own text stays as it was; the app names the endpoint beside it.
+      if (setupFailure !== true) {
+        assert.equal(terminal.failure.message, "API Error: 404 model not found");
+      }
+      assert.deepEqual(terminal.failure.customEndpoint, expected);
+    }).pipe(Effect.provide(adapterServices)),
+  );
+
+  it.effect("takes managed settings over the environment", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const programData = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-managed-" });
+      yield* fileSystem.makeDirectory(`${programData}/ClaudeCode`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${programData}/ClaudeCode/managed-settings.json`,
+        JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://managed.example.test" } }),
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: {
+          CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+          ANTHROPIC_BASE_URL: "https://environment.example.test",
+          ProgramData: programData,
+        },
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("managed-endpoint-failure"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000798",
+          result: "API Error: 404 model not found",
+          terminalReason: "api_error",
+          apiErrorStatus: 404,
+          isError: true,
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.deepEqual(terminal.failure.customEndpoint, {
+        origin: "https://managed.example.test",
+        source: "claude-settings",
+      });
+    }).pipe(Effect.scoped, Effect.provide(adapterServices)),
+  );
+});

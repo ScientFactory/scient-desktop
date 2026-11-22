@@ -30,6 +30,7 @@ import {
   type OrchestrationV2TurnItem,
   type PlanId,
   ProviderDriverKind,
+  ProviderSetupError,
   type ProviderInstanceId,
   type ProviderRequestKind,
   type ProviderSessionId,
@@ -54,6 +55,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -139,6 +141,7 @@ const OpenCodeProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
@@ -778,6 +781,17 @@ export function openCodePermissionRules(
     }
   }
 
+  // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+  for (const root of runtimePolicy.workspace?.extraRoots ?? []) {
+    // A glob character in the path would allow sibling folders, so such a root keeps asking.
+    if (/[*?]/.test(root)) continue;
+    rules.push({
+      permission: "external_directory",
+      pattern: `${root.replace(/\/$/, "")}/*`,
+      action: "allow",
+    });
+  }
+
   return rules;
 }
 
@@ -1079,6 +1093,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
     instanceId: options.instanceId,
     driver: OPENCODE_PROVIDER,
     mcpSessionInjection: options.settings.serverUrl.trim().length === 0,
+    checksVersionAtHandshake: true,
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
       return Effect.succeed(OpenCodeProviderCapabilitiesV2);
     }),
@@ -1098,6 +1113,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             : {}),
           environment: options.environment,
         });
+        const broken = brokenVersionDetail({
+          name: "OpenCode",
+          version: connection.version,
+          advisory: yield* host.compatibility(OPENCODE_PROVIDER, connection.version),
+        });
+        if (broken !== undefined) {
+          return yield* new ProviderSetupError({
+            instanceId: options.instanceId,
+            operation: "runtime",
+            detail: broken,
+          });
+        }
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
           directory: cwd,
@@ -2772,6 +2799,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               updatedAt: now,
             },
           });
+          // The pre-compaction step would otherwise settle the turn as its newest usage.
+          turn.usage.lastStep = null;
+          if (state.providerThread.contextUsage !== null) {
+            yield* updateProviderThread(state, { contextUsage: null });
+          }
         });
 
         const handleMessageUpdated = Effect.fnUntraced(function* (
@@ -3716,7 +3748,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const agent =
             getModelSelectionStringOptionValue(turn.modelSelection, "agent") ??
             (turn.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
-          const variant = getModelSelectionStringOptionValue(turn.modelSelection, "variant");
+          const variant = OpenCodeRuntime.openCodeVariant(turn.modelSelection);
           return {
             ...(agent === undefined ? {} : { agent }),
             ...(variant === undefined ? {} : { variant }),
@@ -3727,6 +3759,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               (options.runtimeInstructions ?? buildRuntimeInstructions)({
                 harness: "OpenCode",
                 model: turn.modelSelection.model,
+                runtimePolicy: turn.runtimePolicy,
               }),
               // SCIENT-FORK:END
             ]

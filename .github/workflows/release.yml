@@ -590,7 +590,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/resource-monitor/target/${{ matrix.rust_target }}/release/scient-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
-          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
       - name: Cache Linux capture helpers
         if: matrix.platform == 'linux'
@@ -1474,6 +1474,21 @@ jobs:
               exit 1
             }
           fi
+      # SCIENT-FORK:START — the download mirror publishes the release to the update feeds now,
+      # instead of at its next scheduled run. Its own workflow waits for the feeds, outside this
+      # run's release lock, and runs right after publication is verified, so a later failed step
+      # cannot skip it. A failed dispatch only warns: the mirror's schedule publishes it anyway.
+      - name: Start the download mirror for this release
+        if: needs.preflight.outputs.channel == 'stable' || needs.preflight.outputs.channel == 'beta'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ needs.preflight.outputs.channel }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          gh workflow run sync-download-mirror.yml --repo "$GITHUB_REPOSITORY" \
+            -f channel="$RELEASE_CHANNEL" -f tag="$RELEASE_TAG"
+      # SCIENT-FORK:END
       # SCIENT-FORK:START — release events from github.token start no workflows, so dispatch
       # the hosted app's deploy on the published tag.
       - name: Deploy the hosted app for this release

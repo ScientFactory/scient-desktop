@@ -1,10 +1,13 @@
 import {
+  ProviderSetupError,
   TrimmedNonEmptyString,
   ServerProviderCompatibilityStatus,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
+import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility";
 import {
   compareSemverVersions,
   normalizeSemverVersion,
@@ -26,9 +29,22 @@ const VersionRange = TrimmedNonEmptyString.pipe(
     ),
   ),
 );
+const compilePattern = (pattern: string) => {
+  try {
+    return new RegExp(pattern, "u");
+  } catch {
+    return undefined;
+  }
+};
 const Policy = Schema.Struct({
   driver: TrimmedNonEmptyString,
   t3CodeRange: VersionRange,
+  /** Matches a reported version that is not plain `X.Y.Z`; its first group is the version to rate. */
+  versionPattern: Schema.optionalKey(
+    TrimmedNonEmptyString.pipe(
+      Schema.check(Schema.makeFilter((value) => compilePattern(value) !== undefined)),
+    ),
+  ),
   recommendedRange: Schema.optionalKey(VersionRange),
   recommendedVersion: Schema.optionalKey(StableVersion),
   ranges: Schema.Array(
@@ -81,15 +97,9 @@ export function resolveProviderCompatibility(
   );
   if (!policy) return undefined;
   const unprefixed = version?.replace(/^v/, "");
-  // Strip Cursor build hashes, Google ACP release prefixes and Muse revisions; leave semver prereleases unknown.
-  const stable =
-    driver === "cursor"
-      ? unprefixed?.replace(/^(\d{4}\.\d{2}\.\d{2})-[a-f0-9]+$/, "$1")
-      : driver === "antigravity"
-        ? unprefixed?.replace(/^agy_acp_server_(\d+\.\d+\.\d+)$/, "$1")
-        : driver === "muse"
-          ? unprefixed?.replace(/^(\d+\.\d+\.\d+)-R\d+(?:\.\d+)?$/, "$1")
-          : unprefixed;
+  // Without a pattern, build hashes, revisions and prereleases stay unknown.
+  const pattern = policy.versionPattern ? compilePattern(policy.versionPattern) : undefined;
+  const stable = (pattern && unprefixed?.match(pattern)?.[1]) || unprefixed;
   const status =
     stable && /^\d+\.\d+\.\d+$/.test(stable)
       ? (policy.ranges.find((entry) => satisfiesSemverRange(stable, entry.range))?.status ??
@@ -166,6 +176,20 @@ export function resolveManifestProviderCompatibility(input: {
       t3CodeVersion,
     ) ?? resolveProviderCompatibility(input.bundled, input.driver, input.version, t3CodeVersion)
   );
+}
+
+/** The one refusal for a runtime the policy rates `broken`; `action` names how this runtime is updated. */
+export function brokenRuntimeError(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly name: string;
+  readonly version: string;
+  readonly advisory: ServerProviderCompatibilityAdvisory | undefined;
+  readonly action?: string;
+}): ProviderSetupError | undefined {
+  const detail = brokenVersionDetail(input);
+  return detail === undefined
+    ? undefined
+    : new ProviderSetupError({ instanceId: input.instanceId, operation: "runtime", detail });
 }
 
 export function applyProviderCompatibility(

@@ -25,7 +25,8 @@
     "packages/shared/src/scientSignInPage.ts",
     "apps/mobile/src/state/accounts.ts",
     "apps/mobile/src/features/threads/ThreadAccountRequests.tsx",
-    "apps/server/src/preview/ServerBrowserContexts.scient.test.ts"
+    "apps/server/src/preview/ServerBrowserContexts.scient.test.ts",
+    "scripts/dev-identity.mjs"
   ],
   "accountsDiffSignals": [
     "scient/accounts",

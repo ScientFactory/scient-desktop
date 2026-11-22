@@ -49,6 +49,7 @@ const BACKGROUND_ENVIRONMENT_KEYS = [
   "SHELL",
   "SSH_AUTH_SOCK",
   "SCIENT_DEV_CODESIGN_IDENTITY",
+  "SCIENT_DEV_IDENTITY",
   "T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT",
   // A loopback feedback service for live checks (infra/scient-feedback/scripts/dev.ts).
   "SCIENT_FEEDBACK_TEST_ENDPOINT",
@@ -854,6 +855,65 @@ export function shareDevelopmentVoiceRuntime({
   }
 }
 
+/**
+ * Refuses a checkout whose app data is the dev identity home's unless it is the home's registered
+ * checkout, before the launcher reads or clears any runner or app state there. Loaded on demand
+ * like the copy: the stable controller's launcher copy has no identity module.
+ */
+export async function guardIdentityHome(
+  paths,
+  { loadIdentity = () => import("./dev-identity.mjs") } = {},
+) {
+  let identity;
+  try {
+    identity = await loadIdentity();
+  } catch {
+    return;
+  }
+  identity.assertHomeCheckout({ checkoutRoot: paths.root, stateRoot: paths.stateRoot });
+}
+
+/**
+ * Copies the owner's dev identity (accounts, models, sign-ins) into this checkout's app. Loaded on
+ * demand: the stable controller ships this launcher without the identity module. A copy that
+ * failed before changing anything only logs; one that left the app's data unsafe stops the start.
+ */
+export async function shareDevelopmentIdentity(
+  paths,
+  { loadIdentity = () => import("./dev-identity.mjs"), writeLine = console.log } = {},
+) {
+  let identity;
+  try {
+    identity = await loadIdentity();
+  } catch {
+    return;
+  }
+  let result;
+  try {
+    result = await identity.importDevIdentity({
+      targetStateDir: NodePath.join(paths.stateRoot, "scient-next-dev"),
+    });
+  } catch (error) {
+    if (error?.fatal) throw error;
+    writeLine(
+      `Could not copy your dev identity (${error instanceof Error ? error.message : String(error)}); this dev app starts with the identity it already had.`,
+    );
+    return;
+  }
+  if (result.status === "home-seeding") {
+    throw new Error(
+      "pnpm dev:identity seed is filling this identity home; start it again when the seed finishes.",
+    );
+  }
+  if (result.status === "refused-target") {
+    throw new Error(
+      "This dev app's data folder points into the identity home or the installed app; move it aside before starting.",
+    );
+  }
+  const line = identity.describeImport(result);
+  if (line) writeLine(line);
+}
+
 async function runApp() {
   const paths = resolveLocalDevAppPaths();
   const coldClaimPath = process.env.SCIENT_DEV_COLD_CLAIM_PATH;
@@ -923,6 +983,7 @@ async function runApp() {
   // Only the owning runner, with no app of this checkout running, may change
   // the checkout's helper.
   shareDevelopmentVoiceRuntime({ root: paths.root });
+  if (paths.role === "candidate") await shareDevelopmentIdentity(paths);
   const pnpmExecPath = process.env.npm_execpath?.trim();
   const devDesktopArgs = ["dev:desktop"];
   const pnpmInvocation = packageManagerInvocation(
@@ -1270,6 +1331,7 @@ async function main() {
       process.env[SCIENT_NEXT_HOME_ENV] = resolveStableDevHome();
     }
   }
+  await guardIdentityHome(resolveLocalDevAppPaths());
   if (command === "run") return runApp();
   if (command === "start")
     return startAppInBackground({

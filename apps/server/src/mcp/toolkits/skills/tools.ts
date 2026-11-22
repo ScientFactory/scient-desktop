@@ -96,7 +96,9 @@ const ScientSkillsListTool = Tool.make("scient_skills_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, skillOperation("skills.list"));
+  .annotate(ScientOperation, skillOperation("skills.list"))
+  // Claude Code defers MCP tools behind ToolSearch; these two find and load skills.
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   description:
@@ -115,7 +117,9 @@ export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, skillOperation("skills.load"));
+  .annotate(ScientOperation, skillOperation("skills.load"))
+  // Claude Code defers MCP tools behind ToolSearch; these two find and load skills.
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource", {
   description:

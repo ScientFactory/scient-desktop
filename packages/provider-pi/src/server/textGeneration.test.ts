@@ -147,6 +147,18 @@ const makeHarness = (
             (opened) => opened.close(),
           ),
         timeoutMs === undefined ? {} : { timeoutMs },
+        // The host's policy rates releases before 0.84.3 broken.
+        (_driver, detected) =>
+          Effect.succeed(
+            detected === "0.84.2"
+              ? {
+                  status: "broken" as const,
+                  message: null,
+                  recommendedVersion: null,
+                  recommendedRange: ">=1.0.0",
+                }
+              : undefined,
+          ),
       );
       return yield* textGeneration.generateCommitMessage({ ...input, modelSelection });
     }),
@@ -523,7 +535,7 @@ it.effect.each([
       const error = yield* makeHarness(client, spawns, undefined, modelSelection, version).pipe(
         Effect.flip,
       );
-      assert.ok(error.detail.includes("Pi 0.84.3 or newer"));
+      assert.ok(error.detail.includes("Pi 0.84.2 does not work"));
       // Older Pi would save the background thinking change as the user's default.
       assert.deepEqual(spawns, []);
       return;

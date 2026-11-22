@@ -46,6 +46,7 @@ import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
+import * as ThreadViewers from "../ThreadViewers.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
@@ -73,6 +74,8 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
+import * as TaskFolderStore from "../../workspace/TaskFolderStore.ts";
 // SCIENT-FORK:START — replay workspaces resolve like production, never to the checkout.
 import * as ScientReplayWorkspacePolicy from "../scient-fork/ReplayWorkspacePolicy.testkit.ts";
 // SCIENT-FORK:END
@@ -248,6 +251,9 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
     readonly managedPolicy?: ManagedPolicyDocument;
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -306,6 +312,9 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     readonly contextHandoffPolicy?: "scient" | "byte";
     readonly managedPolicy?: ManagedPolicyDocument;
     readonly replayGate?: ProviderReplayGate;
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -400,6 +409,10 @@ export function layerWithRegistry<Error>(
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
+    /** The instances the ingestor reads snapshots from, such as an endpoint behind a hub. */
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -496,7 +509,7 @@ export function layerWithRegistry<Error>(
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const actualEventSink = EventSink.layerFromStores.pipe(
-    Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+    Layer.provide(Layer.mergeAll(layerStores, layerDatabase, ThreadViewers.layer)),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
@@ -520,9 +533,9 @@ export function layerWithRegistry<Error>(
   const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          getInstance: () => Effect.undefined,
-        }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)(
+          options.providerInstances ?? { getInstance: () => Effect.undefined },
+        ),
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -544,7 +557,16 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerCheckpointStore,
+        IdAllocator.layer,
+        WorkspaceFolders.layer.pipe(
+          Layer.provide(layerStores),
+          Layer.provide(TaskFolderStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
   );
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
@@ -711,6 +733,7 @@ export function layerWithRegistry<Error>(
         layerProviderSwitchServiceProvided,
         layerRunExecutionServiceProvided,
         layerServerSettings,
+        TaskFolderStore.layer.pipe(Layer.provide(layerDatabase)),
         ThreadForkService.layer,
         conversationForkProvided,
       ),

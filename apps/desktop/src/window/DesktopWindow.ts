@@ -747,6 +747,7 @@ export const make = Effect.gen(function* () {
     const installContextMenu = (
       ownerWindow: Electron.BrowserWindow,
       contents: Electron.WebContents,
+      isBrowserContents = false,
     ): void => {
       if (contextMenuContents.has(contents)) return;
       contextMenuContents.add(contents);
@@ -757,6 +758,18 @@ export const make = Effect.gen(function* () {
         contents.focus();
 
         const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+
+        if (isBrowserContents) {
+          menuTemplate.push(
+            {
+              label: m(msg("Reload")),
+              click: () => {
+                if (!contents.isDestroyed()) contents.reload();
+              },
+            },
+            { type: "separator" },
+          );
+        }
 
         // SCIENT-FORK:START — Scient's spelling suggestions and the Spelling Languages submenu.
         menuTemplate.push(...spellingMenuItems(contents, params));
@@ -803,10 +816,26 @@ export const make = Effect.gen(function* () {
         }
 
         menuTemplate.push(
-          { role: "cut", enabled: params.editFlags.canCut },
-          { role: "copy", enabled: params.editFlags.canCopy },
-          { role: "paste", enabled: params.editFlags.canPaste },
-          { role: "selectAll", enabled: params.editFlags.canSelectAll },
+          {
+            role: "cut",
+            label: m(msg("Cut", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canCut,
+          },
+          {
+            role: "copy",
+            label: m(msg("Copy", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canCopy,
+          },
+          {
+            role: "paste",
+            label: m(msg("Paste", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canPaste,
+          },
+          {
+            role: "selectAll",
+            label: m(msg("Select All", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canSelectAll,
+          },
         );
 
         void runPromise(
@@ -818,12 +847,12 @@ export const make = Effect.gen(function* () {
         );
       });
       contents.on("did-create-window", (popup) => {
-        installContextMenu(popup, popup.webContents);
+        installContextMenu(popup, popup.webContents, isBrowserContents);
       });
     };
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
-      installContextMenu(window, contents);
+      installContextMenu(window, contents, true);
       void runPromise(previewManager.prepareWebview(contents));
     });
 
