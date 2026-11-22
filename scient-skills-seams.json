@@ -67,8 +67,8 @@
     },
     {
       "path": "packages/shared/src/composerInlineTokens.ts",
-      "anchor": "collectSelectedScientSkillNames",
-      "purpose": "Extract real skill tokens while excluding context-chip labels from explicit skill selection."
+      "anchor": "collectComposerContextReferences(text)",
+      "purpose": "Exclude context-chip labels from composer skill tokens, so explicit skill selection (apps/web/src/scient/skills/selectedSkillNames.ts) reads only real `$skill` mentions."
     },
     {
       "path": "apps/server/package.json",

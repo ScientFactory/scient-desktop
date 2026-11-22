@@ -14,9 +14,9 @@ file browser, and other technical surfaces remain unchanged.
 
 ## Markdown boundary
 
-`ChatMarkdown` uses `scientMarkdownPipeline` (`scient/markdown/`: T3's
-remark/rehype pipeline plus math, the image-card mark and a sanitizer schema
-widened for it), sanitizes raw HTML, and then applies the small
+`ChatMarkdown` renders with Words (`markdown/wordsHast.ts`, with Scient's
+math and image-card mark from `scient/markdown/` and `scient/math/`),
+sanitizes raw HTML, and then applies the small
 `rehypeScientBidi` transform. The message base uses
 the same prose thresholds as local blocks; when aggregate prose is in the
 mixed band, top-level Markdown blocks provide one vote each. Code, links, and

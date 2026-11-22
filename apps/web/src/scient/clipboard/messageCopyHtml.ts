@@ -16,7 +16,7 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { getClientSettings } from "~/hooks/useSettings";
 import { renderedMarkdownClipboardHtml } from "../../markdown-clipboard";
 import { resolveMarkdownDirection, type FixedContentDirection } from "../bidi/contentDirection";
-import { isScientMathCodeClassName } from "../math/remarkScientMath";
+import { isScientMathCodeClassName } from "../math/scientWordsMath";
 import { mathMarkdownCopySource } from "../math/ScientMath";
 import {
   chatMarkdownAlertLabel,

@@ -1,18 +1,17 @@
 /**
- * Scient's passes on the chat hast Words builds (markdown/wordsHast.ts mounts them): Scient's math
- * grammar, its image cards, its content direction in place of T3's per-block direction, and inert
- * rich fences.
+ * Scient's passes on the chat hast Words builds (markdown/wordsHast.ts mounts them): its image
+ * cards, its content direction in place of T3's per-block direction, and inert rich fences. Its
+ * math is scient/math/scientWordsMath.ts.
  */
 import type { Element, ElementContent, Root } from "hast";
 
 import type { ContentDirection, FixedContentDirection } from "../bidi/contentDirection";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
-import { scientWordsMath, type ScientWordsMath } from "../math/scientWordsMath";
 import { resolveScientRichFenceKind } from "../presentation/scientRichFenceKind";
 
 /** What a chat message adds to Words' options. Part of the renderer's cache key. */
 export interface ScientWordsHastOptions {
-  /** Render math with Scient's grammar and KaTeX instead of Words' SVG. */
+  /** Typeset the math Words reads with KaTeX instead of its SVG; needs Words' `math`. */
   readonly math: boolean;
   /** The message's resolved direction. */
   readonly contentDirection: FixedContentDirection;
@@ -25,13 +24,6 @@ export function scientWordsOptionsKey(options: ScientWordsHastOptions | undefine
   return options
     ? `\u0000${+options.math}\u0000${options.contentDirection}\u0000${options.requestedContentDirection}`
     : "";
-}
-
-/** Scient's math for one render, or null when the message renders without it. */
-export function scientWordsHastMath(
-  options: ScientWordsHastOptions | undefined,
-): ScientWordsMath | null {
-  return options?.math ? scientWordsMath() : null;
 }
 
 /**

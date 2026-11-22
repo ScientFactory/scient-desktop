@@ -1,7 +1,4 @@
 import { collectComposerContextReferences } from "./composerContextReferences.ts";
-// SCIENT-FORK:START — selected skills ignore tokens inside formulas, as the composer does.
-import { markdownMathRanges } from "./markdownMath.ts";
-// SCIENT-FORK:END
 import { fileBasename } from "./path.ts";
 
 /** The formulas a Markdown parser finds in text, as source offsets. */
@@ -29,17 +26,6 @@ export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
   /** Formulas keep their literal tokens; without it, nothing is read as math. */
   readonly findMath?: FindMathRanges;
-}
-
-/** Call on the user's composer only, before appending files, captures or history. */
-export function collectSelectedScientSkillNames(composerText: string): ReadonlyArray<string> {
-  return [
-    ...new Set(
-      collectComposerInlineTokens(`${composerText}\n`, { findMath: markdownMathRanges }).flatMap(
-        (token) => (token.type === "skill" && token.value.length <= 64 ? [token.value] : []),
-      ),
-    ),
-  ];
 }
 
 const SKILL_MENTION_SOURCE =

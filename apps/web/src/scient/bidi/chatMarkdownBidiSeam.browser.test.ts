@@ -11,7 +11,7 @@ import { wordsHast } from "~/markdown/wordsHast";
 function renderChatPipeline(markdown: string, escapeHtml: boolean) {
   return toJsxRuntime(
     wordsHast(markdown, {
-      math: false,
+      math: true,
       breaks: false,
       escapeHtml,
       insights: false,

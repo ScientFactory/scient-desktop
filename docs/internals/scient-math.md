@@ -19,33 +19,37 @@ fallback glyphs during a cold font load instead of staying invisible.
 rewrite that only prepended `swap` lost to that later declaration, which is
 why the shipped swap variant is used instead of a transform.)
 
-## Pipeline and host seams
+## Chat: Words reads, KaTeX typesets
 
-The remark plugin arrays are built in `scient/markdown/scientMarkdownPipeline.ts`:
-`remarkScientMath` plus `remarkScientSingleDollarMath` plus
-`remarkScientMathRefinements` in both chat arrays (the single-dollar plugin
-must follow `remarkScientMath` so `$$` forms keep their upstream construct).
-The inherited hosts carry marked mounts only. In `ChatMarkdown.tsx`: the math
-imports, one unconditional `useScientMathMarkdownText` call, one
-`useScientMathRemarkPlugins(remarkPlugins, text)` call that threads the
-original message text to the refinement plugin
-(`remarkPlugins={scientRemarkPlugins}` at the render site), and two
-`components` branches — `code` routes `language-math` nodes to
-`ScientInlineMath`, `pre` routes them to `ScientDisplayMath`, each inside
-`ScientMathFindSurface`. In `markdown-clipboard.ts`: the calls to
-`scient/clipboard/mathClipboard.ts` (`mathAwareRange` and the TeX-source
-replacement). Normalization is length-preserving (every rewrite swaps
-a two-character delimiter for the two-character `$$`), so character offsets
-never move and offset-based behavior — task-list toggling in rendered file
-previews, list-item positions — stays correct on every surface with no
-per-surface gating. The hook returns the shared static plugin array
-untouched unless the message contains backslash delimiters, so the common
-path allocates nothing.
+Chat Markdown renders with Words (`markdown/wordsHast.ts`), and Words decides what is math:
+`$…$`, `$$…$$`, `$$` blocks, closed ` ```math ` fences, and with `texDelimiters` `\(…\)` and
+`\[…\]`. Scient keeps Words' SVG out of chat. `scient/math/scientWordsMath.ts`, mounted at two
+marked seams in `wordsHast.ts`, turns each formula Words draws into the `language-math` code that
+`ChatMarkdown.tsx` routes to `ScientInlineMath` or `ScientDisplayMath` inside
+`ScientMathFindSurface`. The TeX is the SVG's label; the authored source comes from Words' source
+position (mapped back through insight blocks) and rides on the element as
+`data-scient-math-source`, which Find shows. Previews show every formula inline.
 
-## Recognition model
+Words' inline or display reading stands, with presentation rules applied when the formula is
+placed, not a second grammar: `$$…$$` beside other text on its line shows inline; display math
+breaks its paragraph, as TeX does; a one-line display formula that Words underlined into a setext
+heading stays a block, followed by its rule; inside code, `pre`, `script`, `style`, `textarea` or
+`title` a formula stays source; a single-dollar formula whose TeX is a shell variable or path
+(`$PATH$`, `$HOME/$USER`, the same rule the editor uses) and TeX over 1,000 characters show their
+source; a ` ```math ` fence Words did not read as math (unclosed while streaming) stays code; and
+an image's alt text keeps a formula's delimiters. The composer, its skill chips and the skills
+chosen on send find formulas with Words' `markdownMathRanges`, so they agree with chat.
 
-Recognition happens in two places, each at the altitude where its inputs are
-unambiguous:
+Nothing chat renders imports remark. `ScientMathFindSource.tsx`, which segments a formula's source
+as the shared Find index does (`@t3tools/shared/threadFindText`, remark), loads lazily once Find
+opens.
+
+## Document page and editor grammar
+
+The document page (`scient/documentPage`) renders with remark and Scient's own grammar,
+`SCIENT_DOCUMENT_REMARK_PLUGINS` in `scient/markdown/scientMarkdownProfiles.ts`; the Markdown
+editor reuses its single-dollar plausibility and backslash-span helpers. Recognition happens in
+two places, each at the altitude where its inputs are unambiguous:
 
 - **`normalizeScientMathDelimiters`** rewrites the backslash delimiters
   models emit — `\(...\)` and `\[...\]` — into `$$` forms on the raw string,
@@ -71,7 +75,7 @@ unambiguous:
 
 Because normalization is length-preserving, a math node's offsets address
 the same characters in the original text; the refinement plugin receives
-that original through `useScientMathRemarkPlugins` and reads the delimiter
+that original through `scientMathRemarkPluginsForMessage` and reads the delimiter
 at each node's start offset to recover inline-versus-display intent that the
 uniform `$$` rewrite erases.
 
@@ -167,31 +171,28 @@ normalizer's protection and length-preservation properties,
 `remarkScientMath.test.ts` for the refinement plugin's tree transforms,
 `scientSingleDollarMath.test.ts` for the tokenizer's guards and plausibility
 rules, `ScientMath.test.ts` for the KaTeX runtime and component fallbacks)
-plus
-`chatMarkdownMathSeam.test.ts`, which combines a static source audit of the
-`ChatMarkdown.tsx` seam (the `pdfFilePreviewSeam.test.ts` pattern) with
-pipeline regressions through the real plugin chain and sanitizer: dollar
-corruption cases (including `$HOME/bin:$PATH`, emphasized `$a*b*c$`, and
-escaped-dollar mixes), the authored-intent matrix for backslash delimiters,
-raw-HTML attribute protection, literal-region protection,
-streaming/oversized downgrades, task-list coexistence, the hard-break
-surface, and an RTL prose fixture.
+plus two chat suites on the real Words path: `scientWordsMath.test.ts` (placement rules, authored
+source, previews, insight blocks, alt text) and `chatMarkdownMathSeam.test.ts`, which combines a
+static source audit of the `ChatMarkdown.tsx` seam (the `pdfFilePreviewSeam.test.ts` pattern) with
+regressions through chat's sanitizer: prices and shell variables, escaped dollars, the
+authored-intent matrix for backslash delimiters, raw-HTML and literal-region protection,
+streaming and oversized downgrades, task-list coexistence, line breaks, and an RTL prose fixture.
 
 ## Mobile
 
 Deliberately not included. Mobile renders chat through a native Markdown
-module, not this remark/rehype pipeline, so raw TeX delimiters remain legible
+module, not the web's Words renderer, so raw TeX delimiters remain legible
 there as plain text rather than rendering as typeset math.
 
 ## Upstream maintenance
 
-Keep math to these mounts in T3's Markdown renderer. (The `pre` path is
-already Scient's for code blocks and rich fences; see
-[chat diagrams](./scient-chat-diagrams.md).) When `ChatMarkdown.tsx` changes upstream,
-reapply this narrow adapter and rerun the focused math tests before accepting
-the update. Retirement condition: if T3 adds native math rendering, drop the
-Scient plugin and components and keep only delimiter normalization, if it is
-still needed on top of T3's own delimiter handling.
+Keep math to the marked mounts in `wordsHast.ts` (Words' formula into Scient's math code, and its
+placement after T3's sanitizer) and the `code`/`pre` branches in `ChatMarkdown.tsx`. (The `pre`
+path is already Scient's for code blocks and rich fences; see
+[chat diagrams](./scient-chat-diagrams.md).) When either file changes upstream, reapply these
+narrow mounts and rerun the focused math tests before accepting the update. If T3's own math
+rendering gains what Scient's KaTeX path gives (copyable TeX, Find over source, accessible
+MathML), drop the Scient mounts.
 
 ## Scientific recognition and clipboard export
 

@@ -233,8 +233,7 @@ import {
   inlineWorkspaceImageResource,
   resolveInlineWorkspaceImage,
 } from "../scient/images/inlineWorkspaceImage";
-import { isScientMathCodeClassName } from "../scient/math/remarkScientMath";
-import { scientMathNodeSource } from "../scient/math/scientWordsMath";
+import { isScientMathCodeClassName, scientMathNodeSource } from "../scient/math/scientWordsMath";
 import { scientWordsOptionsKey } from "../scient/markdown/scientWordsHast";
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 import { ScientMathFindSurface } from "../scient/math/ScientMathFindSurface";
@@ -2431,9 +2430,9 @@ function ChatMarkdown({
     markdownRef.current = node;
   };
   const markdown = wordsOptions(extensions, {
-    // SCIENT-FORK:START — Scient always renders math, with its own grammar and KaTeX (scient/math),
-    // and gives the message its direction (scient/bidi).
-    math: false,
+    // SCIENT-FORK:START — Scient always renders the math Words reads, typeset with KaTeX
+    // (scient/math), and gives the message its direction (scient/bidi).
+    math: true,
     // SCIENT-FORK:END
     breaks: lineBreaks,
     escapeHtml: !parseRawHtml,

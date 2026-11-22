@@ -42,14 +42,22 @@ T3 replaced react-markdown, remark and rehype in chat with Words (`markdown/word
 Scient's behaviour sits in Scient modules mounted at marked seams in `wordsHast.ts` and
 `ChatMarkdown.tsx`.
 
-- **Math.** Scient's own grammar still decides what is math (single-dollar heuristics, `\(`/`\[`
-  intent, pipes in tables, unclosed and oversized guards). Each formula reaches Words as a
-  placeholder of the same length, so offsets stay as authored; a formula alone on its line(s)
-  goes as a one-line heading placeholder so the blocks around it keep their structure. After T3's
-  sanitizer the placeholders become the `language-math` code chat typesets with KaTeX
-  (`scient/math/scientWordsMath.ts`). The authored source rides on the element, so Find and copy
-  need no separate context. Words' own SVG math stays off. T3 deleted the KaTeX `%` repair Scient
-  still uses; it now lives in `scient/math/katexPercentRepair.ts` with T3's test.
+- **Math.** Words decides what is math (`math` with T3's `texDelimiters`), and Scient typesets it
+  with KaTeX instead of Words' SVG. Each formula Words draws becomes the `language-math` code chat
+  already rendered (`scient/math/scientWordsMath.ts`, mounted in `wordsHast.ts`): the TeX is the
+  SVG's label, and the authored source, sliced from Words' source position, rides on the element
+  for Find. Words' inline or display reading stands, with three presentation rules applied when
+  the formula is placed: `$$…$$` beside other text on its line shows inline, a one-line display
+  formula that Words underlined into a setext heading stays a block followed by its rule, and a
+  single-dollar formula whose TeX is a shell variable or path (`$PATH$`, `$HOME/$USER`) or TeX
+  over 1,000 characters shows its source. An image's alt text keeps a formula's delimiters.
+  Words' SVG costs about 0.05 ms per 5 KB message; dropping the remark grammar took a math-heavy
+  5 KB message from about 3.4 ms to 1.1 ms in `wordsHast`. The composer, its skill chips and the
+  skills chosen on send read formulas with Words' `markdownMathRanges`, as chat does. Accepted
+  differences from Scient's old grammar: `$b* c$`, `$a$$b$`, `$\frac{$` and single-dollar
+  formulas of 300–1,000 characters are math, and `$x | y$` in a table cell is one formula. T3
+  deleted the KaTeX `%` repair Scient still uses; it now lives in `scient/math/katexPercentRepair.ts`
+  with T3's test.
 - **Direction.** `rehypeScientBidi` replaces T3's per-block direction pass inside `wordsHast.ts`;
   T3's `markdownTextDirection.ts` stays deleted. Its letter classes stay exported in
   `textDirection.ts` as T3 ships them (knip exception).
@@ -61,9 +69,12 @@ Scient's behaviour sits in Scient modules mounted at marked seams in `wordsHast.
 - **Saved files and notebooks.** T3's inert Markdown (file previews) also shows Plotly and
   Vega-Lite fences as source. Live notebook cells get their own Scient mode: links, images and raw
   HTML are inert as before, while inline code and diagrams render.
-- **Document page.** Stays on its own remark pipeline as a Scient print surface. Remark therefore
-  stays in Scient's web bundle, and a message that may hold math pays one remark parse for the math
-  grammar. `remark-rehype`, `mdast-util-from-markdown`, `micromark-util-combine-extensions`,
+- **Document page.** Stays on its own remark pipeline as a Scient print surface, with Scient's
+  remark math grammar (`scientMarkdownProfiles.ts`, `scientMathText.ts`, `remarkScientMath.ts`,
+  `scientSingleDollarMath.ts`, `scientMathTablePipes.ts`); the Markdown editor keeps the
+  single-dollar and backslash helpers. Nothing chat renders imports remark: Find's formula source
+  segmentation, which parses as the shared index does, loads lazily once Find opens. `remark-rehype`,
+  `remark-breaks`, `mdast-util-from-markdown`, `micromark-util-combine-extensions`,
   `micromark-util-types` and `vfile` left `apps/web`.
 - **Raw `<script>`** in assistant HTML now shows as escaped text (GFM's tag filter) instead of being
   removed; it never becomes an element.

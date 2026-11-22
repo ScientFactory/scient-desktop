@@ -3,13 +3,14 @@ import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
 import { wordsHast, type MarkdownExtensions } from "~/markdown/wordsHast";
+import { isScientMathCodeClassName } from "./scientWordsMath";
 
-const chatHast = (markdown: string, extensions: MarkdownExtensions = {}) =>
+const chatHast = (markdown: string, extensions: MarkdownExtensions = {}, insights = false) =>
   wordsHast(markdown, {
-    math: false,
+    math: true,
     breaks: false,
     escapeHtml: false,
-    insights: false,
+    insights,
     extensions,
     scient: { math: true, contentDirection: "ltr" },
   });
@@ -42,11 +43,34 @@ function formulas(node: Root | Element): Formula[] {
   });
 }
 
+describe("isScientMathCodeClassName", () => {
+  it("recognizes the language-math token", () => {
+    expect(isScientMathCodeClassName("language-math")).toBe(true);
+    expect(isScientMathCodeClassName("language-math math-inline")).toBe(true);
+  });
+
+  it("rejects other languages and absent class names", () => {
+    expect(isScientMathCodeClassName("language-ts")).toBe(false);
+    expect(isScientMathCodeClassName("language-mathml")).toBe(false);
+    expect(isScientMathCodeClassName(undefined)).toBe(false);
+  });
+});
+
 describe("Scient math on Words", () => {
-  it("reads math with Scient's grammar and keeps prices and shell variables as text", () => {
-    const tree = chatHast("Area $\\pi r^2$ costs $5 and $10; $HOME/$USER stay.");
+  it("reads the math Words reads and keeps prices and shell variables as text", () => {
+    const tree = chatHast(
+      "Area $\\pi r^2$ costs $5 and $10, $3.50 to $4.00; $HOME/$USER and $PATH$ stay.",
+    );
     expect(formulas(tree)).toEqual([{ kind: "inline", tex: "\\pi r^2", source: "$\\pi r^2$" }]);
-    expect(toHtml(tree)).toContain("costs $5 and $10; $HOME/$USER stay.");
+    expect(toHtml(tree)).toContain(
+      "costs $5 and $10, $3.50 to $4.00; $HOME/$USER and $PATH$ stay.",
+    );
+  });
+
+  it("lets math bind tighter than emphasis, as a code span does", () => {
+    expect(formulas(chatHast("$b* c$"))).toEqual([
+      { kind: "inline", tex: "b* c", source: "$b* c$" },
+    ]);
   });
 
   it("keeps authored backslash intent: \\( inline, \\[ display that breaks its paragraph", () => {
@@ -60,9 +84,16 @@ describe("Scient math on Words", () => {
     ).toEqual(["p", "pre", "p"]);
   });
 
-  it("promotes a lone $$ paragraph to display math and keeps $$ beside prose inline", () => {
+  it("shows $$ alone on its line as display math and $$ beside prose inline", () => {
     expect(formulas(chatHast("$$x$$")).map((formula) => formula.kind)).toEqual(["display"]);
+    expect(formulas(chatHast("- $$x$$")).map((formula) => formula.kind)).toEqual(["display"]);
+    const ownLine = chatHast("text\n$$x$$\nmore");
+    expect(formulas(ownLine).map((formula) => formula.kind)).toEqual(["display"]);
+    expect(
+      ownLine.children.flatMap((child) => (child.type === "element" ? [child.tagName] : [])),
+    ).toEqual(["p", "pre", "p"]);
     expect(formulas(chatHast("p $$x$$ q")).map((formula) => formula.kind)).toEqual(["inline"]);
+    expect(formulas(chatHast("- item $$x$$")).map((formula) => formula.kind)).toEqual(["inline"]);
   });
 
   it("keeps table rows whole when a formula holds pipes", () => {
@@ -113,6 +144,10 @@ describe("Scient math on Words", () => {
       expect(html).not.toContain("<h1");
       expect(html).not.toContain("<h2");
     }
+    const atx = toHtml(chatHast("# \\[x\\]\n---"));
+    expect(atx).toMatch(/<h1[^>]*>/);
+    expect(atx.match(/<hr>/g)).toHaveLength(1);
+    expect(toHtml(chatHast("\\[x^2\\]\n===\nafter"))).toMatch(/<\/pre>\n<p[^>]*>===<\/p>/);
     const indented = toHtml(chatHast("```math\nx\n```\n    code line"));
     expect(indented).toMatch(/<pre[^>]*><code[^>]*>code line/);
     expect(toHtml(chatHast("> $$\n> y\n> $$\n> ---"))).toContain("<hr>");
@@ -130,14 +165,9 @@ describe("Scient math on Words", () => {
     ]);
   });
 
-  it("leaves link escapes that only look like a placeholder as written", () => {
-    const html = toHtml(chatHast("[a](https://x.dev/%EF%B7%90%FF%FF%FF) and $x$"));
-    expect(html).toContain("%EF%B7%90%FF%FF%FF");
-    expect(formulas(chatHast("[a](https://x.dev/%EF%B7%90%FF%FF%FF) and $x$"))).toHaveLength(1);
-    // A valid escape the author wrote is not a placeholder this render made.
-    expect(toHtml(chatHast("[plain](https://x.dev/%EF%B7%90%EE%80%80) and $x$"))).toContain(
-      'href="https://x.dev/%EF%B7%90%EE%80%80"',
-    );
+  it("keeps the message's own source for a formula inside an insight block", () => {
+    const tree = chatHast("`★ Insight ─────`\n$$\nx\ny\n$$\n`─────`", {}, true);
+    expect(formulas(tree)).toEqual([{ kind: "display", tex: "x\ny", source: "$$\nx\ny\n$$" }]);
   });
 
   it("restores a formula's source wherever it cannot be math", () => {

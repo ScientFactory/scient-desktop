@@ -53,9 +53,7 @@ import {
 } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
-// SCIENT-FORK:START — file-link masking and scientific math use the same authored offsets.
-import { scientMathRanges } from "~/scient/math/scientMathRanges";
-// SCIENT-FORK:END
+import { markdownMathRanges } from "~/markdown/wordsHast";
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -937,8 +935,7 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  // SCIENT-FORK: the composer shields formulas with chat's scientific grammar.
-  const formulas = composerMathRanges(remainder, scientMathRanges);
+  const formulas = composerMathRanges(remainder, markdownMathRanges);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {
@@ -1832,13 +1829,17 @@ export function skillChipReplacements(
     });
   });
   const map = serializeEditorDoc(doc);
-  const formulas = composerMathRanges(map.value, scientMathRanges);
+  // SCIENT-FORK:START — a token inside a formula stays formula source, as chat reads it.
+  const formulas = composerMathRanges(map.value, markdownMathRanges);
+  // SCIENT-FORK:END
   let end = 0;
   for (const segment of splitPromptIntoComposerSegments(map.value)) {
     const start = end;
     end += segment.type === "text" ? segment.text.length : segment.source.length;
     if (segment.type !== "skill" && segment.type !== "model") continue;
+    // SCIENT-FORK:START
     if (formulas.some((formula) => start < formula.end && end > formula.start)) continue;
+    // SCIENT-FORK:END
     const atom = atomJsonForSegment(segment, chips);
     const type = atom && schema.nodes[atom.type];
     if (!atom || !type) continue;

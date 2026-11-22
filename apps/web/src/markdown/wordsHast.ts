@@ -26,9 +26,9 @@ import {
   scientChatHast,
   scientInertRichFences,
   scientNotebookInert,
-  scientWordsHastMath,
   type ScientWordsHastOptions,
 } from "../scient/markdown/scientWordsHast";
+import { restoreScientWordsMath, scientWordsFormula } from "../scient/math/scientWordsMath";
 // SCIENT-FORK:END
 
 /** What a kind of message adds to chat Markdown. Pass a stable object: renderers cache by it. */
@@ -67,7 +67,7 @@ export interface WordsHastOptions {
   /** `★ Insight ───` blocks render as insight callouts. */
   readonly insights: boolean;
   readonly extensions: MarkdownExtensions;
-  // SCIENT-FORK:START — Scient's math grammar and the message's content direction.
+  // SCIENT-FORK:START — Scient's KaTeX math and the message's content direction.
   readonly scient?: ScientWordsHastOptions | undefined;
   // SCIENT-FORK:END
 }
@@ -639,7 +639,14 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
     const { tagName, properties: props } = child;
     if (tagName === "svg") {
       // Sanitizing drops SVG, so math waits under a placeholder until after it.
-      const clean = walk.options.math && child.position ? sanitizeMath(child) : null;
+      // SCIENT-FORK:START — Scient's chat typesets Words' formula with KaTeX (scient/math).
+      const clean =
+        walk.options.math && child.position
+          ? walk.options.scient?.math
+            ? scientWordsFormula(child, walk.source)
+            : sanitizeMath(child)
+          : null;
+      // SCIENT-FORK:END
       if (clean) {
         const key = `${walk.mathKey}-${walk.math.size}`;
         walk.math.set(key, clean);
@@ -1115,10 +1122,6 @@ function makeInert(node: Root | Element) {
 /** ChatMarkdown's sanitized hast for `text`, rendered by Words. */
 export function wordsHast(text: string, options: WordsHastOptions): Root {
   const { extensions } = options;
-  // SCIENT-FORK:START — Scient's grammar reads the math; Words sees each formula as opaque text.
-  const scientMath = scientWordsHastMath(options.scient);
-  if (scientMath) text = scientMath.prepare(text);
-  // SCIENT-FORK:END
   const renderOptions: RenderOptions = {
     math: options.math,
     // llm-math's `\(…\)` and `\[…\]`, which agents write as often as `$`.
@@ -1140,8 +1143,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   const tree = insights?.tree ?? parse(source, renderOptions);
   const walk: Walk = {
     render: (markdown, indent) =>
-      // SCIENT-FORK: content Words renders again reads Scient's math too.
-      parse(scientMath ? scientMath.prepare(markdown) : markdown, {
+      parse(markdown, {
         ...renderOptions,
         leadingWhitespace: extensions.leadingWhitespace === true && { indent },
       }),
@@ -1155,9 +1157,16 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   preserveImageSourceMeta(tree as never);
   normalizeLocalEditorLinks(tree as never);
   const hast = sanitizeChatHast(tree);
-  if (walk.math.size > 0) restoreMath(hast, walk.math);
-  // SCIENT-FORK:START
-  scientMath?.restore(hast, { preview: extensions.preview !== undefined });
+  // SCIENT-FORK:START — Scient's math elements, which chat typesets with KaTeX.
+  if (options.math && options.scient?.math) {
+    restoreScientWordsMath(hast, walk.math, {
+      preview: extensions.preview !== undefined,
+      text,
+      source,
+      toOriginal: insights?.toOriginal,
+      withoutMath: (markdown) => parse(markdown, { ...renderOptions, math: false }),
+    });
+  } else if (walk.math.size > 0) restoreMath(hast, walk.math);
   // SCIENT-FORK:END
   if (insights) restorePositions(hast, insights.toOriginal);
   if (extensions.inert) makeInert(hast);

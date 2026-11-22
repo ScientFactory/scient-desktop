@@ -1,19 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isScientMathCodeClassName, remarkScientMathRefinements } from "./remarkScientMath";
-
-describe("isScientMathCodeClassName", () => {
-  it("recognizes the language-math token", () => {
-    expect(isScientMathCodeClassName("language-math")).toBe(true);
-    expect(isScientMathCodeClassName("language-math math-inline")).toBe(true);
-  });
-
-  it("rejects other languages and absent class names", () => {
-    expect(isScientMathCodeClassName("language-ts")).toBe(false);
-    expect(isScientMathCodeClassName("language-mathml")).toBe(false);
-    expect(isScientMathCodeClassName(undefined)).toBe(false);
-  });
-});
+import { remarkScientMathRefinements } from "./remarkScientMath";
 
 interface TestNode {
   type: string;

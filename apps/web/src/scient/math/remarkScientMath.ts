@@ -11,17 +11,7 @@ export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] sa
 /** TeX longer than this is not typeset; the literal source is shown instead. */
 const MAX_SCIENT_TEX_LENGTH = 1000;
 
-const MATH_CODE_CLASS_NAME = "language-math";
 export const SCIENT_MATH_TABLE_PIPE = "\uE000";
-
-/**
- * Recognizes the `<code>` nodes remark-math produces. It also tags them
- * `math-inline`/`math-display`, but sanitization keeps only `language-*`
- * classes, so inline versus display is decided by the surrounding element.
- */
-export function isScientMathCodeClassName(className: string | undefined): boolean {
-  return className !== undefined && className.split(/\s+/).includes(MATH_CODE_CLASS_NAME);
-}
 
 interface MdastNode {
   type: string;

@@ -13,7 +13,7 @@ import { declineShownApprovalsBeforeSend } from "./approvalSendGuard";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { stripInlineContextReferences } from "../../lib/composerContextReferences";
-import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
+import { collectSelectedScientSkillNames } from "~/scient/skills/selectedSkillNames";
 import {
   queueSubmissionId,
   acknowledgeQueueSubmission,

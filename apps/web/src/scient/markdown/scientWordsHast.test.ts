@@ -1,13 +1,40 @@
+import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
 import { wordsHast } from "~/markdown/wordsHast";
 import { NOTEBOOK_MARKDOWN } from "../notebook/NotebookOutputs";
 
+function images(tree: Root | Element): Element[] {
+  return tree.children.flatMap((child) =>
+    child.type !== "element" ? [] : child.tagName === "img" ? [child] : images(child),
+  );
+}
+
+describe("chat image cards", () => {
+  it("marks standalone figures for image cards after chat's own sanitizer", () => {
+    const cards = (markdown: string) =>
+      images(
+        wordsHast(markdown, {
+          math: true,
+          breaks: false,
+          escapeHtml: false,
+          insights: false,
+          extensions: {},
+          scient: { math: true, contentDirection: "ltr" },
+        }),
+      ).map((image) => image.properties.dataScientImageCard);
+    expect(cards("![Figure](figure.png)")).toEqual([true]);
+    expect(cards("See ![Figure](figure.png) inline")).toEqual([false]);
+    expect(cards('<img src="figure.png" width="20">')).toEqual([false]);
+    expect(cards("| a |\n| - |\n| ![Figure](figure.png) |")).toEqual([false]);
+  });
+});
+
 const notebookHtml = (markdown: string) =>
   toHtml(
     wordsHast(markdown, {
-      math: false,
+      math: true,
       breaks: false,
       escapeHtml: false,
       insights: false,

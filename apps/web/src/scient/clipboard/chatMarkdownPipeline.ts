@@ -15,7 +15,7 @@ import {
 import { wordsHast, type MarkdownExtensions } from "~/markdown/wordsHast";
 import { chatCodeBoxDirection } from "../bidi/chatCodeBoxDirection";
 import type { ContentDirection, FixedContentDirection } from "../bidi/contentDirection";
-import { isScientMathCodeClassName } from "../math/remarkScientMath";
+import { isScientMathCodeClassName } from "../math/scientWordsMath";
 
 const NO_EXTENSIONS: MarkdownExtensions = {};
 
@@ -31,7 +31,7 @@ export function chatMarkdownHast(input: {
   readonly requestedDirection: ContentDirection;
 }): Root {
   return wordsHast(input.text, {
-    math: false,
+    math: true,
     breaks: input.lineBreaks,
     escapeHtml: !input.parseRawHtml,
     insights: false,
