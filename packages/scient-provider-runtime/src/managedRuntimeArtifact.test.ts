@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  fitsManagedRuntimeDownloadLimit,
   hydrateManagedRuntimeArtifact,
   managedRuntimeArtifactReceipt,
   type ManagedRuntimeArtifact,
@@ -88,15 +89,17 @@ describe("managed runtime artifact hydration", () => {
     });
   });
 
-  it("judges a release by its family's download limit, on the copy it would download", () => {
+  it("judges a download by its family's limit, on the file it would fetch", () => {
     const receipt = managedRuntimeArtifactReceipt(policy);
     const mib = 1024 * 1024;
-    expect(hydrateManagedRuntimeArtifact(policy, { ...receipt, size: 512 * mib })).toBeDefined();
-    expect(
-      hydrateManagedRuntimeArtifact(policy, { ...receipt, size: 512 * mib + 1 }),
-    ).toBeUndefined();
+    const fits = (artifact: ReturnType<typeof hydrateManagedRuntimeArtifact>) =>
+      artifact !== undefined && fitsManagedRuntimeDownloadLimit(artifact);
+    expect(fits(hydrateManagedRuntimeArtifact(policy, { ...receipt, size: 512 * mib }))).toBe(true);
+    expect(fits(hydrateManagedRuntimeArtifact(policy, { ...receipt, size: 512 * mib + 1 }))).toBe(
+      false,
+    );
     const larger = { ...policy, maxDownloadBytes: 1024 * mib };
-    expect(hydrateManagedRuntimeArtifact(larger, { ...receipt, size: 578 * mib })).toBeDefined();
+    expect(fits(hydrateManagedRuntimeArtifact(larger, { ...receipt, size: 578 * mib }))).toBe(true);
     const withCopy = {
       ...policy,
       compressedArtifactName: "codex.tar.gz.zst",
@@ -110,17 +113,19 @@ describe("managed runtime artifact hydration", () => {
         size,
         checksum: { algorithm: "sha256", digest: "a".repeat(64) },
       }) as const;
-    // The release's zstd copy is what gets downloaded, so it is the one judged.
-    expect(
-      hydrateManagedRuntimeArtifact(withCopy, { ...atRelease, size: 600 * mib }, copy(300 * mib)),
-    ).toBeDefined();
-    expect(
-      hydrateManagedRuntimeArtifact(withCopy, { ...atRelease, size: 600 * mib }, copy(513 * mib)),
-    ).toBeUndefined();
-    // An installation receipt names no copy: repairing from it would download the raw binary.
-    expect(
-      hydrateManagedRuntimeArtifact(withCopy, { ...receipt, size: 600 * mib }),
-    ).toBeUndefined();
+    const release = (raw: number, zstd: number) =>
+      hydrateManagedRuntimeArtifact(withCopy, { ...atRelease, size: raw * mib }, copy(zstd * mib));
+    // The zstd copy is what gets downloaded, so it is the one judged.
+    expect(fits(release(600, 300))).toBe(true);
+    // A copy too large to download is left out, and the raw binary judged on its own.
+    expect(release(500, 513)?.compressed).toBeUndefined();
+    expect(fits(release(500, 513))).toBe(true);
+    expect(fits(release(600, 513))).toBe(false);
+    // An installation receipt names no copy: it still describes what is installed, but a download
+    // from it would fetch the raw binary.
+    const installed = hydrateManagedRuntimeArtifact(withCopy, { ...atRelease, size: 600 * mib });
+    expect(installed).toBeDefined();
+    expect(fits(installed)).toBe(false);
   });
 
   it("cannot widen provider, target, source path, or checksum policy", () => {

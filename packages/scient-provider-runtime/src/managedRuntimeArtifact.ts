@@ -178,6 +178,15 @@ export function managedRuntimeArtifactReceipt(
 }
 
 /**
+ * Whether a download of `artifact` fits its family's limit: the zstd copy when one comes with it,
+ * else the raw binary. Only downloads are judged: an installed runtime's receipt names no copy, and
+ * still describes what is installed.
+ */
+export const fitsManagedRuntimeDownloadLimit = (artifact: ManagedRuntimeArtifact) =>
+  (artifact.compressed ?? artifact).size <=
+  (artifact.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES);
+
+/**
  * The zstd copy a catalog names, when this app's policy has one for the family. A copy the app
  * cannot read is left out, so the raw binary stays installable.
  */
@@ -195,7 +204,9 @@ function hydrateCompressedArtifact(
     release.checksum.algorithm !== "sha256" ||
     !/^[0-9a-f]{64}$/u.test(release.checksum.digest) ||
     !Number.isSafeInteger(release.size) ||
-    release.size <= 0
+    release.size <= 0 ||
+    // Too large to download: left out, so the raw binary is judged on its own.
+    release.size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)
   ) {
     return undefined;
   }
@@ -282,12 +293,6 @@ export function hydrateManagedRuntimeArtifact(
     return undefined;
   }
   const compressed = hydrateCompressedArtifact(policy, receipt.version, compressedRelease);
-  // The download takes the zstd copy when one comes with the release, else the raw binary; either
-  // keeps the family's limit. An installation receipt names no copy, so it is judged by the raw.
-  if (
-    (compressed ?? receipt).size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)
-  )
-    return undefined;
   return {
     ...policy,
     ...(policy.auxiliaryExecutableRules !== undefined

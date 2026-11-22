@@ -15,6 +15,7 @@ import {
   isSameCursorReleaseDate,
   isValidManagedRuntimeSupersedes,
   MAX_CURSOR_SUPERSEDES,
+  fitsManagedRuntimeDownloadLimit,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
@@ -439,7 +440,7 @@ export function resolveManagedRuntimeCatalogArtifact(input: {
     checksum: release.checksum,
     size: release.size,
   } satisfies Omit<ManagedRuntimeArtifactReceipt, "catalogRevision">;
-  return hydrateManagedRuntimeArtifact(
+  const artifact = hydrateManagedRuntimeArtifact(
     input.policy,
     {
       ...receiptWithoutRevision,
@@ -450,6 +451,8 @@ export function resolveManagedRuntimeCatalogArtifact(input: {
     },
     Option.getOrUndefined(decodeCatalogCompressed(release.compressed)),
   );
+  // A release this build couldn't download is never offered.
+  return artifact && fitsManagedRuntimeDownloadLimit(artifact) ? artifact : undefined;
 }
 
 function isSameManagedRuntimeRelease(
@@ -507,7 +510,9 @@ export function resolveManagedRuntimeRepairArtifact(input: {
     policy && input.activeArtifact
       ? hydrateManagedRuntimeArtifact(policy, input.activeArtifact)
       : undefined;
-  if (!installed) return candidate;
+  // A receipt names no zstd copy: an installed runtime too large to download raw is repaired from
+  // the best release this build can download.
+  if (!installed || !fitsManagedRuntimeDownloadLimit(installed)) return candidate;
   if (!candidate) return installed;
   const comparison = compareManagedRuntimeReleases({
     provider: installed.provider,

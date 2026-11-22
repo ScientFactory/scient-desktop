@@ -10,6 +10,7 @@ import {
   antigravityAcpExecutableNames,
   isAntigravityAcpNativeVersion,
   resolveAntigravityAcpCatalogAsset,
+  fitsManagedRuntimeDownloadLimit,
   hydrateManagedRuntimeArtifact,
   compareManagedRuntimeReleases,
   isSameCursorReleaseDate,
@@ -357,6 +358,8 @@ function candidateProvider(input: {
       artifact.compressed,
     );
     if (!hydrated) throw new Error(`${input.provider} ${key} violates app-owned runtime policy.`);
+    if (!fitsManagedRuntimeDownloadLimit(hydrated))
+      throw new Error(`${input.provider} ${key} exceeds the installer's download limit.`);
     if (artifact.compressed && !hydrated.compressed)
       throw new Error(`${input.provider} ${key} has a compressed copy its policy does not name.`);
   }
@@ -624,6 +627,8 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
         artifact.compressed,
       );
       if (!hydrated) throw new Error(`${provider} ${key} violates app-owned runtime policy.`);
+      if (!fitsManagedRuntimeDownloadLimit(hydrated))
+        throw new Error(`${provider} ${key} exceeds the installer's download limit.`);
       if (artifact.compressed && !hydrated.compressed)
         throw new Error(`${provider} ${key} has a compressed copy its policy does not name.`);
     }
