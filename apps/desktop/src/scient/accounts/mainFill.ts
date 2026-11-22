@@ -178,8 +178,9 @@ export async function copyIntoMain(
       // writes cookies into Main, so the insert tracker can't vouch for it; it is asked right before
       // Google's unit, and the unit's watcher protects whatever a page writes after that.
       const googleDeadNow = async () =>
-        (await readGoogleSessions(main).catch(() => null))?.every((account) => !account.valid) ??
-        false;
+        (await readGoogleSessions(main, mayWrite).catch(() => null))?.every(
+          (account) => !account.valid,
+        ) ?? false;
       for (const unit of planned) {
         if (stopped()) break;
         const sites = [...unitSites(unit)];
@@ -192,10 +193,7 @@ export async function copyIntoMain(
         else if (sites.some((entry) => skipped.has(entry))) outcome = "blocked";
         else {
           const googleDead =
-            input.replaceGoogle === true &&
-            sites.includes(GOOGLE_SITE) &&
-            mayWrite() &&
-            (await googleDeadNow());
+            input.replaceGoogle === true && sites.includes(GOOGLE_SITE) && (await googleDeadNow());
           const foreign = watchForeignInserts(main);
           try {
             outcome = await applyUnit(store, {
@@ -215,6 +213,8 @@ export async function copyIntoMain(
           } finally {
             foreign.stop();
           }
+          // Stopped before any write: nothing failed, and nothing is held against the site.
+          if (stopped()) break;
           if (outcome === "restore-failed") for (const entry of sites) failed.add(entry);
         }
         units.push({ sites: [...unit], outcome });
