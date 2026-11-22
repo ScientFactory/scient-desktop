@@ -162,11 +162,13 @@ const exitsOf = (pids: ReadonlyArray<number>, signal: AbortSignal) =>
     () => undefined,
   );
 
+/** True when the signal was sent; false when the process was already gone. */
 const killProcess = (pid: number) => {
   try {
     process.kill(pid, "SIGKILL");
+    return true;
   } catch {
-    // Already gone.
+    return false;
   }
 };
 
@@ -174,7 +176,8 @@ export interface IdleOptions {
   readonly table: ProcessTable;
   readonly executable?: string;
   readonly waitForExits?: (pids: ReadonlyArray<number>, signal: AbortSignal) => Promise<void>;
-  readonly kill?: (pid: number) => void;
+  /** Sends SIGKILL; true when it was sent, false when the process was already gone. */
+  readonly kill?: (pid: number) => boolean;
   /** The bound on everything after the deadline: confirming, killing, confirming again. */
   readonly grace?: () => AbortSignal;
 }
@@ -216,13 +219,16 @@ export async function waitUntilHomeIdle(
     while (cleanScans < 2) {
       const scan = await scanHome(table, home, executable, after);
       cleanScans = isClean(scan) ? cleanScans + 1 : 0;
+      const stopping: Array<number> = [];
       for (const pid of scan.users) {
         // Read again just before the kill: the PID is still this HOME's Droid process.
         if ((await table.state(pid, home, after)) !== "ours") continue;
-        kill(pid);
+        after.throwIfAborted();
+        if (!kill(pid)) continue;
         killed.add(pid);
+        stopping.push(pid);
       }
-      if (scan.users.length > 0) await waitForExits(scan.users, after);
+      if (stopping.length > 0) await waitForExits(stopping, after);
     }
   } catch {
     throw new Error(

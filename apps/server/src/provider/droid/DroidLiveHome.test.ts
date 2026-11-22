@@ -84,13 +84,27 @@ describe("a scan of the processes using a Droid live test's HOME", () => {
     await expect(
       waitUntilHomeIdle(HOME, deadline.signal, {
         table: scripted([{ 10: "ours" }, {}]).table,
-        kill: (pid) => void killed.push(pid),
+        kill: (pid) => killed.push(pid) > 0,
         waitForExits: async (pids) => void waited.push(pids),
         grace: () => never,
       }),
     ).rejects.toThrow(/were killed: 10$/);
     expect(killed).toEqual([10]);
     expect(waited).toEqual([[10]]);
+  });
+
+  it("after the deadline, counts as killed only what a signal reached", async () => {
+    const deadline = new AbortController();
+    deadline.abort();
+    const waited: Array<ReadonlyArray<number>> = [];
+    // It exited between the last read and the kill: nothing was killed, and the HOME is idle.
+    await waitUntilHomeIdle(HOME, deadline.signal, {
+      table: scripted([{ 10: "ours" }, {}]).table,
+      kill: () => false,
+      waitForExits: async (pids) => void waited.push(pids),
+      grace: () => never,
+    });
+    expect(waited).toEqual([]);
   });
 
   it("never counts a scan the deadline interrupted as clean", async () => {
@@ -112,7 +126,7 @@ describe("a scan of the processes using a Droid live test's HOME", () => {
     await expect(
       waitUntilHomeIdle(HOME, deadline.signal, {
         table,
-        kill: (pid) => void killed.push(pid),
+        kill: (pid) => killed.push(pid) > 0,
         waitForExits: async () => undefined,
         grace: () => never,
       }),
