@@ -2166,6 +2166,9 @@ export function useComposerSend(input: ComposerSendInput) {
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
   // only time a detached send runs, so the draft keeps the environment it was dictated for.
   const captureDetachedSend = useStableCallback(() => {
+    // SCIENT-FORK: in a thread with people in it the message may be theirs, and only this
+    // thread's composer can tell; the dictation then stays in its draft.
+    if (postToRoom.applies()) return null;
     const send = sendFromRender;
     return (
       e?: { preventDefault: () => void },

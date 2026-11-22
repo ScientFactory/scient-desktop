@@ -406,7 +406,11 @@ export const windowsShimTarget = (contents: string) =>
 
 /** Like {@link windowsShimTarget}, but only for a shim exactly as written; never a user's wrapper. */
 export const generatedWindowsShimTarget = (contents: string) =>
-  /^@echo off\r?\n"([^"]+)" %\*\s*$/.exec(contents)?.[1];
+  /^@echo off\r?\n"([^"]+)" %\*\s*$/.exec(contents)?.[1] ??
+  // SCIENT-FORK: the shim `t3 update` writes, which runs the entry through Scient's Node.
+  /^@echo off\r?\nset "ELECTRON_RUN_AS_NODE=1"\r?\n"[^"]+" "([^"]+\.mjs)" %\*\s*$/.exec(
+    contents,
+  )?.[1];
 
 /**
  * The `t3` script the install scripts and `t3 update` write on macOS and Linux. Exec by absolute

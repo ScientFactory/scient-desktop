@@ -538,21 +538,24 @@ export interface ChatComposerProps {
     options?: { steer?: boolean; directPrompt?: string },
     // SCIENT-FORK:END
   ) => void;
-  captureDetachedSend?: () => (
-    e?: { preventDefault: () => void },
-    dispatchMode?: ComposerDispatchMode,
-    submissionIntent?: ComposerSubmissionIntent,
-    directAnnotation?: {
-      annotation: PreviewAnnotationPayload;
-      image: ComposerImageAttachment | null;
-    },
-    detachedOverride?: {
-      readonly prompt: string;
-      readonly sendContext: ReturnType<ChatComposerHandle["getSendContext"]>;
-    },
-    // SCIENT-FORK: a held steer keeps its request.
-    options?: { steer?: boolean },
-  ) => void;
+  // SCIENT-FORK: null when a dictation must not leave its thread (a room's message is for people).
+  captureDetachedSend?: () =>
+    | null
+    | ((
+        e?: { preventDefault: () => void },
+        dispatchMode?: ComposerDispatchMode,
+        submissionIntent?: ComposerSubmissionIntent,
+        directAnnotation?: {
+          annotation: PreviewAnnotationPayload;
+          image: ComposerImageAttachment | null;
+        },
+        detachedOverride?: {
+          readonly prompt: string;
+          readonly sendContext: ReturnType<ChatComposerHandle["getSendContext"]>;
+        },
+        // SCIENT-FORK: a held steer keeps its request.
+        options?: { steer?: boolean },
+      ) => void);
   onResume: () => void;
   onInterrupt: () => void;
   // SCIENT-FORK:START
@@ -2513,6 +2516,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const capturedSendContext =
         capturedDetachedSend !== null ? (composerRef.current?.getSendContext() ?? null) : null;
       const capturedSubmissionTarget = submissionTarget;
+      // SCIENT-FORK: a Goal or Plan chip still sends the dictation as that command.
+      const capturedComposerMode =
+        composerMode !== null && !activePendingProgress ? composerMode : null;
       submitAfterDictation((transcribedText) => {
         const stillLive =
           composerMountedRef.current && attachmentTargetKeyRef.current === queuedOwnerKey;
@@ -2531,13 +2537,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ) {
           return;
         }
+        const detachedPrompt =
+          capturedComposerMode === null
+            ? transcribedText
+            : composerModePrompt(capturedComposerMode, transcribedText);
         const liveTarget = resolveLiveComposerDraftTarget(capturedDraftTarget);
         const latestDraft =
           liveTarget !== null
             ? useComposerDraftStore.getState().getComposerDraft(liveTarget)
             : null;
         submitComposerDraft({
-          prompt: transcribedText,
+          prompt: detachedPrompt,
           submissionTarget: capturedSubmissionTarget,
           event: undefined,
           onSend: (sendEvent) => {
@@ -2547,7 +2557,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               submissionIntent,
               undefined,
               {
-                prompt: transcribedText,
+                prompt: detachedPrompt,
                 sendContext: {
                   ...capturedSendContext,
                   ...(latestDraft
@@ -2561,7 +2571,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         environmentContexts: latestDraft.environmentContexts,
                       }
                     : {}),
-                  prompt: transcribedText,
+                  prompt: detachedPrompt,
                 },
               },
               options,
