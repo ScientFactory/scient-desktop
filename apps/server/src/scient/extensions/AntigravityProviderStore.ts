@@ -6,6 +6,7 @@
  */
 import type {
   ExtensionPluginContents,
+  ProviderInstallState,
   ProviderStoreEntry,
   ProviderStorePage,
   ProviderStoreSearchInput,
@@ -107,7 +108,9 @@ export type AntigravityInstalledPlugin = ServerProviderPlugin & {
 const entryId = (name: string, marketplace: string) => `${name}@${marketplace}`;
 
 export const ANTIGRAVITY_NOT_CLI =
-  "Adding plugins needs Antigravity's agy command-line runtime. Choose it in this agent's settings.";
+  "Update Antigravity in this agent's settings to add its plugins.";
+export const ANTIGRAVITY_CUSTOM_NOT_CLI =
+  "This agent's custom Antigravity runtime can't add plugins. Point its path at agy, or clear it in this agent's settings.";
 const INVENTORY_UNAVAILABLE =
   "Scient could not read Antigravity's installed plugins, so Add and Remove are paused. Refresh to try again.";
 
@@ -323,6 +326,8 @@ export interface AntigravityPluginStoreOptions {
   readonly run: (args: ReadonlyArray<string>) => Effect.Effect<string, Failure>;
   /** Why this instance cannot manage plugins (it is not the agy CLI), or `undefined`. */
   readonly unavailable: Effect.Effect<string | undefined>;
+  /** Fires when the runtime behind `unavailable` may have changed: an install, update or removal. */
+  readonly runtimeChanges?: Stream.Stream<unknown> | undefined;
   /** The resolved plugin folder agy writes, shared by every instance with the same home. */
   readonly pluginHome?: string | undefined;
   readonly marketplaces?: ReadonlyArray<AntigravityMarketplace>;
@@ -660,6 +665,21 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     yield* PubSub.publish(reports, { plugins: listing.plugins, sequence: listing.sequence });
   });
   const refreshThis = Effect.suspend(() => publish()).pipe(Effect.ignore);
+  // Open pages refetch, and the agent's list is read again, once the runtime can (or no longer
+  // can) add plugins.
+  const runtimeChanged = yield* Effect.acquireRelease(PubSub.unbounded<void>(), PubSub.shutdown);
+  if (options.runtimeChanges !== undefined)
+    yield* Stream.concat(
+      Stream.fromEffect(options.unavailable),
+      options.runtimeChanges.pipe(Stream.mapEffect(() => options.unavailable)),
+    ).pipe(
+      Stream.changes,
+      Stream.drop(1),
+      Stream.runForEach(() =>
+        PubSub.publish(runtimeChanged, undefined).pipe(Effect.andThen(refreshThis)),
+      ),
+      Effect.forkScoped,
+    );
   const home = options.pluginHome;
   if (home !== undefined) {
     const peers = instancesByPluginHome.get(home) ?? new Set();
@@ -687,6 +707,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
   const actions: ProviderPluginActions = {
     store: {
       search,
+      changes: Stream.fromPubSub(runtimeChanged),
       entry: (id) => find(id).pipe(Effect.flatMap(({ entry, plugin }) => withIcon(entry, plugin))),
       install: (id) => changeAll(install(id)),
       contents: (id) =>
@@ -798,6 +819,7 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
         binaryPath?: string,
         environment?: NodeJS.ProcessEnv,
       ) => Effect.Effect<AntigravityExecutable, AntigravityInstallationError, Scope.Scope>;
+      readonly changes: Stream.Stream<ProviderInstallState>;
     };
     readonly binaryPath: string;
     readonly environment: NodeJS.ProcessEnv;
@@ -807,6 +829,7 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const environment = antigravityPluginCommandEnvironment(input.environment);
+    const notCli = input.binaryPath.trim() ? ANTIGRAVITY_CUSTOM_NOT_CLI : ANTIGRAVITY_NOT_CLI;
     yield* fs.makeDirectory(input.stateDir, { recursive: true }).pipe(Effect.ignore);
     const run = (args: ReadonlyArray<string>) =>
       Effect.scoped(
@@ -814,7 +837,7 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
           const executable = yield* input.installation
             .acquire(input.binaryPath, input.environment)
             .pipe(Effect.mapError(() => ({ message: "Antigravity is not installed." })));
-          if (executable.harnessPath !== null) return yield* fail(ANTIGRAVITY_NOT_CLI);
+          if (executable.harnessPath !== null) return yield* fail(notCli);
           return yield* runProviderPluginCommand(
             executable.executablePath,
             environment,
@@ -828,9 +851,7 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
         Effect.provideService(Path.Path, path),
       );
     const unavailable = input.installation.resolve(input.binaryPath, input.environment).pipe(
-      Effect.map((executable) =>
-        executable.harnessPath === null ? undefined : ANTIGRAVITY_NOT_CLI,
-      ),
+      Effect.map((executable) => (executable.harnessPath === null ? undefined : notCli)),
       Effect.orElseSucceed(() => "Install Antigravity to add its plugins."),
     );
     // The same home agy and the chat runtime resolve, so every instance writing one plugin
@@ -846,6 +867,10 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
       stateDir: input.stateDir,
       run,
       unavailable,
+      // Activation and removal settle here; progress in between changes nothing yet.
+      runtimeChanges: input.installation.changes.pipe(
+        Stream.filter((state) => state.phase === "succeeded" || state.phase === "idle"),
+      ),
       pluginHome: platform === "win32" ? pluginHome.toLowerCase() : pluginHome,
     });
   },

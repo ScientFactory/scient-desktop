@@ -1,5 +1,10 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import type { ProviderStoreEntry, ServerProvider, ServerProviderPlugin } from "@t3tools/contracts";
+import type {
+  ProviderRuntimeSummary,
+  ProviderStoreEntry,
+  ServerProvider,
+  ServerProviderPlugin,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { Link } from "@tanstack/react-router";
@@ -11,7 +16,17 @@ import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon
 import { Button } from "../../components/ui/button";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { hasManagedAntigravityUpdate } from "../providerConnection/antigravityLifecycleActions";
+import {
+  isActiveProviderRuntimeOperation,
+  providerLifecycleFailureMessage,
+} from "../providerConnection/providerConnectionPresentation";
+import {
+  currentOptimisticProviderValue,
+  type OptimisticProviderValue,
+} from "../providerConnection/optimisticProviderValue";
 import { ScientAgentAccounts } from "../providerConnection/ScientAgentAccounts";
+import { useStartProviderRuntimeAction } from "../providerConnection/useProviderLifecycleController";
 import {
   type AccountService,
   type AccountServiceRoute,
@@ -25,6 +40,7 @@ import {
 import { useProviderPluginActions } from "./extensionActions";
 import { DetailSection } from "./ExtensionDetailPages";
 import { ActionFeedback } from "./ExtensionItems";
+import { ActionError } from "./ExtensionsFeedback";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import {
   actOnProviderPlugin,
@@ -264,8 +280,67 @@ function TurnOnInAntigravity({
 }
 
 /**
- * An Antigravity agent's row for a service its marketplace has as a plugin. Shown only once the
- * store answers and can add plugins; being added claims nothing about the plugin's own sign-in.
+ * The update Settings offers, for an Antigravity whose runtime can't add plugins. The store's
+ * change feed turns the row into Add once the new runtime is active.
+ */
+function UpdateAntigravity({ provider }: { readonly provider: ServerProvider }) {
+  const gt = useGT();
+  const { environmentId, canWrite } = useExtensionsEnvironment();
+  const startRuntimeAction = useStartProviderRuntimeAction();
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // The started operation, until the provider stream reports it.
+  const [started, setStarted] = useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(
+    null,
+  );
+  const operation = (
+    currentOptimisticProviderValue(started, provider) ?? provider.connection?.runtime
+  )?.operation;
+  const active = isActiveProviderRuntimeOperation(operation) ? operation : null;
+  if (starting || active?.action === "update")
+    return (
+      <span role="status" className="shrink-0 text-xs text-muted-foreground">
+        <T>Updating…</T>
+      </span>
+    );
+  const failed =
+    error ??
+    (operation?.action === "update" && operation.status === "failed" ? operation.message : null);
+  const update = async () => {
+    setError(null);
+    setStarting(true);
+    try {
+      const next = await startRuntimeAction({
+        environmentId,
+        instanceId: provider.instanceId,
+        action: "update",
+      });
+      const runtime = next.connection?.runtime;
+      setStarted(runtime ? { baseProvider: provider, value: runtime } : null);
+    } catch (cause) {
+      setError(providerLifecycleFailureMessage(cause, gt("Scient could not update Antigravity.")));
+    }
+    setStarting(false);
+  };
+  return (
+    <span className="flex shrink-0 flex-col items-end gap-1">
+      <Button
+        variant="ghost-primary"
+        size="sm"
+        disabled={!canWrite || active !== null}
+        onClick={() => void update()}
+      >
+        {gt("Update Antigravity")}
+      </Button>
+      <ActionError message={failed} />
+    </span>
+  );
+}
+
+/**
+ * An Antigravity agent's row for a service its marketplace has as a plugin. Shown once the store
+ * answers; when its runtime can't add plugins, the row offers the update that can. Being added
+ * claims nothing about the plugin's own sign-in.
  */
 function AntigravityServiceRow({
   route,
@@ -275,7 +350,7 @@ function AntigravityServiceRow({
   readonly provider: ServerProvider;
 }) {
   const gt = useGT();
-  const { environmentId } = useExtensionsEnvironment();
+  const { environmentId, providers } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const atom = extensionsProviderStoreEntry({
     environmentId,
@@ -289,7 +364,39 @@ function AntigravityServiceRow({
     (entry.data?.installed
       ? provider.plugins?.find((item) => item.name === entry.data?.name)
       : undefined);
-  if (entry.error || entry.data?.storeUnavailable) return null;
+  if (entry.error) return null;
+  if (entry.data?.storeUnavailable) {
+    // The live snapshot follows an update as it runs; the inventory's copy is an earlier read.
+    const live = providers.find((item) => item.instanceId === route.instanceId) ?? provider;
+    const operation = live.connection?.runtime?.operation;
+    const updatable =
+      hasManagedAntigravityUpdate(live) ||
+      (operation?.action === "update" && isActiveProviderRuntimeOperation(operation));
+    return (
+      <CardRow>
+        <ProviderInstanceIcon
+          driverKind={route.driver}
+          displayName={route.label}
+          acpRegistryIconUrl={provider.iconUrl}
+          iconClassName="size-6"
+          indicatorBackground="var(--card)"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{route.label}</span>
+          <span className="block text-xs text-muted-foreground">
+            {updatable ? gt("Update Antigravity to add its plugins") : entry.data.disabledReason}
+          </span>
+        </span>
+        {updatable ? (
+          <UpdateAntigravity provider={live} />
+        ) : (
+          <Button variant="ghost-muted" size="sm" render={<Link to="/settings/providers" />}>
+            <T>Open Settings</T>
+          </Button>
+        )}
+      </CardRow>
+    );
+  }
   const state =
     entry.data === null || entry.data.installationStateKnown === false
       ? "checking"

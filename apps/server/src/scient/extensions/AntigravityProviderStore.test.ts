@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -9,14 +10,18 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as Scope from "effect/Scope";
+import type { ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 import { ANTIGRAVITY_MARKETPLACES, antigravityCategories } from "./AntigravityPluginCatalog.ts";
 import {
+  ANTIGRAVITY_CUSTOM_NOT_CLI,
   ANTIGRAVITY_NOT_CLI,
   antigravityPluginCommandEnvironment,
+  makeAntigravityInstancePlugins,
   makeAntigravityPluginActions,
 } from "./AntigravityProviderStore.ts";
 import { makeZip, renameInZip } from "./AntigravityPluginArchive.testkit.ts";
@@ -212,7 +217,11 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
   });
 
 const provide = <A, E>(
-  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
+  effect: Effect.Effect<
+    A,
+    E,
+    FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+  >,
 ) => Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("AntigravityProviderStore", () => {
@@ -729,6 +738,89 @@ it.live("refreshes every instance that shares the plugin folder after a change",
         }
       }
       expect((yield* latest(elsewhere.reports))._tag).toBe("None");
+    }),
+  ),
+);
+
+it.live("tells open pages when an update switches the runtime to agy, and only then", () =>
+  provide(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped();
+      const install = yield* SubscriptionRef.make<ProviderInstallState>({
+        driver: ProviderDriverKind.make("antigravity"),
+        operationId: null,
+        phase: "idle",
+        downloadedBytes: 0,
+        totalBytes: null,
+        version: null,
+        installedVersion: "1.4.5",
+        canRemove: true,
+        message: null,
+      });
+      let harnessPath: string | null = path.join(stateDir, "localharness_external");
+      const executable = Effect.sync(() => ({
+        executablePath: path.join(stateDir, "agy"),
+        harnessPath,
+        source: "managed" as const,
+        version: harnessPath === null ? "1.0.0" : "1.4.5",
+        managedVersionDirectory: null,
+      }));
+      const http = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 404 }))),
+      );
+      const instance = (binaryPath: string) =>
+        makeAntigravityInstancePlugins({
+          installation: {
+            resolve: () => executable,
+            acquire: () => executable,
+            changes: SubscriptionRef.changes(install),
+          },
+          binaryPath,
+          environment: { HOME: stateDir },
+          stateDir,
+        }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      const store = (yield* instance("")).actions.store!;
+      // A custom runtime's own path is what changes, so its reason says so.
+      const custom = (yield* instance(path.join(stateDir, "acp"))).actions.store!;
+      expect((yield* custom.search({})).message).toBe(ANTIGRAVITY_CUSTOM_NOT_CLI);
+      expect((yield* store.search({})).message).toBe(ANTIGRAVITY_NOT_CLI);
+      const nextChange = () =>
+        store.changes!.pipe(
+          Stream.runHead,
+          Effect.timeoutOption("300 millis"),
+          Effect.map(Option.flatten),
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+      // Download progress, and a finished install of the same older runtime, change nothing.
+      const quiet = yield* nextChange();
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        operationId: "repair",
+        phase: "downloading" as const,
+      }));
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        phase: "succeeded" as const,
+      }));
+      expect((yield* Fiber.join(quiet))._tag).toBe("None");
+
+      const switched = yield* nextChange();
+      harnessPath = null;
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        operationId: "update",
+        phase: "downloading" as const,
+      }));
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        phase: "succeeded" as const,
+        installedVersion: "1.0.0",
+      }));
+      expect((yield* Fiber.join(switched))._tag).toBe("Some");
+      expect((yield* store.search({})).message).not.toBe(ANTIGRAVITY_NOT_CLI);
     }),
   ),
 );

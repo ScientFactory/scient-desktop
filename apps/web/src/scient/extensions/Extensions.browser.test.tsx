@@ -14,6 +14,7 @@ import {
   type ScientPluginSummary,
   type ServerProvider,
   type ProviderStoreEntry,
+  type ProviderRuntimeSummary,
 } from "@t3tools/contracts";
 import type * as AtomReact from "@effect/atom-react";
 import type * as TanStackRouter from "@tanstack/react-router";
@@ -75,6 +76,8 @@ const state = vi.hoisted(() => ({
     { entries: ProviderStoreEntry[]; total: number; nextCursor?: string }
   >,
   storeEntry: null as ProviderStoreEntry | null,
+  /** The store-entry query's failure, when it fails. */
+  storeEntryError: null as string | null,
   contentApps: undefined as ExtensionPluginContents["apps"] | undefined,
   queryTargets: [] as unknown[],
   projects: [] as Array<{
@@ -100,6 +103,8 @@ const state = vi.hoisted(() => ({
     pluginRemove: vi.fn(),
     pluginEnabled: vi.fn(),
     providerAct: vi.fn(),
+    planRuntime: vi.fn(),
+    startRuntime: vi.fn(),
   },
   confirm: vi.fn(),
   openExternal: vi.fn(),
@@ -154,6 +159,8 @@ vi.mock("../../state/server", async () => {
         // Commands run as Effects; the fakes below answer with a Promise of the settled result.
         run: promiseCommandRun((...args: unknown[]) => state.refreshInventory(...args)),
       },
+      planProviderRuntime: "planRuntime",
+      startProviderRuntime: "startRuntime",
     },
   };
 });
@@ -258,7 +265,10 @@ vi.mock("../../state/query", async () => {
       }
       if (atom.kind === "skill-document")
         return { data: { instructions: "Skill instructions" }, error: null };
-      if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
+      if (atom.kind === "store-entry")
+        return state.storeEntryError === null
+          ? { data: state.storeEntry, error: null }
+          : { data: null, error: state.storeEntryError };
       if (atom.kind === "store")
         return {
           data: state.storePages[String(atom.input?.instanceId)] ?? { entries: [], total: 0 },
@@ -758,6 +768,7 @@ function setup() {
   state.registry = AtomRegistry.make();
   state.queryTargets = [];
   state.storeEntry = null;
+  state.storeEntryError = null;
   state.storePages = {};
   state.contentApps = undefined;
   state.hash = "";
@@ -2780,10 +2791,137 @@ describe("Antigravity Marketplace", () => {
 
     agents = await show({ plugins: [] }, { ...gmail, installationStateKnown: false });
     await vi.waitFor(() => expect(agents.textContent).toContain("Checking…"));
+  });
 
-    // An Antigravity that cannot add plugins (not the agy CLI) gets no row.
-    agents = await show({ plugins: [] }, { ...gmail, storeUnavailable: true });
-    expect(agents.textContent).not.toContain("Antigravity");
+  it("offers Update Antigravity on Gmail's page while its runtime can't add plugins", async () => {
+    await using fixture = setup();
+    const notCli = "Update Antigravity in this agent's settings to add its plugins.";
+    const gmail = storeEntry("gmail", {
+      displayName: "Gmail",
+      storeUnavailable: true,
+      disabledReason: notCli,
+    });
+    const runtime = (patch: Partial<ProviderRuntimeSummary>): ProviderRuntimeSummary => ({
+      source: "scient_managed",
+      supportTier: "fully_assisted",
+      target: "darwin-arm64",
+      actions: ["update", "repair", "remove"],
+      managedVersion: "1.4.5",
+      previousManagedVersion: null,
+      operation: null,
+      message: "An update moves Antigravity to Google's agy CLI.",
+      ...patch,
+    });
+    const show = async (
+      summary: ProviderRuntimeSummary,
+      entry: ProviderStoreEntry = gmail,
+      patch: Partial<ServerProvider> = {},
+    ) => {
+      await fixture.reset();
+      state.providersByEnvironment = {
+        local: [
+          provider(antigravity, "antigravity", {
+            displayName: "Antigravity",
+            connection: {
+              methods: ["antigravity_google"],
+              canDisconnect: true,
+              operation: null,
+              runtime: summary,
+            },
+            ...patch,
+          }),
+        ],
+      };
+      state.storeEntry = entry;
+      await fixture.render(<AccountServiceDetailPage serviceId="gmail" />);
+      await vi.waitFor(() => expect(fixture.section("Your agents")).not.toBeNull());
+      return fixture.section("Your agents");
+    };
+
+    let agents = await show(runtime({}));
+    await vi.waitFor(() =>
+      expect(agents.textContent).toContain("Update Antigravity to add its plugins"),
+    );
+    expect(buttonIn(agents, "Add to Antigravity")).toBeNull();
+    const started = runtime({
+      operation: {
+        operationId: "op-1",
+        action: "update",
+        status: "downloading",
+        startedAt: "2026-11-23T00:00:00.000Z",
+        finishedAt: null,
+        message: "Downloading Antigravity",
+      },
+    });
+    state.commands.planRuntime.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        instanceId: antigravity,
+        action: "update",
+        target: "darwin-arm64",
+        version: "1.0.0",
+        downloadBytes: null,
+        sourceLabel: "Official Google Antigravity CLI release",
+        catalogRevision: "antigravity-cli:1.0.0:abc",
+        message: "Update Google's verified Antigravity CLI privately for Scient.",
+      },
+    });
+    state.commands.startRuntime.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        providers: [
+          provider(antigravity, "antigravity", {
+            connection: {
+              methods: ["antigravity_google"],
+              canDisconnect: true,
+              operation: null,
+              runtime: started,
+            },
+          }),
+        ],
+      },
+    });
+    await userEvent.click(buttonIn(agents, "Update Antigravity")!);
+    // The same reviewed update Settings runs: plan it, then start that plan.
+    await vi.waitFor(() =>
+      expect(state.commands.startRuntime).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: "update",
+          catalogRevision: "antigravity-cli:1.0.0:abc",
+        },
+      }),
+    );
+    expect(state.commands.planRuntime).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: { instanceId: antigravity, action: "update" },
+    });
+    await vi.waitFor(() => expect(agents.textContent).toContain("Updating…"));
+
+    // Once the runtime can add plugins the store answers again, and the row is the usual Add.
+    agents = await show(
+      runtime({ actions: ["repair", "remove"] }),
+      storeEntry("gmail", { displayName: "Gmail" }),
+      { plugins: [] },
+    );
+    await vi.waitFor(() => expect(buttonIn(agents, "Add to Antigravity")).not.toBeNull());
+
+    // No update can help (a custom runtime): the store's reason and where to change it.
+    agents = await show(runtime({ source: "custom", actions: [] }));
+    await vi.waitFor(() => expect(agents.textContent).toContain(notCli));
+    expect(buttonIn(agents, "Update Antigravity")).toBeNull();
+    expect(linkIn(agents, "Open Settings")?.getAttribute("href")).toBe("/settings/providers");
+
+    // A store that fails to answer still hides the row.
+    await fixture.reset();
+    state.providersByEnvironment = {
+      local: [provider(antigravity, "antigravity", { displayName: "Antigravity" })],
+    };
+    state.storeEntryError = "Antigravity's store did not answer.";
+    await fixture.render(<AccountServiceDetailPage serviceId="gmail" />);
+    await vi.waitFor(() => expect(fixture.section("Your agents")).not.toBeNull());
+    expect(fixture.section("Your agents")?.textContent).not.toContain("Antigravity");
   });
 
   it("leaves Gmail off the Discover shelf, which its own page offers, but keeps it in the store", async () => {
