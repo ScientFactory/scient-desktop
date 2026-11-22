@@ -29,7 +29,7 @@ export type ProcessState = "gone" | "zombie" | "starting" | "ours" | "other";
 
 export interface ListedProcess {
   readonly pid: number;
-  /** The kernel's short name for the process, kept while it is defunct. */
+  /** macOS: the kernel's short name, kept while defunct. Linux: the executable's file name. */
   readonly name: string;
 }
 
@@ -90,7 +90,7 @@ const readStat = async (pid: number) => {
   };
 };
 
-/** Linux: environments NUL-separated in /proc. Another user's process, unreadable, isn't ours. */
+/** Linux: executables and environments in /proc. Another user's process, unreadable, isn't ours. */
 const linuxTable: ProcessTable = {
   list: async (signal) => {
     signal.throwIfAborted();
@@ -99,9 +99,13 @@ const linuxTable: ProcessTable = {
         (await NodeFSP.readdir("/proc"))
           .filter((entry) => /^\d+$/.test(entry))
           .map((entry) =>
-            // Gone, or hidden from this user: the confirming scan covers what a gone one started.
-            readStat(Number(entry)).then(
-              ({ name }) => [{ pid: Number(entry), name }],
+            // The executable itself: Node, for one, renames its process to the first 15
+            // characters of its path. Gone, defunct or another user's: the confirming scan covers
+            // what a gone one started.
+            NodeFSP.readlink(`/proc/${entry}/exe`).then(
+              (path) => [
+                { pid: Number(entry), name: NodePath.basename(path.replace(/ \(deleted\)$/u, "")) },
+              ],
               () => [],
             ),
           ),
@@ -124,9 +128,9 @@ const linuxTable: ProcessTable = {
 export const processTable = (platform: NodeJS.Platform): ProcessTable =>
   platform === "darwin" ? darwinTable : linuxTable;
 
-/** The kernel keeps 16 characters of a name on macOS, 15 on Linux. */
+/** macOS's kernel name keeps 16 characters; Linux lists the executable's full name. */
 const namesExecutable = (name: string, executable: string) =>
-  name.length >= 15 ? executable.startsWith(name) : name === executable;
+  name.length >= 16 ? executable.startsWith(name) : name === executable;
 
 /** The processes of `executable` whose environment sets HOME to `home`, read after one listing. */
 export async function scanHome(
