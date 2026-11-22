@@ -64,6 +64,10 @@ import {
 } from "../../scient/extensions/ScientAgentPluginInventory.ts";
 import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMcpInventory.ts";
 import {
+  runScientAgentHostCommand,
+  startScientAgentHostProcess,
+} from "../../scient/extensions/ProviderPluginCommand.ts";
+import {
   hasChatGptAccount,
   readScientAgentChatGptApps,
   scientAgentCapabilities,
@@ -443,6 +447,30 @@ export const ScientAgentDriver: ScientProviderDriver<
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         ),
+      {
+        list: (serverName) =>
+          runScientAgentHostCommand(launchConfig.binaryPath, processEnv, serverConfig.stateDir, [
+            "mcp",
+            "list",
+            ...(serverName === undefined ? [] : ["--server", serverName]),
+          ]).pipe(
+            Effect.provideService(OmpExecutableGate, executableGate),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          ),
+        login: (serverName) =>
+          startScientAgentHostProcess(launchConfig.binaryPath, processEnv, serverConfig.stateDir, [
+            "mcp",
+            "login",
+            serverName,
+          ]).pipe(
+            Effect.provideService(OmpExecutableGate, executableGate),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          ),
+      },
     ).pipe(Effect.provideService(Path.Path, path));
     const store = yield* makeSharedPluginStore({
       kind: "scient",

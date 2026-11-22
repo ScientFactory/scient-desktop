@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -14,6 +15,7 @@ import type {
   ProviderNativeInventory,
 } from "../../provider/ScientProviderInstanceSeams.ts";
 import { runScientAgentPluginCommand } from "./ProviderPluginCommand.ts";
+import { scientAgentMcpRows, scientAgentMcpSignIn } from "./ScientAgentMcpInventory.ts";
 import { readPluginJson } from "./LocalPluginFiles.ts";
 
 const Installed = Schema.Struct({
@@ -81,6 +83,23 @@ function scientAgentInstalledPlugins(
   ];
 }
 
+const SIGN_IN_ELSEWHERE = "Manage this MCP server's sign-in in Scient Agent.";
+
+/** The agent's `mcp` host command; each answers `undefined` when this build does not offer it. */
+export interface ScientAgentMcpHost {
+  readonly list: (
+    serverName?: string,
+  ) => Effect.Effect<string | undefined, { readonly message: string }>;
+  /** Stdout lines of `mcp login <name>`, whose process lives in the caller's scope. */
+  readonly login: (
+    serverName: string,
+  ) => Effect.Effect<
+    Stream.Stream<string, { readonly message: string }> | undefined,
+    { readonly message: string },
+    Scope.Scope
+  >;
+}
+
 const McpFile = Schema.Record(Schema.String, Schema.Unknown);
 const decodeMcp = Schema.decodeUnknownOption(McpFile);
 const pluginMcpServers = Effect.fn("pluginMcpServers")(function* (
@@ -122,6 +141,7 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
       ReadonlyArray<ServerProviderMcpServer>,
       { readonly message: string }
     > = () => Effect.succeed([]),
+    mcp?: ScientAgentMcpHost,
   ) {
     const reports = yield* Effect.acquireRelease(
       PubSub.unbounded<ProviderNativeInventory>({ replay: 1 }),
@@ -132,6 +152,7 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
     const lock = yield* Semaphore.make(1);
     const lastRead = yield* Ref.make<number | undefined>(undefined);
     const path = yield* Path.Path;
+    const scope = yield* Effect.scope;
     const list = Effect.fn("ScientAgentPluginInventory.list")(
       function* (cwd: string | undefined) {
         const sequence = yield* nextInventoryReadSequence;
@@ -166,40 +187,87 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
         plugin.name,
       ]);
     });
+    const listAgentMcp = (serverName?: string) =>
+      mcp
+        ? mcp
+            .list(serverName)
+            .pipe(
+              Effect.flatMap((stdout) =>
+                stdout === undefined ? Effect.undefined : scientAgentMcpRows(stdout),
+              ),
+            )
+        : Effect.undefined;
+    const refreshInventory = ({ force }: { readonly force: boolean }) =>
+      lock.withPermits(1)(
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          const previous = yield* Ref.get(lastRead);
+          if (!force && previous !== undefined && now - previous < 600_000) return;
+          const [listing, configured, agentServers] = yield* Effect.all(
+            [
+              list(undefined),
+              standalone(),
+              // A failed live listing leaves the configured servers in place.
+              listAgentMcp().pipe(Effect.orElseSucceed(() => undefined)),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const pluginServers = (yield* Effect.forEach(listing.plugins, (plugin) =>
+            pluginMcpServers(plugin).pipe(Effect.provideService(Path.Path, path)),
+          )).flat();
+          const names = new Set(configured.map((server) => server.name));
+          const fileServers = [
+            ...configured,
+            ...pluginServers.filter((server) => !names.has(server.name)),
+          ];
+          const agentNames = new Set(agentServers?.map((server) => server.name));
+          // The agent names every server it loads; it omits disabled ones, and other live
+          // sources (ChatGPT apps) report rows it does not.
+          const mcpServers = agentServers
+            ? [
+                ...agentServers,
+                ...fileServers.filter(
+                  (server) => !agentNames.has(server.name) && server.status !== "unknown",
+                ),
+              ]
+            : fileServers;
+          yield* PubSub.publish(reports, {
+            plugins: listing.plugins,
+            mcpServers,
+            sequence: listing.sequence,
+          });
+          yield* Ref.set(lastRead, now);
+        }),
+      );
     const actions: ProviderPluginActions = {
       listPlugins: ({ cwd }) => list(cwd),
       uninstall: (input) => mutate(input, "uninstall"),
       setEnabled: (input) => mutate(input, input.enabled ? "enable" : "disable"),
-      readMcpServer: () => Effect.undefined,
-      startMcpSignIn: () =>
-        Effect.fail({ message: "Manage this MCP server's sign-in in Scient Agent." }),
+      readMcpServer: ({ serverName }) =>
+        listAgentMcp(serverName).pipe(
+          Effect.map((rows) => rows?.find((server) => server.name === serverName)),
+        ),
+      startMcpSignIn: Effect.fn("ScientAgentPluginInventory.startMcpSignIn")(function* ({
+        serverName,
+      }: {
+        readonly serverName: string;
+      }) {
+        const lines = mcp ? yield* mcp.login(serverName) : undefined;
+        if (!lines) return yield* Effect.fail({ message: SIGN_IN_ELSEWHERE });
+        const attempt = yield* scientAgentMcpSignIn(lines, serverName);
+        return {
+          authorizationUrl: attempt.authorizationUrl,
+          // The agent stores the credential itself; its listing then shows the server connected.
+          waitForCompletion: attempt.waitForCompletion.pipe(
+            Effect.tap(() =>
+              refreshInventory({ force: true }).pipe(Effect.ignore, Effect.forkIn(scope)),
+            ),
+          ),
+        };
+      }),
       isRetired: Deferred.isDone(retired),
       whenRetired: Deferred.await(retired),
-      refreshInventory: ({ force }) =>
-        lock.withPermits(1)(
-          Effect.gen(function* () {
-            const now = yield* Clock.currentTimeMillis;
-            const previous = yield* Ref.get(lastRead);
-            if (!force && previous !== undefined && now - previous < 600_000) return;
-            const [listing, configured] = yield* Effect.all([list(undefined), standalone()], {
-              concurrency: "unbounded",
-            });
-            const pluginServers = (yield* Effect.forEach(listing.plugins, (plugin) =>
-              pluginMcpServers(plugin).pipe(Effect.provideService(Path.Path, path)),
-            )).flat();
-            const names = new Set(configured.map((server) => server.name));
-            const mcpServers = [
-              ...configured,
-              ...pluginServers.filter((server) => !names.has(server.name)),
-            ];
-            yield* PubSub.publish(reports, {
-              plugins: listing.plugins,
-              mcpServers,
-              sequence: listing.sequence,
-            });
-            yield* Ref.set(lastRead, now);
-          }),
-        ),
+      refreshInventory,
     };
     return { actions, reports: Stream.fromPubSub(reports) };
   },
