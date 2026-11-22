@@ -13,10 +13,11 @@ extensions.
   (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, Microsoft Teams,
   iMessage, Telegram, Figma, Zotero, GitHub, Slack, Notion, Dropbox, Linear, PubMed,
   Semantic Scholar, Hugging Face, Exa, Canva, Playwright, Vercel and Cloudflare), then one
-  section per kind of work, such as Papers &
-  literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
-  each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
-  section title to see the whole category. Sections and categories list
+  section per kind of work: Papers & literature, Biology & medicine, Code & developer tools,
+  AI & machine learning, Data & databases, Cloud, DevOps & security, and more. Each shows its
+  most useful picks; select its title to see the whole category, including the matching plugins
+  from each agent's store. After them come the features built into Scient,
+  each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Sections and categories list
   official services, run by the service itself or by Anthropic for it. Community
   servers and MCP Registry servers appear only when you search. Search covers the
   catalog, the registry, and what you have already installed.

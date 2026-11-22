@@ -250,6 +250,17 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     claude: claudeConnectorFor("Readwise"),
   },
   {
+    id: "latex",
+    name: "LaTeX",
+    tagline: msg("Compile LaTeX papers on this computer"),
+    description: msg(
+      "Codex reaches LaTeX through OpenAI’s LaTeX plugin, which compiles with its bundled Tectonic, or with TeX Live or MacTeX when they are installed.",
+    ),
+    categories: ["papers"],
+    websiteUrl: "https://www.latex-project.org",
+    stores: { codex: "latex@openai-bundled" },
+  },
+  {
     id: "boltz",
     name: "Boltz",
     tagline: msg("Predict structures, screen molecules and design binders"),
@@ -259,6 +270,26 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     categories: ["biology", "chemistry"],
     websiteUrl: "https://boltz.bio",
     stores: { claude: "boltz@claude-plugins-official", codex: "boltz-api-cli@openai-curated" },
+  },
+  {
+    id: "life-science-research",
+    name: "Life Science Research",
+    tagline: msg("Research questions across genetics, omics, structure and trials"),
+    description: msg(
+      "OpenAI’s Life Science Research plugin for Codex routes a research question to the right public resources, from human genetics and expression to protein structure, chemistry and clinical evidence, and synthesizes an evidence-backed answer.",
+    ),
+    categories: ["biology"],
+    stores: { codex: "life-science-research@openai-curated" },
+  },
+  {
+    id: "ngs-analysis",
+    name: "NGS Analysis",
+    tagline: msg("Run sequencing analyses, from FASTQ to variants and RNA-seq"),
+    description: msg(
+      "OpenAI’s Life Sciences NGS Analysis plugin for Codex inspects sequencing files on this computer, asks for the missing assay details, and runs supported public pipelines with QC reports and logs.",
+    ),
+    categories: ["biology"],
+    stores: { codex: "ngs-analysis@openai-curated" },
   },
 ];
 
