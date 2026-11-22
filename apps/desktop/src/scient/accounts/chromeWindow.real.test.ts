@@ -175,8 +175,13 @@ const reloadWindow = (profile: string, stop: AbortSignal, atKey: () => void) =>
       (error, stdout) =>
         resolve(error ? `failed: ${error.message}` : (stdout.trim().split(/\r?\n/).at(-1) ?? "")),
     );
+    // A script that ended early has closed its input; its last line says why.
+    child.stdin?.on("error", () => undefined);
+    let seen = "";
     child.stdout?.on("data", (chunk: string) => {
-      if (ready || !chunk.includes("ready")) return;
+      seen += chunk;
+      // Whole lines only: `ready` can arrive split across chunks.
+      if (ready || !seen.split(/\r?\n/).slice(0, -1).includes("ready")) return;
       ready = true;
       atKey();
       child.stdin?.end("go\n");
