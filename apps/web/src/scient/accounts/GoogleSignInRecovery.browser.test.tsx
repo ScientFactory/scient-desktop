@@ -52,6 +52,7 @@ it("restarts another site's Continue with Google at that site, in the tab's prof
     environmentId,
     profileId: work.id,
     url: "https://www.overleaf.com/",
+    attemptId: expect.any(String),
   });
 });
 
