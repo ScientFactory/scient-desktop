@@ -1,4 +1,5 @@
-import { ArrowUpIcon, CheckIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { flushSync } from "react-dom";
 import { Link } from "@tanstack/react-router";
@@ -14,6 +15,7 @@ import {
 } from "~/components/ui/popover";
 import { SidebarMenuItem } from "~/components/ui/sidebar";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import {
   isUpdateRunActive,
@@ -26,25 +28,29 @@ import {
 } from "./otherUpdates.logic";
 import { UpdateTextButton } from "./UpdateTextButton";
 import { confirmServerStops, useOtherUpdates } from "./useOtherUpdates";
+import { OTHER_UPDATES_TONE } from "./otherUpdatesTone";
 
 /** How long the finished check stays before the circle steps aside. */
 const OTHER_UPDATES_DONE_VISIBLE_MS = 2_500;
 
 const CIRCLE_LABELS: Record<OtherUpdatesCircleState, string> = {
-  idle: "Other updates available",
-  updating: "Other updates in progress",
-  failed: "Other update failed",
-  done: "Other updates done",
+  idle: msg("Other updates available"),
+  updating: msg("Other updates in progress"),
+  failed: msg("Other update failed"),
+  done: msg("Other updates done"),
 };
 
 const CIRCLE_TONES: Record<OtherUpdatesCircleState, string> = {
-  idle: "bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-400/22 dark:text-blue-300 dark:hover:bg-blue-400/30",
-  updating:
-    "bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-400/22 dark:text-blue-300 dark:hover:bg-blue-400/30",
+  idle: OTHER_UPDATES_TONE,
+  updating: OTHER_UPDATES_TONE,
   failed:
     "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-400/22 dark:text-red-300 dark:hover:bg-red-400/30",
   done: "bg-green-100 text-green-700 dark:bg-green-400/20 dark:text-green-300",
 };
+
+/** In the icon rail, the waiting circle is a faint fill inside a dashed ring. */
+const RAIL_IDLE_TONE =
+  "border border-dashed border-blue-500/60 bg-blue-500/2 text-blue-600 hover:bg-blue-500/8 dark:border-blue-300/55 dark:bg-blue-400/3 dark:text-blue-300 dark:hover:bg-blue-400/10";
 
 function ExclamationGlyph() {
   return (
@@ -54,11 +60,15 @@ function ExclamationGlyph() {
   );
 }
 
-function ProgressRing() {
+/** `large` fits the rail's 24px circle; otherwise the 20px one. */
+function ProgressRing({ large }: { readonly large: boolean }) {
   return (
     <svg
       aria-hidden="true"
-      className="pointer-events-none absolute -inset-0.5 size-6 animate-spin motion-reduce:animate-none"
+      className={cn(
+        "pointer-events-none absolute -inset-0.5 animate-spin motion-reduce:animate-none",
+        large ? "size-7" : "size-6",
+      )}
       fill="none"
       viewBox="0 0 24 24"
     >
@@ -87,6 +97,7 @@ function AskText({
   readonly stops: number;
   readonly className: string;
 }) {
+  const messages = useMessages();
   return (
     <span
       aria-live="polite"
@@ -94,7 +105,7 @@ function AskText({
       data-other-update-ask={asking || undefined}
       id={id}
     >
-      {asking ? stopsThreadsLabel(stops) : null}
+      {asking ? stopsThreadsLabel(stops, messages) : null}
     </span>
   );
 }
@@ -160,16 +171,19 @@ function RowEnd({
   readonly onUpdate: () => void;
   readonly onRetry: () => void;
 }) {
+  const gt = useGT();
   const muted = MUTED;
   switch (row.state.status) {
     case "idle":
       return busy ? (
-        <span className={muted}>waiting</span>
+        <span className={muted}>
+          <T context="update status">waiting</T>
+        </span>
       ) : (
         <AskingAction
           askId={askId}
           asking={asking}
-          label="Update"
+          label={gt("Update", { $context: "verb, installs this update" })}
           stops={stops}
           onAsk={onAsk}
           onRun={onUpdate}
@@ -178,24 +192,36 @@ function RowEnd({
     case "updating":
       return <span className={muted}>{otherUpdateProgressLabel(row.state.progress)}</span>;
     case "waiting":
-      return <span className={muted}>waiting for idle</span>;
+      return (
+        <span className={muted}>
+          <T>waiting for idle</T>
+        </span>
+      );
     case "failed":
       return row.state.retry && busy ? (
-        <span className={muted}>waiting</span>
+        <span className={muted}>
+          <T context="update status">waiting</T>
+        </span>
       ) : row.state.retry ? (
         <AskingAction
           askId={askId}
           asking={asking}
-          label="Retry"
+          label={gt("Retry")}
           stops={stops}
           onAsk={onAsk}
           onRun={onRetry}
         />
       ) : (
-        <span className="shrink-0 text-destructive">failed</span>
+        <span className="shrink-0 text-destructive">
+          <T context="update status">failed</T>
+        </span>
       );
     case "done":
-      return <span className={muted}>done</span>;
+      return (
+        <span className={muted}>
+          <T context="update status">done</T>
+        </span>
+      );
   }
 }
 
@@ -209,6 +235,7 @@ function OtherUpdateRowItem({
   onUpdate,
   onRetry,
 }: Omit<Parameters<typeof RowEnd>[0], "askId">) {
+  const gt = useGT();
   const askId = useId();
   const instanceId =
     row.item.kind === "provider"
@@ -226,12 +253,19 @@ function OtherUpdateRowItem({
         <span className="flex shrink-0 items-center gap-2.5">
           {instanceId !== null ? (
             <Link
-              aria-label={`Open ${row.item.name} settings${row.item.machine ? ` on ${row.item.machine}` : ""}`}
+              aria-label={
+                row.item.machine
+                  ? gt("Open {name} settings on {machine}", {
+                      name: row.item.name,
+                      machine: row.item.machine,
+                    })
+                  : gt("Open {name} settings", { name: row.item.name })
+              }
               className="text-foreground/80 underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
               search={{ environmentId: row.item.environmentId, instanceId }}
               to="/settings/providers"
             >
-              Settings
+              <T>Settings</T>
             </Link>
           ) : null}
           <RowEnd
@@ -260,13 +294,13 @@ function OtherUpdateRowItem({
 /**
  * The footer circle for updates other than this app's own: other machines' servers and apps,
  * one-click provider CLIs and Scient-managed runtimes. It stays until they are updated; its card lists
- * each one and updates them in place, since none of them restarts this app. `standalone`
- * gives it its own footer item when this app's update pill is absent.
+ * each one and updates them in place, since none of them restarts this app. By `placement`: beside
+ * this app's update pill, its own footer item when that pill is absent, or the icon rail.
  */
 export function SidebarOtherUpdates({
   servers,
   updateAll,
-  standalone = false,
+  placement = "pill",
 }: {
   readonly servers: ReadonlyArray<OtherServerUpdate>;
   /**
@@ -274,8 +308,10 @@ export function SidebarOtherUpdates({
    * each server when its restart is due.
    */
   readonly updateAll: (admitServer: (target: ServerUpdateTarget) => boolean) => Promise<void>;
-  readonly standalone?: boolean;
+  readonly placement?: "pill" | "footer" | "rail";
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const updates = useOtherUpdates(servers);
   const runActive = isUpdateRunActive(useUpdateEverythingRun());
   const [handle] = useState(() => PopoverCreateHandle());
@@ -320,8 +356,9 @@ export function SidebarOtherUpdates({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: m(msg("Could not update")),
+          description:
+            error instanceof Error ? error.message : m(msg("An unexpected error occurred.")),
         }),
       );
     }
@@ -345,11 +382,12 @@ export function SidebarOtherUpdates({
         openOnHover
         render={
           <button
-            aria-label={CIRCLE_LABELS[circle]}
+            aria-label={messages(CIRCLE_LABELS[circle])}
             className={cn(
-              "relative grid size-5 shrink-0 cursor-pointer place-items-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
-              !standalone && "mr-1.5",
-              CIRCLE_TONES[circle],
+              "relative grid shrink-0 cursor-pointer place-items-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+              placement === "rail" ? "size-6" : "size-5",
+              placement === "pill" && "mr-1.5",
+              placement === "rail" && circle === "idle" ? RAIL_IDLE_TONE : CIRCLE_TONES[circle],
             )}
             data-other-updates={circle}
             // Narrow footers fold their secondary actions to make room, as for the app pill.
@@ -364,16 +402,24 @@ export function SidebarOtherUpdates({
           />
         }
       >
-        {circle === "updating" ? <ProgressRing /> : null}
+        {circle === "updating" ? <ProgressRing large={placement === "rail"} /> : null}
         {circle === "failed" ? (
           <ExclamationGlyph />
         ) : circle === "done" ? (
           <CheckIcon aria-hidden="true" className="size-3" strokeWidth={2.75} />
+        ) : placement === "rail" ? (
+          <ArrowDownIcon aria-hidden="true" className="size-3.5" strokeWidth={3} />
         ) : (
           <ArrowUpIcon aria-hidden="true" className="size-3" strokeWidth={2.6} />
         )}
       </PopoverTrigger>
-      <PopoverPopup align="end" initialFocus={false} padding="compact" side="top" width="sm">
+      <PopoverPopup
+        align="end"
+        initialFocus={false}
+        padding="compact"
+        side={placement === "rail" ? "right" : "top"}
+        width="sm"
+      >
         <div className="flex flex-col gap-2.5 text-xs">
           <ul className="flex flex-col gap-2">
             {rows.map((row) => (
@@ -400,7 +446,7 @@ export function SidebarOtherUpdates({
               <AskingAction
                 asking={asking === "all"}
                 emphasis
-                label="Update all"
+                label={gt("Update all")}
                 stops={updateAllStops}
                 onAsk={() => setAsking("all")}
                 onRun={() => void runUpdateAll()}
@@ -412,7 +458,7 @@ export function SidebarOtherUpdates({
     </Popover>
   );
 
-  return standalone ? (
+  return placement === "footer" ? (
     <SidebarMenuItem className="ml-auto shrink-0">{control}</SidebarMenuItem>
   ) : (
     control

@@ -5,6 +5,8 @@ import { Button } from "~/components/ui/button";
 import { runtime } from "~/lib/runtime";
 import { readPreparedConnection } from "~/state/session";
 import { observeLatexWidth } from "./observeLatexWidth";
+import { msg, T, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 
 interface ArtworkHandles {
   loading?: ReturnType<typeof import("../pdf/pdfRuntime").startPdfDocumentLoad> | undefined;
@@ -43,7 +45,7 @@ async function paintLatexArtwork(input: {
   try {
     const prepared = input.environmentId && readPreparedConnection(input.environmentId);
     if (!prepared || !input.cwd || !input.relativePath) {
-      input.setStatus("Connect to the document’s environment to show this drawing.");
+      input.setStatus(m(msg("Connect to the document’s environment to show this drawing.")));
       return;
     }
     const request = {
@@ -76,7 +78,7 @@ async function paintLatexArtwork(input: {
           Math.ceil(width * input.rasterPixelRatio) * Math.ceil(height * input.rasterPixelRatio) >
             16_777_216
         )
-          throw new Error("The drawing preview is too large.");
+          throw new Error(m(msg("The drawing preview is too large.")));
         // Native decoding avoids loading fonts and executing PDF drawing
         // operators in the UI renderer. The PDF remains the fallback.
         const response = await fetch(`data:image/png;base64,${size.pngBase64}`, {
@@ -87,9 +89,9 @@ async function paintLatexArtwork(input: {
           const element = input.canvas.current;
           if (signal.aborted || !element) return;
           if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 16_777_216)
-            throw new Error("The drawing preview is too large.");
+            throw new Error(m(msg("The drawing preview is too large.")));
           const context = element.getContext("2d");
-          if (!context) throw new Error("The drawing canvas is unavailable.");
+          if (!context) throw new Error(m(msg("The drawing canvas is unavailable.")));
           element.width = bitmap.width;
           element.height = bitmap.height;
           element.style.width = `${width}px`;
@@ -122,7 +124,7 @@ async function paintLatexArtwork(input: {
     const ratio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
     const viewport = page.getViewport({ scale: scale * ratio });
     if (viewport.width * viewport.height > 16_777_216)
-      throw new Error("The drawing preview is too large.");
+      throw new Error(m(msg("The drawing preview is too large.")));
     element.width = Math.ceil(viewport.width);
     element.height = Math.ceil(viewport.height);
     element.style.width = `${size.width}px`;
@@ -133,7 +135,9 @@ async function paintLatexArtwork(input: {
     if (!signal.aborted) input.setStatus(null);
   } catch (error) {
     if (!signal.aborted)
-      input.setStatus(error instanceof Error ? error.message : "Drawing preview unavailable.");
+      input.setStatus(
+        error instanceof Error ? error.message : m(msg("Drawing preview unavailable.")),
+      );
   } finally {
     releaseArtworkHandles(handles);
   }
@@ -149,6 +153,7 @@ export function LatexTikzArtwork(props: {
   readonly algorithmNumber?: number | undefined;
   readonly label?: string | undefined;
 }) {
+  const gt = useGT();
   const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const requested = useRef(false);
@@ -180,10 +185,10 @@ export function LatexTikzArtwork(props: {
     null,
   );
   const status = !admitted
-    ? "Drawing preview is off. You can continue editing in Source."
+    ? gt("Drawing preview is off. You can continue editing in Source.")
     : resultState?.key === requestKey
       ? resultState.message
-      : "Rendering drawing…";
+      : gt("Rendering drawing…");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the containing panel DOM node width until unmount
   useLayoutEffect(() => {
     const panel = root.current?.closest<HTMLElement>(
@@ -252,8 +257,10 @@ export function LatexTikzArtwork(props: {
       {!admitted && (
         <div className="scient-latex-tikz-admission">
           <p>
-            Preview runs this drawing and its document preamble with host TeX/Lua. It has the
-            environment’s filesystem authority; this is not a sandbox. Only run source you trust.
+            <T>
+              Preview runs this drawing and its document preamble with host TeX/Lua. It has the
+              environment’s filesystem authority; this is not a sandbox. Only run source you trust.
+            </T>
           </p>
           <Button
             type="button"
@@ -264,7 +271,7 @@ export function LatexTikzArtwork(props: {
               setActionNumber((action) => action + 1);
             }}
           >
-            Run this drawing preview
+            <T>Run this drawing preview</T>
           </Button>
         </div>
       )}
@@ -275,13 +282,13 @@ export function LatexTikzArtwork(props: {
           size="sm"
           onClick={() => setActionNumber((action) => action + 1)}
         >
-          Run drawing preview again
+          <T>Run drawing preview again</T>
         </Button>
       )}
       <canvas
         ref={canvas}
         role="img"
-        aria-label={props.label ?? "TikZ drawing"}
+        aria-label={props.label ?? gt("TikZ drawing")}
         hidden={status !== null}
       />
       {status !== null && (

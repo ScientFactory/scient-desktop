@@ -89,11 +89,47 @@ function runtimeErrorAttribution(
   return { failureOwner: owner, failureCategory: category };
 }
 
+/** Why a compute runtime was lost, from Scient's own fixed loss reasons. */
+export type ComputeLossReason =
+  | "server-restart"
+  | "transport-failed"
+  | "admission-timeout"
+  | "persistence-failed"
+  | "kernel-exited"
+  | "kernel-connection"
+  | "protocol-error"
+  | "missing-capability"
+  | "exited";
+
 export type ComputeRunFailureFacts =
   | { readonly kind: "runtime-reported"; readonly errorName: string | undefined }
   | { readonly kind: "not-admitted" }
-  | { readonly kind: "lost"; readonly reason: "server-restart" | "transport-failed" | "exited" }
+  | { readonly kind: "lost"; readonly reason: ComputeLossReason }
   | { readonly kind: "runtime-start" };
+
+/** The fixed starts of the bridge's own fatal reasons (scient_compute_bridge.py `_fail_fatal`). */
+export const COMPUTE_BRIDGE_LOSS_PREFIXES: ReadonlyArray<readonly [string, ComputeLossReason]> = [
+  ["The kernel process exited", "kernel-exited"],
+  ["Kernel communication failed", "kernel-connection"],
+  ["Protocol error:", "protocol-error"],
+  ["Missing capabilities:", "missing-capability"],
+];
+
+/** Scient's bridge refuses a run whose source changed under it; no native code ran. */
+const SOURCE_CONFLICT_ERROR = "Scient:SourceConflict";
+
+const LOSS_ATTRIBUTION: Readonly<Record<ComputeLossReason, FailureAttribution>> = {
+  "server-restart": { failureOwner: "scient", failureCategory: "app-restart" },
+  "transport-failed": { failureOwner: "scient", failureCategory: "runtime-connection" },
+  "admission-timeout": { failureOwner: "scient", failureCategory: "admission-timeout" },
+  "persistence-failed": { failureOwner: "scient", failureCategory: "persistence-failed" },
+  "protocol-error": { failureOwner: "scient", failureCategory: "protocol-error" },
+  "missing-capability": { failureOwner: "scient", failureCategory: "missing-capability" },
+  // A crashing extension, exhausted memory or a kernel bug all end the kernel.
+  "kernel-exited": { failureOwner: "unknown", failureCategory: "kernel-exited" },
+  "kernel-connection": { failureOwner: "unknown", failureCategory: "kernel-connection" },
+  exited: { failureOwner: "unknown", failureCategory: "runtime-exited" },
+};
 
 export function computeRunAttribution(
   facts: ComputeRunFailureFacts,
@@ -101,7 +137,9 @@ export function computeRunAttribution(
 ): FailureAttribution {
   switch (facts.kind) {
     case "runtime-reported":
-      return runtimeErrorAttribution(facts.errorName, managedRuntime);
+      return facts.errorName === SOURCE_CONFLICT_ERROR
+        ? { failureOwner: "input", failureCategory: "source-conflict" }
+        : runtimeErrorAttribution(facts.errorName, managedRuntime);
     case "not-admitted":
       return { failureOwner: "scient", failureCategory: "dispatch" };
     case "runtime-start":
@@ -110,12 +148,7 @@ export function computeRunAttribution(
         failureCategory: "runtime-start",
       };
     case "lost":
-      return facts.reason === "server-restart"
-        ? { failureOwner: "scient", failureCategory: "app-restart" }
-        : facts.reason === "transport-failed"
-          ? { failureOwner: "scient", failureCategory: "runtime-connection" }
-          : // A crashing extension, exhausted memory or Scient's bridge all end the process.
-            { failureOwner: "unknown", failureCategory: "runtime-exited" };
+      return LOSS_ATTRIBUTION[facts.reason];
   }
 }
 
@@ -126,12 +159,45 @@ export function computeRunAttribution(
 export function programRunAttribution(
   status: "failed" | "lost",
   exitCode: number | null,
+  notStarted?: "source-changed" | "runtime-missing",
 ): FailureAttribution {
   if (status === "lost") return { failureOwner: "unknown", failureCategory: "runtime-exited" };
+  // The file changed before it ran, or its runtime is not installed.
+  if (notStarted === "source-changed")
+    return { failureOwner: "input", failureCategory: "source-changed" };
+  if (notStarted === "runtime-missing")
+    return { failureOwner: "environment", failureCategory: "runtime-missing" };
   if (exitCode === null) return { failureOwner: "unknown", failureCategory: "not-started" };
   return exitCode === 0
     ? { failureOwner: "unknown", failureCategory: "failed-after-exit" }
     : { failureOwner: "code", failureCategory: "nonzero-exit" };
+}
+
+const PDF_EXPORT_OWNERS = {
+  "project-required": "input",
+  "project-changed": "input",
+  "invalid-source-path": "input",
+  "invalid-output-path": "input",
+  "unsupported-format": "input",
+  "source-not-found": "input",
+  "source-changed": "input",
+  "too-large": "input",
+  // Scient's own renderer and publication.
+  "renderer-unavailable": "scient",
+  "publication-failed": "scient",
+  "partial-publication": "scient",
+  "output-write-failed": "environment",
+  "render-failed": "unknown",
+} as const satisfies Partial<Record<FailureCategory, FailureOwner>>;
+
+/** A PDF export's typed error code, when it is one of the closed export codes. */
+export function pdfExportAttribution(code: unknown): FailureAttribution | undefined {
+  return typeof code === "string" && Object.hasOwn(PDF_EXPORT_OWNERS, code)
+    ? {
+        failureOwner: PDF_EXPORT_OWNERS[code as keyof typeof PDF_EXPORT_OWNERS],
+        failureCategory: code as keyof typeof PDF_EXPORT_OWNERS,
+      }
+    : undefined;
 }
 
 const LATEX_OWNERS: Readonly<Record<ScientLatexBuildFailureClass, FailureOwner>> = {

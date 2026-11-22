@@ -9,6 +9,232 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.33",
+    publishedAt: "2026-11-22",
+    format: "paragraphs",
+    headline: "A new sidebar rail, multi-repository projects, journal covers and Antigravity.",
+    highlights: [
+      {
+        id: "icon-rail-0633",
+        title: "Open common pages from the new icon rail",
+        description:
+          "The sidebar’s new icon rail opens Home, Library, Scheduled tasks, Extensions and Code review. Settings, Usage and Scient Connect sit at the bottom. Library opens My Library over the whole window, no project needed. New threads pick their project in a chip above the message box. Turn the rail off in Settings → Labs → Sidebar icon rail.",
+      },
+      {
+        id: "multi-repo-0633",
+        title: "Work across several repositories in one project",
+        description:
+          "A folder of repositories, or a repository with others it depends on, is now one project. Manage them in Settings → Projects → Repositories. Each turn groups changes by repository, and the Diff pane lets you switch between them. Commit, push or open a pull request in each from thread details. New worktree checks out the repositories you select. In a plain folder, files outside the repositories are shared by worktree threads.",
+      },
+      {
+        id: "library-covers-0633",
+        title: "See publishers and journal covers in your Library",
+        description:
+          "Library rows and cards show publisher and journal icons when Scient can identify them. Cards show the current journal cover when available, including covers from some Elsevier, Wiley and Springer Nature journals, Science, PNAS and NEJM Evidence. Covers are saved for offline use.",
+      },
+      {
+        id: "side-threads-0633",
+        title: "Keep subagents and side chats beside your thread",
+        description:
+          "Click a subagent or side chat to open it in the right panel. ⌘-click, or Ctrl-click on Windows and Linux, opens it in the main view. Swap these in Settings → Chat → Open subagents and side chats in. After sending a message in a side chat, choose Add to chat or type @ and part of its title in your thread’s composer, even while the thread is busy.",
+      },
+      {
+        id: "remote-0633",
+        title: "Forward ports and see your machines on a map",
+        description:
+          "In the desktop app, use a thread’s Servers list or Forwarded ports in the command palette to reach a connected computer’s port at localhost. Turn off Settings → Sharing & access → Preview tunnel on that computer to disable forwarding and stream its browser tabs. On a wide window, Settings → Environments offers Map and List views. With Linked environments on in Labs, link several machines at once and read their threads.",
+      },
+      {
+        id: "agents-0633",
+        title: "Sign in to MCP servers and spot custom endpoints",
+        description:
+          "When an MCP server you added to Claude or Codex needs access, choose Sign in in the thread and follow the prompts. If ANTHROPIC_BASE_URL sends Claude elsewhere, Settings → Providers shows the server and how it was configured. Request errors can name it too. Antigravity follows your global AGENTS.md and GEMINI.md; use its own provider, not Scient Agent.",
+      },
+      {
+        id: "antigravity-0633",
+        title: "Add Antigravity plugins and sign in from chat",
+        description:
+          "Extensions now has an Antigravity Marketplace with Google’s official and partner plugins, Add and Remove. Partner plugins show a third-party notice before Add. Supported plugins offer sign-in from chat. Choose Update Antigravity to move an existing managed install to Google’s agy CLI. You’ll need to sign in to Google again once after the switch. Each instance keeps its own sign-in. Antigravity usage also recognizes more Gemini model variants.",
+      },
+      {
+        id: "reading-0633",
+        title: "Clearer chat text and quicker everyday actions",
+        description:
+          "The default themes use new text colors. Chat follows your Interface font size, with tighter line spacing in agent replies. Copy tables as Markdown, CSV or HTML, and use Copy contents in a text file’s preview. Edit from here skips its dialog when the thread uses only the project folder and Scient confirms later turns changed no files. Duplicate browser tabs with their pages, and search actions in Settings → Shortcuts.",
+      },
+    ],
+    alsoIncluded:
+      "Empty old thread databases no longer trigger a restoration warning. The composer shows the provider’s icon when a model name won’t fit. Browser sign-in suggests reloading a blank page; on macOS and Windows, Cancel stays after Done. With the icon rail on, a ready update shows Update at the top of the sidebar. Issues can hide projects and show several Linear teams.",
+  },
+  {
+    version: "0.6.32",
+    publishedAt: "2026-11-21",
+    format: "paragraphs",
+    headline: "A new sidebar rail, projects with several repositories, and journal covers.",
+    highlights: [
+      {
+        id: "icon-rail-0632",
+        title: "Open common pages from the new icon rail",
+        description:
+          "The sidebar’s new icon rail opens Home, Library, Scheduled tasks, Extensions and Code review, with Settings, Usage and Scient Connect at the bottom. When both are available, Code review switches between Pull requests and Issues. Library opens My Library over the whole window, no project needed. A new thread asks “What should we work on?” and picks its project in a chip above the message box. Turn the rail off in Settings → Labs → Sidebar icon rail.",
+      },
+      {
+        id: "multi-repo-0632",
+        title: "Work across several repositories in one project",
+        description:
+          "A plain folder of repositories, or a repository with others it depends on, is now one project. Settings → Projects → Repositories lists them and adds outside folders. Each turn’s changes are grouped by repository, the Diff pane has a repository picker, and thread details commits, pushes or opens a pull request in each. New worktree checks out each repository you select, and Revert repositories too restores them. In a plain folder, files outside the repositories are shared by worktree threads.",
+      },
+      {
+        id: "library-covers-0632",
+        title: "See publishers and journal covers in your Library",
+        description:
+          "Library rows and cards show a publisher icon when the DOI, publisher or link identifies one, or an icon for the type of source. Journals with their own icon, such as The Lancet, Cell and Nature, show it instead. Cards show the current cover when Scient can find it, including covers for some Elsevier, Wiley and Springer Nature journals, as well as Science, PNAS and NEJM Evidence. Covers are saved for offline use.",
+      },
+      {
+        id: "side-threads-0632",
+        title: "Keep subagents and side chats beside your thread",
+        description:
+          "Click a subagent or side chat to open it as a tab in the right panel, keeping your thread in view. ⌘-click, or Ctrl-click on Windows and Linux, opens it in the main view instead; Settings → Chat → Open subagents and side chats in swaps the two. After sending a message in a side chat, choose Add to chat or type @ and part of its title in the thread’s composer, even while the thread is busy.",
+      },
+      {
+        id: "remote-0632",
+        title: "Forward ports and see your machines on a map",
+        description:
+          "In the desktop app, use a thread’s Servers list or Forwarded ports in the command palette to forward a port from a connected computer, so any app on yours reaches it at localhost. Turn off Settings → Sharing & access → Preview tunnel on a computer to disable port forwarding and stream browser tabs from it. On a wide window, switch between Map and List in Settings → Environments. With Linked environments on in Labs, link several machines at once and read a linked machine’s threads.",
+      },
+      {
+        id: "agents-0632",
+        title: "Sign in to MCP servers and spot custom endpoints",
+        description:
+          "When an MCP server you added to Claude or Codex needs a sign-in, the thread shows Sign in; approve access, paste the address you land on and choose Finish sign-in. If ANTHROPIC_BASE_URL sends Claude elsewhere, Settings → Providers shows that server and how it was configured, and request errors can name it. Each Antigravity instance keeps its own Google sign-in and follows your global AGENTS.md and GEMINI.md. For Antigravity, use the separate Antigravity provider, not Scient Agent.",
+      },
+      {
+        id: "reading-0632",
+        title: "Clearer chat text and quicker everyday actions",
+        description:
+          "The default themes use new text colors, chat follows your Interface font size, and agent replies have tighter line spacing. Copy chat tables as Markdown, CSV or HTML, and copy a text file from its preview with Copy contents. Edit from here rewinds chat without a dialog when the thread uses only the project folder and Scient can confirm later turns changed no files. Duplicate a browser tab with its page, and search actions when adding a shortcut in Settings → Shortcuts.",
+      },
+    ],
+    alsoIncluded:
+      "An empty old thread database no longer triggers a restoration warning. When the model name won’t fit, the composer shows the provider’s icon. Scient’s browser sign-in dialog tells you to reload a blank page; on macOS and Windows, Cancel stays after Done. With the icon rail on, a ready update shows Update at the top of the sidebar. Issues can hide projects and show several Linear teams.",
+  },
+  {
+    version: "0.6.31",
+    publishedAt: "2026-11-19",
+    format: "paragraphs",
+    headline: "Linked results for your papers, issues, and ten languages.",
+    highlights: [
+      {
+        id: "linked-results-markdown-0631",
+        title: "Link numbers, tables and figures to your runs",
+        description:
+          "Run a saved script fresh so it writes values, CSV tables or figures to SCIENT_RESULTS_DIR, then use Insert ▸ Result to tie them to a Markdown paper. When the script or observed project files read by a Python run change, affected results are marked with the cause. Re-run to capture a new revision, then apply Update to refresh that script’s results in the document in one undoable edit, or ask an agent to check them. Outputs stay plain Markdown; run records stay on the Compute machine.",
+      },
+      {
+        id: "linked-results-latex-0631",
+        title: "Keep LaTeX papers in sync with your analysis",
+        description:
+          "Insert ▸ Result writes ordinary LaTeX macros, booktabs tables and figure files beside your paper, so it compiles anywhere, including Overleaf, with those generated files and required packages. A status badge beside the build bar flags out-of-date or newer results and when the PDF needs rebuilding, showing what an update will change with Re-run, Update files and Undo update. Macros used in included chapters are checked before updating.",
+      },
+      {
+        id: "issues-0631",
+        title: "Track and link issues beside your conversations",
+        description:
+          "Open the new Issues page for GitHub, GitLab, Azure DevOps, Forgejo and Linear projects. Filter, sort and save reusable views, read and comment on issues, edit labels and assignees, and hover issue links in chat for previews. Choose Link to this thread from an issue to see it beside pull requests in Linked items so both you and your agents keep it in context.",
+      },
+      {
+        id: "languages-0631",
+        title: "Use Scient in ten languages",
+        description:
+          "Choose English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or Swedish in Settings → General → Display → Language, or follow your system default. Desktop menus, dialogs and Scient’s own panels, such as Library, Compute, documents, Overleaf and Accounts, follow the same choice.",
+      },
+      {
+        id: "updates-0631",
+        title: "Keep working while updates prepare",
+        description:
+          "Choosing Restart now saves open workspaces and shows progress right beside the update control, with Retry for recoverable failures. On macOS, Scient prepares and verifies the downloaded update while you keep working, then runs a final save so edits made in the meantime are kept. Unreadable update feeds no longer stall on checking.",
+      },
+      {
+        id: "agents-chat-0631",
+        title: "Edit earlier messages and keep context together",
+        description:
+          "Edit from here now rewinds Cursor sessions and restarts Antigravity with your kept conversation, and ACP agents keep the earlier conversation when you revert. Side chats started with /side keep your attachments and context, pressing Enter while an image compresses sends once it is ready, and failed sends or steers explain why.",
+      },
+      {
+        id: "previews-0631",
+        title: "Inspect remote localhost pages locally",
+        description:
+          "When connected to another computer in the desktop app, localhost preview tabs you open render locally through a tunnel, so the element picker, screenshots and annotations work just as they do locally. Preview pages ask before reading your location, edited HTML files open fresh from Files, and open HTML previews refresh without flashing white.",
+      },
+      {
+        id: "windows-signin-0631",
+        title: "More reliable Windows installs and Claude sign-in",
+        description:
+          "On Windows, the installer now protects eligible custom per-user folders so saving works reliably there, plain file reads no longer fail when the native helper is unavailable, and you can drag file pills into Explorer. A new Claude sign-in can finish after its next account check and verification even if its login process stays open.",
+      },
+    ],
+    alsoIncluded:
+      "The Fork this chat card returns with an editable title and worktree switch, also from /fork-worktree. New direct pairings can renew with use. Choose an fx backend per thread, use Full access on fx 0.0.14+, and update supported fx installs in Settings. Save Pull request views, unassign default shortcuts, set a terminal shell, usage retention or sparse worktrees, plus faster Find in thread.",
+  },
+  {
+    version: "0.6.30",
+    publishedAt: "2026-11-17",
+    format: "paragraphs",
+    headline: "An agentic library for your research.",
+    highlights: [
+      {
+        id: "personal-library-0630",
+        title: "Keep your papers across projects",
+        description:
+          "Sources becomes Library: one collection for all your projects on this computer. Organize papers with collections, tags, reading status and stars, find possible duplicates, and undo bulk changes. Each project keeps its own references and notes. Libraries on different computers are separate for now.",
+      },
+      {
+        id: "library-import-export-0630",
+        title: "Bring your references with you",
+        description:
+          "Import Zotero libraries, groups and collections, PDFs, or reference files. Add papers by identifier, refresh them from Zotero, or send them back with their PDFs. Back up your Library or save a project package to share its papers, notes and highlights.",
+      },
+      {
+        id: "library-reading-0630",
+        title: "Read, highlight and ask about your papers",
+        description:
+          "Highlight passages, add notes and search your papers’ full text. Ask the Library to help answer a question from your papers, with citations and checked quotations. Quote a passage directly into your document with its source and page.",
+      },
+      {
+        id: "library-citations-0630",
+        title: "Cite as you write, and check your references",
+        description:
+          "Find Library references while writing citations in Markdown or LaTeX, and choose a citation style for your project and Word exports. Check references in your Library or documents, including Word files, for incorrect details, missing entries, retractions and published versions of preprints.",
+      },
+      {
+        id: "systematic-reviews-0630",
+        title: "Keep a systematic review organized",
+        description:
+          "Record searches, screen titles and abstracts, track full-text decisions and resolve disagreements in the Library. Scient builds a PRISMA flow diagram from those records. Agents can help with screening, and their decisions are marked for you to review.",
+      },
+      {
+        id: "feedback-0630",
+        title: "Send feedback without leaving Scient",
+        description:
+          "Use the lightbulb beside Settings, type /feedback, or choose Report after a failed turn. Review what will be sent and optionally attach a screenshot, logs or the conversation. Reports saved offline are sent when the connection returns.",
+      },
+      {
+        id: "scient-agent-0630",
+        title: "Improvements to Scient Agent",
+        description:
+          "Continue works after Stop or a usage limit, and recovered turns no longer keep an earlier failure. Long idle conversations can be compacted before their cache expires, while supported agents load optional tools when needed to leave more room for your work. Usage now includes background requests such as titles and prompt suggestions.",
+      },
+      {
+        id: "windows-browser-import-0630",
+        title: "Bring Windows browser sign-ins into Scient",
+        description:
+          "Import Chrome and Edge profiles on Windows through the browser’s own approval flow, without closing it. Saved passwords remain in the browser. Google sign-ins can work directly in Scient again, with clearer alternatives when Google refuses.",
+      },
+    ],
+    alsoIncluded:
+      "A smoother update flow with background downloads and automatic retries. Fork conversations in one click or into a new worktree. Edit queued messages without losing their place. Faster loading of long conversations, less storage used by forks, and startup and crash fixes. Font sizes reset once to the new defaults; you can adjust them again in Settings.",
+  },
+  {
     version: "0.6.29",
     publishedAt: "2026-11-15",
     format: "paragraphs",

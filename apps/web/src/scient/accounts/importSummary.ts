@@ -4,6 +4,9 @@ import {
   type BrowserImportResult,
   type BrowserImportSourceId,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { countBucket, type AccountBrowserEvents } from "../analytics/accountBrowserAnalytics";
 
@@ -43,11 +46,17 @@ export function importShortfall(summary: ImportSummary): BrowserImportFailureRea
 }
 
 /** What a partial import says about the protected cookies it left behind. */
-export function protectedNotice(count: number | undefined): string | undefined {
+export function protectedNotice(
+  count: number | undefined,
+  resolve: MessageResolver = m,
+): string | undefined {
   if (!count) return undefined;
-  const cookies =
-    count === 1 ? "1 protected cookie" : `${count.toLocaleString()} protected cookies`;
-  return `${cookies} couldn't be copied; some sites may need sign-in.`;
+  return resolve(
+    msg(
+      "{count, plural, one {{shown} protected cookie couldn't be copied; some sites may need sign-in.} other {{shown} protected cookies couldn't be copied; some sites may need sign-in.}}",
+    ),
+    { count, shown: count.toLocaleString() },
+  );
 }
 
 const UNAVAILABLE: ReadonlySet<string> = new Set(BrowserImportUnavailableReason.literals);

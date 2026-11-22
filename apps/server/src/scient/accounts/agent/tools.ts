@@ -16,6 +16,7 @@ import {
   PaperAsked,
   PaperItem,
   PaperItemState,
+  PaperVersion,
   PreviewTabId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -105,8 +106,11 @@ const credentials = metadata(
 const signIn = metadata(
   Tool.make("scient_account_sign_in", {
     ...common,
+    // A sign-in that works releases the papers waiting for it.
     dependencies: [
       ...common.dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
       McpInvocationContext,
       OrchestratorMcpService,
       SecretRequests,
@@ -209,6 +213,8 @@ const add = metadata(
     failure: AccountsError,
     dependencies: [
       ...common.dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
       McpInvocationContext,
       OrchestratorMcpService,
       SecretRequests,
@@ -331,10 +337,10 @@ const connectorList = metadata(
     failure: AccountsError,
     dependencies: common.dependencies,
     description:
-      "The user's connectors, hosted and local: on or off, status, last error, what is missing; host = who runs a hosted one and sees what passes through it. query: also connectors Scient can add (its picks and the MCP Registry). Add one that fits with scient_connector_add before making a new one.",
+      "The user's connectors, hosted and local: on or off, status, last error, what is missing; host sees what passes through. query: also ones Scient can add; prefer hosting Official. Gmail, Outlook etc. come through each agent's own account. Add with scient_connector_add before making one.",
     parameters: Schema.Struct({
       query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
-        description: "e.g. gmail.",
+        description: "e.g. slack.",
       }),
     }),
     success: Schema.Struct({
@@ -357,6 +363,7 @@ const connectorList = metadata(
             title: Schema.optional(Schema.String),
             description: Schema.optional(Schema.String),
             host: Schema.optional(Schema.String),
+            hosting: Schema.String,
             addable: Schema.Boolean,
             reason: Schema.optional(Schema.String),
             added: Schema.optional(Schema.String),
@@ -514,15 +521,24 @@ const paperDependencies = [
   Path.Path,
   WorkspaceBindingResolver,
 ];
+const AddToLibrary = Schema.Boolean.annotate({
+  description:
+    "For the user's Library: file the PDF on the Source with its DOI, adding a missing Source from its registry record, credited to you.",
+});
+const LibrarySourceId = TrimmedNonEmptyString.annotate({
+  description: "Attach the PDF to this Library source instead of finding one by DOI.",
+});
 const paperGet = metadata(
   Tool.make("scient_paper_get", {
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "The first step to fetch any paper's PDF: give its DOI or link (for a title, find one first), and Scient saves it in the project from a free legal copy or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
+      "The first step to fetch any paper's PDF: give its DOI or link (for a title, find one first), and Scient saves it in the project from a free legal copy or the user's university access in the browser, preferring the published version. Returns its path, or why it can't arrive yet. For the user's Library set addToLibrary. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+      addToLibrary: Schema.optional(AddToLibrary),
+      sourceId: Schema.optional(LibrarySourceId),
     }),
     success: Schema.Union([
       Schema.Struct({
@@ -538,8 +554,13 @@ const paperGet = metadata(
         published: Schema.Boolean.annotate({
           description: "False for an accepted manuscript or preprint.",
         }),
+        version: Schema.optional(PaperVersion),
         title: Schema.optional(Schema.String),
         doi: Schema.optional(Schema.String),
+        sourceId: Schema.optional(
+          Schema.String.annotate({ description: "The Library source the PDF is on." }),
+        ),
+        message: Schema.optional(Schema.String),
       }),
       Schema.Struct({
         status: Schema.Literals(["not-found", "no-access", "needs-you", "waiting"]),
@@ -558,10 +579,15 @@ const paperQueue = metadata(
       "Queue any number of papers, each by DOI or link, and keep working. Scient fetches them in the background into the project's papers folder, one at a time per publisher, and they continue after this turn. If a sign-in is needed Scient asks the user once and every paper waiting continues. Read results with scient_papers_status.",
     parameters: Schema.Struct({
       papers: Schema.Array(
-        Schema.Struct({ doi: PaperAsked.fields.doi, url: PaperAsked.fields.url }),
+        Schema.Struct({
+          doi: PaperAsked.fields.doi,
+          url: PaperAsked.fields.url,
+          addToLibrary: Schema.optional(AddToLibrary),
+          sourceId: Schema.optional(LibrarySourceId),
+        }),
       ).check(Schema.isMinLength(1), Schema.isMaxLength(5000)),
     }),
-    success: Schema.Struct({ queued: Schema.Number }),
+    success: Schema.Struct({ queued: Schema.Number, message: Schema.optional(Schema.String) }),
   }),
   "paper-queue",
   "Queue papers to fetch",
@@ -590,7 +616,9 @@ const paperStatus = metadata(
           title: PaperItem.fields.title,
           route: PaperItem.fields.route,
           published: PaperItem.fields.published,
+          version: PaperItem.fields.version,
           path: PaperItem.fields.path,
+          sourceId: PaperItem.fields.sourceId,
           message: PaperItem.fields.message,
         }),
       ),

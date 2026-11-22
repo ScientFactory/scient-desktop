@@ -1,4 +1,5 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { textDirection } from "~/textDirection";
 
@@ -26,6 +27,7 @@ export function AssistantCitationCommentEditor({
   // SCIENT-FORK: T3 voice setup is dormant; Scient's comment control never opens it.
   onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
+  const gt = useGT();
   const [comment, setComment] = useState(citation.comment ?? "");
   const [voiceBusy, setVoiceBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -43,11 +45,16 @@ export function AssistantCitationCommentEditor({
       onSubmit(comment);
     }
   };
-  const submitLabel = mode === "create" ? "Add to chat" : "Save";
+  const submitLabel =
+    mode === "create" ? gt("Add to chat") : gt("Save", { $context: "verb, saves the comment" });
   const keyboardDescription =
     mode === "create"
-      ? "Enter to add the citation to chat; Command/Ctrl+Enter to add and send; Shift+Enter for a new line."
-      : "Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line.";
+      ? gt(
+          "Enter to add the citation to chat; Command/Ctrl+Enter to add and send; Shift+Enter for a new line.",
+        )
+      : gt(
+          "Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line.",
+        );
 
   return (
     <div
@@ -64,10 +71,10 @@ export function AssistantCitationCommentEditor({
     >
       <textarea
         ref={textareaRef}
-        aria-label="Comment on selected text"
+        aria-label={gt("Comment on selected text")}
         aria-description={keyboardDescription}
         aria-invalid={commentTooLong || undefined}
-        placeholder="Add an optional comment..."
+        placeholder={gt("Add an optional comment...")}
         rows={2}
         dir={textDirection(comment)}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
@@ -94,8 +101,10 @@ export function AssistantCitationCommentEditor({
       />
       {commentTooLong ? (
         <p role="status" className="pt-1 text-xs text-destructive">
-          Comments can contain up to {ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()}{" "}
-          characters.
+          <T>
+            Comments can contain up to{" "}
+            <Var>{ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()}</Var> characters.
+          </T>
         </p>
       ) : null}
       <div
@@ -122,10 +131,12 @@ export function AssistantCitationCommentEditor({
           <Button
             variant="outline"
             size="xs"
+            // Escape cancels; keep Tab from the comment on Save so Enter cannot discard a new citation.
+            tabIndex={-1}
             onPointerDown={(event) => event.preventDefault()}
             onClick={onCancel}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button
             size="xs"
@@ -133,7 +144,7 @@ export function AssistantCitationCommentEditor({
             onPointerDown={(event) => event.preventDefault()}
             onClick={submit}
           >
-            {commentTooLong ? "Shorten comment" : submitLabel}
+            {commentTooLong ? gt("Shorten comment") : submitLabel}
           </Button>
         </div>
       </div>

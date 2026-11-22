@@ -2,6 +2,10 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const testState = vi.hoisted(() => ({
   resources: [] as Array<unknown>,
   assetState: "success" as "success" | "loading" | "failure",

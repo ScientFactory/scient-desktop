@@ -117,6 +117,10 @@ sends each message after the preceding answer finishes successfully.
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.
+A slash command such as `/compact` or `/context` waits for the current turn to
+finish, because a command steered into a turn would replace the agent's task.
+Sending a queued command now moves it to the front of the queue. [Goal](#goals)
+commands are the exception: some can stop the current turn.
 If your **Send shortcut** requires `Cmd+Enter` or `Ctrl+Enter`, that shortcut uses
 your default follow-up behavior; add **Shift** to use the opposite action. This
 applies only to multiline messages when you choose the multiline send option.
@@ -125,7 +129,17 @@ Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to sen
 the oldest queued message as a steer. This leaves the current draft intact and
 requires an active turn that supports steering. If that shortcut sends the opposite
 action for your draft, move focus outside the composer to steer the queued message. Change
-`thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
+`thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut. To make
+`Cmd+Enter` or `Ctrl+Enter` steer the oldest queued message when the composer is empty, add
+this rule to your [keybindings file](keybindings.md#edit-the-configuration-file):
+
+```json
+{
+  "key": "mod+enter",
+  "command": "thread.steerQueuedMessage",
+  "when": "composerFocus && turnRunning && composerEmpty"
+}
+```
 
 Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the
 start of the composer to edit the most recently queued message. Change
@@ -302,8 +316,12 @@ highlight pulses, holds for a moment, then fades on its own; press `Escape` to s
 or clear it early. If the source is unavailable or its text has changed, the saved quote stays
 readable and Scient shows a warning.
 
-Mobile shows the full saved quote and its comment in sent messages. It does not offer
-**Ask in chat** or navigation to a quote's source.
+On mobile, long-press an assistant response, adjust the text selection, and choose
+**Cite** to insert a quote at the composer cursor. If the passage appears more than
+once in that section, choose its source occurrence. Select more surrounding text
+if a short passage appears too often. Tap a quote in a draft to add
+or edit its comment, or to remove it. To open the source message, tap a quote in
+a draft or sent message, then choose **Go to message**.
 
 ## Recall a sent prompt
 
@@ -337,12 +355,20 @@ to its checkpoint from before that message. That also undoes edits you made your
 File restore is only offered for threads running in a worktree, and it is
 refused when another thread or agent session also uses that directory, a folder
 inside it, or a folder that contains it, since
-restoring would erase their changes. A thread that works in the project directory
-rewinds the conversation only. When Scient could not save a snapshot of the files
+restoring would erase their changes. Completed subagents belonging to the reverting
+thread do not block restoring that same worktree, provided they have no queued or
+active work, pending requests, or background tasks. A thread that works in the project
+directory rewinds the conversation only. When Scient could not save a snapshot of the files
 before that message, such as in a folder that is not a Git repository or whose
 changed files are too large, the dialog offers only **Rewind chat**, which leaves
 the files as they are. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
+
+In a thread that works in the project directory alone, with no tracked folders, repositories or
+submodules, the dialog offers only **Rewind chat**. There, **Edit from here** rewinds right away,
+without the dialog, when no reply from that message on changed any files. If a reply changed files,
+or Scient cannot tell, the dialog asks first. A thread in a worktree, or one that reaches other
+folders or repositories, always asks. If the rewind fails, the dialog opens to show why.
 
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
@@ -362,8 +388,9 @@ and use **Attach again** or remove the missing file before sending.
 ## Voice input on web and desktop
 
 Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio
-is transcribed on an environment you choose in **Settings → Voice**; nothing is
-sent until you choose one. See [Voice input](./voice-input.md).
+is transcribed on an environment you choose in **Settings → Voice**, or on the Mac
+with Apple Speech in the macOS desktop app; nothing is sent until you choose one.
+See [Voice input](./voice-input.md).
 
 ## Voice input on mobile
 
@@ -415,8 +442,8 @@ shortcut described above.
 On web and desktop, queued messages appear at the end of the thread as dashed messages that have
 not been sent yet. On mobile they appear above the composer. Each shows its text and any attached
 images. **Send now** sends a message right away, into the running turn if there is one. While a
-compaction runs, **Send now** skips the compaction and sends the message instead. You can also
-edit or remove it.
+turn runs, a slash command moves to the front of the queue instead. While a compaction runs,
+**Send now** skips the compaction and sends the message instead. You can also edit or remove it.
 
 After Stop, a failed turn, or a server restart, queued messages keep their order and are held.
 While the agent is idle, every held message shows **Send now**, on mobile too. Send now starts
@@ -424,8 +451,8 @@ that message, and the rest of the queue continues after it in order. Sending a n
 directly also continues the held queue after that message, unless it steers a turn that is
 already running. On web or desktop, **Resume** in an empty composer continues the queue too, as
 does **Resume queue** on mobile. You can edit or remove held messages without starting them. If
-the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an empty
-composer on web or desktop to continue the thread, and the queue follows.
+the thread stopped at a usage limit, Send now says to continue the thread first: use **Resume
+thread** in an empty composer on web or desktop to continue the thread, and the queue follows.
 
 Resume and Resume thread continue a stopped run through the agent's own continuation, without
 sending a new prompt. If the agent does not support it, send a message to continue instead. If
@@ -434,7 +461,9 @@ the original request never reached the agent, Resume sends that request again.
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
-The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
+The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. While a
+turn is running, the opposite-action shortcut or a `Cmd`-click (`Ctrl`-click on Windows and Linux)
+saves the message and then steers it into that turn. Whatever
 you had typed in the composer before starting the edit is restored afterwards. If the queued
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.
@@ -829,8 +858,8 @@ your draft automatically. **Stash** saves it for later through the usual menu.
 Sending another ordinary message releases the queue to follow it automatically,
 one message at a time after each successful answer. Restarting work or the server
 does not release a held queue. You can also click **Send** on any waiting message:
-that message starts first and the remaining queue is released in its retained
-order, with automatic completions first. Reorder while idle to choose the order.
+that message starts first, even before a finished background task's result, and the remaining
+queue is released in its retained order. Reorder while idle to choose the order.
 
 **Retry** is for a queued message whose provider failed to start; the message stays
 queued. It cannot bypass a running answer or silently release the held tail.

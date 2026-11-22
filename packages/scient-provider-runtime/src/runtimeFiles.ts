@@ -11,10 +11,11 @@ import * as NodeZlib from "node:zlib";
 import * as Tar from "tar";
 import * as Yauzl from "yauzl";
 
-import type {
-  ManagedRuntimeArchiveFormat,
-  ManagedRuntimeChecksum,
-  ManagedRuntimeExtractionLimits,
+import {
+  MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES,
+  type ManagedRuntimeArchiveFormat,
+  type ManagedRuntimeChecksum,
+  type ManagedRuntimeExtractionLimits,
 } from "./managedRuntimeArtifact.ts";
 
 const MAX_REDIRECTS = 5;
@@ -27,10 +28,9 @@ function isTransientDownloadStatus(status: number): boolean {
  * minute in all, spread so many installs don't retry at the same moment.
  */
 const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000] as const;
-const MAX_RETRY_AFTER_MS = 60_000;
-/** Largest artifact the installer downloads; release discovery rejects larger ones. */
-export const MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
-const MAX_DOWNLOAD_BYTES = MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES;
+const MAX_RETRY_AFTER_MS = 4 * 60 * 60 * 1_000;
+// Covers all four jittered backoffs; longer server waits belong to durable recovery.
+const LOCAL_RETRY_WAIT_BUDGET_MS = 65_000;
 // Compressed downloads and expanded payloads have independent budgets.
 // Providers must explicitly opt in above the unchanged default below.
 const MAX_EXPANDED_BYTES = 768 * 1024 * 1024;
@@ -38,7 +38,6 @@ const DEFAULT_EXTRACTION_LIMITS: ManagedRuntimeExtractionLimits = {
   maxExpandedBytes: 512 * 1024 * 1024,
   maxEntries: 32,
 };
-const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30 * 1_000;
 /** A failed try that still brought this much of a resumable download starts the retries afresh. */
 const RESUME_PROGRESS_BYTES = 1024 * 1024;
@@ -62,15 +61,59 @@ export type ManagedRuntimeFailureClass =
 // @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class ManagedRuntimeFileError extends Error {
   readonly failureClass: ManagedRuntimeFailureClass | undefined;
+  /** Whether trying the same change again later may succeed, when the class alone can't say. */
+  readonly retryable: boolean | undefined;
+  readonly #retryNotBefore: number | undefined;
+  /** Remaining server cooldown, bounded to four hours; absent once it has elapsed. */
+  get retryAfterMs(): number | undefined {
+    if (this.#retryNotBefore === undefined) return undefined;
+    const remaining = Math.min(MAX_RETRY_AFTER_MS, this.#retryNotBefore - Date.now());
+    return remaining > 0 ? remaining : undefined;
+  }
   constructor(
     message: string,
-    options?: ErrorOptions & { readonly failureClass?: ManagedRuntimeFailureClass },
+    options?: ErrorOptions & {
+      readonly failureClass?: ManagedRuntimeFailureClass;
+      readonly retryable?: boolean;
+      readonly retryAfterMs?: number;
+    },
   ) {
     super(message, options);
     this.name = "ManagedRuntimeFileError";
     this.failureClass = options?.failureClass;
+    this.retryable = options?.retryable;
+    const delay = options?.retryAfterMs;
+    this.#retryNotBefore =
+      delay !== undefined && Number.isFinite(delay) && delay > 0
+        ? Date.now() + Math.min(delay, MAX_RETRY_AFTER_MS)
+        : undefined;
   }
 }
+
+/** How a try's connection failed, from its error code; never its message. */
+export type ManagedRuntimeNetworkKind =
+  | "dns"
+  | "refused"
+  | "reset"
+  | "unreachable"
+  | "connect_timeout"
+  | "stalled"
+  | "cut_off"
+  | "other";
+
+const NETWORK_KINDS: Readonly<Record<string, ManagedRuntimeNetworkKind>> = {
+  ENOTFOUND: "dns",
+  EAI_AGAIN: "dns",
+  ECONNREFUSED: "refused",
+  ECONNRESET: "reset",
+  ECONNABORTED: "reset",
+  EPIPE: "reset",
+  UND_ERR_SOCKET: "reset",
+  ENETUNREACH: "unreachable",
+  EHOSTUNREACH: "unreachable",
+  ETIMEDOUT: "connect_timeout",
+  UND_ERR_CONNECT_TIMEOUT: "connect_timeout",
+};
 
 function assertAllowedHttpsUrl(url: URL, allowedHosts: ReadonlySet<string>): void {
   if (url.protocol !== "https:") {
@@ -99,11 +142,12 @@ class TransientDownloadFailure extends Error {
   readonly reason: string;
   readonly retryAfterMs: number | null;
   readonly status: number | null;
+  readonly networkKind: ManagedRuntimeNetworkKind | undefined;
   constructor(
     kind: TransientDownloadFailure["kind"],
     reason: string,
     retryAfterMs: number | null = null,
-    options?: ErrorOptions & { readonly status?: number },
+    options?: ErrorOptions & { readonly status?: number; readonly code?: string | undefined },
   ) {
     super(reason, options);
     this.name = "TransientDownloadFailure";
@@ -111,6 +155,14 @@ class TransientDownloadFailure extends Error {
     this.reason = reason;
     this.retryAfterMs = retryAfterMs;
     this.status = options?.status ?? null;
+    this.networkKind =
+      kind === "stalled"
+        ? "stalled"
+        : kind === "cut-off"
+          ? "cut_off"
+          : kind === "connection"
+            ? ((options?.code === undefined ? undefined : NETWORK_KINDS[options.code]) ?? "other")
+            : undefined;
   }
 }
 
@@ -160,12 +212,7 @@ export function managedRuntimeFailureClass(
   cause: unknown,
   stage?: string,
 ): ManagedRuntimeFailureClass {
-  const chain: unknown[] = [];
-  for (let current = cause; current !== undefined && chain.length < 8;) {
-    chain.push(current);
-    current = current instanceof Error ? current.cause : undefined;
-  }
-  const errors = chain.filter((entry): entry is Error => entry instanceof Error);
+  const errors = causeChain(cause);
   for (const error of errors) {
     if (error instanceof ManagedRuntimeFileError && error.failureClass !== undefined)
       return error.failureClass;
@@ -184,10 +231,82 @@ export function managedRuntimeFailureClass(
   return "other";
 }
 
+/** The install step that failed, for analytics; the failure class says how it failed. */
+export type ManagedRuntimeCheck =
+  | "smoke"
+  | "reserve"
+  | "stop_sessions"
+  | "rpc_start"
+  | "protocol"
+  | "version"
+  | "get_state"
+  | "qualification"
+  | "activation"
+  | "rollback"
+  | "refresh";
+
+const failedChecks = new WeakMap<object, ManagedRuntimeCheck>();
+
+/**
+ * Records which step `cause` failed in, unless a step nearer the root cause already did. Any
+ * object can carry it, since some Effect failures are plain objects. Returns `cause` unchanged.
+ */
+export function markManagedRuntimeCheck<E>(check: ManagedRuntimeCheck, cause: E): E {
+  if (typeof cause === "object" && cause !== null && managedRuntimeFailedCheck(cause) === undefined)
+    failedChecks.set(cause, check);
+  return cause;
+}
+
+/** The step nearest the root cause along the cause chain. */
+export function managedRuntimeFailedCheck(cause: unknown): ManagedRuntimeCheck | undefined {
+  let found = typeof cause === "object" && cause !== null ? failedChecks.get(cause) : undefined;
+  for (const error of causeChain(cause)) found = failedChecks.get(error) ?? found;
+  return found;
+}
+
+function causeChain(cause: unknown): ReadonlyArray<Error> {
+  const errors: Error[] = [];
+  for (let current = cause; current instanceof Error && errors.length < 8; current = current.cause)
+    errors.push(current);
+  return errors;
+}
+
+const RETRYABLE_FAILURE_CLASSES = new Set<ManagedRuntimeFailureClass>([
+  "network",
+  "timeout",
+  "busy",
+]);
+
+/**
+ * Whether the same change may succeed if tried again later, from error types: a server that stayed
+ * busy (HTTP 408, 429, most 5xx) or a lost connection may; a 501, certificate, checksum, disk or
+ * permission failure will not.
+ */
+export function managedRuntimeFailureRetryable(cause: unknown, stage?: string): boolean {
+  for (const error of causeChain(cause)) {
+    if (error instanceof ManagedRuntimeFileError && error.retryable !== undefined)
+      return error.retryable;
+    if (error instanceof TransientDownloadFailure) return true;
+  }
+  return RETRYABLE_FAILURE_CLASSES.has(managedRuntimeFailureClass(cause, stage));
+}
+
+/** Remaining server cooldown through wrapped failures; contains no transport details. */
+export function managedRuntimeRetryAfterMs(cause: unknown): number | undefined {
+  let remaining = 0;
+  for (const error of causeChain(cause)) {
+    if (error instanceof ManagedRuntimeFileError)
+      remaining = Math.max(remaining, error.retryAfterMs ?? 0);
+  }
+  return remaining > 0 ? remaining : undefined;
+}
+
 function retryAfterMs(header: string | null): number | null {
   if (!header) return null;
   const seconds = Number(header);
-  const ms = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(header) - Date.now();
+  const ms = Number.isFinite(seconds)
+    ? Math.min(seconds, MAX_RETRY_AFTER_MS / 1_000) * 1_000
+    : Date.parse(header) - Date.now();
   return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), MAX_RETRY_AFTER_MS) : null;
 }
 
@@ -209,7 +328,7 @@ function connectionFailure(cause: unknown): TransientDownloadFailure | ManagedRu
     "connection",
     code ? `connection failed, ${code}` : "connection failed",
     null,
-    { cause },
+    { cause, code },
   );
 }
 
@@ -283,6 +402,8 @@ interface ManagedRuntimeDownloadInput {
    * before going back to a source that already failed.
    */
   readonly fallbackUrl?: string | undefined;
+  /** Absolute not-before times by HTTPS origin, shared across compressed and raw copies. */
+  readonly sourceCooldowns?: Map<string, number> | undefined;
   /** Checked after every try, so a damaged copy counts as that source failing. */
   readonly checksum?: ManagedRuntimeChecksum | undefined;
   readonly destination: string;
@@ -291,21 +412,40 @@ interface ManagedRuntimeDownloadInput {
    * Name it by the release digest: both copies serve the same bytes. Needs `checksum`.
    */
   readonly partialPath?: string | undefined;
-  /** Per copy; `null` waits as long as data keeps arriving. Ten minutes by default. */
-  readonly timeLimitMs?: number | null | undefined;
   readonly allowedHosts: ReadonlyArray<string>;
   readonly expectedSize: number;
+  /** The artifact family's reviewed limit; the shared default when absent. */
+  readonly maxBytes?: number | undefined;
   readonly signal: AbortSignal;
+  /** From the bytes kept by an earlier try, when a try starts, then as bytes arrive. */
   readonly onProgress?: (downloaded: number, total: number) => void;
   readonly onRetry?: (retry: ManagedRuntimeDownloadRetry) => void;
+  /** After each failed try, before Scient waits or gives up, so a failed download says how far it got. */
+  readonly onFailedTry?: (download: ManagedRuntimeDownloadResult) => void;
 }
 
-/** What a finished download continued from, for analytics. */
+/** How a download went up to its latest try, for analytics. */
 export interface ManagedRuntimeDownloadResult {
-  /** Bytes already on disk when the successful try started; 0 for a fresh download. */
+  /** Bytes already on disk when the latest try started; 0 for a fresh download. */
   readonly resumedBytes: number;
-  /** `fallback` when the second copy served the file. */
+  /** The copy the latest try used; `fallback` is the second. */
   readonly source: "primary" | "fallback";
+  /** Tries made, the first included. */
+  readonly tries: number;
+  /** How much of the file the latest try had when it ended, 0 to 100. */
+  readonly progressPercent: number;
+  /** Received bytes per second of request time, kept bytes and waits excluded; absent with none. */
+  readonly bytesPerSecond?: number;
+  /** How the latest try's connection failed. */
+  readonly networkKind?: ManagedRuntimeNetworkKind;
+}
+
+/** Shared by the tries of one download. */
+interface DownloadTransfer {
+  resumedBytes: number;
+  downloadedBytes: number;
+  receivedBytes: number;
+  activeMs: number;
 }
 
 function describeSourceFailure(failure: Error): string {
@@ -323,10 +463,10 @@ function describeSourceFailure(failure: Error): string {
 }
 
 /**
- * Downloads one reviewed artifact, retrying temporary failures for about a
- * minute. With a fallback copy, any failure of one copy moves to the other.
- * Cancellation, the time limit and local disk errors always stay final.
- * With `partialPath`, a failed try keeps its bytes and the next try asks only for the rest.
+ * Downloads one reviewed artifact, retrying temporary failures (30 seconds without data among them)
+ * for about a minute; a fallback copy takes over from a failing one. No overall time limit: a slow
+ * download goes on while data arrives. Cancellation and local disk errors stay final. With
+ * `partialPath`, a failed try keeps its bytes and the next asks only for the rest.
  */
 export async function downloadManagedRuntime(
   input: ManagedRuntimeDownloadInput,
@@ -335,116 +475,128 @@ export async function downloadManagedRuntime(
   const allowedHosts = new Set(input.allowedHosts.map((host) => host.toLowerCase()));
   const expected = input.checksum ? expectedDigest(input.checksum) : undefined;
   const partialPath = input.checksum ? input.partialPath : undefined;
-  const timeLimitMs = input.timeLimitMs === undefined ? DOWNLOAD_TIMEOUT_MS : input.timeLimitMs;
-  // Each copy gets the whole time limit, so a slow copy never uses up the other's.
-  const deadlines = new Map<string, AbortSignal>();
-  const deadline = (source: string): AbortSignal => {
-    const existing = deadlines.get(source);
-    if (existing) return existing;
-    const created =
-      timeLimitMs === null ? new AbortController().signal : AbortSignal.timeout(timeLimitMs);
-    deadlines.set(source, created);
-    return created;
+  const transfer: DownloadTransfer = {
+    resumedBytes: 0,
+    downloadedBytes: 0,
+    receivedBytes: 0,
+    activeMs: 0,
   };
-  const waitSignal =
-    sources.length === 1 ? AbortSignal.any([input.signal, deadline(input.url)]) : input.signal;
   const lastFailure = new Map<string, Error>();
   let usable = [...sources];
-  let round = [...usable];
+  const sourceCooldowns = input.sourceCooldowns ?? new Map<string, number>();
+  const notBefore = (source: string) => sourceCooldowns.get(new URL(source).origin) ?? 0;
+  const remainingCooldown = () =>
+    Math.max(0, ...sources.map((source) => notBefore(source) - Date.now()));
+  let waitBudgetMs = LOCAL_RETRY_WAIT_BUDGET_MS;
+  let retryProgressBytes = 0;
+  let cause: unknown;
   let tries = 0;
-  for (let retry = 0; ;) {
-    const source = round.shift()!;
-    tries += 1;
-    const received = { bytes: 0 };
-    let cause: unknown;
-    try {
-      const attempt = await downloadOnce(
-        input,
-        source,
-        allowedHosts,
-        deadline(source),
-        partialPath,
-        received,
-      );
-      let resumedBytes = attempt.resumedBytes;
-      if (expected !== undefined && attempt.digest !== expected) {
-        await removePartialDownload(partialPath ?? input.destination);
-        // Bytes kept from an earlier try may be what is wrong, so fetch the whole file once.
-        if (resumedBytes === 0) throw checksumMismatch();
-        const fresh = await downloadOnce(
-          input,
-          source,
-          allowedHosts,
-          deadline(source),
-          partialPath,
-          received,
-        );
-        if (fresh.digest !== expected) {
-          await removePartialDownload(partialPath ?? input.destination);
-          throw checksumMismatch();
-        }
-        resumedBytes = 0;
-      }
-      if (partialPath) {
-        await NodeFSP.rename(partialPath, input.destination);
-        await NodeFSP.rm(partialValidatorPath(partialPath), { force: true }).catch(() => undefined);
-      }
-      return { resumedBytes, source: source === input.url ? "primary" : "fallback" };
-    } catch (caught) {
-      cause = caught;
+  const facts = (source: string, cause?: unknown): ManagedRuntimeDownloadResult => {
+    const networkKind = cause instanceof TransientDownloadFailure ? cause.networkKind : undefined;
+    return {
+      resumedBytes: transfer.resumedBytes,
+      source: source === input.url ? "primary" : "fallback",
+      tries,
+      progressPercent: Math.min(
+        100,
+        Math.floor((transfer.downloadedBytes / input.expectedSize) * 100),
+      ),
+      ...(transfer.receivedBytes > 0 && transfer.activeMs > 0
+        ? { bytesPerSecond: Math.round((transfer.receivedBytes * 1_000) / transfer.activeMs) }
+        : {}),
+      ...(networkKind ? { networkKind } : {}),
+    };
+  };
+  const exhausted = async (): Promise<never> => {
+    input.signal.throwIfAborted();
+    const kept =
+      partialPath && (await partialDownloadSize(partialPath)) > 0
+        ? " Scient kept what it downloaded; trying again continues from there."
+        : "";
+    const retryAfterMs = remainingCooldown();
+    const retryable =
+      retryAfterMs > 0 ||
+      [...lastFailure.values()].some((failure) => failure instanceof TransientDownloadFailure);
+    if (sources.length === 1 && cause instanceof TransientDownloadFailure) {
+      throw new ManagedRuntimeFileError(`${exhaustedMessage(cause, tries)}${kept}`, {
+        cause,
+        failureClass: transientFailureClass(cause),
+        retryable,
+        retryAfterMs,
+      });
     }
-    // With a second copy, a problem with this one, running out of time
-    // included, only rules this copy out. Cancellation still ends everything.
-    const outOfTime = deadline(source).aborted && !input.signal.aborted;
-    const ruledOut = sources.length > 1 && (cause instanceof ManagedRuntimeFileError || outOfTime);
-    if (!(cause instanceof TransientDownloadFailure) && !ruledOut) {
-      if (outOfTime && partialPath && (await partialDownloadSize(partialPath)) > 0) {
-        throw new ManagedRuntimeFileError(
-          `The download took longer than ${describeTimeLimit(timeLimitMs)}. Scient kept what it downloaded; trying again continues from there.`,
-          { cause, failureClass: "timeout" },
-        );
-      }
-      throw cause;
-    }
-    lastFailure.set(
-      source,
-      outOfTime
-        ? new Error(`took longer than ${describeTimeLimit(timeLimitMs)}.`)
-        : (cause as Error),
+    const details = sources
+      .flatMap((candidate) => {
+        const failure = lastFailure.get(candidate);
+        return failure ? [`${new URL(candidate).hostname} ${describeSourceFailure(failure)}`] : [];
+      })
+      .join(" ");
+    throw new ManagedRuntimeFileError(
+      `Scient couldn't download it from ${sources.length > 1 ? "either source" : "the source"} after ${tries} tries. ${details}${kept}`,
+      {
+        cause,
+        failureClass: managedRuntimeFailureClass(cause),
+        retryable,
+        retryAfterMs,
+      },
     );
-    if (ruledOut) {
-      usable = usable.filter((candidate) => candidate !== source);
-      round = round.filter((candidate) => candidate !== source);
-    }
-    if (usable.length > 0 && round.length > 0) continue;
-    // Steady progress on a slow line is not a failing server; keep going while it lasts.
-    if (received.bytes >= RESUME_PROGRESS_BYTES) retry = 0;
-    const baseDelay = RETRY_DELAYS_MS[retry];
-    if (usable.length === 0 || baseDelay === undefined) {
-      const kept =
-        partialPath && (await partialDownloadSize(partialPath)) > 0
-          ? " Scient kept what it downloaded; trying again continues from there."
-          : "";
-      if (sources.length === 1) {
-        throw new ManagedRuntimeFileError(
-          `${exhaustedMessage(cause as TransientDownloadFailure, tries)}${kept}`,
-          { cause, failureClass: transientFailureClass(cause as TransientDownloadFailure) },
+  };
+  for (let retry = 0; ;) {
+    for (const source of usable) {
+      input.signal.throwIfAborted();
+      if (notBefore(source) > Date.now()) continue;
+      tries += 1;
+      try {
+        const attempt = await downloadOnce(input, source, allowedHosts, partialPath, transfer);
+        if (expected !== undefined && attempt.digest !== expected) {
+          await removePartialDownload(partialPath ?? input.destination);
+          // Bytes kept from an earlier try may be what is wrong, so fetch the whole file once.
+          if (attempt.resumedBytes === 0) throw checksumMismatch();
+          const fresh = await downloadOnce(input, source, allowedHosts, partialPath, transfer);
+          if (fresh.digest !== expected) {
+            await removePartialDownload(partialPath ?? input.destination);
+            throw checksumMismatch();
+          }
+        }
+        if (partialPath) {
+          await NodeFSP.rename(partialPath, input.destination);
+          await NodeFSP.rm(partialValidatorPath(partialPath), { force: true }).catch(
+            () => undefined,
+          );
+        }
+        return facts(source);
+      } catch (caught) {
+        cause = caught;
+      }
+      input.signal.throwIfAborted();
+      if (cause instanceof TransientDownloadFailure && cause.retryAfterMs !== null) {
+        sourceCooldowns.set(
+          new URL(source).origin,
+          Math.max(notBefore(source), Date.now() + cause.retryAfterMs),
         );
       }
-      const details = sources
-        .map(
-          (candidate) =>
-            `${new URL(candidate).hostname} ${describeSourceFailure(lastFailure.get(candidate)!)}`,
-        )
-        .join(" ");
-      throw new ManagedRuntimeFileError(
-        `Scient couldn't download it from either source after ${tries} tries. ${details}${kept}`,
-        { cause, failureClass: outOfTime ? "timeout" : managedRuntimeFailureClass(cause) },
-      );
+      input.onFailedTry?.(facts(source, cause));
+      // With a second copy, a problem with this one only rules this copy out.
+      const ruledOut = sources.length > 1 && cause instanceof ManagedRuntimeFileError;
+      if (!(cause instanceof TransientDownloadFailure) && !ruledOut) throw cause;
+      lastFailure.set(source, cause as Error);
+      if (ruledOut) usable = usable.filter((candidate) => candidate !== source);
     }
-    const delayMs =
-      (cause instanceof TransientDownloadFailure ? cause.retryAfterMs : null) ??
-      Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+    // Only a growing retained prefix replenishes retries; a server may ignore Range.
+    if (partialPath && transfer.downloadedBytes - retryProgressBytes >= RESUME_PROGRESS_BYTES) {
+      retry = 0;
+      retryProgressBytes = transfer.downloadedBytes;
+      waitBudgetMs = LOCAL_RETRY_WAIT_BUDGET_MS;
+    }
+    const baseDelay = RETRY_DELAYS_MS[retry];
+    if (usable.length === 0 || baseDelay === undefined) return exhausted();
+    const delayMs = Math.max(
+      Math.round(baseDelay * (0.8 + Math.random() * 0.4)),
+      Math.min(...usable.map((source) => Math.max(0, notBefore(source) - Date.now()))),
+    );
+    // Long server cooldowns belong to durable recovery, not an open install dialog.
+    if (delayMs > waitBudgetMs) return exhausted();
+    waitBudgetMs -= delayMs;
     retry += 1;
     input.onRetry?.({
       retry,
@@ -452,14 +604,8 @@ export async function downloadManagedRuntime(
       reason: cause instanceof TransientDownloadFailure ? cause.reason : "download failed",
       delayMs,
     });
-    await NodeTimersPromises.setTimeout(delayMs, undefined, { signal: waitSignal });
-    round = [...usable];
+    await NodeTimersPromises.setTimeout(delayMs, undefined, { signal: input.signal });
   }
-}
-
-function describeTimeLimit(timeLimitMs: number | null): string {
-  const minutes = Math.round((timeLimitMs ?? 0) / 60_000);
-  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
 }
 
 function checksumMismatch(): ManagedRuntimeFileError {
@@ -535,9 +681,8 @@ async function downloadOnce(
   input: ManagedRuntimeDownloadInput,
   url: string,
   allowedHosts: ReadonlySet<string>,
-  timeoutSignal: AbortSignal,
   partialPath: string | undefined,
-  received: { bytes: number },
+  transfer: DownloadTransfer,
 ): Promise<{ readonly resumedBytes: number; readonly digest: string | undefined }> {
   const target = partialPath ?? input.destination;
   const newHash = () =>
@@ -549,10 +694,10 @@ async function downloadOnce(
     have = 0;
   }
   if (have > 0 && hash) await hashPrefix(target, have, hash);
-  if (have === input.expectedSize) {
-    input.onProgress?.(have, input.expectedSize);
-    return { resumedBytes: have, digest: hash?.digest("hex") };
-  }
+  transfer.resumedBytes = have;
+  transfer.downloadedBytes = have;
+  input.onProgress?.(have, input.expectedSize);
+  if (have === input.expectedSize) return { resumedBytes: have, digest: hash?.digest("hex") };
 
   const idleController = new AbortController();
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -560,12 +705,12 @@ async function downloadOnce(
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => idleController.abort(), DOWNLOAD_IDLE_TIMEOUT_MS);
   };
-  const signal = AbortSignal.any([input.signal, timeoutSignal, idleController.signal]);
-  // A stall is worth another try; cancellation and the overall limit are not.
+  const signal = AbortSignal.any([input.signal, idleController.signal]);
+  // A stall is worth another try; cancellation is not.
   const classify = (cause: unknown, fromNetwork: boolean): unknown => {
     if (cause instanceof ManagedRuntimeFileError || cause instanceof TransientDownloadFailure)
       return cause;
-    if (input.signal.aborted || timeoutSignal.aborted) return cause;
+    if (input.signal.aborted) return cause;
     if (idleController.signal.aborted)
       return new TransientDownloadFailure("stalled", "download stalled", null, { cause });
     return fromNetwork ? connectionFailure(cause) : cause;
@@ -585,6 +730,7 @@ async function downloadOnce(
     });
   };
   resetIdleTimer();
+  const startedAt = Date.now();
 
   try {
     let response = await request(have);
@@ -595,6 +741,8 @@ async function downloadOnce(
         response = await request(0);
       }
       have = 0;
+      transfer.resumedBytes = 0;
+      transfer.downloadedBytes = 0;
       hash = newHash();
     }
     if (!response.ok || !response.body) {
@@ -611,7 +759,7 @@ async function downloadOnce(
         contentLength !== null &&
         (!Number.isSafeInteger(contentLength) ||
           contentLength < 0 ||
-          contentLength > MAX_DOWNLOAD_BYTES ||
+          contentLength > (input.maxBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES) ||
           contentLength !== input.expectedSize)
       ) {
         await response.body.cancel().catch(() => undefined);
@@ -628,10 +776,14 @@ async function downloadOnce(
     const source = NodeStream.Readable.fromWeb(response.body as never);
     source.on("data", (chunk: Buffer) => {
       downloaded += chunk.byteLength;
-      received.bytes += chunk.byteLength;
+      transfer.downloadedBytes = downloaded;
+      transfer.receivedBytes += chunk.byteLength;
       hash?.update(chunk);
       resetIdleTimer();
-      if (downloaded > MAX_DOWNLOAD_BYTES || downloaded > input.expectedSize) {
+      if (
+        downloaded > (input.maxBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES) ||
+        downloaded > input.expectedSize
+      ) {
         source.destroy(
           new ManagedRuntimeFileError("Managed runtime download exceeded the reviewed size.", {
             failureClass: "size_mismatch",
@@ -665,6 +817,7 @@ async function downloadOnce(
     return { resumedBytes: have, digest: hash?.digest("hex") };
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
+    transfer.activeMs += Date.now() - startedAt;
   }
 }
 

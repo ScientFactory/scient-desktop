@@ -12,6 +12,12 @@ Write or run an eval when a change affects what a model sees or does: agent inst
 | [voice-cleanup](voice-cleanup/) | Whether optional dictation cleanup edits only the spoken text and preserves its meaning.             |
 | [test-signal](test-signal/)     | Whether a cheap model running the test-signal check flags low-signal tests.                          |
 
+<!-- SCIENT-FORK:START — Scient's Sources cases. -->
+
+`mcp-tool-use` also covers Scient's Sources tools, on a real Library whose state is checked after each run: [how to run them and read the result](mcp-tool-use/README.md#sources-cases).
+
+<!-- SCIENT-FORK:END -->
+
 ## Run an eval
 
 1. Run `vp i` at the repo root.

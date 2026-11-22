@@ -8,6 +8,8 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+// SCIENT-FORK: sign-in failure reasons are Scient's lifecycle vocabulary.
+import { ProviderConnectionFailureReason } from "./providerLifecycle.ts";
 
 export const ProviderSetupInput = Schema.Struct({
   instanceId: ProviderInstanceId,
@@ -16,7 +18,7 @@ export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 // Environments supply these and clients open them, so a `javascript:` URL would run as the client.
-const SignInUrl = TrimmedNonEmptyString.check(
+export const SignInUrl = TrimmedNonEmptyString.check(
   Schema.isMaxLength(16_384),
   Schema.isPattern(/^https?:\/\//i),
 );
@@ -135,6 +137,9 @@ export const ProviderAuthState = Schema.Struct({
   credentialOwner: ForwardCompatibleOptional(Schema.Literals(["provider", "t3"])),
   // SCIENT-FORK:START — native account writes are not necessarily an account-status witness.
   accountVerified: ForwardCompatibleOptional(Schema.Boolean),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — why a failed flow failed, set where the failure is known.
+  failureReason: ForwardCompatibleOptional(ProviderConnectionFailureReason),
   // SCIENT-FORK:END
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;

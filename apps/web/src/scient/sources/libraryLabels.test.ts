@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { m } from "~/i18n/messages";
+
+import {
+  addedToProjectLabel,
+  alsoInOtherProjectsLabel,
+  emptySourcesLabel,
+  goneFromComputerLabel,
+  inLibraryNotProjectLabel,
+  LIBRARY_LABELS,
+  readingResultLabel,
+  removedFromProjectLabel,
+  removeSnapshotsHelp,
+  removeSnapshotsLabel,
+  someAlsoInOtherProjectsLabel,
+} from "./libraryLabels";
+import { sourcePinLabel } from "./sourceLabels";
+
+const strings = (value: unknown): ReadonlyArray<string> =>
+  typeof value === "string"
+    ? [value]
+    : typeof value === "object" && value !== null
+      ? Object.values(value).flatMap(strings)
+      : [];
+
+describe("library labels", () => {
+  it("never call a source pinned", () => {
+    const shown = [
+      ...strings(LIBRARY_LABELS).map((text) => m(text)),
+      ...[1, 2].flatMap((count) => [
+        addedToProjectLabel(count),
+        removedFromProjectLabel(count),
+        alsoInOtherProjectsLabel(count) ?? "",
+        someAlsoInOtherProjectsLabel(count),
+        inLibraryNotProjectLabel(count),
+        removeSnapshotsLabel(count),
+        removeSnapshotsHelp(count),
+        goneFromComputerLabel(count),
+      ]),
+      ...(["project", "library", undefined] as const).flatMap((listed) =>
+        Object.values(emptySourcesLabel(listed)),
+      ),
+      sourcePinLabel({ pinned: true }, "library"),
+      sourcePinLabel({ pinned: true, fromSnapshot: true }, "project"),
+    ];
+    expect(shown.filter((text) => /pin/iu.test(text))).toEqual([]);
+  });
+
+  it("counts sources no longer in the Library apart from the changed ones", () => {
+    expect(
+      readingResultLabel(
+        { readingStatus: "read" },
+        {
+          sources: [
+            { sourceId: "a", outcome: "updated", readingStatus: "read", starred: false },
+            { sourceId: "b", outcome: "unchanged", readingStatus: "read", starred: true },
+            { sourceId: "gone", outcome: "not-found" },
+          ],
+        },
+      ),
+    ).toEqual({
+      title: "Marked 2 sources read",
+      description: "1 source is no longer in the Library.",
+    });
+  });
+});

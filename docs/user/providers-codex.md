@@ -144,6 +144,33 @@ reported accounts, refresh provider status, and confirm the second instance has
 its own shadow path and login. A shadow-home conflict usually means the directory
 contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 
+## Sign in to an MCP server
+
+When an MCP server you added to Codex needs you to sign in, the thread shows a notice with
+**Sign in**; on mobile, tap the notice. Approve access on the page it opens. In the Scient desktop
+app on the computer that runs Codex, Codex receives the approval itself and the dialog closes with
+**Signed in**. Otherwise your browser goes to a page that may not load: copy that page's address,
+paste it into Scient, and choose **Finish sign-in**. Codex reconnects the server in that thread and
+keeps the sign-in for other threads on the same Codex instance, and **Extensions** shows the server
+signed in. An instance with its own home, such as a second account, may need to sign in separately.
+Signing in needs permission to manage providers.
+
+## Use the OpenAI Chrome extension
+
+Connecting ChatGPT in **Settings → Providers** signs in the Codex provider.
+Using your signed-in Chrome profile through the extension requires a browser
+connection for the current Codex thread.
+
+If a Scient thread reports `The browser access host is unavailable`, its browser
+host is unavailable; this does not identify an extension connection failure.
+For a task that requested Chrome, follow [OpenAI's setup guide](https://learn.chatgpt.com/docs/chrome-extension),
+then select Chrome in a Codex chat in the ChatGPT desktop app.
+If the task runs on a remote environment, `localhost` in the desktop browser
+refers to your computer. Forward the remote page's port or use a URL reachable
+from your computer before repeating the task. Connecting to Scient through a
+relay or tunnel does not by itself expose that page. Scient's built-in browser
+preview uses its own browser session.
+
 ## Use Daybreak
 
 Models with cyber access programs show a Cyber Access option in the model
@@ -162,9 +189,11 @@ spend limit to continue sooner.
 
 ## Send feedback to OpenAI
 
-In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
-issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
-and share with OpenAI employees.
+In an existing Codex thread, send `/feedback-openai` or `/feedback-openai` followed by a
+description of the issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID
+that you can copy and share with OpenAI employees. In the desktop app, `/feedback` sends
+[feedback to the Scient team](./feedback.md) instead; in the web app, Codex's command keeps the
+name `/feedback`.
 
 ## Answer questions while Codex works
 

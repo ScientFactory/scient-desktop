@@ -7,6 +7,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { RegistryContext } from "@effect/atom-react";
+import { T, useGT, Var } from "gt-react";
 import {
   createContext,
   memo,
@@ -39,6 +40,9 @@ import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+// SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+import { MODEL_NAME_HIDDEN_TRIGGER_CLASS_NAME } from "../../scient/modelPicker/modelNameFit";
+// SCIENT-FORK:END
 
 /** Holds the page still behind the open picker; its lifetime is the popup element's. */
 function lockBackgroundScroll(
@@ -106,6 +110,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   size?: ComposerControlSize;
   compact?: boolean;
   iconOnly?: boolean;
+  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+  modelNameHidden?: boolean;
+  // SCIENT-FORK:END
   isComposerOwned?: boolean;
   disabled?: boolean;
   terminalOpen?: boolean;
@@ -156,6 +163,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   useEffect(() => {
     if (isMenuOpen) refreshModelCatalog();
   }, [isMenuOpen]);
+  const gt = useGT();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
   // Touch opens on the popup itself so the on-screen keyboard stays down until the search is tapped.
@@ -201,7 +209,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? undefined
       : selectedInstanceOptions[0]);
   const unresolvedTitle =
-    props.model === ANTIGRAVITY_DEFAULT_MODEL ? "Choose model" : props.model || "Choose model";
+    props.model === ANTIGRAVITY_DEFAULT_MODEL
+      ? gt("Choose model")
+      : props.model || gt("Choose model");
   const group =
     activeEntry &&
     getAntigravityModelGroups(
@@ -219,10 +229,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (triggerModel
       ? getTriggerDisplayModelName(triggerModel, activeEntry?.driverKind)
       : unresolvedTitle);
+  const withUnavailable = (model: string, isUnavailable: boolean | undefined) =>
+    isUnavailable ? gt("{model} (Unavailable)", { model }) : model;
   const triggerLabel =
     props.statusLabel ??
     (triggerModel
-      ? `${getDisplayModelName(triggerModel)}${triggerModel.isUnavailable ? " (Unavailable)" : ""}`
+      ? withUnavailable(getDisplayModelName(triggerModel), triggerModel.isUnavailable)
       : triggerTitle);
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -287,26 +299,35 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: selection.model,
       options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
     });
-    const unavailable = model?.isUnavailable ? " (Unavailable)" : "";
     return {
       ...selection,
       entry,
       label: model
-        ? `${getTriggerDisplayModelName(model, entry?.driverKind)}${unavailable}`
+        ? withUnavailable(getTriggerDisplayModelName(model, entry?.driverKind), model.isUnavailable)
         : selection.model,
-      fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
+      fullLabel: model
+        ? withUnavailable(getDisplayModelName(model), model.isUnavailable)
+        : selection.model,
+      // SCIENT-FORK:START — an icon-only trigger keeps an unavailable model's badge.
+      isUnavailable: model?.isUnavailable === true,
+      // SCIENT-FORK:END
     };
   });
   const multipleLabel = selectedEntries
     ? selectedEntries.length === 0
-      ? "Choose models"
-      : `${selectedEntries
-          .slice(0, 2)
-          .map((selection) => selection.label)
-          .join(", ")}${selectedEntries.length > 2 ? `, ${selectedEntries.length - 2} more` : ""}`
+      ? gt("Choose models")
+      : selectedEntries.length > 2
+        ? gt("{count, plural, one {{models}, {count} more} other {{models}, {count} more}}", {
+            models: selectedEntries
+              .slice(0, 2)
+              .map((selection) => selection.label)
+              .join(", "),
+            count: selectedEntries.length - 2,
+          })
+        : selectedEntries.map((selection) => selection.label).join(", ")
     : undefined;
   const allModelNames = selectedEntries
-    ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || "Choose models"
+    ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || gt("Choose models")
     : undefined;
   const triggerTooltipContent = [
     props.triggerLabel ?? allModelNames ?? triggerLabel,
@@ -324,6 +345,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       props.isComposerOwned && "max-w-56",
     ),
     "data-chat-provider-model-picker-label": "true",
+    // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+    "data-model-trigger-text": props.statusLabel ? undefined : "true",
+    // SCIENT-FORK:END
   } as const;
 
   const picker = (
@@ -351,7 +375,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}
       getModelDisabledReason={(instanceId, model) =>
         props.disabled
-          ? "Model picker is disabled"
+          ? gt("Model picker is disabled")
           : (props.getModelDisabledReason?.(instanceId, model) ?? null)
       }
       {...(props.isProviderSetupAvailable
@@ -399,12 +423,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 ref={pickerTriggerRef}
                 aria-label={[
                   props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel,
+                  // SCIENT-FORK:START — a hidden model name keeps its cost in the trigger's name.
+                  props.modelNameHidden && !props.statusLabel && selectedModel?.providerCostLabel
+                    ? gt("Costs {cost} of the provider's base token rate", {
+                        cost: selectedModel.providerCostLabel,
+                      })
+                    : null,
+                  // SCIENT-FORK:END
                   props.statusLabel ? null : props.triggerDetail,
                 ]
                   .filter(Boolean)
                   .join(", ")}
                 size={size}
                 data-chat-provider-model-picker="true"
+                // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+                data-model-name-hidden={props.modelNameHidden ? "true" : undefined}
+                // SCIENT-FORK:END
                 data-composer-shortcut={props.triggerShortcuts}
                 onClick={(event) => {
                   if (!isMenuOpen || !docked) return;
@@ -422,6 +456,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     ? "max-w-42 shrink-0"
                     : !props.isComposerOwned && "max-w-48 sm:max-w-56",
                   props.triggerClassName,
+                  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+                  props.modelNameHidden && MODEL_NAME_HIDDEN_TRIGGER_CLASS_NAME,
+                  // SCIENT-FORK:END
                 )}
                 disabled={props.disabled}
               />
@@ -436,6 +473,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               {selectedEntries && props.triggerLabel === undefined ? (
                 <span
                   data-chat-provider-model-picker-icon
+                  // SCIENT-FORK:START — only a rendered icon can stand in for the model name.
+                  data-model-trigger-icon={
+                    selectedEntries.slice(0, 3).some((selection) => selection.entry)
+                      ? "true"
+                      : undefined
+                  }
+                  // SCIENT-FORK:END
                   className="flex shrink-0 items-center -space-x-1"
                   aria-hidden="true"
                 >
@@ -463,7 +507,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 </span>
               ) : activeEntry && props.triggerLabel === undefined ? (
                 // Narrow compacted composers hide the provider icon before truncating the name.
-                <span data-chat-provider-model-picker-icon className="contents">
+                <span
+                  data-chat-provider-model-picker-icon
+                  // SCIENT-FORK:START — only a rendered icon can stand in for the model name.
+                  data-model-trigger-icon="true"
+                  // SCIENT-FORK:END
+                  className="contents"
+                >
                   <ProviderInstanceIcon
                     driverKind={activeEntry.driverKind}
                     displayName={activeEntry.displayName}
@@ -499,14 +549,21 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
+                          <span
+                            // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+                            data-model-trigger-text="true"
+                            // SCIENT-FORK:END
+                            className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70"
+                          />
                         }
                       >
                         {selectedModel.providerCostLabel}
                       </TooltipTrigger>
                       <TooltipPopup side="top">
-                        Costs {selectedModel.providerCostLabel} of the provider&apos;s base token
-                        rate
+                        <T>
+                          Costs <Var>{selectedModel.providerCostLabel}</Var> of the provider&apos;s
+                          base token rate
+                        </T>
                       </TooltipPopup>
                     </Tooltip>
                   ) : null}
@@ -516,9 +573,19 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   props.triggerLabel === undefined &&
                   selectedModel?.isUnavailable ? (
                     <Badge variant="outline" size="sm">
-                      Unavailable
+                      <T context="badge on a model that cannot be selected">Unavailable</T>
                     </Badge>
                   ) : null}
+                  {/* SCIENT-FORK:START — an icon-only trigger keeps an unavailable model's badge. */}
+                  {props.modelNameHidden &&
+                  !props.statusLabel &&
+                  props.triggerLabel === undefined &&
+                  selectedEntries?.some((selection) => selection.isUnavailable) ? (
+                    <Badge data-model-trigger-hidden-status variant="outline" size="sm">
+                      <T context="badge on a model that cannot be selected">Unavailable</T>
+                    </Badge>
+                  ) : null}
+                  {/* SCIENT-FORK:END */}
                 </>
               )}
             </span>

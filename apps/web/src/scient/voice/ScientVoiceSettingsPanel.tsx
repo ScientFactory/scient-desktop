@@ -1,5 +1,7 @@
 // SCIENT-OWNED: Scient's voice settings page (whisper.cpp models, language and transcript
 // correction). The settings route shows it in place of T3's voice page until the voice decision.
+import { T, useGT, Var } from "gt-react";
+
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   CheckIcon,
@@ -41,6 +43,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 
 function formatBytes(bytes: number): string {
   const mib = bytes / 1024 / 1024;
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- a size with its unit symbol
   return `~${Math.round(mib)} MiB`;
 }
 
@@ -73,6 +76,7 @@ function VoiceLanguagePicker({
   readonly value: VoiceLanguagePreference;
   readonly onChange: (language: VoiceLanguagePreference) => void;
 }): ReactNode {
+  const gt = useGT();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [moreLanguagesOpen, setMoreLanguagesOpen] = useState(!isPrimaryVoiceLanguage(value));
 
@@ -85,12 +89,14 @@ function VoiceLanguagePicker({
   return (
     <div className="relative border-border/60 border-t pt-3 md:border-t-0 md:pl-8 md:pt-1 md:before:absolute md:before:top-1 md:before:left-0 md:before:h-10 md:before:w-px md:before:bg-border/60">
       <div className="flex items-center gap-1">
-        <h3 className="font-medium text-sm">Language</h3>
+        <h3 className="font-medium text-sm">
+          <T context="voice dictation language">Language</T>
+        </h3>
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger
             render={
               <Button
-                aria-label="Choose voice language"
+                aria-label={gt("Choose voice language")}
                 className="relative top-0.5"
                 size="xs"
                 variant="ghost-muted"
@@ -124,7 +130,7 @@ function VoiceLanguagePicker({
                         <span>{VOICE_LANGUAGE_NAMES[language]}</span>
                         {language === "auto" ? (
                           <Badge size="sm" variant="info">
-                            Recommended
+                            <T>Recommended</T>
                           </Badge>
                         ) : null}
                       </span>
@@ -140,7 +146,9 @@ function VoiceLanguagePicker({
                     size="xs"
                     variant="ghost-muted"
                   >
-                    <span className="flex-1 text-left">More languages</span>
+                    <span className="flex-1 text-left">
+                      <T>More languages</T>
+                    </span>
                     <ChevronRightIcon
                       className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
                     />
@@ -235,6 +243,7 @@ function VoiceModelCard({
   onRemoveOpenChange,
   onConfirmRemove,
 }: VoiceModelCardProps): ReactNode {
+  const gt = useGT();
   const state = model.state;
   const progress = voiceModelProgressPercent(model);
   const downloading = state.state === "downloading" || activeDownload;
@@ -245,29 +254,33 @@ function VoiceModelCard({
           <h3 className="font-medium text-sm">{model.displayName}</h3>
           {recommended ? (
             <Badge variant="info" size="sm">
-              Best for this computer
+              <T>Best for this computer</T>
             </Badge>
           ) : null}
           {selected ? (
             <Badge variant="success" size="sm">
-              <CheckIcon /> In use
+              <CheckIcon /> <T context="this voice model is the one in use">In use</T>
             </Badge>
           ) : null}
         </div>
         <p className="text-muted-foreground text-xs">{model.description}</p>
         <p className="text-muted-foreground/70 text-xs">
-          Multilingual · {formatBytes(model.byteSize)}
+          <T>
+            Multilingual · <Var>{formatBytes(model.byteSize)}</Var>
+          </T>
         </p>
       </div>
 
       {downloading ? (
         <div className="mt-4 space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{state.state === "downloading" ? "Downloading…" : "Starting download…"}</span>
+            <span>
+              {state.state === "downloading" ? gt("Downloading…") : gt("Starting download…")}
+            </span>
             <span>{progress}%</span>
           </div>
           <div
-            aria-label={`Downloading ${model.displayName}`}
+            aria-label={gt("Downloading {model}", { model: model.displayName })}
             aria-valuemax={100}
             aria-valuemin={0}
             aria-valuenow={progress}
@@ -284,7 +297,9 @@ function VoiceModelCard({
 
       {state.state === "missing" && state.partialBytes ? (
         <p className="mt-3 text-muted-foreground text-xs">
-          Paused at {formatBytes(state.partialBytes)}.
+          <T>
+            Paused at <Var>{formatBytes(state.partialBytes)}</Var>.
+          </T>
         </p>
       ) : null}
       {state.state === "error" ? (
@@ -294,9 +309,11 @@ function VoiceModelCard({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {queuedDownload ? (
           <>
-            <span className="text-muted-foreground text-xs">Queued</span>
+            <span className="text-muted-foreground text-xs">
+              <T context="download is queued">Queued</T>
+            </span>
             <Button size="xs" variant="ghost-muted" onClick={onCancelQueued}>
-              Cancel
+              <T>Cancel</T>
             </Button>
           </>
         ) : downloading ? (
@@ -306,7 +323,7 @@ function VoiceModelCard({
             disabled={!runtimeAvailable}
             onClick={() => onCancel(model.id)}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
         ) : state.state === "ready" ? (
           <Button
@@ -315,7 +332,9 @@ function VoiceModelCard({
             disabled={selected || busy || !runtimeAvailable}
             onClick={() => onSelect(model.id)}
           >
-            {selected ? "In use" : "Use this model"}
+            {selected
+              ? gt("In use", { $context: "this voice model is the one in use" })
+              : gt("Use this model")}
           </Button>
         ) : (
           <Button
@@ -325,10 +344,10 @@ function VoiceModelCard({
           >
             {state.state === "error" ? <RefreshCwIcon /> : <DownloadIcon />}
             {state.state === "error"
-              ? "Retry"
+              ? gt("Retry")
               : state.state === "missing" && Boolean(state.partialBytes)
-                ? "Resume"
-                : "Download"}
+                ? gt("Resume", { $context: "resume the download" })
+                : gt("Download", { $context: "verb, downloads the voice model" })}
           </Button>
         )}
         {!downloading && !queuedDownload ? (
@@ -342,7 +361,7 @@ function VoiceModelCard({
             <PopoverTrigger
               render={
                 <Button
-                  aria-label={`Remove ${model.displayName}`}
+                  aria-label={gt("Remove {model}", { model: model.displayName })}
                   size="icon-xs"
                   variant="ghost"
                   disabled={busy || (state.state === "missing" && !state.partialBytes)}
@@ -360,16 +379,16 @@ function VoiceModelCard({
               role="alertdialog"
             >
               <div className="p-3">
-                <PopoverTitle>Remove {model.displayName}?</PopoverTitle>
+                <PopoverTitle>{gt("Remove {model}?", { model: model.displayName })}</PopoverTitle>
                 <PopoverDescription className="mt-1" size="compact">
                   {removeDescription}
                 </PopoverDescription>
                 <div className="mt-3 flex justify-end gap-1.5">
                   <Button size="xs" variant="ghost" onClick={() => onRemoveOpenChange(false)}>
-                    Cancel
+                    <T>Cancel</T>
                   </Button>
                   <Button size="xs" variant="destructive" onClick={onConfirmRemove}>
-                    Remove model
+                    <T>Remove model</T>
                   </Button>
                 </div>
               </div>
@@ -382,6 +401,7 @@ function VoiceModelCard({
 }
 
 export function ScientVoiceSettingsPanel(): ReactNode {
+  const gt = useGT();
   const [client] = useState(() => getVoiceBridge());
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
@@ -415,7 +435,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
       setSnapshot(await client.getModelsState());
       if (clearError) setErrorMessage(null);
     } catch {
-      setErrorMessage("Voice settings could not be loaded.");
+      setErrorMessage(gt("Voice settings could not be loaded."));
     }
   });
 
@@ -529,7 +549,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Voice"
+        title={gt("Voice", { $context: "settings page for voice dictation" })}
         icon={<Mic2Icon className="size-4 text-muted-foreground" />}
         variant="plain"
       >
@@ -537,9 +557,11 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
             <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
               <div className="min-w-0">
-                <h3 className="font-medium text-sm">Correct transcripts with an LLM</h3>
+                <h3 className="font-medium text-sm">
+                  <T>Correct transcripts with an LLM</T>
+                </h3>
                 <p className="text-xs text-muted-foreground">
-                  Fix spelling and punctuation. Significantly slower.
+                  <T>Fix spelling and punctuation. Significantly slower.</T>
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -549,10 +571,10 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                   size="sm"
                   variant="ghost-muted"
                 >
-                  Manage
+                  <T context="verb, manage the text generation model">Manage</T>
                 </Button>
                 <Switch
-                  aria-label="Correct voice transcripts with an LLM"
+                  aria-label={gt("Correct voice transcripts with an LLM")}
                   checked={correctionEnabled}
                   onCheckedChange={(checked) =>
                     updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
@@ -566,14 +588,20 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             />
           </div>
           <div className="border-border/60 border-t pt-3">
-            <h3 className="font-medium text-sm">Voice model</h3>
+            <h3 className="font-medium text-sm">
+              <T>Voice model</T>
+            </h3>
             <p className="text-muted-foreground text-xs">
-              Transcribe with ChatGPT, or on this computer with the balance of speed and accuracy
-              you choose.
+              <T>
+                Transcribe with ChatGPT, or on this computer with the balance of speed and accuracy
+                you choose.
+              </T>
             </p>
           </div>
           {!snapshot ? (
-            <p className="text-sm text-muted-foreground">Loading voice models…</p>
+            <p className="text-sm text-muted-foreground">
+              <T>Loading voice models…</T>
+            </p>
           ) : null}
           {snapshot && !snapshot.runtimeAvailable ? (
             <p className="rounded-lg border border-warning/30 bg-warning/8 p-3 text-sm text-warning-foreground">
@@ -609,8 +637,8 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                 removeOpen={removeTarget?.id === model.id}
                 removeDescription={
                   removeTarget?.id === model.id && replacementModel
-                    ? `${replacementModel.displayName} will be used instead.`
-                    : "You can download this model again here at any time."
+                    ? gt("{model} will be used instead.", { model: replacementModel.displayName })
+                    : gt("You can download this model again here at any time.")
                 }
                 onDownload={(modelId) =>
                   handleDownload(

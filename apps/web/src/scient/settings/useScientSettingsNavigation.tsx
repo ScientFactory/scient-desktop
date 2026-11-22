@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { msg, useGT, useMessages } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel } from "../../components/ui/collapsible";
 import {
@@ -18,47 +19,51 @@ import {
 import type { SettingsPath } from "../../components/settings/settingsSearch";
 import { cn } from "../../lib/utils";
 
+/** Section labels are `msg()` strings, resolved where they show. */
 const SETTINGS_PAGE_SECTIONS: Partial<
   Readonly<Record<SettingsPath, ReadonlyArray<{ label: string; targetId: string }>>>
 > = {
   "/settings/general": [
-    { label: "Notifications", targetId: "notifications" },
-    { label: "Sidebar", targetId: "sidebar" },
-    { label: "Confirmations", targetId: "confirmations" },
-    { label: "Display", targetId: "display" },
+    { label: msg("Notifications", { $context: "settings section" }), targetId: "notifications" },
+    { label: msg("Sidebar", { $context: "settings section" }), targetId: "sidebar" },
+    { label: msg("Confirmations"), targetId: "confirmations" },
+    {
+      label: msg("Display", { $context: "settings section about what is shown" }),
+      targetId: "display",
+    },
   ],
   "/settings/appearance": [
-    { label: "Colors & themes", targetId: "appearance" },
-    { label: "Interface", targetId: "appearance-interface" },
-    { label: "Typography", targetId: "typography" },
+    { label: msg("Colors & themes"), targetId: "appearance" },
+    { label: msg("Interface", { $context: "settings section" }), targetId: "appearance-interface" },
+    { label: msg("Typography"), targetId: "typography" },
   ],
   "/settings/threads": [
-    { label: "New projects", targetId: "new-projects" },
-    { label: "New threads", targetId: "project-defaults" },
-    { label: "Usage limits", targetId: "usage-limits" },
-    { label: "Auto-settle", targetId: "auto-settle" },
-    { label: "Text generation", targetId: "text-generation" },
-    { label: "Forks", targetId: "forks" },
+    { label: msg("New projects"), targetId: "new-projects" },
+    { label: msg("New threads"), targetId: "project-defaults" },
+    { label: msg("Usage limits"), targetId: "usage-limits" },
+    { label: msg("Auto-settle"), targetId: "auto-settle" },
+    { label: msg("Text generation"), targetId: "text-generation" },
+    { label: msg("Forks", { $context: "settings section" }), targetId: "forks" },
   ],
   "/settings/browser": [
-    { label: "Agent access", targetId: "browser-agent-access" },
-    { label: "Browsing", targetId: "browser" },
-    { label: "Recordings", targetId: "browser-recordings" },
+    { label: msg("Agent access"), targetId: "browser-agent-access" },
+    { label: msg("Browsing", { $context: "settings section" }), targetId: "browser" },
+    { label: msg("Recordings", { $context: "settings section" }), targetId: "browser-recordings" },
   ],
   "/settings/source-control": [
-    { label: "Repositories", targetId: "source-control-defaults" },
-    { label: "Version control", targetId: "source-control" },
-    { label: "Writing & review", targetId: "source-control-text-generation" },
+    { label: msg("Repositories"), targetId: "source-control-defaults" },
+    { label: msg("Version control"), targetId: "source-control" },
+    { label: msg("Writing & review"), targetId: "source-control-text-generation" },
   ],
   "/settings/maintenance": [
-    { label: "Updates", targetId: "updates" },
-    { label: "Background activity", targetId: "background" },
-    { label: "Artifacts and logs", targetId: "storage-artifacts" },
-    { label: "Diagnostics", targetId: "diagnostics-section" },
+    { label: msg("Updates", { $context: "settings section" }), targetId: "updates" },
+    { label: msg("Background activity"), targetId: "background" },
+    { label: msg("Artifacts and logs"), targetId: "storage-artifacts" },
+    { label: msg("Diagnostics"), targetId: "diagnostics-section" },
   ],
   "/settings/about": [
-    { label: "App", targetId: "about" },
-    { label: "Legal", targetId: "legal" },
+    { label: msg("App", { $context: "settings section about the app" }), targetId: "about" },
+    { label: msg("Legal", { $context: "settings section" }), targetId: "legal" },
   ],
 };
 
@@ -84,6 +89,8 @@ export function useScientSettingsNavigation(
   pathname: string,
   items: ReadonlyArray<{ to: SettingsPath; label: string }>,
 ) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname });
@@ -154,7 +161,11 @@ export function useScientSettingsNavigation(
         {isActive && pageSections ? (
           <SidebarMenuAction
             type="button"
-            aria-label={`${pageSectionsExpanded ? "Hide" : "Show"} ${item.label} sections`}
+            aria-label={
+              pageSectionsExpanded
+                ? gt("Hide {page} sections", { page: item.label })
+                : gt("Show {page} sections", { page: item.label })
+            }
             aria-expanded={pageSectionsExpanded}
             aria-controls={pageSectionsId}
             onClick={() => {
@@ -185,7 +196,7 @@ export function useScientSettingsNavigation(
                     )}
                     onClick={() => handlePageSectionClick(item.to, section.targetId)}
                   >
-                    <span className="ms-0.5">{section.label}</span>
+                    <span className="ms-0.5">{messages(section.label)}</span>
                   </SidebarMenuSubButton>
                 </SidebarMenuSubItem>
               ))}

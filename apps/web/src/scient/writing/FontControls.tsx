@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import { type MouseEvent, useContext, useState } from "react";
 import { catalogueFont } from "@scientfactory/scient-markdown/fonts";
@@ -37,6 +38,8 @@ export function FontControls(props: {
   /** Moves every run of the selection by `steps` size steps, each from its own size. */
   readonly onStep: (steps: number) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [open, setOpen] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -85,7 +88,9 @@ export function FontControls(props: {
       }}
     >
       <div className="grid gap-1.5">
-        <span className="text-xs text-foreground/70">Font</span>
+        <span className="text-xs text-foreground/70">
+          <T context="font family">Font</T>
+        </span>
         <button
           type="button"
           aria-expanded={open}
@@ -97,7 +102,7 @@ export function FontControls(props: {
           onClick={() => setOpen(!open)}
         >
           <span className="truncate">
-            {props.familyMixed ? "Mixed fonts" : (props.family ?? "Default font")}
+            {props.familyMixed ? gt("Mixed fonts") : (props.family ?? gt("Default font"))}
           </span>
           <ChevronDownIcon className="size-4 shrink-0 text-foreground/70" />
         </button>
@@ -106,21 +111,27 @@ export function FontControls(props: {
             <Input
               size="sm"
               type="search"
-              aria-label="Search fonts"
-              placeholder="Search fonts"
+              aria-label={gt("Search fonts")}
+              placeholder={gt("Search fonts")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <div className="max-h-52 overflow-y-auto" role="listbox" aria-label="Font">
+            <div
+              className="max-h-52 overflow-y-auto"
+              role="listbox"
+              aria-label={gt("Font", { $context: "font family" })}
+            >
               <FontOption
-                label="Default font"
+                label={gt("Default font")}
                 selected={props.family === null && !props.familyMixed}
                 disabled={props.disabled}
                 onSelect={() => choose(null)}
               />
               {groups.map((group) => (
                 <div key={group.label}>
-                  <div className="px-2 pt-2 pb-0.5 text-xs text-foreground/70">{group.label}</div>
+                  <div className="px-2 pt-2 pb-0.5 text-xs text-foreground/70">
+                    {messages(group.label)}
+                  </div>
                   {group.fonts.map((font) => (
                     <FontOption
                       key={font.name}
@@ -146,7 +157,9 @@ export function FontControls(props: {
           if (!event.currentTarget.contains(event.relatedTarget)) setPresetsOpen(false);
         }}
       >
-        <span className="text-xs text-foreground/70">Size (pt)</span>
+        <span className="text-xs text-foreground/70">
+          <T>Size (pt)</T>
+        </span>
         <NumberField
           size="sm"
           variant="compact"
@@ -178,14 +191,14 @@ export function FontControls(props: {
             if (size !== null && size !== shownSize) props.onSize(size);
           }}
         >
-          <NumberFieldDecrement aria-label="Smaller" />
+          <NumberFieldDecrement aria-label={gt("Smaller", { $context: "font size" })} />
           <NumberFieldInput
-            aria-label="Font size in points"
+            aria-label={gt("Font size in points")}
             aria-expanded={presetsOpen}
             data-font-size-input=""
             onClick={() => setPresetsOpen(true)}
           />
-          <NumberFieldIncrement aria-label="Larger" />
+          <NumberFieldIncrement aria-label={gt("Larger", { $context: "font size" })} />
           <button
             type="button"
             disabled={props.disabled || (props.size === null && !props.sizeMixed)}
@@ -195,11 +208,11 @@ export function FontControls(props: {
               requestAnimationFrame(() => setDefaultSize(measureSelectionSize()));
             }}
           >
-            Default size
+            <T>Default size</T>
           </button>
         </NumberField>
         {presetsOpen && (
-          <div className="max-h-40 overflow-y-auto" role="listbox" aria-label="Font size">
+          <div className="max-h-40 overflow-y-auto" role="listbox" aria-label={gt("Font size")}>
             {FONT_SIZE_PRESETS.map((size) => (
               <FontOption
                 key={size}
@@ -239,7 +252,11 @@ function FontOption(props: {
       onClick={props.onSelect}
     >
       <span>{props.label}</span>
-      {props.selected && <span className="font-sans text-xs text-foreground/70">current</span>}
+      {props.selected && (
+        <span className="font-sans text-xs text-foreground/70">
+          <T context="the font or size in use">current</T>
+        </span>
+      )}
       {props.note !== undefined && (
         <span className="font-sans text-xs text-foreground/70">{props.note}</span>
       )}

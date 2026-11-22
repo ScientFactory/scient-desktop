@@ -8,6 +8,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { scopeThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -17,19 +18,14 @@ import * as DateTime from "effect/DateTime";
 import { useLayoutEffect } from "react";
 import { act, render } from "../../../test/render";
 import { describe, expect, it, vi } from "vite-plus/test";
+import type { StartThreadTurnInput } from "@t3tools/client-runtime/operations";
 import {
   useComposerDraftStore,
   composerTargetKey,
-  createEmptyThreadDraft,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
 import * as session from "../../state/session";
-import * as extracted from "../../scient/threadQueue/extractedIntentSend";
-import { useQueueEditSessions, finishQueueEdit } from "../../scient/threadQueue/editSession";
-import * as queueClient from "../../scient/threadQueue/client";
-import { readExtractedIntent, writeQueueEditJournal } from "../../scient/threadQueue/editJournal";
-import { usePromptStashStore } from "../../promptStashStore";
-import type { ExtractedSubmissionPacket } from "../../scient/threadQueue/submission";
+import * as submission from "../../scient/threadQueue/submission";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { draftSendState } from "./chatViewSend";
 import { useComposerSend, type ComposerSendInput } from "./useComposerSend";
@@ -42,15 +38,20 @@ import {
 } from "./preparingComposerImages";
 import * as imageCompression from "../../lib/imageCompression";
 import { useMultipleModelSend } from "./useMultipleModelSend";
-import { composerSubmissionMatchesDraft } from "../../scient/threadQueue/submission";
+import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import { toastManager } from "../ui/toast";
+// SCIENT-FORK: `/feedback` opens Send feedback to Scient.
+import { useFeedbackDraft } from "../../scient/feedback/feedbackStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextReference } from "../../lib/composerContextRecords";
+import { responseContextRecord, threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 const bindings = vi.hoisted(() => ({
   command: vi.fn<
-    (packet: ExtractedSubmissionPacket) => Promise<AtomCommandResult<{ queued: boolean }, unknown>>
+    (packet: {
+      readonly environmentId: EnvironmentId;
+      readonly input: StartThreadTurnInput;
+    }) => Promise<AtomCommandResult<{ queued: boolean }, unknown>>
   >(async () => AsyncResult.success({ queued: false })),
 }));
 vi.mock("../../state/use-orchestration-command", () => ({
@@ -65,20 +66,36 @@ vi.mock("../../hooks/useHandleNewThread", () => ({
 }));
 vi.mock("@tanstack/react-router", { spy: true });
 vi.mock("../../state/session", { spy: true });
-vi.mock("../../scient/threadQueue/client", { spy: true });
-vi.mock("../../scient/threadQueue/extractedIntentSend", { spy: true });
+vi.mock("../../scient/threadQueue/submission", { spy: true });
 vi.mock("../../lib/imageCompression", { spy: true });
 vi.mock("../ChatView.logic", { spy: true });
 
-function deferredRecovery() {
-  const result =
-    Promise.withResolvers<Awaited<ReturnType<typeof extracted.beginExtractedSubmission>>>();
-  const begin = vi.mocked(extracted.beginExtractedSubmission);
-  begin.mockImplementationOnce(() => result.promise);
+/** Holds the send at its submission identity, its first yield before dispatch. */
+function heldSubmissionIdentity() {
+  const result = Promise.withResolvers<string>();
+  const identify = vi.mocked(submission.queueSubmissionId);
+  identify.mockImplementationOnce(() => result.promise);
   return {
     ...result,
-    begin,
-    [Symbol.dispose]: () => begin.mockReset(),
+    identify,
+    [Symbol.dispose]: () => identify.mockReset(),
+  };
+}
+
+function queuedRunEditStub(
+  overrides: Partial<ReturnType<typeof useQueuedRunEdit>> = {},
+): ReturnType<typeof useQueuedRunEdit> {
+  return {
+    editingRunId: null,
+    isEditing: false,
+    isSaving: false,
+    draftTarget: scopeThreadRef(EnvironmentId.make("unused"), ThreadId.make("unused")),
+    editingAttachments: null,
+    beginEdit: vi.fn(),
+    cancelEdit: vi.fn(),
+    removeEditingAttachment: vi.fn(),
+    saveEdit: vi.fn(async () => {}),
+    ...overrides,
   };
 }
 
@@ -90,12 +107,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
     const navigate = vi.fn(async () => {});
     vi.mocked(useNavigate).mockReturnValue(navigate);
     vi.mocked(session.readEnvironmentScope).mockReset().mockReturnValue(true);
-    vi.mocked(extracted.beginExtractedSubmission).mockReset();
     vi.mocked(imageCompression.prepareImageForAttachment).mockReset();
-    vi.mocked(queueClient.extractNativeQueuedRun).mockReset();
-    stack.defer(() => {
-      vi.mocked(queueClient.extractNativeQueuedRun).mockReset();
-    });
     stack.defer(() => {
       vi.mocked(session.readEnvironmentScope).mockReset();
     });
@@ -225,8 +237,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       environmentId,
       routeThreadKey: routeKey,
       currentRouteThreadKeyRef: route,
-      queueContextKeyRef: { current: routeKey },
-      queueEditsReady: true,
       serverProjection: null,
       hasHeldQueuedRuns: false,
       onForkConversation: noop,
@@ -261,6 +271,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       isGitRepo: false,
       phase: "ready",
       sendEnvMode: "local",
+      worktreeRepositories: undefined,
       startFromOrigin: false,
       localCheckoutBranchMismatch: null,
       logicalProjectEnvironments: [],
@@ -269,6 +280,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       composerDraftTarget: target,
       promptRef: { current: prompt },
       feedbackUploadsInFlightRef: { current: new Set() },
+      queuedRunEdit: queuedRunEditStub(),
       isRevertingCheckpoint: false,
       threadDetailLoading: false,
       activeEnvironmentUnavailable: false,
@@ -468,7 +480,7 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
     isCurrentSend: () => true,
     isCurrentDraft: () =>
       fixture.route.current === fixture.input.routeThreadKey &&
-      composerSubmissionMatchesDraft(
+      submission.composerSubmissionMatchesDraft(
         draftAtSend,
         useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
       ),
@@ -688,31 +700,6 @@ describe("mounted composer send admission owner", () => {
     ).toBe(before);
   });
 
-  it("does not answer a feedback request after navigation during queue recovery", async () => {
-    const requestId = RuntimeRequestId.make("stale-feedback");
-    const respond = vi.fn();
-    await using fixture = await setup({
-      pendingApprovals: [
-        {
-          requestId,
-          requestKind: "command",
-          createdAt: "2026-10-24T00:00:00Z",
-          responseCapability: "live",
-          supportsFeedback: true,
-        },
-      ],
-      onRespondToApproval: respond,
-    });
-    fixture.context = { ...fixture.context, shownPendingApprovalIds: [requestId] };
-    using recovery = deferredRecovery();
-    const sending = fixture.send();
-    fixture.route.current = "another-thread";
-    recovery.resolve({ intent: undefined, retryResult: undefined });
-    await sending;
-    expect(respond).not.toHaveBeenCalled();
-    expect(fixture.command).not.toHaveBeenCalled();
-  });
-
   it("drops a removed preparing tile and drains reservations after a rejected conversion", async () => {
     await using fixture = await setup();
     const converted =
@@ -743,132 +730,6 @@ describe("mounted composer send admission owner", () => {
       expect.stringContaining("could not be read"),
     );
   });
-  async function replaysFrozenAdmissionAfterLostAck(feedbackShown: boolean) {
-    const frameSubmittedMessage = vi.fn();
-    const setOptimisticUserMessages = vi.fn();
-    const requestId = RuntimeRequestId.make("captured-feedback");
-    const respond = vi.fn(async () => AsyncResult.success(undefined));
-    await using fixture = await setup({
-      frameSubmittedMessage,
-      setOptimisticUserMessages,
-      // A captured queue record is not feedback: it declines shown approvals and dispatches.
-      pendingApprovals: feedbackShown
-        ? [
-            {
-              requestId,
-              requestKind: "command",
-              createdAt: "2026-10-24T00:00:00Z",
-              responseCapability: "live",
-              supportsFeedback: true,
-            },
-          ]
-        : [],
-      onRespondToApproval: respond,
-    });
-    fixture.context = {
-      ...fixture.context,
-      shownPendingApprovalIds: feedbackShown ? [requestId] : [],
-    };
-    await using edits = new AsyncDisposableStack();
-    const sessionsBefore = useQueueEditSessions.getState();
-    const stashBefore = usePromptStashStore.getState();
-    const key = composerTargetKey(fixture.input.composerDraftTarget);
-    const journalKey = `00000000-0000-4000-8000-00000000000${feedbackShown ? 2 : 1}`;
-    const ordinary = useComposerDraftStore
-      .getState()
-      .getComposerDraft(fixture.input.composerDraftTarget);
-    if (!ordinary) throw new Error("Expected the synthetic ordinary draft");
-    edits.defer(async () => {
-      try {
-        const owned = useQueueEditSessions.getState().sessions[key];
-        if (owned) await finishQueueEdit(owned);
-        await writeQueueEditJournal(journalKey);
-        await writeQueueEditJournal(`intent:${journalKey}`);
-        for (const entry of usePromptStashStore.getState().entries) {
-          if (entry.queueEditKey === journalKey) usePromptStashStore.getState().takeEntry(entry.id);
-        }
-      } finally {
-        useQueueEditSessions.setState(sessionsBefore, true);
-        usePromptStashStore.setState(stashBefore, true);
-      }
-    });
-    vi.mocked(queueClient.extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
-    const edited = { ...createEmptyThreadDraft(), prompt: "$recovered Queue edit" };
-    useQueueEditSessions.setState({
-      sessions: {
-        [key]: {
-          key,
-          journalKey,
-          originalTarget: fixture.input.composerDraftTarget,
-          editTarget: fixture.input.composerDraftTarget,
-          queueItemId: "native-run",
-          editToken: journalKey,
-          ordinary,
-          edited,
-          composerSeparated: true,
-          nativeRun: {
-            runId: RunId.make("native-run"),
-            messageId: MessageId.make("native-message"),
-            expectedUpdatedAt: "2026-10-20T00:00:00Z",
-          },
-        },
-      },
-    });
-    await fixture.send();
-    expect(fixture.command).not.toHaveBeenCalled();
-    expect(frameSubmittedMessage).not.toHaveBeenCalled();
-    expect(setOptimisticUserMessages).not.toHaveBeenCalled();
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
-      JSON.stringify(vi.mocked(fixture.input.setThreadError).mock.calls),
-    ).toMatchObject({ prompt: edited.prompt, extractedIntent: { intentId: journalKey } });
-    expect(usePromptStashStore.getState().entries).toContainEqual(
-      expect.objectContaining({
-        prompt: ordinary.prompt,
-        queueEditKey: journalKey,
-        queueEditSide: "ordinary",
-      }),
-    );
-    fixture.context = { ...fixture.context, prompt: edited.prompt };
-    const lostAck = await settlePromise(async () => {
-      throw new Error("Lost extracted acknowledgement");
-    });
-    if (lostAck._tag !== "Failure") throw new Error("Expected a synthetic failure");
-    fixture.command.mockResolvedValueOnce(lostAck);
-    await fixture.send();
-    expect(
-      fixture.command,
-      JSON.stringify(vi.mocked(fixture.input.setThreadError).mock.calls),
-    ).toHaveBeenCalledTimes(1);
-    expect(fixture.command.mock.calls[0]?.[0].input).toMatchObject({
-      selectedScientSkillNames: ["recovered"],
-      message: { text: expect.stringContaining("$recovered Queue edit") },
-    });
-    const first = fixture.command.mock.calls[0]?.[0];
-    expect(await readExtractedIntent(journalKey)).toMatchObject({ phase: "submitted-unknown" });
-    expect(respond.mock.calls).toEqual(feedbackShown ? [[requestId, "decline"]] : []);
-    fixture.context = {
-      ...fixture.context,
-      selectedModel: "later-model",
-      selectedModelSelection: { ...fixture.context.selectedModelSelection, model: "later-model" },
-    };
-    await fixture.send();
-    expect(fixture.command).toHaveBeenCalledTimes(2);
-    expect(fixture.command.mock.calls[1]?.[0]).toEqual(first);
-    expect(vi.mocked(queueClient.extractNativeQueuedRun)).toHaveBeenCalledTimes(1);
-    expect(await readExtractedIntent(journalKey)).toMatchObject({ phase: "consumed" });
-    expect(useQueueEditSessions.getState().sessions[key]).toBeUndefined();
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)
-        ?.prompt ?? "",
-    ).toBe("");
-    // The frozen retry replays its recorded admission without a second decline.
-    expect(respond).toHaveBeenCalledTimes(feedbackShown ? 1 : 0);
-  }
-  it.each([false, true])(
-    "fences a transferred draft and replays its frozen native admission after a lost ACK (shown feedback request: %s)",
-    replaysFrozenAdmissionAfterLostAck,
-  );
   it("carries captured settings and skills through fanout without releasing its parent's lock", async () => {
     await using fixture = await setup();
     using _toast = vi.spyOn(toastManager, "add").mockReturnValue("synthetic-fanout-toast");
@@ -931,12 +792,13 @@ describe("mounted composer send admission owner", () => {
       useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)?.prompt,
     ).toBe("Newer fanout draft");
   });
-  it("holds one admission lock and keeps settings and skills captured before recovery yields", async () => {
+  it("holds one admission lock and keeps settings and skills captured before the send yields", async () => {
     await using fixture = await setup();
-    using recovery = deferredRecovery();
+    using held = heldSubmissionIdentity();
     const first = fixture.send();
+    await vi.waitFor(() => expect(held.identify).toHaveBeenCalledTimes(1));
     await fixture.send();
-    expect(recovery.begin).toHaveBeenCalledTimes(1);
+    expect(held.identify).toHaveBeenCalledTimes(1);
     fixture.context = {
       ...fixture.context,
       prompt: "$later Different prompt",
@@ -946,7 +808,7 @@ describe("mounted composer send admission owner", () => {
         model: "later-model",
       },
     };
-    recovery.resolve({ intent: undefined, retryResult: undefined });
+    held.resolve("qitem_held");
     await first;
     expect(
       fixture.command,
@@ -962,11 +824,12 @@ describe("mounted composer send admission owner", () => {
   });
 
   it.each(["draft changed", "route left"] as const)(
-    "cancels before dispatch when %s during recovery",
+    "cancels before dispatch when %s while the send prepares",
     async (change) => {
       await using fixture = await setup();
-      using recovery = deferredRecovery();
+      using held = heldSubmissionIdentity();
       const sending = fixture.send();
+      await vi.waitFor(() => expect(held.identify).toHaveBeenCalledTimes(1));
       if (change === "draft changed")
         useComposerDraftStore
           .getState()
@@ -975,7 +838,7 @@ describe("mounted composer send admission owner", () => {
       const draft = useComposerDraftStore
         .getState()
         .getComposerDraft(fixture.input.composerDraftTarget);
-      recovery.resolve({ intent: undefined, retryResult: undefined });
+      held.resolve("qitem_held");
       await sending;
       expect(fixture.command).not.toHaveBeenCalled();
       expect(
@@ -984,6 +847,67 @@ describe("mounted composer send admission owner", () => {
       expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
     },
   );
+
+  // SCIENT-FORK:START — `/feedback` opens Send feedback to Scient and never reaches the model.
+  const withScientFeedback = async (run: () => Promise<void>) => {
+    const host = window as unknown as { desktopBridge?: object };
+    const bridge = host.desktopBridge;
+    host.desktopBridge = { ...bridge, feedback: {} };
+    useFeedbackDraft.setState({ open: false, message: "" });
+    try {
+      await run();
+    } finally {
+      if (bridge === undefined) delete host.desktopBridge;
+      else host.desktopBridge = bridge;
+    }
+  };
+
+  it("opens Send feedback to Scient with the words after /feedback", async () => {
+    await withScientFeedback(async () => {
+      await using fixture = await setup();
+      const prompt = "/feedback the export lost my figures";
+      useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+      fixture.context = { ...fixture.context, prompt };
+      await fixture.send();
+      expect(fixture.command).not.toHaveBeenCalled();
+      expect(useFeedbackDraft.getState()).toMatchObject({
+        open: true,
+        source: "slash-command",
+        message: "the export lost my figures",
+      });
+    });
+  });
+
+  it("refuses /feedback with an attachment instead of sending it to the model", async () => {
+    await withScientFeedback(async () => {
+      const toast = vi.spyOn(toastManager, "add");
+      await using fixture = await setup();
+      const prompt = "/feedback the export failed";
+      useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+      fixture.context = {
+        ...fixture.context,
+        prompt,
+        files: [
+          {
+            type: "file",
+            id: "figure",
+            name: "figure.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 3,
+            file: new File(["pdf"], "figure.pdf", { type: "application/pdf" }),
+          },
+        ],
+      };
+      await fixture.send();
+      expect(fixture.command).not.toHaveBeenCalled();
+      expect(useFeedbackDraft.getState().open).toBe(false);
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Remove the attachments to send feedback" }),
+      );
+      toast.mockRestore();
+    });
+  });
+  // SCIENT-FORK:END
 
   // Send is enabled for a composer that holds only a thread context, so the send must go.
   it("sends a message whose only content is an attached thread", async () => {
@@ -1003,7 +927,8 @@ describe("mounted composer send admission owner", () => {
   });
 
   it("sends a direct steer without consuming the unrelated composer draft or files", async () => {
-    await using fixture = await setup();
+    const queuedRunEdit = queuedRunEditStub({ isEditing: true });
+    await using fixture = await setup({ queuedRunEdit });
     fixture.context = {
       ...fixture.context,
       files: [
@@ -1021,21 +946,6 @@ describe("mounted composer send admission owner", () => {
       .getState()
       .getComposerDraft(fixture.input.composerDraftTarget);
     if (!draft) throw new Error("Expected a synthetic draft");
-    using editState = new DisposableStack();
-    const before = useQueueEditSessions.getState();
-    editState.defer(() => useQueueEditSessions.setState(before, true));
-    const key = composerTargetKey(fixture.input.composerDraftTarget);
-    const edit = {
-      key,
-      journalKey: key,
-      originalTarget: fixture.input.composerDraftTarget,
-      editTarget: fixture.input.composerDraftTarget,
-      queueItemId: "unrelated-edit",
-      editToken: "synthetic",
-      ordinary: draft,
-      edited: draft,
-    };
-    useQueueEditSessions.setState({ sessions: { [key]: edit } });
     await fixture.send(undefined, "auto", "foreground", undefined, {
       directPrompt: "Steer only",
       steer: true,
@@ -1052,7 +962,65 @@ describe("mounted composer send admission owner", () => {
     expect(
       useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
     ).toBe(draft);
-    expect(useQueueEditSessions.getState().sessions[key]).toBe(edit);
+    // The queued message open in the composer is not saved by a direct prompt.
+    expect(queuedRunEdit.saveEdit).not.toHaveBeenCalled();
+  });
+
+  it("saves the queued message being edited, with its mentions and reply, instead of sending", async () => {
+    const queuedRunEdit = queuedRunEditStub({ isEditing: true });
+    await using fixture = await setup({ queuedRunEdit });
+    const attached = threadContextRecord(
+      scopeThreadRef(fixture.input.environmentId, ThreadId.make("attached")),
+      "Attached",
+    );
+    const reply = responseContextRecord({
+      citation: {
+        version: 1,
+        environmentId: fixture.input.environmentId,
+        threadId: ThreadId.make("thread"),
+        messageId: MessageId.make("answer"),
+        text: "The earlier answer",
+        start: 0,
+        end: 18,
+        prefix: "",
+        suffix: "",
+      },
+      itemId: TurnItemId.make("answer-item"),
+      subagents: [],
+    });
+    const prompt = `Look at ${formatInlineContextReference(threadContextReference(attached))}`;
+    const target = fixture.input.composerDraftTarget;
+    useComposerDraftStore.getState().setPrompt(target, prompt);
+    useComposerDraftStore.getState().setReplyTo(target, reply);
+    fixture.input.promptRef.current = prompt;
+    fixture.context = { ...fixture.context, prompt, threadContexts: [attached] };
+    await fixture.send(undefined, "steer", "alternate");
+    expect(fixture.command).not.toHaveBeenCalled();
+    expect(queuedRunEdit.saveEdit).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(prompt),
+        threadContexts: [attached],
+        replyTo: reply,
+      }),
+      fixture.input.setThreadError,
+      { dispatchMode: "steer", submissionIntent: "alternate" },
+    );
+  });
+
+  it("refuses to save a queued message as a side chat", async () => {
+    const queuedRunEdit = queuedRunEditStub({ isEditing: true });
+    await using fixture = await setup({ queuedRunEdit, onSideChat: async () => true });
+    using toast = vi.spyOn(toastManager, "add");
+    const prompt = "/side check this";
+    useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+    fixture.input.promptRef.current = prompt;
+    fixture.context = { ...fixture.context, prompt };
+    await fixture.send();
+    expect(queuedRunEdit.saveEdit).not.toHaveBeenCalled();
+    expect(fixture.command).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Queued message not updated" }),
+    );
   });
 
   it("reuses the journal's command and message identity after a lost acknowledgement", async () => {

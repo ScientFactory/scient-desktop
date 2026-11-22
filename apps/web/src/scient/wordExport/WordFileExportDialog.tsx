@@ -1,5 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { msg, T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
+
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { m } from "~/i18n/messages";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -17,11 +22,12 @@ import { exportWordFile, exportWordLatex, prepareWordFileDiagrams } from "./clie
 import { captureWordDiagrams } from "./captureDiagrams";
 import { PandocInstallStatus } from "./PandocInstallControl";
 import { usePandocTool } from "./usePandocTool";
+import { WORD_CITATION_STYLE_STORAGE_KEY, normalizeWordCitationStyle } from "./wordCitationStyle";
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.length > 0
     ? cause.message
-    : "The file could not be exported to Word.";
+    : m(msg("The file could not be exported to Word."));
 }
 
 /**
@@ -39,11 +45,18 @@ export function WordFileExportDialog(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, cwd, relativePath, rootRelativePath, savedRevision, onClose } = props;
+  const gt = useGT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const runningRef = useRef(false);
   const tool = usePandocTool(environmentId);
+  const [storedCitationStyle] = useLocalStorage(
+    WORD_CITATION_STYLE_STORAGE_KEY,
+    "default",
+    Schema.String,
+  );
+  const citationStyle = normalizeWordCitationStyle(storedCitationStyle);
   const refreshTool = tool.refresh;
 
   const run = async () => {
@@ -57,7 +70,7 @@ export function WordFileExportDialog(props: {
         try {
           const revision = await savedRevision();
           if (revision === null) {
-            setError("Save the file before exporting it to Word.");
+            setError(gt("Save the file before exporting it to Word."));
             break completeOperation;
           }
           const result =
@@ -69,6 +82,7 @@ export function WordFileExportDialog(props: {
                   diagramCapture: await captureWordDiagrams(
                     await prepareWordFileDiagrams(environmentId, { cwd, relativePath, revision }),
                   ),
+                  ...(citationStyle === "default" ? {} : { citationStyle }),
                 })
               : await exportWordLatex(environmentId, {
                   cwd,
@@ -84,13 +98,13 @@ export function WordFileExportDialog(props: {
           }
           toastManager.add({
             type: "success",
-            title: saved._tag === "saved" ? "Word file saved" : "Download started",
+            title: saved._tag === "saved" ? gt("Word file saved") : gt("Download started"),
             description: saved._tag === "saved" ? saved.path : result.file.fileName,
           });
           if (result.warnings.length > 0) {
             toastManager.add({
               type: "warning",
-              title: "Exported with notes",
+              title: gt("Exported with notes"),
               description: result.warnings.map((warning) => warning.message).join("\n"),
             });
           }
@@ -127,13 +141,17 @@ export function WordFileExportDialog(props: {
     >
       <DialogPopup className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Export to Word</DialogTitle>
+          <DialogTitle>
+            <T>Export to Word</T>
+          </DialogTitle>
           <DialogDescription>{rootRelativePath ?? relativePath}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {installed ? (
             <p className="text-muted-foreground text-sm" role="status">
-              {busy ? "Converting the saved file to Word…" : "Ready to export the saved file."}
+              {busy
+                ? gt("Converting the saved file to Word…")
+                : gt("Ready to export the saved file.")}
             </p>
           ) : (
             <PandocInstallStatus controller={tool} showReady />
@@ -146,11 +164,11 @@ export function WordFileExportDialog(props: {
         </DialogPanel>
         <DialogFooter>
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           {installed ? (
             <Button type="button" disabled={busy} onClick={() => void run()}>
-              {busy ? "Exporting…" : "Export"}
+              {busy ? gt("Exporting…") : gt("Export", { $context: "verb, exports the file" })}
             </Button>
           ) : null}
         </DialogFooter>

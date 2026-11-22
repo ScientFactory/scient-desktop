@@ -7,10 +7,10 @@ import { pdfReaderSessionDocumentKey } from "../pdfReaderSessionStore";
  * The opener owns a pending reveal until its active PDF reader claims it. That reader may retain it
  * through slow downloads/password prompts, but closing the reader must cancel it.
  */
-export interface PdfRevealRequest {
-  readonly id: number;
-  readonly target: PdfTarget;
-}
+export type PdfRevealRequest =
+  | { readonly id: number; readonly target: PdfTarget }
+  /** A page by its printed label (`4`, `xii`), which is its number when the PDF has no labels. */
+  | { readonly id: number; readonly pageLabel: string };
 
 const requests = new Map<string, PdfRevealRequest>();
 const owners = new Map<string, object>();
@@ -38,12 +38,19 @@ export function pdfRevealDocumentKey(document: {
   return pdfReaderSessionDocumentKey(document);
 }
 
-export function requestPdfReveal(documentKey: string, target: PdfTarget): PdfRevealRequest {
-  const request = { id: nextId++, target };
+function file(documentKey: string, request: PdfRevealRequest): PdfRevealRequest {
   requests.set(documentKey, request);
   owners.delete(documentKey);
   notify();
   return request;
+}
+
+export function requestPdfReveal(documentKey: string, target: PdfTarget): PdfRevealRequest {
+  return file(documentKey, { id: nextId++, target });
+}
+
+export function requestPdfPageReveal(documentKey: string, pageLabel: string): PdfRevealRequest {
+  return file(documentKey, { id: nextId++, pageLabel });
 }
 
 export function pendingPdfReveal(documentKey: string): PdfRevealRequest | null {
@@ -71,10 +78,6 @@ export function claimPdfReveal(documentKey: string, id: number, owner: object): 
     notify();
   }
   return true;
-}
-
-export function ownsPdfReveal(documentKey: string, id: number, owner: object): boolean {
-  return requests.get(documentKey)?.id === id && owners.get(documentKey) === owner;
 }
 
 /** Completes the request: shown, or reported as not showable. */

@@ -12,6 +12,7 @@ import {
 import { setLatexEnvironmentOption } from "./latexObjectProperties";
 import { enterLatexObjectBody } from "./latexObjectCaret";
 import { escapeText } from "./latexVisualDocument";
+import { useGT } from "gt-react";
 
 export function LatexColorBoxView({
   node,
@@ -25,6 +26,7 @@ export function LatexColorBoxView({
   editable: boolean;
   draftKey?: string | undefined;
 }) {
+  const gt = useGT();
   const root = useRef<HTMLDivElement>(null);
   const layout = node.attrs.layout;
   const context = useContext(LatexAuthoringContext);
@@ -78,7 +80,7 @@ export function LatexColorBoxView({
         >
           <LatexStatementTitle
             editor={editor}
-            label="Box title"
+            label={gt("Box title")}
             value={title}
             source={node.attrs.titleSource ?? escapeText(title)}
             editing={titleEditing}
@@ -92,13 +94,14 @@ export function LatexColorBoxView({
           />
         </div>
       )}
-      <NodeViewContent className="scient-latex-color-box-body" aria-label="Box content" />
+      <NodeViewContent className="scient-latex-color-box-body" aria-label={gt("Box content")} />
       <LatexObjectToolbar
         editor={editor}
         root={root}
         selected={selected}
-        label="Box tools"
-        position="Box"
+        label={gt("Box tools")}
+        name={gt("Box", { $context: "LaTeX colored box object" })}
+        position={gt("Box", { $context: "LaTeX colored box object" })}
         inline
       >
         <LatexBoxControls
@@ -116,7 +119,7 @@ export function LatexColorBoxView({
             setTitleEditing(true);
             requestAnimationFrame(() => {
               const field = root.current?.querySelector<HTMLTextAreaElement>(
-                '[aria-label="Box title"]',
+                ".scient-latex-color-box-title textarea",
               );
               field?.focus({ preventScroll: true });
               field?.setSelectionRange(0, 0);

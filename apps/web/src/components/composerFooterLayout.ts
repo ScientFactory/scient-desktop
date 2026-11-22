@@ -48,6 +48,10 @@ export interface RestingComposerControlsMeasurement {
   blockWidths: readonly number[];
   overflowWidth: number;
   iconOnlyBlockWidths?: readonly number[];
+  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+  /** How far the model name may truncate and still read; absent when it may truncate fully. */
+  modelNameTruncatableWidth?: number | undefined;
+  // SCIENT-FORK:END
 }
 
 function restingComposerControlsWidth(
@@ -88,9 +92,23 @@ const RESTING_CONTROLS_SLACK_PX = 1;
 export function resolveRestingComposerControlsLayout(
   input: RestingComposerControlsMeasurement & {
     hostWidth: number;
-    previous?: { hiddenCount: number; iconOnlyCount?: number; visible: boolean };
+    previous?: {
+      hiddenCount: number;
+      iconOnlyCount?: number;
+      visible: boolean;
+      // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+      modelNameHidden?: boolean;
+      // SCIENT-FORK:END
+    };
   },
-): { hiddenCount: number; iconOnlyCount?: number; visible: boolean } {
+): {
+  hiddenCount: number;
+  iconOnlyCount?: number;
+  visible: boolean;
+  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+  modelNameHidden?: boolean;
+  // SCIENT-FORK:END
+} {
   const { blockWidths, hostWidth, previous } = input;
   const iconSteps = input.iconOnlyBlockWidths ? blockWidths.length : 0;
   const previousStep = previous
@@ -121,6 +139,19 @@ export function resolveRestingComposerControlsLayout(
     previous && !previous.visible
       ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
       : minimumWidth <= hostWidth;
+  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+  if (input.modelNameTruncatableWidth !== undefined) {
+    const modelNameHidden =
+      widthAtStep(step, input.naturalFixedWidth - input.modelNameTruncatableWidth) >
+      hostWidth - (previous?.modelNameHidden ? RESTING_CONTROLS_SLACK_PX : 0);
+    return {
+      hiddenCount,
+      ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}),
+      visible,
+      modelNameHidden,
+    };
+  }
+  // SCIENT-FORK:END
   return { hiddenCount, ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}), visible };
 }
 

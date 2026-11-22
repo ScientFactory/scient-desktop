@@ -9,18 +9,19 @@ const GATED = {
   linux_packaging: ["linux_changed"],
 };
 const REPORTERS = ["test_web_reused", "test_server_reused", "stable_contexts_reused"];
-const ALWAYS = ["changes", "lint", "build", "test", "test_web", "test_server"];
-const JOBS = [
-  "release_notes",
-  "queue_ci",
-  ...ALWAYS,
-  "overleaf_windows",
-  ...Object.keys(GATED),
-  ...REPORTERS,
+const ALWAYS = [
+  "changes",
+  "lint",
+  "build",
+  "test",
+  "test_web",
+  "test_server",
+  "test_web_performance",
+  "test_server_performance",
 ];
-// Evidence and upkeep only: these run beside the gate and never block a merge. Without
-// shard_weights every shard uses the checked-in weights, and the shards themselves are gated.
-const ADVISORY = ["overleaf_macos", "shard_weights", "main_caches"];
+const JOBS = ["queue_ci", ...ALWAYS, "overleaf_windows", ...Object.keys(GATED), ...REPORTERS];
+// Evidence and upkeep only: these run beside the gate and never block a merge.
+const ADVISORY = ["overleaf_macos", "main_caches"];
 
 function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }) {
   const expected = receipt ? JOBS : [...JOBS, "qualification"];
@@ -53,9 +54,7 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
     else if (job === "qualification") skip = !qualify;
     else if (reporting) skip = !reused;
     else if (job === "overleaf_windows") skip = windowsReused;
-    else if (job !== "release_notes") {
-      skip = reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
-    }
+    else skip = reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
     // Active reporters and receipts must finish; every actual failure/cancellation blocks.
     if (result === "success" || (result === "skipped" && skip)) continue;
     errors.push(`${job}: ${result ?? "missing"}${result === "skipped" ? " without a reason" : ""}`);
@@ -63,7 +62,34 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
   return errors;
 }
 
-module.exports = { ADVISORY, GATED, JOBS, jobFailures };
+// Test lanes whose failures ci-quarantine.cjs may still accept, failed test by failed test.
+// Setup, lint, build and static analysis always block. The receipt fails
+// whenever another need does, so it is a candidate only beside them.
+const QUARANTINABLE = [
+  "test",
+  "test_web",
+  "test_server",
+  "test_web_performance",
+  "test_server_performance",
+  "overleaf_windows",
+  "compute_native",
+  "windows_packaging",
+  "remote_server_packaging",
+  "linux_packaging",
+  "qualification",
+];
+
+/** True when every failure is a plain test-lane `failure` that the quarantine may explain. */
+function quarantineCandidate(needs, failures) {
+  if (failures.length === 0) return false;
+  const failed = failures.map((failure) => /^([a-z_]+): failure$/.exec(failure)?.[1]);
+  return (
+    failed.every((job) => job && QUARANTINABLE.includes(job) && needs[job]?.result === "failure") &&
+    failed.some((job) => job !== "qualification")
+  );
+}
+
+module.exports = { ADVISORY, GATED, JOBS, QUARANTINABLE, jobFailures, quarantineCandidate };
 if (require.main === module) {
   const needs = JSON.parse(process.env.RESULTS);
   for (const [job, { result }] of Object.entries(needs)) console.log(`${job}: ${result}`);
@@ -72,6 +98,10 @@ if (require.main === module) {
     qualifyingPr: process.env.QUALIFYING_PR === "true",
   });
   for (const failure of failures) console.error(failure);
-  if (failures.length) process.exitCode = 1;
+  if (quarantineCandidate(needs, failures)) {
+    // The next step reads each failed job and passes only if every failure is quarantined.
+    console.log("Only test lanes failed; checking them against the flake quarantine.");
+    require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, "quarantine=candidate\n");
+  } else if (failures.length) process.exitCode = 1;
 }
 // SCIENT-FORK:END

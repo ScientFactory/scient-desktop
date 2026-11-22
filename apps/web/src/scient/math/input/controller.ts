@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import { customMathEdit } from "../../keyboard/customMath";
 import {
   commandEdit,
@@ -89,8 +92,11 @@ export class MathInputController {
       this.update({
         open: true,
         query,
-        notice:
-          "Place the caret in editable prose or a supported equation. Code, comments, and ambiguous source are not rewritten.",
+        notice: m(
+          msg(
+            "Place the caret in editable prose or a supported equation. Code, comments, and ambiguous source are not rewritten.",
+          ),
+        ),
       });
   }
   close(returnFocus = true): void {
@@ -131,7 +137,7 @@ export class MathInputController {
         captured.selection.to !== current.snapshot.selection.to)
     ) {
       this.update({
-        notice: "The document or selection changed. Close and reopen the math palette.",
+        notice: m(msg("The document or selection changed. Close and reopen the math palette.")),
       });
       return false;
     }
@@ -141,7 +147,9 @@ export class MathInputController {
       display,
     );
     if (!applied) {
-      this.update({ notice: "The equation changed. Place the caret again before inserting." });
+      this.update({
+        notice: m(msg("The equation changed. Place the caret again before inserting.")),
+      });
       return false;
     }
     this.adapter.focus();
@@ -157,7 +165,12 @@ export class MathInputController {
     if (packages === null || packages.includes(name)) return true;
     this.update({
       open: true,
-      notice: `This command requires ${name}. Add \\usepackage{${name}} to the LaTeX preamble in Source, then insert it here.`,
+      notice: m(
+        msg(
+          "This command requires {name}. Add {command} to the LaTeX preamble in Source, then insert it here.",
+          { name, command: `\\usepackage{${name}}` },
+        ),
+      ),
     });
     return false;
   }
@@ -325,7 +338,7 @@ export class MathInputController {
         if (!applied && !this.panel.notice)
           this.update({
             open: true,
-            notice: "This math command is unavailable. The source was not changed.",
+            notice: m(msg("This math command is unavailable. The source was not changed.")),
           });
         return applied;
       })

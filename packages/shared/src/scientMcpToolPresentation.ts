@@ -9,6 +9,7 @@ export type ScientMcpToolSummaryAction =
   | "scient-sources"
   | "scient-documents"
   | "scient-overleaf"
+  | "scient-custom-models"
   | "scient-compute";
 
 function tool(
@@ -83,13 +84,81 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "scient-sources",
   ),
   t3_sources_remove: tool(["Remove", "Removing", "Removed", "a source"], "scient-sources"),
-  t3_sources_review: tool(["Review", "Reviewing", "Reviewed", "a source"], "scient-sources"),
+  t3_sources_restore: tool(["Restore", "Restoring", "Restored", "a source"], "scient-sources"),
+  t3_sources_revert: tool(
+    ["Revert", "Reverting", "Reverted", "a source to an earlier version"],
+    "scient-sources",
+  ),
+  t3_sources_check: tool(
+    ["Check", "Checking", "Checked", "a source's identifier"],
+    "scient-sources",
+  ),
   t3_sources_attach_pdf: tool(
     ["Attach", "Attaching", "Attached", "a PDF to a source"],
     "scient-sources",
   ),
   t3_sources_detach_pdf: tool(
     ["Detach", "Detaching", "Detached", "a PDF from a source"],
+    "scient-sources",
+  ),
+  t3_sources_bibliography: tool(
+    ["Update", "Updating", "Updated", "the bibliography files"],
+    "scient-sources",
+  ),
+  t3_sources_cite: tool(["Prepare", "Preparing", "Prepared", "a citation"], "scient-sources"),
+  t3_sources_search: tool(["Search", "Searching", "Searched", "source text"], "scient-sources"),
+  t3_sources_read_text: tool(["Read", "Reading", "Read", "a source's text"], "scient-sources"),
+  t3_sources_quote_check: tool(["Check", "Checking", "Checked", "quotes"], "scient-sources"),
+  t3_sources_save_page: tool(
+    ["Save", "Saving", "Saved", "a page to the Library"],
+    "scient-sources",
+  ),
+  t3_sources_import_file: tool(
+    ["Import", "Importing", "Imported", "a reference file"],
+    "scient-sources",
+  ),
+  t3_sources_export: tool(["Export", "Exporting", "Exported", "sources"], "scient-sources"),
+  t3_sources_zotero_browse: tool(["Browse", "Browsing", "Browsed", "Zotero"], "scient-sources"),
+  t3_sources_zotero_import: tool(
+    ["Import", "Importing", "Imported", "from Zotero"],
+    "scient-sources",
+  ),
+  t3_sources_zotero_refresh: tool(
+    ["Refresh", "Refreshing", "Refreshed", "sources from Zotero"],
+    "scient-sources",
+  ),
+  t3_sources_zotero_send: tool(["Send", "Sending", "Sent", "sources to Zotero"], "scient-sources"),
+  t3_sources_collections: tool(["Read", "Reading", "Read", "collections"], "scient-sources"),
+  t3_sources_organize: tool(["Organize", "Organizing", "Organized", "sources"], "scient-sources"),
+  t3_sources_bulk_update: tool(
+    ["Update", "Updating", "Updated", "several sources"],
+    "scient-sources",
+  ),
+  t3_sources_systematic_reviews: tool(
+    ["Read", "Reading", "Read", "systematic reviews"],
+    "scient-sources",
+  ),
+  t3_sources_systematic_review_update: tool(
+    ["Update", "Updating", "Updated", "a systematic review"],
+    "scient-sources",
+  ),
+  t3_references_check: tool(["Check", "Checking", "Checked", "references"], "scient-sources"),
+  t3_references_resolve: tool(
+    ["Resolve", "Resolving", "Resolved", "reference findings"],
+    "scient-sources",
+  ),
+  t3_annotations_read: tool(["Read", "Reading", "Read", "PDF annotations"], "scient-sources"),
+  t3_annotations_add: tool(["Add", "Adding", "Added", "a PDF annotation"], "scient-sources"),
+  t3_annotations_update: tool(
+    ["Update", "Updating", "Updated", "a PDF annotation"],
+    "scient-sources",
+  ),
+  t3_annotations_remove: tool(
+    ["Remove", "Removing", "Removed", "a PDF annotation"],
+    "scient-sources",
+  ),
+  t3_annotations_restore: tool(
+    ["Restore", "Restoring", "Restored", "a PDF annotation"],
     "scient-sources",
   ),
   t3_pdf_build: tool(["Build", "Building", "Built", "a PDF"], "scient-documents"),
@@ -118,12 +187,21 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Manage", "Managing", "Managed", "the Overleaf token"],
     "scient-overleaf",
   ),
+  t3_custom_models: tool(["List", "Listing", "Listed", "custom models"], "scient-custom-models"),
+  t3_custom_models_manage: tool(
+    ["Change", "Changing", "Changed", "custom models"],
+    "scient-custom-models",
+  ),
   t3_compute_run: tool(["Run", "Running", "Ran", "code"], "scient-compute"),
   t3_compute_run_file: tool(["Run", "Running", "Ran", "a project file"], "scient-compute"),
   t3_notebook_read: tool(["Read", "Reading", "Read", "a notebook"], "scient-compute"),
   t3_notebook_edit: tool(["Edit", "Editing", "Edited", "a notebook"], "scient-compute"),
   t3_notebook_run: tool(["Run", "Running", "Ran", "notebook cells"], "scient-compute"),
   t3_compute_output: tool(["Read", "Reading", "Read", "run output"], "scient-compute"),
+  t3_results_run: tool(["Run", "Running", "Ran", "a script for results"], "scient-compute"),
+  t3_results_list: tool(["List", "Listing", "Listed", "linked results"], "scient-compute"),
+  t3_results_markdown: tool(["Link", "Linking", "Linked", "a result"], "scient-compute"),
+  t3_results_check: tool(["Check", "Checking", "Checked", "linked results"], "scient-compute"),
   t3_compute_sessions: tool(["List", "Listing", "Listed", "compute sessions"], "scient-compute"),
   t3_compute_variables: tool(["Read", "Reading", "Read", "session variables"], "scient-compute"),
   t3_compute_control: tool(["Control", "Controlling", "Controlled", "a session"], "scient-compute"),
@@ -150,44 +228,4 @@ export function scientSkillDisplayName(input: Record<string, unknown> | null): s
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
   return displayName || null;
-}
-
-/** The named skill a skill tool acts on, when its input names one. */
-export function scientMcpToolTarget(
-  definition: T3McpToolDefinition,
-  input: Record<string, unknown> | null,
-): string | undefined {
-  const namesSkill =
-    definition === SCIENT_MCP_TOOLS.t3_skill_load ||
-    definition === SCIENT_MCP_TOOLS.t3_skill_save ||
-    definition === SCIENT_MCP_TOOLS.t3_skill_read;
-  if (!namesSkill && definition !== SCIENT_MCP_TOOLS.t3_skill_read_resource) return undefined;
-  const skill = scientSkillDisplayName(input);
-  if (!skill) return undefined;
-  return namesSkill ? skill : `a file of ${skill}`;
-}
-
-/** Collapsed-group label for calls to one family of Scient's tools. */
-export function scientMcpToolSummaryLabel(
-  action: ScientMcpToolSummaryAction,
-  phrase: (past: string, infinitive: string, object: string) => string,
-  times: string,
-): string {
-  switch (action) {
-    // SCIENT-FORK:START — Scient Accounts: summarize grouped account calls.
-    case "scient-accounts":
-      return phrase("Used", "use", `accounts ${times}`);
-    // SCIENT-FORK:END
-    case "scient-skills":
-      return phrase("Used", "use", `skills ${times}`);
-    case "scient-sources":
-      return phrase("Used", "use", `sources ${times}`);
-    case "scient-documents":
-      // One verb for PDF/LaTeX builds and exports alike.
-      return phrase("Prepared", "prepare", `documents ${times}`);
-    case "scient-overleaf":
-      return phrase("Used", "use", `Overleaf ${times}`);
-    case "scient-compute":
-      return phrase("Used", "use", `Compute ${times}`);
-  }
 }

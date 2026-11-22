@@ -1,3 +1,4 @@
+import { msg, T, useGT } from "gt-react";
 import type { ThreadIndexRow } from "@scientfactory/scient-cloud/api";
 import { EnvironmentId, ProjectId, ThreadId, type ModelSelection } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
@@ -18,11 +19,12 @@ import { useEnvironmentProviders } from "~/state/environments";
 import { newChatModelSelection } from "../conversationImport/importDestination.logic";
 import type { CloudApi } from "./cloudApi";
 import { readCloudStatus, takeOverCloudThread, turnOnCloudCopy } from "./serverCloud";
+import { m } from "~/i18n/messages";
 
 type Candidate = { readonly projectId: ProjectId; readonly title: string };
 
 /** Why continuing asks for Cloud copy on this computer, beside the button that turns it on. */
-export const CLOUD_COPY_NEEDED = "Continuing needs sync on this computer too.";
+export const CLOUD_COPY_NEEDED = msg("Continuing needs sync on this computer too.");
 
 /** Conversations being continued here right now: a repeat click never takes a second lease. */
 const inFlight = new Set<string>();
@@ -118,7 +120,7 @@ export function useContinueHere({ api, userId }: { api: CloudApi; userId: string
       for (;;) {
         const modelSelection = modelFor(environmentId, projectId);
         if (modelSelection === null) {
-          setProblem("Set up a model on this computer first.");
+          setProblem(m(msg("Set up a model on this computer first.")));
           return null;
         }
         const result = await takeOverCloudThread(environmentId, {
@@ -141,7 +143,9 @@ export function useContinueHere({ api, userId }: { api: CloudApi; userId: string
       }
     } catch (error) {
       setProblem(
-        error instanceof Error ? error.message : "The conversation couldn't be continued here.",
+        error instanceof Error
+          ? error.message
+          : m(msg("The conversation couldn't be continued here.")),
       );
       return null;
     }
@@ -177,15 +181,18 @@ function ProjectChooser({
   onChoose: (projectId: ProjectId | null) => void;
 }) {
   const [selected, setSelected] = useState<ProjectId | null>(candidates[0]?.projectId ?? null);
+  const gt = useGT();
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-xs text-muted-foreground">Continue in</span>
+      <span className="text-xs text-muted-foreground">
+        <T>Continue in</T>
+      </span>
       <Select value={selected} onValueChange={(value) => setSelected(value)}>
-        <SelectTrigger size="sm" className="w-auto max-w-56" aria-label="Project">
+        <SelectTrigger size="sm" className="w-auto max-w-56" aria-label={gt("Project")}>
           <SelectValue>
             {(value: ProjectId | null) =>
               candidates.find((candidate) => candidate.projectId === value)?.title ??
-              "Choose a project"
+              gt("Choose a project")
             }
           </SelectValue>
         </SelectTrigger>
@@ -203,10 +210,10 @@ function ProjectChooser({
         disabled={selected === null}
         onClick={() => onChoose(selected)}
       >
-        Continue
+        <T>Continue</T>
       </Button>
       <Button size="sm" variant="ghost-muted" onClick={() => onChoose(null)}>
-        Cancel
+        <T>Cancel</T>
       </Button>
     </div>
   );

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { EnvironmentId, ProviderConnectionAccount, ServerProvider } from "@t3tools/contracts";
 
 import { ScientAgentIcon } from "../../components/Icons";
@@ -18,6 +19,7 @@ export function ScientAgentInlineSetup(props: {
   readonly composerController?: ProviderLifecycleController;
   readonly signedOutAccount?: ProviderConnectionAccount | undefined;
 }) {
+  const gt = useGT();
   if (props.composerController) {
     return (
       <ManagedRuntimeComposerSetup
@@ -26,7 +28,9 @@ export function ScientAgentInlineSetup(props: {
         displayName={props.displayName}
         environmentId={props.environmentId}
         icon={ScientAgentIcon}
-        modelSetupHint="Sign in to a model account or add a custom model in Settings > Providers."
+        modelSetupHint={gt(
+          "Sign in to a model account or add a custom model in Settings > Providers.",
+        )}
         provider={props.provider}
         signedOutAccount={props.signedOutAccount}
         renderModelSetupAction={(appearance) => (

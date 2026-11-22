@@ -7,8 +7,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { m } from "../i18n/messages.ts";
 import { BACKEND_QUIT_STOP_TIMEOUT } from "./DesktopBackendManager.ts";
 
 // The fields of the server's `server-runtime.json` that identify the owner of a T3 home.
@@ -90,18 +92,50 @@ export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")
 });
 
 // SCIENT-FORK:START — Scient branding; upstream's advice names the t3 CLI and T3 Code.
-export const HOME_OWNED_TITLE = "This Scient data directory is unavailable";
+export const HOME_OWNED_TITLE = msg("This Scient data directory is unavailable");
 
 export const homeOwnedMessage = (owner: Option.Option<HomeOwner>): string =>
   Option.match(owner, {
     onNone: () =>
-      "Another Scient server is using this data directory. Stop that server and reopen Scient.",
+      m(
+        msg(
+          "Another Scient server is using this data directory. Stop that server and reopen Scient.",
+        ),
+      ),
     onSome: (owner) => {
-      const kind = owner.serviceManaged
-        ? "The Scient background service"
-        : "Another Scient server (for example one started over SSH)";
-      const version = owner.serverVersion ? `, version ${owner.serverVersion}` : "";
-      return `${kind} is using this data directory (PID ${owner.pid}, port ${owner.port}${version}). Stop that server and reopen Scient.`;
+      const variables = {
+        pid: String(owner.pid),
+        port: String(owner.port),
+        version: owner.serverVersion ?? "",
+      };
+      if (owner.serviceManaged) {
+        return owner.serverVersion
+          ? m(
+              msg(
+                "The Scient background service is using this data directory (PID {pid}, port {port}, version {version}). Stop that server and reopen Scient.",
+              ),
+              variables,
+            )
+          : m(
+              msg(
+                "The Scient background service is using this data directory (PID {pid}, port {port}). Stop that server and reopen Scient.",
+              ),
+              variables,
+            );
+      }
+      return owner.serverVersion
+        ? m(
+            msg(
+              "Another Scient server (for example one started over SSH) is using this data directory (PID {pid}, port {port}, version {version}). Stop that server and reopen Scient.",
+            ),
+            variables,
+          )
+        : m(
+            msg(
+              "Another Scient server (for example one started over SSH) is using this data directory (PID {pid}, port {port}). Stop that server and reopen Scient.",
+            ),
+            variables,
+          );
     },
   });
 // SCIENT-FORK:END

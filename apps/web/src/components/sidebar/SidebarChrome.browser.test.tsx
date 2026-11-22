@@ -253,17 +253,26 @@ it("lists other updates with text actions and updates them without a confirmatio
 });
 
 // regression: 4b9f781edc fix(sidebar): keep update controls within narrow layouts
-it.each(["downloading", "downloaded"] as const)(
+// A background download keeps the control idle, so the labelled states are Retry and Update.
+it.each(["retry", "downloaded"] as const)(
   "keeps %s updates inside the minimum sidebar and preserves overflow actions",
   async (status) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    await mountFooter(_fixture, 216, {
-      ...updateState,
-      status,
-      ...(status === "downloading" ? { downloadPercent: 57 } : {}),
-    });
+    await mountFooter(
+      _fixture,
+      216,
+      status === "retry"
+        ? {
+            ...updateState,
+            status: "available",
+            downloadedVersion: null,
+            message: "network timeout",
+            errorContext: "download",
+          }
+        : { ...updateState, status },
+    );
     const more = page.getByRole("button", { name: "More sidebar actions", includeHidden: true });
     await expect.element(more).toBeVisible();
     await expect
@@ -374,32 +383,6 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
   };
 }
 
-it("lists other updates and updates them without a confirmation", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  fixture.everything = everythingFixture();
-  await mountFooter(_fixture, 216, idleUpdateState);
-  await page.getByRole("button", { name: "Other updates available" }).click();
-  const updateAll = page.getByRole("button", { name: "Update all" });
-  await expect.element(updateAll).toBeVisible();
-  const row = document.querySelector<HTMLElement>("[data-other-update-row]")!;
-  expect(row.textContent).toContain("alvin server");
-  expect(row.textContent).toContain("0.6.20 → 0.6.21");
-
-  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
-    await page.screenshot({
-      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-card.png`,
-    });
-  }
-
-  await updateAll.click();
-  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-  const updating = page.getByRole("button", { name: "Other updates in progress" });
-  await expect.element(updating).toBeVisible();
-  await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
-});
-
 it("asks once inline before Update all stops running threads", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -473,10 +456,15 @@ it("asks on a row's own line before its Update stops running threads", async () 
   }
 });
 
+// The desktop downloads an offered update by itself; the pill offers a pass that downloads this
+// app only after that download failed and shows Retry.
 const availableUpdateState: DesktopUpdateState = {
   ...updateState,
   status: "available",
   downloadedVersion: null,
+  message: "network timeout",
+  errorContext: "download",
+  canRetry: true,
 };
 
 function countedEverythingFixture() {
@@ -492,7 +480,7 @@ it("starts a pass that downloads this app at once when it stops no threads", asy
   const { value, run } = countedEverythingFixture();
   fixture.everything = value;
   await mountFooter(_fixture, 216, availableUpdateState);
-  await page.getByRole("button", { name: /^Update: / }).click();
+  await page.getByRole("button", { name: /^Retry: / }).click();
   await expect.poll(() => run.mock.calls.length).toBe(1);
   expect(run.mock.calls[0]![0].admitServer).toBeTypeOf("function");
   expect(document.querySelector("[data-update-ask]")).toBeNull();
@@ -513,7 +501,7 @@ it("asks above the pill before a pass that downloads this app stops running thre
   // Room above the footer for the card, which otherwise flips below the pill.
   _fixture.host!.style.marginTop = "120px";
   window.scrollTo(0, 0);
-  const pill = page.getByRole("button", { name: /^Update: / });
+  const pill = page.getByRole("button", { name: /^Retry: / });
   await pill.click();
   const cancel = page.getByRole("button", { name: "Cancel" });
   await expect.element(cancel).toBeVisible();

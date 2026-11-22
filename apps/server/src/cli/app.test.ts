@@ -14,6 +14,7 @@ import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppContr
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as NetService from "@t3tools/shared/Net";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -85,6 +86,7 @@ const layerCliAuthority = Layer.mergeAll(
     ),
     Layer.provide(VcsProcess.layer),
     Layer.provide(FetchHttpClient.layer),
+    Layer.provide(FeatureFlags.layerTest()),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
     Layer.provide(

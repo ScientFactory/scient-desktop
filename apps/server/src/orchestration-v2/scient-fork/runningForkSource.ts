@@ -151,7 +151,6 @@ export const runningForkAuthorityChanged = (
     current.thread.workspaceAuthorityRevision !== before.thread.workspaceAuthorityRevision ||
     current.thread.rollbackRequestId !== before.thread.rollbackRequestId ||
     current.thread.rollbackCompletedRequestId !== before.thread.rollbackCompletedRequestId ||
-    current.thread.conversationFork?.status !== before.thread.conversationFork?.status ||
     root?.checkpointScopeId !== priorRoot?.checkpointScopeId ||
     Option.isNone(project) ||
     project.value.workspaceRoot !== capture.workspaceRoot
@@ -234,7 +233,10 @@ export const makeRunningForkTextSnapshots = (input: {
  * sink supplies its own write steps.
  */
 export const makeRunningForkTextCapture = <EOwner, EAppend, ESequence>(deps: {
-  readonly commitAndPublish: Effect.Success<ReturnType<typeof makeCommitPublication>>;
+  /** Commits after queued provider snapshots of `threadIds`, then publishes. */
+  readonly commitAndPublishFor: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Success<ReturnType<typeof makeCommitPublication>>;
   readonly readOwner: (owner: ProviderTextSnapshotOwner) => Effect.Effect<unknown, EOwner>;
   /** Normalizes, appends and applies the events inside the transaction. */
   readonly appendAndApply: (
@@ -249,7 +251,10 @@ export const makeRunningForkTextCapture = <EOwner, EAppend, ESequence>(deps: {
     readonly owner: ProviderTextSnapshotOwner;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) {
-    const result = yield* deps.commitAndPublish(
+    const result = yield* deps.commitAndPublishFor([
+      input.owner.threadId,
+      ...input.events.map((event) => event.threadId),
+    ])(
       Effect.gen(function* () {
         yield* deps.readOwner(input.owner);
         const storedEvents = yield* deps.appendAndApply(input.events);

@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { useLayoutEffect, useRef } from "react";
@@ -73,6 +74,7 @@ export type ReportLocalUpdateError = (title: string, description: string) => voi
 export function useUpdateEverything(localUpdateVersion: string | null) {
   const targetVersion = localUpdateVersion ?? APP_VERSION;
   const { environments } = useEnvironments();
+  const resolve = useMessages();
   const environmentIds = environmentIdsKey(environments.map(({ environmentId }) => environmentId));
   const sessionStates = useAtomValue(environmentSessionStatesAtom(environmentIds));
   const updateStates = useAtomValue(environmentUpdateStatesAtom(environmentIds));
@@ -89,6 +91,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const { targets: behindServers, skipped: unreachable } = collectServerUpdateTargets(
     machines,
     targetVersion,
+    resolve,
   );
   // SCIENT-FORK:START — do not advertise or dispatch an unqualified exact artifact target.
   const needsExactArtifact = behindServers.some(
@@ -134,24 +137,27 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     reportFailure: false,
   });
 
-  const view = describeUpdateEverything({
-    localVersion: localUpdateVersion,
-    localMachines: machines.filter((machine) => machine.hostedByThisApp),
-    servers,
-    skipped,
-    // SCIENT-FORK:START — managed runtimes are part of the pass.
-    providerMachines: [
-      ...providers.machines.map((machine) => ({
-        environmentId: machine.environmentId,
-        label: machine.label,
-        providers: machine.candidates.map(
-          (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-        ),
-      })),
-      ...managedRuntimeProviderMachines(managedRuntimes.targets),
-    ],
-    // SCIENT-FORK:END
-  });
+  const view = describeUpdateEverything(
+    {
+      localVersion: localUpdateVersion,
+      localMachines: machines.filter((machine) => machine.hostedByThisApp),
+      servers,
+      skipped,
+      // SCIENT-FORK:START — managed runtimes are part of the pass.
+      providerMachines: [
+        ...providers.machines.map((machine) => ({
+          environmentId: machine.environmentId,
+          label: machine.label,
+          providers: machine.candidates.map(
+            (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+          ),
+        })),
+        ...managedRuntimeProviderMachines(managedRuntimes.targets),
+      ],
+      // SCIENT-FORK:END
+    },
+    resolve,
+  );
 
   return {
     // SCIENT-FORK:START — managed runtimes are part of the pass.
@@ -235,7 +241,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               if (runOutcome.status !== "updated") {
                 providerFailures.set(
                   run.environmentId,
-                  runOutcome.status === "failed" ? runOutcome.line : "Provider update interrupted",
+                  runOutcome.status === "failed"
+                    ? runOutcome.line
+                    : resolve(msg("Provider update interrupted")),
                 );
               }
               return runOutcome;

@@ -110,9 +110,13 @@ it.live.skipIf(isWindows)("stops the CLI's detached descendants when the server 
     assert.isAbove(grandchild, 1);
     // A dying server's descriptors close; the kernel would do this for it.
     for (const pipe of child.stdio) pipe?.destroy();
+    // The CLI and its detached descendant can exit in either order.
     yield* Effect.promise(() =>
-      expect.poll(() => isAlive(grandchild), { timeout: 5_000 }).toBe(false),
+      expect
+        .poll(() => ({ cliAlive: isAlive(child.pid ?? 0), descendantAlive: isAlive(grandchild) }), {
+          timeout: 5_000,
+        })
+        .toEqual({ cliAlive: false, descendantAlive: false }),
     );
-    assert.isFalse(isAlive(child.pid ?? 0), "the CLI stopped too");
   }).pipe(Effect.scoped),
 );

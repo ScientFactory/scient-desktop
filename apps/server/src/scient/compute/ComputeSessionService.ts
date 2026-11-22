@@ -82,6 +82,7 @@ import {
   type ComputeFoundTool,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { RESULTS_FOLDER_VARIABLE } from "@t3tools/shared/computeResults";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -92,6 +93,8 @@ import * as Effect from "effect/Effect";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import {
   computeRunAttribution,
+  COMPUTE_BRIDGE_LOSS_PREFIXES,
+  type ComputeLossReason,
   type ComputeRunFailureFacts,
 } from "../../telemetry/FailureAttribution.ts";
 import { makeComputeOutputAnalytics } from "../../telemetry/ComputeOutputAnalytics.ts";
@@ -141,6 +144,19 @@ const IDLE_SWEEP_MINIMUM_MS = 1_000;
 const SERVER_RESTART_REASON = "The server restarted while this session was running.";
 const TRANSPORT_CLOSED_REASON = "The runtime stopped without saying why.";
 const TRANSPORT_FAILED_REASON = "The connection to the runtime failed.";
+const ADMISSION_TIMEOUT_REASON =
+  "Execution admission timed out; the runtime was closed to avoid uncertain execution.";
+const PERSISTENCE_FAILED_REASON = "Unable to persist compute session state.";
+
+/** Why a run was lost, read from Scient's own fixed reasons; anything else is `exited`. */
+function computeLossReason(failureReason: string | null | undefined): ComputeLossReason {
+  if (failureReason === SERVER_RESTART_REASON) return "server-restart";
+  if (failureReason === TRANSPORT_FAILED_REASON) return "transport-failed";
+  if (failureReason === ADMISSION_TIMEOUT_REASON) return "admission-timeout";
+  if (failureReason === PERSISTENCE_FAILED_REASON) return "persistence-failed";
+  const bridge = COMPUTE_BRIDGE_LOSS_PREFIXES.find(([prefix]) => failureReason?.startsWith(prefix));
+  return bridge?.[1] ?? "exited";
+}
 const RESTART_DETAIL = "The session was restarted before this ran.";
 const STOP_DETAIL = "The session was stopped before this ran.";
 const INTERRUPT_TIMEOUT_DETAIL = "The runtime did not answer an interrupt.";
@@ -154,6 +170,7 @@ const sameRunOnce = (
     : right !== undefined &&
       left.executionId === right.executionId &&
       left.code === right.code &&
+      left.actor?.threadId === right.actor?.threadId &&
       sameExecutionSource(left.source, right.source);
 
 /** A language and the transport that can carry it, paired at wiring time. */
@@ -335,6 +352,8 @@ export interface ComputeSettledRun {
   /** What reading the session back must be admitted with. */
   readonly workspace: ComputeWorkspaceReceipt | null;
   readonly execution: ComputeExecutionRecord;
+  /** The session as it was when the run settled: its language and runtime. */
+  readonly session: ComputeSessionRecord;
 }
 
 /** How much of a transcript is already spent, and what it is allowed to spend. */
@@ -1102,17 +1121,11 @@ const make = Effect.gen(function* () {
             ? { kind: "runtime-reported", errorName: result.diagnostics[0]?.errorName }
             : { kind: "not-admitted" }
           : result.status === "lost"
-            ? result.startedAt === null
+            ? // An admission that timed out never started, but the runtime did not fail to start.
+              result.startedAt === null &&
+              computeLossReason(result.failureReason) !== "admission-timeout"
               ? { kind: "runtime-start" }
-              : {
-                  kind: "lost",
-                  reason:
-                    result.failureReason === SERVER_RESTART_REASON
-                      ? "server-restart"
-                      : result.failureReason === TRANSPORT_FAILED_REASON
-                        ? "transport-failed"
-                        : "exited",
-                }
+              : { kind: "lost", reason: computeLossReason(result.failureReason) }
             : null;
     return {
       actor: actor === undefined ? ("user" as const) : ("agent" as const),
@@ -1150,9 +1163,10 @@ const make = Effect.gen(function* () {
         root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
         workspace: live.workspaceReceipt,
         execution,
+        session: yield* Ref.get(live.recordRef),
       });
     }
-    // Queue/phase changes must not recreate a start after consent is changed.
+    // Queue/phase changes must not recreate a start.
     if (
       !isNewExecution &&
       (status === undefined || !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status))
@@ -2064,10 +2078,7 @@ const make = Effect.gen(function* () {
                 Effect.timeoutOrElse({
                   duration: "5 seconds",
                   orElse: () =>
-                    endSessionUnderLease(
-                      live,
-                      "Execution admission timed out; the runtime was closed to avoid uncertain execution.",
-                    ).pipe(
+                    endSessionUnderLease(live, ADMISSION_TIMEOUT_REASON).pipe(
                       Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
                       Effect.andThen(
                         Effect.fail(
@@ -2211,7 +2222,7 @@ const make = Effect.gen(function* () {
   const failClosedOnPersistenceError = (live: LiveComputeSession, error: ComputeOperationError) =>
     error.reason !== "persistence-failed"
       ? Effect.void
-      : endSessionUnderLease(live, "Unable to persist compute session state.").pipe(
+      : endSessionUnderLease(live, PERSISTENCE_FAILED_REASON).pipe(
           Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
           Effect.ignore,
         );
@@ -2355,11 +2366,14 @@ const make = Effect.gen(function* () {
         const executionId = ComputeExecutionId.make(event.requestId);
         yield* collectProjectOutputs(live, event);
         const finished = (yield* Ref.get(live.pendingRef)).get(executionId);
-        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) =>
-          event.executionCount === undefined
-            ? result
-            : { ...result, executionCount: event.executionCount },
-        );
+        const reads = event.writes?.reads;
+        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) => ({
+          ...result,
+          ...(event.executionCount === undefined ? {} : { executionCount: event.executionCount }),
+          ...(reads === undefined
+            ? {}
+            : { reads: { files: reads, truncated: event.writes?.readsTruncated === true } }),
+        }));
         yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
         yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
         if (event.outcome !== "succeeded" && finished !== undefined) {
@@ -2653,7 +2667,29 @@ const make = Effect.gen(function* () {
           cause,
         ),
     });
-    const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
+    const { environment: hostRuntimeEnvironment } = sanitizeComputeEnvironment(
+      definedEnvironment(hostEnvironment),
+    );
+    const once = input.runOnce;
+    const publishes = once?.publishResults === true;
+    const environment =
+      publishes && once !== undefined
+        ? {
+            ...hostRuntimeEnvironment,
+            [RESULTS_FOLDER_VARIABLE]: yield* store
+              .prepareResultsFolder(input.projectId, input.sessionId, once.executionId)
+              .pipe(
+                Effect.mapError((cause) =>
+                  computeError(
+                    "start",
+                    "runtime-unusable",
+                    "The results folder could not be made.",
+                    cause,
+                  ),
+                ),
+              ),
+          }
+        : hostRuntimeEnvironment;
     const profiles = yield* binding.adapter
       .discover({
         projectRoot,

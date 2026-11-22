@@ -1,6 +1,7 @@
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 import type { DocumentPersistenceCurrentReview } from "@scientfactory/scient-document";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { FilePenLine } from "lucide-react";
 import {
   useEffect,
@@ -12,6 +13,7 @@ import {
 } from "react";
 
 import { Button } from "~/components/ui/button";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { Input } from "~/components/ui/input";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 import { projectEnvironment } from "~/state/projects";
@@ -47,15 +49,15 @@ type CurrentReview =
       readonly contents?: never;
     });
 
-function renameFailureMessage(cause: unknown): string {
+function renameFailureMessage(cause: unknown, resolve: MessageResolver = m): string {
   const failure = failureCode(cause);
   return failure === "path_exists"
-    ? "A file already exists at that path."
+    ? resolve(msg("A file already exists at that path."))
     : failure === "revision_conflict"
-      ? "The file changed before it could be renamed. Reload it and try again."
+      ? resolve(msg("The file changed before it could be renamed. Reload it and try again."))
       : cause instanceof Error
         ? cause.message
-        : "Unable to rename the file.";
+        : resolve(msg("Unable to rename the file."));
 }
 
 function failureCode(cause: unknown): string | null {
@@ -136,6 +138,8 @@ async function settleAfter(run: () => Promise<void>, settle: () => void): Promis
 
 /** The open file's name, which renames the file when clicked. */
 export function FileRenameButton(props: FileRenameButtonProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const renameFile = useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
   const readFile = useAtomCommand(projectEnvironment.readFileOrdered, { reportFailure: false });
   const resolveMutation = useAtomCommand(projectEnvironment.resolveFileMutation, {
@@ -243,13 +247,17 @@ export function FileRenameButton(props: FileRenameButtonProps) {
               : result.value;
           if (!current || current.truncated || current.readOnly) {
             setError(
-              "The current source path could not be reviewed completely. Open the actual source, destination, and retained versions read-only.",
+              gt(
+                "The current source path could not be reviewed completely. Open the actual source, destination, and retained versions read-only.",
+              ),
             );
             return;
           }
           setReview(current);
         } catch {
-          setError("The current source path could not be read. No recovery choice was accepted.");
+          setError(
+            gt("The current source path could not be read. No recovery choice was accepted."),
+          );
         }
       },
       () => {
@@ -274,7 +282,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
             current.readOnly ||
             current.revision !== review.revision
           ) {
-            setError("The reviewed source path changed. Review it again before accepting.");
+            setError(gt("The reviewed source path changed. Review it again before accepting."));
             return;
           }
           const evidence = current.publicationAttention ?? retainedFileEvidence(attention.cause);
@@ -333,11 +341,15 @@ export function FileRenameButton(props: FileRenameButtonProps) {
             setError(null);
           } else
             setError(
-              "This rename remains unresolved. The open path was not moved; local input and retained versions are preserved.",
+              gt(
+                "This rename remains unresolved. The open path was not moved; local input and retained versions are preserved.",
+              ),
             );
         } catch {
           setError(
-            "Recovery confirmation could not finish. Review the current source path again; the rename has not been acknowledged.",
+            gt(
+              "Recovery confirmation could not finish. Review the current source path again; the rename has not been acknowledged.",
+            ),
           );
         }
       },
@@ -387,7 +399,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       pendingRename?.destination.relativePath ??
       (props.normalize ? props.normalize(path) : normalizeRenamePath(path, props.relativePath));
     if (!destinationRelativePath) {
-      setError(props.invalidMessage ?? "Enter a relative path inside this workspace.");
+      setError(props.invalidMessage ?? gt("Enter a relative path inside this workspace."));
       return;
     }
     if (destinationRelativePath === props.relativePath) {
@@ -396,13 +408,14 @@ export function FileRenameButton(props: FileRenameButtonProps) {
     }
     if (props.metadataOnly) {
       if (!metadataReady) {
-        setError(RECOVERY_COPY_UNSETTLED);
+        // SCIENT-FORK: the notice in the active language.
+        setError(messages(RECOVERY_COPY_UNSETTLED));
         return;
       }
       const owner = metadataOwner.current;
       const release = pendingRename ? undefined : props.beforeRename?.();
       if (!pendingRename && props.beforeRename && !release) {
-        setError("Finish the current file operation before renaming.");
+        setError(gt("Finish the current file operation before renaming."));
         return;
       }
       setSubmitting(true);
@@ -472,7 +485,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
                   cause: outcome.cause,
                   destination: destinationRelativePath,
                 });
-              else setError(renameFailureMessage(outcome.cause));
+              else setError(renameFailureMessage(outcome.cause, messages));
             }
           } catch (cause) {
             if (metadataOwner.current === owner) setError(renameFailureMessage(cause));
@@ -504,14 +517,14 @@ export function FileRenameButton(props: FileRenameButtonProps) {
         return;
       }
       if (outcome.kind === "failed") {
-        setError(renameFailureMessage(outcome.cause));
+        setError(renameFailureMessage(outcome.cause, messages));
         return;
       }
       if (outcome.kind === "legacy-required") {
         setError(
           outcome.reason === "destination"
-            ? "The destination already owns a view or recovery copy. Choose another path."
-            : "Finish the current document operation before renaming.",
+            ? gt("The destination already owns a view or recovery copy. Choose another path.")
+            : gt("Finish the current document operation before renaming."),
         );
         return;
       }
@@ -519,12 +532,13 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       return;
     }
     if (!props.renameJournal) {
-      setError(RECOVERY_COPY_UNSETTLED);
+      // SCIENT-FORK: the notice in the active language.
+      setError(messages(RECOVERY_COPY_UNSETTLED));
       return;
     }
     const release = pendingRename ? undefined : props.beforeRename?.();
     if (!pendingRename && props.beforeRename && !release) {
-      setError("Finish the current file operation before renaming.");
+      setError(gt("Finish the current file operation before renaming."));
       return;
     }
     setSubmitting(true);
@@ -535,13 +549,14 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       .then(
         (intent): { intent: DocumentRenameIntent | null; cause: unknown } => ({
           intent,
-          cause: new Error(RECOVERY_COPY_UNSETTLED),
+          // SCIENT-FORK: the notice in the active language.
+          cause: new Error(messages(RECOVERY_COPY_UNSETTLED)),
         }),
         (cause: unknown) => ({ intent: null, cause }),
       );
     const intent = begun.intent;
     if (!intent) {
-      setError(renameFailureMessage(begun.cause));
+      setError(renameFailureMessage(begun.cause, messages));
       release?.();
       setSubmitting(false);
       return;
@@ -549,7 +564,9 @@ export function FileRenameButton(props: FileRenameButtonProps) {
     const mutationId = intent.mutationId;
     if (!journal.isCurrent(intent)) {
       setError(
-        "The rename owner retired before transport dispatch. The original intent remains preserved.",
+        gt(
+          "The rename owner retired before transport dispatch. The original intent remains preserved.",
+        ),
       );
       release?.();
       setSubmitting(false);
@@ -632,7 +649,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
         render={
           <button
             type="button"
-            aria-label={`Rename ${props.label}`}
+            aria-label={gt("Rename {file}", { file: props.label })}
             className="group/file-name -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
             disabled={props.disabled && !pendingRename}
           >
@@ -652,11 +669,13 @@ export function FileRenameButton(props: FileRenameButtonProps) {
             void submit();
           }}
         >
-          <PopoverTitle>Rename file</PopoverTitle>
+          <PopoverTitle>
+            <T>Rename file</T>
+          </PopoverTitle>
           <Input
             ref={inputRef}
             aria-invalid={error !== null || undefined}
-            aria-label="File path"
+            aria-label={gt("File path")}
             disabled={submitting || pendingRename !== null}
             onChange={(event) => setPath(event.target.value)}
             size="compact"
@@ -673,8 +692,9 @@ export function FileRenameButton(props: FileRenameButtonProps) {
           ) : null}
           {attention ? (
             <div className="flex flex-col gap-2 text-xs" role="alert">
-              <p className="font-medium">{retainedAttentionCopy(attention.kind).title}</p>
-              <p>{retainedAttentionCopy(attention.kind).description}</p>
+              {/* SCIENT-FORK: the notice in the active language. */}
+              <p className="font-medium">{retainedAttentionCopy(attention.kind, messages).title}</p>
+              <p>{retainedAttentionCopy(attention.kind, messages).description}</p>
               {props.onOpenFile ? (
                 <div className="flex flex-wrap gap-1">
                   {[
@@ -690,7 +710,9 @@ export function FileRenameButton(props: FileRenameButtonProps) {
                       title={reviewPath}
                       onClick={() => props.onOpenFile?.(reviewPath)}
                     >
-                      Review {reviewPath}
+                      <T>
+                        Review <Var>{reviewPath}</Var>
+                      </T>
                     </Button>
                   ))}
                 </div>
@@ -702,20 +724,24 @@ export function FileRenameButton(props: FileRenameButtonProps) {
                 disabled={submitting}
                 onClick={() => void reviewCurrent()}
               >
-                Review current source path read-only
+                <T>Review current source path read-only</T>
               </Button>
               {review ? (
                 <>
                   {review.missing ? (
                     <p role="status">
-                      The current source pathname was confirmed absent. Accepting absence does not
-                      confirm the rename, move the open path, or create an empty file.
+                      <T>
+                        The current source pathname was confirmed absent. Accepting absence does not
+                        confirm the rename, move the open path, or create an empty file.
+                      </T>
                     </p>
                   ) : (
                     <>
                       <p>
-                        Current source revision: {review.revision}. Accepting it does not confirm
-                        the rename or move the open path.
+                        <T>
+                          Current source revision: <Var>{review.revision}</Var>. Accepting it does
+                          not confirm the rename or move the open path.
+                        </T>
                       </p>
                       <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2">
                         {review.contents}
@@ -729,7 +755,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
                     disabled={submitting}
                     onClick={() => void acceptReview()}
                   >
-                    Accept reviewed current source path
+                    <T>Accept reviewed current source path</T>
                   </Button>
                 </>
               ) : null}
@@ -745,7 +771,11 @@ export function FileRenameButton(props: FileRenameButtonProps) {
             size="sm"
             type="submit"
           >
-            {submitting ? "Renaming…" : pendingRename ? "Replay original rename" : "Rename"}
+            {submitting
+              ? gt("Renaming…")
+              : pendingRename
+                ? gt("Replay original rename")
+                : gt("Rename", { $context: "button, renames the file" })}
           </Button>
         </form>
       </PopoverPopup>

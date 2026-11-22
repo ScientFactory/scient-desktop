@@ -1,5 +1,6 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EnvironmentId, ScientPandocToolStatus } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { installPandocTool, readPandocTool } from "./client";
@@ -52,6 +53,7 @@ export function usePandocTool(
   environmentId: EnvironmentId,
   onInstalled?: () => void,
 ): PandocToolController {
+  const messages = useMessages();
   const [status, setStatus] = useState<ScientPandocToolStatus | null>(null);
   const [error, setError] = useState<{
     readonly message: string;
@@ -182,6 +184,7 @@ export function usePandocTool(
       requesting,
       error: error?.message ?? null,
       errorFromCheck: error?.fromCheck ?? false,
+      resolve: messages,
     }),
     act,
     refresh,

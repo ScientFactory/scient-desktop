@@ -2,8 +2,10 @@ import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects"
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useLocation, useRouter } from "@tanstack/react-router";
+import { msg } from "gt-react";
 import { useLayoutEffect } from "react";
 
+import { m } from "~/i18n/messages";
 import { useDesktopReloadGuard } from "~/lib/desktopReload";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { registerActiveSurfaceDeparture } from "./activeSurfaceDeparture";
@@ -119,7 +121,12 @@ export function useChatSurfaceDepartureGuards(input: {
         .getSnapshot()
         .find((entry) => projectFileOperationKey(entry) === id);
       return file
-        ? `Could not save ${file.relativePath} in ${file.cwd}. Resolve its save notice, then try again.`
+        ? m(
+            msg("Could not save {path} in {folder}. Resolve its save notice, then try again.", {
+              path: file.relativePath,
+              folder: file.cwd,
+            }),
+          )
         : undefined;
     },
   );

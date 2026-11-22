@@ -1,6 +1,9 @@
 // SCIENT-OWNED: the Files menu's Open With lists every app the computer offers
 // for an entry (as Finder does), beside the code editors Scient already knows.
 import type { ContextMenuItem, WorkspaceOpenWithApps } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 const OPEN_APP_PREFIX = "files:open-app:";
 const OPEN_APP_CHOOSER = "files:open-app-chooser";
@@ -34,6 +37,7 @@ export async function cachedOpenWithApps(
 export function withOpenWithApps(
   items: ReadonlyArray<ContextMenuItem>,
   offered: WorkspaceOpenWithApps | null,
+  resolve: MessageResolver = m,
 ): ContextMenuItem[] {
   const existing = items.find((item) => item.id === "open-with");
   const editors = existing?.children ?? [];
@@ -42,7 +46,7 @@ export function withOpenWithApps(
   const children: ContextMenuItem[] = [
     ...apps.map((app, index) => ({
       id: `${OPEN_APP_PREFIX}${index}`,
-      label: app.isDefault ? `${app.name} (default)` : app.name,
+      label: app.isDefault ? resolve(msg("{app} (default)", { app: app.name })) : app.name,
     })),
     ...editors.map((editor, index) =>
       index === 0 && apps.length > 0 ? { ...editor, separatorBefore: true } : editor,
@@ -51,14 +55,18 @@ export function withOpenWithApps(
       ? [
           {
             id: OPEN_APP_CHOOSER,
-            label: "Other App…",
+            label: resolve(msg("Other App…")),
             separatorBefore: apps.length + editors.length > 0,
           },
         ]
       : []),
   ];
   if (children.length === 0) return [...items];
-  const openWith: ContextMenuItem = { id: "open-with", label: "Open with", children };
+  const openWith: ContextMenuItem = {
+    id: "open-with",
+    label: resolve(msg("Open with")),
+    children,
+  };
   if (existing) return items.map((item) => (item === existing ? openWith : item));
   // Without code editors there was no Open With: it goes after Open and Reveal.
   const after = items.findLastIndex((item) => item.id === "open" || item.id === "reveal-in-folder");

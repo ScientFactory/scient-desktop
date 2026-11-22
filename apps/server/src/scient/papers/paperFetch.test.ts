@@ -5,6 +5,7 @@ import {
   ThreadId,
   defaultAccountControls,
   type AccountSummary,
+  PreviewTabId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -33,6 +34,7 @@ const browser = (page: Partial<PaperPage>) => {
     pdfUrl: null,
     login: false,
     challenge: false,
+    terms: false,
     institutionUrl: null,
     buy: false,
     ...page,
@@ -64,8 +66,8 @@ const fetchWith = (page: Partial<PaperPage>, accounts: ReadonlyArray<AccountSumm
   const { broker, operations } = browser(page);
   return fetchFromPage({
     url: "https://journal.example.org/article/1",
-    profileId: undefined,
-    caller: { kind: "paper", scope, requester: { accounts: "all" } },
+    profileId: "main",
+    caller: { kind: "paper", scope, requester: {} },
     accept: () => Effect.succeed(true),
   }).pipe(
     Effect.map((result) => ({ result, operations })),
@@ -129,5 +131,23 @@ it.effect("names a held saved sign-in, so the paper waits for the person to sign
       reason: "sign-in",
       signInAccountId: held.accountId,
     });
+  }),
+);
+
+it.effect("keeps the institutional consent form without downloading or submitting it", () =>
+  Effect.gen(function* () {
+    const { result, operations } = yield* fetchWith({
+      url: "https://ai.nejm.org/action/authenticateSharedSP",
+      terms: true,
+      pdfUrl: "https://ai.nejm.org/doi/pdf/10.1056/example",
+      login: true,
+    });
+    expect(result).toMatchObject({
+      status: "blocked",
+      reason: "terms",
+      tabId: PreviewTabId.make("tab-1"),
+      profileId: "main",
+    });
+    expect(operations).toEqual(["open", "accountWaitForLoad", "evaluate"]);
   }),
 );

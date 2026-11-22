@@ -13,6 +13,15 @@ describe("stalledRetryFailure", () => {
     });
   });
 
+  it("names a stall over a code that only says where the evidence came from", () => {
+    const failure = makeProviderFailure({
+      message: "overloaded",
+      code: "assistant_error",
+      class: "provider_error",
+    });
+    expect(stalledRetryFailure(failure).code).toBe("retry_stalled");
+  });
+
   it("keeps a provider code that recovery reads", () => {
     const failure = makeProviderFailure({
       message: "limit",

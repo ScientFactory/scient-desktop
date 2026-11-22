@@ -69,6 +69,8 @@ jobs:
 
       - id: catalog
         name: Build one provider candidate from its official stable channel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           node scripts/update-managed-runtime-catalog.ts
           --provider "${{ inputs.provider }}"
@@ -136,7 +138,8 @@ jobs:
     needs: discover
     if: needs.discover.outputs.available == 'true' && (needs.discover.outputs.changed == 'true' || !inputs.publish)
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # Qualify-only runs repeat each Windows qualification five times, about 6 minutes each on Arm.
+    timeout-minutes: ${{ !inputs.publish && 60 || 30 }}
     strategy:
       fail-fast: false
       matrix:
@@ -342,6 +345,7 @@ jobs:
             apps/server/src/scient/providerLifecycle/antigravityBrowserHelperPreflight.ts \
             apps/server/scripts/qualify-antigravity-acp-catalog.ts \
             apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
+            apps/server/src/scient/providerLifecycle/antigravityRuntimeRelease.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/secrets/secretProviderDefinitions.ts \
@@ -389,6 +393,7 @@ jobs:
             packages/source-control-gitcafe \
             packages/source-control-github \
             packages/source-control-gitlab \
+            packages/source-control-tanstack-source \
             packages/effect-acp; then
             echo "ACP installer or native qualification changed during this run; retry ACP." >&2
             exit 1
@@ -444,6 +449,7 @@ jobs:
             apps/server/src/scient/workspace/WindowsNativeFile.ts \
             apps/server/src/sourceControl \
             apps/server/src/telemetry \
+            apps/server/src/cloud/config.ts \
             apps/server/src/textGeneration \
             apps/server/src/utils \
             apps/server/src/vcs \
@@ -479,6 +485,7 @@ jobs:
             packages/source-control-gitcafe \
             packages/source-control-github \
             packages/source-control-gitlab \
+            packages/source-control-tanstack-source \
             packages/shared; then
             echo "What Droid's protocol qualification runs changed during this run; retry from current main." >&2
             exit 1
@@ -538,6 +545,7 @@ jobs:
             packages/source-control-gitcafe \
             packages/source-control-github \
             packages/source-control-gitlab \
+            packages/source-control-tanstack-source \
             packages/shared; then
             echo "Scient Agent qualification changed during this run; retry from current main." >&2
             exit 1
@@ -639,6 +647,7 @@ jobs:
             packages/source-control-gitcafe \
             packages/source-control-github \
             packages/source-control-gitlab \
+            packages/source-control-tanstack-source \
             packages/contracts \
             packages/scient-analysis \
             packages/scient-compute \

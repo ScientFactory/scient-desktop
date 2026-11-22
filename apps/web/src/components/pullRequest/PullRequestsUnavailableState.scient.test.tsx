@@ -1,8 +1,12 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 // regression: 7068e86f76 fix(web): open GitHub pull requests in browser when loading fails (#8507)
 describe("PullRequestsUnavailableState", () => {

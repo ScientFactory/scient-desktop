@@ -11,24 +11,25 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
-  type OrchestrationThreadActivity,
-  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
 // SCIENT-FORK:START — Scient Agent's own accounts stand in for each other.
-import { scientAgentAlternativeModel } from "./scientAgentModelFallback.ts";
+import {
+  scientAgentAlternativeModel,
+  scientSubscriptionFamily,
+} from "./scientAgentModelFallback.ts";
+import { resolveProviderModelPreferences } from "./scientModel.ts";
 // SCIENT-FORK:END
 
 import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
 
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
@@ -82,6 +83,79 @@ export function exhaustedUsageWindow(
   }
 }
 
+// SCIENT-FORK:START — subscription fallback shares picker visibility and preferred models.
+export function resolveUsageLimitFallback(input: {
+  readonly currentSelection: ModelSelection;
+  readonly fallbackSelection: ModelSelection | null;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings;
+  readonly projectId?: ProjectId | null;
+}): ModelSelection | undefined {
+  const currentProvider = input.providers.find(
+    (provider) => provider.instanceId === input.currentSelection.instanceId,
+  );
+  if (!currentProvider) return undefined;
+  const currentFamily = scientSubscriptionFamily(currentProvider, input.currentSelection.model);
+  const eligible = (
+    provider: ServerProvider,
+    selection: ModelSelection,
+    includeDefaults = false,
+  ) => {
+    const model = provider.models.find(
+      (candidate) =>
+        candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
+    );
+    if (
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      provider.status === "error" ||
+      !isProviderAvailable(provider) ||
+      !model ||
+      model.unavailableReason ||
+      model.supportsTextGeneration === false ||
+      exhaustedUsageWindow(provider, input.now, model.slug) ||
+      (input.settings &&
+        !resolveProjectProviderInstanceEnabled(
+          input.settings,
+          input.projectId ?? null,
+          provider.instanceId,
+        ))
+    ) {
+      return false;
+    }
+    const preferences = input.settings?.providerModelPreferences?.[provider.instanceId];
+    const hidden = includeDefaults
+      ? resolveProviderModelPreferences(provider.driver, provider.models, preferences).hiddenModels
+      : (preferences?.hiddenModels ?? []);
+    return !hidden.includes(selection.model) && !hidden.includes(model.slug);
+  };
+  if (input.fallbackSelection) {
+    const preferred = input.providers.find(
+      (provider) => provider.instanceId === input.fallbackSelection?.instanceId,
+    );
+    if (preferred && eligible(preferred, input.fallbackSelection)) return input.fallbackSelection;
+  }
+  const agents = input.providers.filter((provider) => provider.driver === "scient");
+  agents.sort(
+    (a, b) =>
+      Number(b.instanceId === input.currentSelection.instanceId) -
+      Number(a.instanceId === input.currentSelection.instanceId),
+  );
+  for (const agent of agents) {
+    const alternative = scientAgentAlternativeModel(
+      agent,
+      input.currentSelection.model,
+      (slug) => !eligible(agent, { instanceId: agent.instanceId, model: slug }, true),
+      currentFamily,
+    );
+    if (alternative) return { instanceId: agent.instanceId, model: alternative.slug };
+  }
+  return undefined;
+}
+// SCIENT-FORK:END
+
 export function resolveNewThreadModelSelection(input: {
   readonly defaultSelection: ModelSelection | null;
   readonly explicitSelection?: ModelSelection | null;
@@ -93,50 +167,17 @@ export function resolveNewThreadModelSelection(input: {
 }) {
   const selection = input.explicitSelection ?? input.defaultSelection;
   const unchanged = { selection, fallback: null };
-  // SCIENT-FORK:START — Scient Agent answers with another signed-in account's model first.
-  if (!input.explicitSelection && selection) {
-    const agent = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-    const limited = exhaustedUsageWindow(agent, input.now, selection.model);
-    const alternative =
-      limited &&
-      scientAgentAlternativeModel(
-        agent,
-        selection.model,
-        (slug) => exhaustedUsageWindow(agent, input.now, slug) !== undefined,
-      );
-    if (agent && limited && alternative)
-      return {
-        selection: { instanceId: selection.instanceId, model: alternative.slug },
-        fallback: { provider: agent, resetsAt: limited.resetsAt ?? null },
-      };
-  }
-  // SCIENT-FORK:END
-  if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
+  if (input.explicitSelection || !selection) return unchanged;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
   const window = exhaustedUsageWindow(provider, input.now, selection.model);
-  const fallback = input.providers.find(
-    (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
-  );
-  if (
-    !provider ||
-    !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
-  )
-    return unchanged;
-  return {
-    selection: input.fallbackSelection,
-    fallback: { provider, resetsAt: window.resetsAt ?? null },
-  };
+  if (!provider || !window) return unchanged;
+  const fallback = resolveUsageLimitFallback({ ...input, currentSelection: selection });
+  return fallback
+    ? {
+        selection: fallback,
+        fallback: { provider, resetsAt: window.resetsAt ?? null },
+      }
+    : unchanged;
 }
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
@@ -150,28 +191,6 @@ export const CHATGPT_WORKSPACE_ADMIN_REQUEST =
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
-}
-
-/** A historical limit must not turn an unrelated current failure into a usage notice. */
-export function isChatGptUsageLimitError(
-  activities: readonly OrchestrationThreadActivity[],
-  error: string | null | undefined,
-): boolean {
-  if (!error) return false;
-  for (let index = activities.length - 1; index >= 0; index--) {
-    const activity = activities[index]!;
-    if (activity.kind !== "runtime.error") continue;
-    const payload = activity.payload;
-    return (
-      typeof payload === "object" &&
-      payload !== null &&
-      "code" in payload &&
-      payload.code === CHATGPT_USAGE_LIMIT_CODE &&
-      "message" in payload &&
-      payload.message === error
-    );
-  }
-  return false;
 }
 
 export const CURSOR_USAGE_WINDOWS = [
@@ -205,7 +224,9 @@ function cursorUsageWindowRank(id: string): number {
   return rank < 0 ? CURSOR_USAGE_WINDOWS.length : rank;
 }
 
-function providersWithLimits(providers: readonly ServerProvider[]): readonly ServerProvider[] {
+export function providersWithLimits(
+  providers: readonly ServerProvider[],
+): readonly ServerProvider[] {
   return providers.filter(
     (provider) =>
       provider.enabled &&
@@ -226,7 +247,10 @@ export type LimitPresentations = ReadonlyMap<
   }
 >;
 
-export function collectExternalUsageLinks(presentations: LimitPresentations) {
+export function collectExternalUsageLinks(
+  presentations: LimitPresentations,
+  accountLabel = (provider: string, environment: string) => `${provider} on ${environment}`,
+) {
   const links = new Map<
     string,
     {
@@ -240,7 +264,10 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       const external = provider.usageLimits?.externalUsage;
       if (external && provider.auth.status === "authenticated") {
-        const account = `${provider.displayName ?? provider.instanceId} on ${presentation.entry.target.label}`;
+        const account = accountLabel(
+          provider.displayName ?? provider.instanceId,
+          presentation.entry.target.label,
+        );
         links.set(external.url, {
           ...external,
           message: provider.usageLimits?.unavailable?.message,
@@ -298,6 +325,32 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 }
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
+
+function limitAccountKeyResolver(presentations: LimitPresentations) {
+  return accountKeyResolver(
+    [...presentations.values()].flatMap((presentation) => [
+      ...(presentation.serverConfig?.providers ?? [])
+        .filter((provider) => provider.enabled)
+        .map(nativeReport),
+      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
+    ]),
+  );
+}
+
+const nativeRowKey = (
+  resolveKey: ReturnType<typeof accountKeyResolver>,
+  environmentId: EnvironmentId,
+  provider: ServerProvider,
+) => resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`;
+
+const hubRowKey = (
+  resolveKey: ReturnType<typeof accountKeyResolver>,
+  environmentId: EnvironmentId,
+  source: UsageLimitSourceSnapshot,
+  account: UsageLimitSourceAccount,
+) =>
+  resolveKey(account) ??
+  `${hubIdentity(environmentId, source)}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
 
 // Source ids are environment-local, so only a remote endpoint names the same hub across environments.
 function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
@@ -405,19 +458,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       },
     });
   };
-  const resolveKey = accountKeyResolver(
-    [...presentations.values()].flatMap((presentation) => [
-      ...(presentation.serverConfig?.providers ?? [])
-        .filter((provider) => provider.enabled)
-        .map(nativeReport),
-      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
-    ]),
-  );
+  const resolveKey = limitAccountKeyResolver(presentations);
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
-      merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
+      merge(nativeRowKey(resolveKey, environmentId, provider), {
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
@@ -443,7 +489,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         // A resolved account already has an identity; its public key must stay distinct from others'.
         const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
         const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolved ?? key, {
+        merge(hubRowKey(resolveKey, environmentId, source, account), {
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),
@@ -470,27 +516,37 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   return [...accounts.values()];
 }
 
-export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
-  const label = (environmentLabel: string, subject: string) =>
-    presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
-  const notices = new Set<string>();
-  for (const presentation of presentations.values()) {
-    const environmentLabel = presentation.entry.target.label;
+/** Hub accounts whose read failed and that no other report shows as a row, with their names. */
+export function unshownFailedHubAccounts(
+  presentations: LimitPresentations,
+): ReadonlyMap<UsageLimitSourceAccount, string> {
+  const resolveKey = limitAccountKeyResolver(presentations);
+  const shownRows = new Set<string>();
+  for (const [environmentId, presentation] of presentations) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
-      const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
-      const name = provider.displayName?.trim() || String(provider.driver);
-      if (notice) notices.add(`${label(environmentLabel, name)}: ${notice}`);
+      if (provider.usageLimits && limitsNotice(provider.usageLimits) === null) {
+        shownRows.add(nativeRowKey(resolveKey, environmentId, provider));
+      }
     }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
-      if (source.error) {
-        notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0) {
-        notices.add(`${label(environmentLabel, source.label)}: No accounts reported.`);
+      for (const account of source.accounts) {
+        if (limitsNotice(account.usageLimits) === null) {
+          shownRows.add(hubRowKey(resolveKey, environmentId, source, account));
+        }
       }
     }
   }
-  return [...notices];
+  const failed = new Map<UsageLimitSourceAccount, string>();
+  for (const [environmentId, presentation] of presentations) {
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      for (const account of source.accounts) {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") continue;
+        if (shownRows.has(hubRowKey(resolveKey, environmentId, source, account))) continue;
+        failed.set(account, account.email ?? hubAccountName(account));
+      }
+    }
+  }
+  return failed;
 }
 
 export interface LimitPoolMember {
@@ -749,7 +805,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
 }
 
-export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
+function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "unsupported") {
     return limits.unavailable.message ?? "This account has no subscription limits.";
   }
@@ -800,16 +856,6 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   return "on";
 }
 
-export function formatDuration(ms: number): string {
-  const remaining = Math.max(0, ms);
-  const days = Math.floor(remaining / DAY);
-  const hours = Math.floor((remaining % DAY) / HOUR);
-  const minutes = Math.floor((remaining % HOUR) / MINUTE);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
 /** One redeemable reset as clients offer it; `input` already names the chosen credit. */
 export interface ResetCreditChoice {
   readonly key: string;
@@ -820,52 +866,20 @@ export interface ResetCreditChoice {
   readonly input: ProviderConsumeResetCreditInput;
 }
 
-export function resetCreditChoices(
-  credits: ServerProviderResetCredits,
-  input: ProviderConsumeResetCreditInput,
-  now: number,
-  compact = false,
-): ReadonlyArray<ResetCreditChoice> {
-  const expiresIn = (at: string | undefined) => (at ? formatDuration(Date.parse(at) - now) : null);
-  if (credits.options && "instanceId" in input) {
-    return credits.options.map((option) => {
-      const expires = expiresIn(option.expiresAt);
-      return {
-        key: option.creditId,
-        summary: `${option.label} · ${option.availableCount} left${expires ? ` · expires in ${expires}` : ""}`,
-        actionLabel: "Use",
-        confirmDescription: `${option.label}: ${option.description} This cannot be undone.`,
-        availableCount: option.availableCount,
-        input: { ...input, creditId: option.creditId },
-      };
-    });
-  }
-  const count = credits.availableCount;
-  const expires = expiresIn(credits.nextExpiresAt);
-  return [
-    {
-      key: "next",
-      summary:
-        count === 0
-          ? "No reset credits banked"
-          : compact
-            ? `${count} banked${expires ? ` · expires in ${expires}` : ""}`
-            : `${count} ${count === 1 ? "reset credit" : "reset credits"} banked${expires ? ` · next expires in ${expires}` : ""}`,
-      actionLabel: "Use reset",
-      confirmDescription:
-        "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
-      availableCount: count,
-      input,
-    },
-  ];
-}
+export type ResetCountdown =
+  | { readonly kind: "now" }
+  | { readonly kind: "momentarily" }
+  | { readonly kind: "in"; readonly ms: number };
 
-export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
+export function resetCountdown(
+  window: ServerProviderUsageWindow,
+  now: number,
+): ResetCountdown | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
-  if (resetsAt <= now) return "resets now";
-  if (resetsAt - now < MINUTE) return "Resets momentarily";
-  return `resets in ${formatDuration(resetsAt - now)}`;
+  if (resetsAt <= now) return { kind: "now" };
+  if (resetsAt - now < MINUTE) return { kind: "momentarily" };
+  return { kind: "in", ms: resetsAt - now };
 }
 
 export const USAGE_LIMITS_COMMAND = {
@@ -942,27 +956,102 @@ export function withUsageLimitsCommands(
   });
 }
 
+/** The hubs an instance sends its requests through: those whose address is its endpoint. */
+export function instanceHubs(
+  provider: ServerProvider,
+  sources: UsageLimitSourceSnapshots,
+): UsageLimitSourceSnapshots {
+  const endpoint = provider.auth.endpoint;
+  return endpoint === undefined ? [] : sources.filter((source) => source.origin === endpoint);
+}
+
+// Antigravity meters Gemini Argon, Gemini Carbon, other Gemini, and Claude/GPT models apart.
+function antigravityQuotaFamily(id: string) {
+  if (!id.startsWith("gemini")) return "shared";
+  return id.includes("argon") ? "argon" : id.includes("carbon") ? "carbon" : "gemini";
+}
+
+/** Each Antigravity quota blocks only the models it meters. */
+export function antigravityWindowLimitsModel(
+  window: Pick<ServerProviderUsageWindow, "id">,
+  model: string | null,
+): boolean {
+  // A hub can prefix model ids, such as "ag/gemini-3.1-pro".
+  const base = model?.slice(model.lastIndexOf("/") + 1);
+  // An alias such as "fast" may route to either quota, so both hold it back.
+  if (base === undefined || !/^(gemini|claude|gpt)/.test(base)) return true;
+  return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
+}
+
+/** The hub accounts that serve a model: those that list it, else every account of the driver. */
+export function hubRoutes(
+  sources: UsageLimitSourceSnapshots,
+  driver: ServerProvider["driver"],
+  model: string | null,
+): (account: UsageLimitSourceAccount) => boolean {
+  // Claude Code's 1M-context suffix is not part of the model id a hub routes.
+  const full = model?.replace(/\[1m\]$/i, "");
+  // The hub routes a thinking suffix such as "gpt-5.2(high)" by its base model when one lists it.
+  const base = full?.replace(/\([^)]*\)$/, "");
+  const lists = (id: string | undefined) =>
+    sources.some((source) => source.accounts.some((account) => account.models?.includes(id ?? "")));
+  const slug = lists(base) ? base : full;
+  const listed = (account: UsageLimitSourceAccount) =>
+    slug !== undefined && account.models?.includes(slug) === true;
+  const serving = new Set(
+    sources.flatMap((source) => source.accounts.filter(listed).map((account) => account.driver)),
+  );
+  // Model ids such as "opus" are aliases no hub lists, so no listing falls back to the driver.
+  if (serving.size === 0)
+    return (account) => account.driver === driver && account.models?.length !== 0;
+  // An account whose model list was unreadable may serve the model too.
+  return (account) =>
+    account.models ? listed(account) : serving.has(account.driver) || account.driver === driver;
+}
+
 export function collectProviderUsageLimits(
   instanceId: ProviderInstanceId,
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
+  model: string | null = null,
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
-  if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
+  if (!selected) return null;
+  // Only an instance sent to a hub is known to reach the accounts that hub routes its model to.
+  const hubs = instanceHubs(selected, sources);
+  const routes =
+    hubs.length > 0
+      ? hubRoutes(hubs, selected.driver, model)
+      : (account: UsageLimitSourceAccount) => account.driver === selected.driver;
+  const shownHubs = hubs.length > 0 ? hubs : sources;
+  const drivers = new Set(
+    shownHubs.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
+  );
+  if (drivers.size === 0) drivers.add(selected.driver);
+  if (![...drivers].some((driver) => hasProviderUsageLimits(driver, providers, sources))) {
+    return null;
+  }
   const resolveKey = accountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);
+  // Behind a hub, a local login counts only when it is one of the accounts the hub routes to.
+  const routedKeys =
+    hubs.length > 0
+      ? new Set(hubs.flatMap((source) => source.accounts.filter(routes).map(resolveKey)))
+      : null;
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
     string,
     { usage: NativeSnapshot; credits: NativeSnapshot | null }
   >();
   for (const provider of providersWithLimits(providers)) {
-    if (provider.driver !== selected.driver || !provider.usageLimits) continue;
+    if (!drivers.has(provider.driver) || !provider.usageLimits) continue;
+    const accountKey = resolveKey(nativeReport(provider));
+    if (routedKeys && (accountKey === null || !routedKeys.has(accountKey))) continue;
     const snapshot = { provider, limits: provider.usageLimits };
-    const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
+    const key = accountKey ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
     const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
     const usable = limitsNotice(snapshot.limits) === null;
@@ -997,7 +1086,8 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const hubCredits = sources
+    // Only a hub this instance reaches may redeem a credit for its thread.
+    const hubCredits = shownHubs
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>
@@ -1039,8 +1129,8 @@ export function collectProviderUsageLimits(
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
-  for (const source of sources) {
-    const matching = source.accounts.filter((account) => account.driver === selected.driver);
+  for (const source of shownHubs) {
+    const matching = source.accounts.filter(routes);
     for (const account of matching) {
       const key = resolveKey(account);
       if (key && nativeAccountKeys.has(key)) continue;

@@ -4,6 +4,7 @@ import { languages } from "@codemirror/language-data";
 import { highlightTree, tags } from "@lezer/highlight";
 import { LatexTextField, restoredLatexFieldDraft } from "./LatexTextField";
 import type { LatexListingPresentation } from "./latexLiteral";
+import { T, useGT, Var } from "gt-react";
 
 const highlighting = HighlightStyle.define([
   { tag: tags.keyword, class: "scient-latex-listing-keyword" },
@@ -87,6 +88,7 @@ export function LatexLiteralCodeView(props: {
   onCaptionEditing: (editing: boolean) => void;
   onExit: () => void;
 }) {
+  const gt = useGT();
   const [live, setLive] = useState(() => restoredLatexFieldDraft(props.bodyDraftKey, props.body));
   const host = useRef<HTMLDivElement>(null);
   const [syntax, setSyntax] = useState<{ name: string; language: Language } | null>(null);
@@ -127,9 +129,15 @@ export function LatexLiteralCodeView(props: {
   const caption =
     props.caption === null && !props.captionEditing ? null : (
       <div className="scient-latex-listing-caption">
-        {props.caption !== null && <span>Listing {props.ordinal}: </span>}
+        {props.caption !== null && (
+          <span>
+            <T>
+              Listing <Var>{props.ordinal}</Var>:{" "}
+            </T>
+          </span>
+        )}
         <LatexTextField
-          aria-label="Listing caption"
+          aria-label={gt("Listing caption")}
           rows={1}
           value={props.caption ?? ""}
           disabled={props.disabled}
@@ -222,8 +230,8 @@ export function LatexLiteralCodeView(props: {
           dir="ltr"
           aria-label={
             ["lstlisting", "tcblisting"].includes(props.environment)
-              ? "Code listing"
-              : "Literal text"
+              ? gt("Code listing")
+              : gt("Literal text")
           }
           rows={1}
           spellCheck={false}

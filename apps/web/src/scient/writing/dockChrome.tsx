@@ -1,6 +1,7 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEffectEvent } from "react";
 
+import { T, useGT } from "gt-react";
 import { ChevronDown, ChevronUp, Ellipsis } from "lucide-react";
 import {
   Fragment,
@@ -397,6 +398,7 @@ export function DockOverflowRow(props: {
   readonly overflowButtonIcon?: ReactNode;
   readonly overflowPosition?: "end" | "after-groups";
 }) {
+  const gt = useGT();
   const dockRef = useRef<HTMLDivElement>(null);
   const widthsRef = useRef(new Map<string, number>());
   const compactWidthsRef = useRef(new Map<string, number>());
@@ -551,7 +553,7 @@ export function DockOverflowRow(props: {
           >
             {showOverflowMenu ? (
               <DockMenu
-                label={props.overflowButtonLabel ?? "More actions"}
+                label={props.overflowButtonLabel ?? gt("More actions")}
                 commandScope={props.commandScope}
                 icon={props.overflowButtonIcon ?? <Ellipsis className="size-4" />}
                 chevron={false}
@@ -589,7 +591,8 @@ export function DockOverflowRow(props: {
  * carries a label so the bar never reads as empty chrome.
  */
 function DockCollapseHandle(props: { readonly expanded: boolean; readonly onToggle: () => void }) {
-  const label = props.expanded ? "Hide formatting tools" : "Show formatting tools";
+  const gt = useGT();
+  const label = props.expanded ? gt("Hide formatting tools") : gt("Show formatting tools");
   return (
     <Tooltip>
       <TooltipTrigger
@@ -606,7 +609,9 @@ function DockCollapseHandle(props: { readonly expanded: boolean; readonly onTogg
             ) : (
               <>
                 <ChevronDown className="size-4" />
-                <span className="pe-1 text-xs text-muted-foreground">Formatting</span>
+                <span className="pe-1 text-xs text-muted-foreground">
+                  <T context="text formatting commands">Formatting</T>
+                </span>
               </>
             )}
           </button>

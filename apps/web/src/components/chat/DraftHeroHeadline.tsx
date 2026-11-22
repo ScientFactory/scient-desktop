@@ -6,7 +6,10 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon } from "lucide-react";
+// SCIENT-FORK:START — the project chip above the composer; the sentence no longer embeds it.
+import { T, useGT } from "gt-react";
+import { ChevronDownIcon, FolderIcon, FolderPlusIcon, XIcon } from "lucide-react";
+// SCIENT-FORK:END
 import { useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
@@ -16,7 +19,7 @@ import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { isTriagePrompt } from "@t3tools/shared/triagePrompt";
 import { useClientSettings } from "~/hooks/useSettings";
-import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
+import { seedDraftModelSelection } from "~/lib/seedDraftModelSelection";
 import {
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
@@ -27,11 +30,7 @@ import {
   projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
-import {
-  useEnvironments,
-  usePrimaryEnvironmentId,
-  useEnvironmentProviders,
-} from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { isProjectPinShortcut, ProjectPinButton } from "../ProjectPinButton";
@@ -47,15 +46,16 @@ import {
   useComboboxFilter,
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { InlineButton } from "../ui/button";
+// SCIENT-FORK:START — the project chip above the composer replaces the heading's inline picker.
+import { Button } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
-import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
+// SCIENT-FORK:END
 import { TriageDraftHero } from "./TriageDraftHero";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { resolveProjectDefaultProviderModelSelection } from "../../providerInstances";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 const ADD_PROJECT_VALUE = "add-project";
+// SCIENT-FORK:START — "No project" is the chip's last choice instead of a line under the heading.
+const NO_PROJECT_VALUE = "no-project";
+// SCIENT-FORK:END
 
 interface PickerItem {
   readonly value: string;
@@ -73,9 +73,9 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const gt = useGT();
   const projects = useProjects();
   const { environments } = useEnvironments();
-  const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
@@ -86,8 +86,6 @@ export function DraftHeroHeadline({
   const isTriageDraftPrompt = useComposerDraftStore((store) =>
     draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
   );
-  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
-  const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
@@ -136,8 +134,9 @@ export function DraftHeroHeadline({
   const hasResolvedProject =
     activeProjectRef?.projectId != null &&
     (activeProjectGroup !== null || activeProjectTitle !== null);
+  // SCIENT-FORK:START — shouldShowProjectMenu moved below, where it also counts No project.
   const canChooseProject = projectPickerEntries.length > 0;
-  const shouldShowProjectMenu = canChooseProject;
+  // SCIENT-FORK:END
   const menuEntries = projectPickerEntries.filter(
     ({ targetProject }) =>
       !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
@@ -155,16 +154,24 @@ export function DraftHeroHeadline({
   const isScratchDraft =
     activeProject !== null &&
     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
+  // SCIENT-FORK:START — the chip's menu also offers No project, so it shows when only that does.
+  const canStartScratch = scratchWorkspaceRoot !== null && !isScratchDraft;
+  const shouldShowProjectMenu = canChooseProject || canStartScratch;
+  // SCIENT-FORK:END
 
   // Pinning from a row keeps rows in place while the picker is open.
-  const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
-    [
-      ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
-      { value: ADD_PROJECT_VALUE, label: "Add project" },
-    ],
+  // SCIENT-FORK:START — only project rows keep their order; the actions always come last.
+  const orderedProjectItems: readonly PickerItem[] = useOrderWhileOpen(
+    menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
     (item) => item.value,
     pickerOpen,
   );
+  const pickerItems: readonly PickerItem[] = [
+    ...orderedProjectItems,
+    { value: ADD_PROJECT_VALUE, label: gt("Add project") },
+    ...(canStartScratch ? [{ value: NO_PROJECT_VALUE, label: gt("No project") }] : []),
+  ];
+  // SCIENT-FORK:END
   const pickerSearch = pickerQuery.trim();
   const filteredPickerItems =
     pickerSearch.length === 0
@@ -172,6 +179,9 @@ export function DraftHeroHeadline({
       : pickerItems.filter(
           (item) =>
             item.value !== ADD_PROJECT_VALUE &&
+            // SCIENT-FORK:START
+            item.value !== NO_PROJECT_VALUE &&
+            // SCIENT-FORK:END
             pickerFilter.contains(item, pickerSearch, (candidate) => candidate.label),
         );
   const selectedPickerItem = pickerItems.find((item) => item.value === activeProjectKey) ?? null;
@@ -193,51 +203,13 @@ export function DraftHeroHeadline({
       return;
     }
     pendingScratchRef.current = null;
-    const currentDraft = getComposerDraft(draftId);
-    if (!composerDraftHasUserContent(currentDraft)) {
-      void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
+    const projectRef = scopeProjectRef(project.environmentId, project.id);
+    if (!composerDraftHasUserContent(getComposerDraft(draftId))) {
+      void openProjectDraft(projectRef);
       return;
     }
-    setLogicalProjectDraftThreadId(
-      logicalProjectKey,
-      scopeProjectRef(project.environmentId, project.id),
-      draftId,
-    );
-    if (!hasExplicitComposerModelSelection(currentDraft)) {
-      applyStickyState(draftId);
-      const environmentConfig = environments.find(
-        (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig;
-      const environmentSettings = environmentConfig?.settings;
-      const defaultSelection = environmentSettings
-        ? resolveProjectSettings(environmentSettings, project.id, project).settings
-            .defaultModelSelection
-        : project.defaultModelSelection;
-      const fallbackResolution = resolveNewThreadModelSelection({
-        defaultSelection:
-          defaultSelection ??
-          (useComposerDraftStore.getState().stickyActiveProvider !== null || !environmentSettings
-            ? null
-            : resolveProjectDefaultProviderModelSelection(
-                providersByEnvironment.get(project.environmentId) ?? [],
-                environmentSettings,
-                project.id,
-              )),
-        fallbackSelection: environmentSettings?.fallbackModelSelection ?? null,
-        providers: providersByEnvironment.get(project.environmentId) ?? [],
-        ...(environmentSettings ? { settings: environmentSettings } : {}),
-        projectId: project.id,
-        now: Date.now(),
-      });
-      const defaultModelSelection = fallbackResolution.fallback
-        ? fallbackResolution.selection
-        : defaultSelection;
-      if (defaultModelSelection) {
-        setModelSelection(draftId, defaultModelSelection, {
-          replaceOptions: true,
-        });
-      }
-    }
+    setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId);
+    seedDraftModelSelection(draftId, projectRef);
   };
   const startScratch = async (): Promise<boolean> => {
     if (scratchTargetEnvironmentId === null || isScratchDraft) {
@@ -271,13 +243,18 @@ export function DraftHeroHeadline({
         setPickerQuery("");
       }}
       value={selectedPickerItem}
-      onValueChange={(item) => {
+      // SCIENT-FORK:START — Add project and No project run only from a click or Enter on their
+      // row, never from a letter typed on the closed chip.
+      onValueChange={(item, details) => {
         if (!item) return;
         setPickerOpen(false);
-        if (item.value === ADD_PROJECT_VALUE) {
-          openAddProject();
+        if (item.value === ADD_PROJECT_VALUE || item.value === NO_PROJECT_VALUE) {
+          if (details.reason !== "item-press") return;
+          if (item.value === ADD_PROJECT_VALUE) openAddProject();
+          else void startScratch();
           return;
         }
+        // SCIENT-FORK:END
         const entry = projectEntryByKey.get(item.value);
         if (!entry || item.value === activeProjectKey) {
           return;
@@ -289,27 +266,43 @@ export function DraftHeroHeadline({
         <TooltipTrigger
           render={
             <ComboboxTrigger
-              render={<InlineButton tone="picker" />}
+              // SCIENT-FORK:START — a chip above the composer, as the strip below it uses.
+              render={<Button variant="ghost-muted" size="compact" />}
               data-draft-project-trigger=""
-              className="pointer-events-auto min-w-0 max-w-full align-baseline"
+              className="pointer-events-auto min-w-0 max-w-full"
+              // SCIENT-FORK:END
             />
           }
         >
+          {/* SCIENT-FORK:START */}
+          {isScratchDraft ? (
+            <XIcon className="shrink-0" />
+          ) : activeProjectGroup ? (
+            <ProjectFavicon project={activeProjectGroup} className="size-3.5 shrink-0" />
+          ) : (
+            <FolderIcon className="shrink-0" />
+          )}
           <DraftProjectName
             value={
-              isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a workspace")
+              isScratchDraft
+                ? gt("No project")
+                : (activeProjectDisplayName ?? gt("Choose a workspace"))
             }
             singleLine
           />
+          <ChevronDownIcon className="shrink-0 opacity-60" />
+          {/* SCIENT-FORK:END */}
         </TooltipTrigger>
         {activeProjectDisplayName && !isScratchDraft ? (
           <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
         ) : null}
       </Tooltip>
-      <ComboboxPopup align="center" className="w-72 overflow-hidden">
+      {/* SCIENT-FORK:START — opens from the chip's left edge. */}
+      <ComboboxPopup align="start" className="w-72 overflow-hidden">
+        {/* SCIENT-FORK:END */}
         <ComboboxSearchInput
-          aria-label="Search projects"
-          placeholder="Search projects..."
+          aria-label={gt("Search projects")}
+          placeholder={gt("Search projects...")}
           value={pickerQuery}
           onChange={(event) => setPickerQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -323,17 +316,23 @@ export function DraftHeroHeadline({
             toggleProjectGroupPin(group);
           }}
         />
-        <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+        <ComboboxEmpty>
+          <T>No matching projects.</T>
+        </ComboboxEmpty>
         <ComboboxList>
           {(item: PickerItem) => {
             const entry = projectEntryByKey.get(item.value);
             return (
               <ComboboxItem key={item.value} hideIndicator value={item}>
+                {/* SCIENT-FORK:START — No project's icon. */}
                 {item.value === ADD_PROJECT_VALUE ? (
                   <FolderPlusIcon className="size-4 shrink-0" />
+                ) : item.value === NO_PROJECT_VALUE ? (
+                  <XIcon className="size-4 shrink-0" />
                 ) : entry ? (
                   <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
                 ) : null}
+                {/* SCIENT-FORK:END */}
                 <Tooltip>
                   <TooltipTrigger render={<span className="min-w-0 flex-1 text-sm" />}>
                     <DraftProjectName value={item.label} />
@@ -362,39 +361,19 @@ export function DraftHeroHeadline({
       </ComboboxPopup>
     </Combobox>
   ) : (
-    <button
-      type="button"
+    // SCIENT-FORK:START — without projects the chip adds one; the "or start without a project"
+    // line is the chip's No project item.
+    <Button
+      variant="ghost-muted"
+      size="compact"
       onClick={openAddProject}
-      className="pointer-events-auto inline min-w-0 max-w-full cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="pointer-events-auto min-w-0 max-w-full"
     >
-      <DraftProjectName value={activeProjectTitle ?? "Add a project"} singleLine />
-    </button>
+      <FolderPlusIcon className="shrink-0" />
+      <DraftProjectName value={activeProjectTitle ?? gt("Add a project")} singleLine />
+    </Button>
   );
-
-  const noProjectShortcut = shortcutLabelForCommand(keybindings, "chat.newWithoutProject");
-  const orStartWithoutProject =
-    scratchWorkspaceRoot !== null && !isScratchDraft && (hasResolvedProject || canChooseProject) ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <InlineButton
-              tone="muted"
-              className="pointer-events-auto"
-              onClick={() =>
-                void startScratch().then((started) => {
-                  if (started) {
-                    document.querySelector<HTMLElement>("[data-draft-project-trigger]")?.focus();
-                  }
-                })
-              }
-            />
-          }
-        >
-          or start without a project
-        </TooltipTrigger>
-        {noProjectShortcut ? <TooltipPopup side="bottom">{noProjectShortcut}</TooltipPopup> : null}
-      </Tooltip>
-    ) : null;
+  // SCIENT-FORK:END
 
   if (isScratchDraft && isTriageDraftPrompt) {
     const environment = environments.find(
@@ -408,28 +387,18 @@ export function DraftHeroHeadline({
     );
   }
 
+  // SCIENT-FORK:START — one question, with the project chosen in a chip above the composer.
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      {hasResolvedProject && !isScratchDraft ? (
-        <DraftHeroProjectHeading projectName={activeProjectDisplayName ?? "Choose a project"}>
-          {projectSelector}
-        </DraftHeroProjectHeading>
-      ) : (
-        <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-          {isScratchDraft ? (
-            <>What should we work on?</>
-          ) : canChooseProject ? (
-            <>{projectSelector} to start</>
-          ) : (
-            <>Add a project to start</>
-          )}
-        </h1>
-      )}
-      {scratchWorkspaceRoot === null ? null : (
-        <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
-          {isScratchDraft ? projectSelector : orStartWithoutProject}
-        </p>
-      )}
+    <div className="mx-auto flex w-full max-w-5xl flex-col">
+      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:sr-only">
+        {hasResolvedProject || isScratchDraft || canChooseProject || canStartScratch ? (
+          <T>What should we work on?</T>
+        ) : (
+          <T>Add a project to start</T>
+        )}
+      </h1>
+      <div className="mt-6 flex w-full min-w-0 items-center">{projectSelector}</div>
     </div>
   );
+  // SCIENT-FORK:END
 }

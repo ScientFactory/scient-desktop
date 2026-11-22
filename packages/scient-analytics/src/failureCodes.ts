@@ -27,6 +27,7 @@ const OMP_CODES = new Set([
   "empty-response",
   "provider-finish-error",
   "timeout",
+  "network",
   "silent-abort",
   "user-interrupt",
   "abort",
@@ -37,11 +38,36 @@ const OMP_CODES = new Set([
   "idle_confirmation_failed",
   "unconfirmed",
   "command_rejected",
+  // No cause from the agent: where the failure's evidence came from.
+  "unrecognized_error_kind",
+  "prompt_result_error",
+  "retry_exhausted",
+  "assistant_error",
+  "prompt_command_failed",
   "command_timeout",
   "rpc_failed",
 ]);
 
-/** Claude Agent SDK result subtypes, process exits, and Scient's own Claude codes. */
+/** The Claude Agent SDK's closed assistant-message errors. */
+const CLAUDE_ASSISTANT_ERRORS = [
+  "authentication_failed",
+  "oauth_org_not_allowed",
+  "account_on_hold",
+  "verification_required",
+  "billing_error",
+  "rate_limit",
+  "overloaded",
+  "invalid_request",
+  "model_not_found",
+  "server_error",
+  "max_output_tokens",
+  "cloud_credential_error",
+];
+
+/**
+ * Claude Agent SDK result subtypes and terminal reasons, its assistant errors (as
+ * `assistant_<error>`), process exits, and Scient's own Claude codes.
+ */
 const CLAUDE_CODES = new Set([
   "error_max_turns",
   "error_during_execution",
@@ -51,6 +77,30 @@ const CLAUDE_CODES = new Set([
   "process_exited_nonzero",
   "claude_mod_ui_unsupported",
   "compaction_failed",
+  "claude_request_unanswered",
+  "claude_stream_ended",
+  "claude_query_failed",
+  "sdk_result_error",
+  // TerminalReason, minus `completed`.
+  "blocking_limit",
+  "rapid_refill_breaker",
+  "prompt_too_long",
+  "image_error",
+  "model_error",
+  "api_error",
+  "malformed_tool_use_exhausted",
+  "aborted_streaming",
+  "aborted_tools",
+  "stop_hook_prevented",
+  "hook_stopped",
+  "tool_deferred",
+  "max_turns",
+  "background_requested",
+  "budget_exhausted",
+  "structured_output_retry_exhausted",
+  "tool_deferred_unavailable",
+  "turn_setup_failed",
+  ...CLAUDE_ASSISTANT_ERRORS.map((error) => `assistant_${error}`),
 ]);
 
 /** Codex app-server error variants. */
@@ -133,6 +183,24 @@ const DROID_CODES = new Set([
 
 const HTTP_CODE = /^http_[1-5]\d\d$/u;
 const CLAUDE_API_ERROR_CODE = /^api_error_[1-5]\d\d$/u;
+
+/**
+ * The class to report for a failure whose validated code names it more exactly. Scient Agent can
+ * end a turn on a usage-limit kind without the cost cap or HTTP 429 its classifier keys on, so
+ * that turn says provider_error while its code says usage-limit. Only the report changes: the
+ * classifier also drives recovery, which keeps its own class.
+ */
+export function analyticsFailureClass(
+  provider: string,
+  failureClass: string,
+  failureCode: string | undefined,
+): string {
+  return (provider === "scient" || provider === "omp") &&
+    failureClass === "provider_error" &&
+    failureCode === "usage-limit"
+    ? "usage_limit"
+    : failureClass;
+}
 
 /** The code to report for a failure of `provider`, or undefined when it is not a known category. */
 export function analyticsFailureCode(provider: string, code: unknown): string | undefined {

@@ -686,7 +686,7 @@ it.effect.each([
         stopDelegatedTasks: false,
       };
       const publicCommand = entry === "decoded" ? yield* decodeDispatchCommand(command) : command;
-      yield* ThreadMessageIntake.dispatchCommand(publicCommand);
+      yield* ThreadMessageIntake.dispatchCommand(publicCommand, { managesProviders: true });
       // The fixture never starts a provider; keep the real Stop effect and its worker.
       yield* sql`
         DELETE FROM orchestration_v2_effect_outbox WHERE command_id != ${command.commandId}

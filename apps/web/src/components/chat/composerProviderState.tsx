@@ -18,7 +18,7 @@ import {
 import type { PromptUltrathink } from "@t3tools/client-runtime/model-traits";
 
 import type { DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import { getProviderModelCapabilities, keepsUnavailableModelOptions } from "../../providerModels";
 import { getReasoningTraitStep, type TraitsSelectionInput } from "./TraitsPicker";
 
 type ComposerProviderStateInput = {
@@ -86,7 +86,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     promptInjectionState = "none",
     includePlanAgent,
   } = input;
-  if (provider === "opencode" || provider === "cursor") {
+  if (keepsUnavailableModelOptions(provider, model)) {
     const normalizedModel = normalizeModelSlug(model, provider);
     const modelIsInCatalog = models.some((candidate) => candidate.slug === normalizedModel);
     if (!modelIsInCatalog) {

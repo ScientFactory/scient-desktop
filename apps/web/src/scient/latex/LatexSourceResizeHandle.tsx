@@ -1,4 +1,5 @@
 import { useRef, useState, type RefObject } from "react";
+import { useGT } from "gt-react";
 
 const minimumHeight = 64;
 
@@ -10,6 +11,7 @@ export function LatexSourceResizeHandle({
   field: RefObject<HTMLTextAreaElement | null>;
   onResize: (height: number) => void;
 }) {
+  const gt = useGT();
   const [size, setSize] = useState({ height: minimumHeight, maximum: 320 });
   const drag = useRef<{ id: number; y: number; height: number; maximum: number } | null>(null);
   const measure = () => {
@@ -39,12 +41,12 @@ export function LatexSourceResizeHandle({
       className="scient-latex-source-resize-handle"
       role="separator"
       tabIndex={0}
-      aria-label="Resize LaTeX code editor"
+      aria-label={gt("Resize LaTeX code editor")}
       aria-orientation="horizontal"
       aria-valuemin={minimumHeight}
       aria-valuemax={Math.round(size.maximum)}
       aria-valuenow={Math.round(size.height)}
-      aria-valuetext={`${Math.round(size.height)} pixels high`}
+      aria-valuetext={gt("{height} pixels high", { height: Math.round(size.height) })}
       onFocus={() => {
         const measured = measure();
         if (measured) setSize(measured);

@@ -13,6 +13,7 @@ const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 function entry(input: {
   readonly status: ServerProvider["status"];
   readonly models: ServerProvider["models"];
+  readonly auth?: ServerProvider["auth"];
 }) {
   return deriveProviderInstanceEntries([
     {
@@ -22,7 +23,7 @@ function entry(input: {
       installed: true,
       version: "2.1.170",
       status: input.status,
-      auth: { status: "authenticated", required: true },
+      auth: input.auth ?? { status: "authenticated", required: true },
       checkedAt: "2026-08-09T00:00:00.000Z",
       models: input.models,
       slashCommands: [],
@@ -77,11 +78,13 @@ describe("readyProviderDefaultModel", () => {
     ).toBe("claude-sonnet");
   });
 
+  // A warning on a confirmed sign-in with models is usable, as in the composer's picker.
   it("does not hand an unready provider to the composer", () => {
     expect(
       readyProviderDefaultModel(
         entry({
           status: "warning",
+          auth: { status: "unknown", required: true },
           models: [
             {
               slug: "claude-sonnet",
@@ -107,17 +110,8 @@ describe("readyProviderDefaultModel", () => {
         },
       ],
     });
-    const incompleteEntry = entry({
-      status: "warning",
-      models: [
-        {
-          slug: "claude-sonnet",
-          name: "Claude Sonnet",
-          isCustom: false,
-          capabilities: null,
-        },
-      ],
-    });
+    // Signed in but with nothing to offer yet: a warning without models still needs attention.
+    const incompleteEntry = entry({ status: "warning", models: [] });
 
     expect(providerOnboardingStatusLabel(readyEntry)).toBe("Ready");
     expect(providerOnboardingStatusLabel(incompleteEntry)).toBe("Needs attention");

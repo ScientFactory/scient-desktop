@@ -12,6 +12,8 @@ import { createMarkdownPersistenceTransport } from "../markdownEditor/persistenc
 import { assembleVisualProject, type VisualProjectFile } from "./latexProjectVisual";
 import { latexWithoutComments } from "./latexSourceSyntax";
 import { latexDocumentInputs, type LatexDocumentInputs } from "./latexDocumentInputs";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 interface PreparationOptions {
   readonly selected?: MarkdownPersistenceLease;
@@ -59,7 +61,7 @@ export async function prepareLatexDocument(
     (options.selected.target.environmentId !== target.environmentId ||
       options.selected.target.cwd !== target.cwd)
   )
-    return { ok: false, message: "The selected file belongs to another workspace." };
+    return { ok: false, message: m(msg("The selected file belongs to another workspace.")) };
   const snapshotOf = (file: MarkdownPersistenceTarget) =>
     options.selected?.target.relativePath === file.relativePath
       ? options.selected.getSnapshot()
@@ -138,10 +140,16 @@ export async function prepareLatexDocument(
             ));
       if (unknownPending())
         return blocked(
-          "This document has unresolved includes and unsaved files. Save those files before continuing.",
+          m(
+            msg(
+              "This document has unresolved includes and unsaved files. Save those files before continuing.",
+            ),
+          ),
         );
       if (!inputs.finish(target, paths) || inputs.pending(target, paths))
-        return blocked("Finish or resolve the pending text in this document before continuing.");
+        return blocked(
+          m(msg("Finish or resolve the pending text in this document before continuing.")),
+        );
       let saved = true;
       for (const path of paths) {
         const file = { ...target, relativePath: path };
@@ -157,9 +165,12 @@ export async function prepareLatexDocument(
           lease.release();
         }
       }
-      if (!saved) return blocked("Resolve the unsaved changes in this document before continuing.");
+      if (!saved)
+        return blocked(m(msg("Resolve the unsaved changes in this document before continuing.")));
       if (inputs.pending(target, paths))
-        return blocked("Finish or resolve the pending text in this document before continuing.");
+        return blocked(
+          m(msg("Finish or resolve the pending text in this document before continuing.")),
+        );
       let changed = false;
       const revisions = new Map<string, string>();
       for (const path of paths) {
@@ -210,8 +221,12 @@ export async function prepareLatexDocument(
         if (isCurrent()) return { ok: true, revisions, isCurrent };
       }
     }
-    return blocked("The document changed while preparing it. Try again after finishing your edit.");
+    return blocked(
+      m(msg("The document changed while preparing it. Try again after finishing your edit.")),
+    );
   } catch (error) {
-    return blocked(error instanceof Error ? error.message : "Could not save the document's files.");
+    return blocked(
+      error instanceof Error ? error.message : m(msg("Could not save the document's files.")),
+    );
   }
 }

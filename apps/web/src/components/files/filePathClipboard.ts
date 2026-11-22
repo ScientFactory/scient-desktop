@@ -1,12 +1,16 @@
 import {
   ClipboardApiUnavailableError,
   ClipboardWriteError,
+  namedClipboardTarget,
   writeTextToClipboard,
 } from "~/hooks/useCopyToClipboard";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 
 import { isAbsolutePath } from "@t3tools/shared/path";
+
+import { m } from "~/i18n/messages";
 
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -69,12 +73,12 @@ export function resolveFilePathCopyValue(input: {
 
 function filePathCopyErrorDescription(error: unknown): string {
   if (isClipboardApiUnavailableError(error)) {
-    return "Clipboard API unavailable.";
+    return m(msg("Clipboard API unavailable."));
   }
   if (isClipboardWriteError(error)) {
-    return error.cause instanceof Error ? error.cause.message : "An error occurred.";
+    return error.cause instanceof Error ? error.cause.message : m(msg("An error occurred."));
   }
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : m(msg("An error occurred."));
 }
 
 export async function copyFilePathToClipboard(input: {
@@ -84,13 +88,16 @@ export async function copyFilePathToClipboard(input: {
 }): Promise<boolean> {
   const title = filePathCopyTitle(input.format);
   try {
-    return await writeTextToClipboard(input.value, title.toLowerCase());
+    return await writeTextToClipboard(input.value, namedClipboardTarget(title.toLowerCase()));
   } catch (error) {
     input.onError?.(error);
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: `Failed to copy ${title.toLowerCase()}`,
+        title:
+          input.format === "relative"
+            ? m(msg("Failed to copy relative path"))
+            : m(msg("Failed to copy full path")),
         description: filePathCopyErrorDescription(error),
       }),
     );

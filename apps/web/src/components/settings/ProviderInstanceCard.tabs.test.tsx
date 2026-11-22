@@ -10,6 +10,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { getDriverOption } from "./providerDriverMeta";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const environmentId = EnvironmentId.make("local");
 
 function renderEditor(driver: string, hasShippedDriver: boolean): string {

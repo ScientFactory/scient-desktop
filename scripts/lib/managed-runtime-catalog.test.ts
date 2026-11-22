@@ -18,6 +18,7 @@ import {
   refreshManagedRuntimeProvider,
   validateManagedRuntimeCatalog,
   validateManagedRuntimeCandidate,
+  withGitHubToken,
   type ManagedRuntimeCatalogData,
 } from "./managed-runtime-catalog.ts";
 import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json" with { type: "json" };
@@ -40,11 +41,13 @@ const scientDigest = "a".repeat(64);
 function scientRelease(
   version = "0.1.0",
   compressed: "none" | "all" | "without-checksum" = "none",
+  copySize = 123456,
 ) {
   const files = (name: string) => {
     const url = `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${name}`;
+    const size = name.endsWith(".zst") ? copySize : 123456;
     return [
-      { name, browser_download_url: url, size: 123456, digest: `sha256:${scientDigest}` },
+      { name, browser_download_url: url, size, digest: `sha256:${scientDigest}` },
       { name: `${name}.sha256`, browser_download_url: `${url}.sha256`, size: 94, digest: null },
     ];
   };
@@ -74,7 +77,10 @@ function scientFetch(
       return new Response(input.checksum ?? `${scientDigest}  ${name}\n`);
     }
     expect(init?.method).toBe("HEAD");
-    return new Response(null, { headers: { "content-length": String(input.size ?? 123456) } });
+    // The release's own size for the asset, unless the test overrides it.
+    const listed = release.assets.find((asset) => asset.browser_download_url === url.toString());
+    const size = input.size ?? listed?.size ?? 123456;
+    return new Response(null, { headers: { "content-length": String(size) } });
   };
 }
 
@@ -160,6 +166,18 @@ describe("Scient Agent first managed release", () => {
         scientFetch({ release: scientRelease("0.1.0", "without-checksum") }),
       ),
     ).rejects.toThrow(/missing scient-agent-.*\.zst or its checksum/u);
+  });
+
+  it("leaves out a compressed copy too large to download, and offers the binary alone", async () => {
+    const result = await refreshManagedRuntimeProvider(
+      currentCatalog,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all", 512 * 1024 * 1024 + 1) }),
+    );
+    const release = validateManagedRuntimeCandidate(result.catalog, "scient");
+    expect(Object.values(release.artifacts).map((artifact) => artifact.compressed)).toEqual(
+      scientArtifactNames.map(() => undefined),
+    );
   });
 
   it("publishes compressed copies added to an already published release", async () => {
@@ -255,7 +273,7 @@ describe("Scient Agent first managed release", () => {
   });
 
   // regression: 8f4842a96b feat(scient-agent): add managed runtime installation and maintenance
-  it.each(["0.0.9", "1.0.0", "0.1.0-beta.1", "0.1.0+build", "latest"])(
+  it.each(["0.0.9", "2.0.0", "0.1.0-beta.1", "0.1.0+build", "latest"])(
     "rejects unsupported stable pointer %s",
     async (version) => {
       await expect(
@@ -667,6 +685,21 @@ function acpRegistry(version: string, nativeVersion: string) {
   };
 }
 
+const OMP_RELEASES_URL = "https://api.github.com/repos/can1357/oh-my-pi/releases?per_page=20";
+
+function ompRelease(version: string) {
+  return {
+    tag_name: `v${version}`,
+    draft: false,
+    prerelease: false,
+    assets: Object.values(bundledCatalogJson.providers.omp.artifacts).map(({ artifactName }) => ({
+      name: artifactName,
+      browser_download_url: `https://github.com/can1357/oh-my-pi/releases/download/v${version}/${artifactName}`,
+      digest: `sha256:${"b".repeat(64)}`,
+    })),
+  };
+}
+
 function nextPatch(version: string): string {
   const match = /^(.*\.)([0-9]+)$/u.exec(version);
   if (!match) throw new Error(`Test version '${version}' has no numeric patch component.`);
@@ -709,12 +742,14 @@ function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.ve
         draft: false,
         prerelease: false,
       });
-    if (url === "https://api.github.com/repos/can1357/oh-my-pi/releases/latest")
-      return Response.json({
-        tag_name: `v${bundledCatalogJson.providers.omp.version}`,
-        draft: false,
-        prerelease: false,
-      });
+    if (url === OMP_RELEASES_URL)
+      return Response.json([
+        {
+          tag_name: `v${bundledCatalogJson.providers.omp.version}`,
+          draft: false,
+          prerelease: false,
+        },
+      ]);
     if (url === "https://api.github.com/repos/ScientFactory/scient-agent/releases/latest")
       return new Response(null, { status: 404 });
     if (url === "https://api.meta.ai/muse-code/channels/muse-stable") {
@@ -1023,22 +1058,62 @@ describe("managed runtime release discovery", () => {
     expect(Object.keys(result.catalog.providers.droid!.artifacts)).toHaveLength(6);
   });
 
-  it("refuses an Oh My Pi release outside the supported major", async () => {
+  it("keeps the qualified Oh My Pi release while only a new major is newer", async () => {
     const current = validateManagedRuntimeCatalog(bundledCatalogJson);
     const requested: string[] = [];
+    const reports: string[] = [];
+    const qualified = bundledCatalogJson.providers.omp.version;
     const fetch_ = async (input: URL) => {
       const url = input.toString();
       requested.push(url);
-      if (url === "https://api.github.com/repos/can1357/oh-my-pi/releases/latest") {
-        return Response.json({ tag_name: "v19.0.0", draft: false, prerelease: false, assets: [] });
+      if (url === OMP_RELEASES_URL) {
+        return Response.json([
+          ompRelease("19.0.1"),
+          ompRelease("19.0.0"),
+          ompRelease(qualified),
+          ompRelease("17.9.0"),
+        ]);
       }
       throw new Error(`Unexpected release request: ${url}`);
     };
-    await expect(refreshManagedRuntimeProvider(current, "omp", fetch_)).rejects.toThrow(
-      /19\.0\.0.*major 18/u,
+    const result = await refreshManagedRuntimeProvider(current, "omp", fetch_, (message) =>
+      reports.push(message),
     );
-    // Discovery stops at the stable pointer; no artifact metadata is fetched.
-    expect(requested).toEqual(["https://api.github.com/repos/can1357/oh-my-pi/releases/latest"]);
+    expect(result.changedProviders).toEqual([]);
+    expect(result.catalog).toBe(current);
+    expect(reports).toContain(
+      "Oh My Pi 19.0.1 is outside the supported major 18; it is not published until the new major is qualified.",
+    );
+    // Discovery stops at the release list; no artifact metadata is fetched.
+    expect(requested).toEqual([OMP_RELEASES_URL]);
+  });
+
+  it("discovers the newest Oh My Pi patch of the supported major past a newer major", async () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const patch = "18.99.1";
+    const fetch_ = async (input: URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === OMP_RELEASES_URL) {
+        return Response.json([
+          ompRelease("19.0.1"),
+          { ...ompRelease("18.99.2"), prerelease: true },
+          { ...ompRelease("18.99.3"), draft: true },
+          { tag_name: "nightly", draft: false, prerelease: false },
+          { ...ompRelease("18.99.9"), tag_name: "18.99.9" },
+          ompRelease(patch),
+          ompRelease("18.99.0"),
+        ]);
+      }
+      expect(
+        url.startsWith(`https://github.com/can1357/oh-my-pi/releases/download/v${patch}/`),
+      ).toBe(true);
+      expect(init?.method).toBe("HEAD");
+      return new Response(null, { headers: { "content-length": "100000000" } });
+    };
+    const result = await refreshManagedRuntimeProvider(current, "omp", fetch_);
+    expect(result.changedProviders).toEqual(["omp"]);
+    expect(result.catalog.providers.omp?.version).toBe(patch);
+    expect(Object.keys(result.catalog.providers.omp!.artifacts)).toHaveLength(6);
   });
 
   it("accepts only a strict Grok stable version", () => {
@@ -1466,5 +1541,31 @@ describe("qualified Cursor same-day replacements", () => {
         "cursor",
       ),
     ).toThrow(/ordering metadata/u);
+  });
+});
+
+describe("GitHub API token", () => {
+  it("authenticates only GitHub API requests and keeps their other headers", async () => {
+    const sent: Array<{ url: string; headers: Headers }> = [];
+    const fetch_ = withGitHubToken(async (input, init) => {
+      sent.push({ url: input.href, headers: new Headers(init?.headers) });
+      return new Response("{}");
+    }, "token-1");
+    const headers = { "user-agent": "catalog-test" };
+    await fetch_(new URL(scientApi), { headers });
+    await fetch_(new URL("https://github.com/ScientFactory/scient-agent/releases"), { headers });
+    await fetch_(new URL("https://api.github.com.example.org/repos"), { headers });
+    expect(sent.map(({ headers }) => headers.get("authorization"))).toEqual([
+      "Bearer token-1",
+      null,
+      null,
+    ]);
+    expect(sent.every(({ headers }) => headers.get("user-agent") === "catalog-test")).toBe(true);
+  });
+
+  it("leaves requests anonymous without a token", async () => {
+    const plain = async () => new Response("{}");
+    expect(withGitHubToken(plain, undefined)).toBe(plain);
+    expect(withGitHubToken(plain, "")).toBe(plain);
   });
 });

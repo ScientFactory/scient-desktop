@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
+import { decodeMsg } from "gt-react";
 
-import {
-  searchableSetting,
-  searchSettings,
-  SETTINGS_SEARCH_ITEMS,
-  SETTINGS_SECTION_LABELS,
-} from "./settingsSearch";
+import { searchSettings, SETTINGS_SEARCH_ITEMS, SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
 describe("Scient settings search", () => {
   // regression: dd3895663a fix(cli): install and advertise the Scient command
   it("finds the canonical Scient command and its former t3 name", () => {
-    expect(searchableSetting("cli-command").title).toBe("scient command");
+    expect(decodeMsg(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "cli-command")!.title)).toBe(
+      "scient command",
+    );
     const items = SETTINGS_SEARCH_ITEMS.filter((item) => item.id === "cli-command").map((item) => ({
       ...item,
       desktopOnly: false,

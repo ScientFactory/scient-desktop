@@ -4,6 +4,7 @@ import type {
   ScientSkillCatalogItem,
   ScientSkillInvocationPolicy,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { SettingsRow } from "../../components/settings/settingsLayout";
@@ -17,6 +18,7 @@ export function ProjectSkillsSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
 }) {
+  const gt = useGT();
   const inventory = useEnvironmentQuery(
     scientSkillsInventory({
       environmentId: props.environmentId,
@@ -57,10 +59,10 @@ export function ProjectSkillsSettings(props: {
   };
 
   if (inventory.error) {
-    return <SettingsRow title="Project skills unavailable" description={inventory.error} />;
+    return <SettingsRow title={gt("Project skills unavailable")} description={inventory.error} />;
   }
   if (inventory.data === null) {
-    return <SettingsRow title="Loading project skills" />;
+    return <SettingsRow title={gt("Loading project skills")} />;
   }
   return (
     <>
@@ -74,8 +76,11 @@ export function ProjectSkillsSettings(props: {
       ) : null}
       {projectSkills.length === 0 && inventory.data.diagnostics.length === 0 ? (
         <SettingsRow
-          title="No project skills"
-          description="Agents can add skills in .scient/skills. New valid skills are available automatically."
+          title={gt("No project skills")}
+          description={gt(
+            "Agents can add skills in {folder}. New valid skills are available automatically.",
+            { folder: ".scient/skills" },
+          )}
         />
       ) : null}
       {projectSkills.map((skill) => (
@@ -98,14 +103,14 @@ export function ProjectSkillsSettings(props: {
       {inventory.data.diagnostics.map((diagnostic) => (
         <SettingsRow
           key={`${diagnostic.code}:${diagnostic.path ?? diagnostic.message}`}
-          title="Skill needs attention"
+          title={gt("Skill needs attention")}
           description={diagnostic.message}
           status={diagnostic.path}
         />
       ))}
       {projectSkills.length > 0 ? (
         <p className="px-3 pt-2 text-xs text-muted-foreground sm:px-4">
-          Changes apply to the next message.
+          <T>Changes apply to the next message.</T>
         </p>
       ) : null}
     </>

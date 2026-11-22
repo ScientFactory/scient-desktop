@@ -295,14 +295,34 @@ function helperAcceptance(
   };
 }
 export const nativeFilePublicationInternals = { checkHelperCandidate, helperAcceptance };
+/** Why each refused helper was refused, from its latest check, so a host can say why. */
+const latestRefusals = new Map<string, ReadonlyArray<NativeHelperCheckFailure>>();
 const acceptance = helperAcceptance(async (candidate) => {
   // Only a refusal PowerShell gave is held; a missing file or a deadline is asked again at once.
   let holdRefusal = false;
+  const failures: NativeHelperCheckFailure[] = [];
   const helper = await resolveNativeFilePublicationHelperPath(candidate, (failure) => {
+    failures.push(failure);
     holdRefusal = failure.error instanceof WindowsPermissionsRefusedError;
   });
+  if (helper === undefined) latestRefusals.set(candidate, failures);
+  else latestRefusals.delete(candidate);
   return { helper, holdRefusal };
 });
+/** Why the helper for `configuredPath` was last refused: each failed check, or none recorded. */
+export function nativeFilePublicationHelperRefusal(configuredPath?: string): string | undefined {
+  const failures = latestRefusals.get(helperCandidate(configuredPath));
+  if (failures === undefined) return undefined;
+  if (failures.length === 0) return "No helper at the installed path.";
+  return failures
+    .map(
+      (failure) =>
+        `attempt ${failure.attempt}, ${failure.stage}, ${Math.round(failure.elapsedMs)} ms: ${
+          failure.error instanceof Error ? failure.error.message : String(failure.error)
+        }`,
+    )
+    .join("; ");
+}
 /** The helper `resolveNativeFilePublicationHelperPath` finds, as `helperAcceptance` keeps it. */
 export function nativeFilePublicationHelper(
   configuredPath?: string,
@@ -888,13 +908,6 @@ function nativeFilePublicationArguments(
     destinationName,
   ];
 }
-export async function runNativeFilePublication(
-  helperPath: string,
-  request: NativeFilePublicationRequest,
-) {
-  return parseResult(await invokeNativeHelper(helperPath, nativeFilePublicationArguments(request)));
-}
-
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
 export interface NativeFilePublicationLease {
   readonly processId?: number;

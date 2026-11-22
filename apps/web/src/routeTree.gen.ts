@@ -23,6 +23,7 @@ import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatIssuesRouteImport } from './routes/_chat.issues'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
 import { Route as ChatCloudIndexRouteImport } from './routes/_chat.cloud.index'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
@@ -70,6 +71,7 @@ import { Route as ChatSettingsExtensionsAllRouteImport } from './routes/_chat.se
 import { Route as ChatCloudComputerIdConversationIdRouteImport } from './routes/_chat.cloud.$computerId.$conversationId'
 import { Route as ChatSettingsExtensionsStoreInstanceIdRouteImport } from './routes/_chat.settings.extensions_.store.$instanceId'
 import { Route as ChatSettingsExtensionsCategoryCategoryRouteImport } from './routes/_chat.settings.extensions_.category.$category'
+import { Route as ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRouteImport } from './routes/_chat.linked.$viaEnvironmentId.$linkedEnvironmentId.$linkedThreadId'
 import { Route as ChatSettingsExtensionsItemServerSplatRouteImport } from './routes/_chat.settings.extensions_.item.server.$'
 import { Route as ChatSettingsExtensionsItemPluginPluginIdRouteImport } from './routes/_chat.settings.extensions_.item.plugin.$pluginId'
 import { Route as ChatSettingsExtensionsItemConnectorConnectorIdRouteImport } from './routes/_chat.settings.extensions_.item.connector.$connectorId'
@@ -145,6 +147,11 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatIssuesRoute = ChatIssuesRouteImport.update({
+  id: '/issues',
+  path: '/issues',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatGettingStartedRoute = ChatGettingStartedRouteImport.update({
@@ -399,6 +406,14 @@ const ChatSettingsExtensionsCategoryCategoryRoute =
     path: '/extensions/category/$category',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute =
+  ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRouteImport.update(
+    {
+      id: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId',
+      path: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId',
+      getParentRoute: () => ChatRoute,
+    } as any,
+  )
 const ChatSettingsExtensionsItemServerSplatRoute =
   ChatSettingsExtensionsItemServerSplatRouteImport.update({
     id: '/extensions_/item/server/$',
@@ -453,6 +468,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/getting-started': typeof ChatGettingStartedRoute
+  '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
@@ -503,6 +519,7 @@ export interface FileRoutesByFullPath {
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/settings/skills/external': typeof ChatSettingsSkillsExternalRoute
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
+  '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
   '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
@@ -521,6 +538,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/getting-started': typeof ChatGettingStartedRoute
+  '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
@@ -572,6 +590,7 @@ export interface FileRoutesByTo {
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/settings/skills/external': typeof ChatSettingsSkillsExternalRoute
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
+  '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
   '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
@@ -592,6 +611,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/getting-started': typeof ChatGettingStartedRoute
+  '/_chat/issues': typeof ChatIssuesRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
@@ -643,6 +663,7 @@ export interface FileRoutesById {
   '/_chat/settings/scientific-computing_/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/_chat/settings/skills_/external': typeof ChatSettingsSkillsExternalRoute
   '/_chat/settings/skills_/project': typeof ChatSettingsSkillsProjectRoute
+  '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
   '/_chat/settings/extensions_/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/_chat/settings/extensions_/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
   '/_chat/settings/extensions_/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
@@ -664,6 +685,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/getting-started'
+    | '/issues'
     | '/new'
     | '/pull-requests'
     | '/settings'
@@ -714,6 +736,7 @@ export interface FileRouteTypes {
     | '/settings/scientific-computing/$languageId'
     | '/settings/skills/external'
     | '/settings/skills/project'
+    | '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
     | '/settings/extensions/item/account/$serviceId'
@@ -732,6 +755,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/getting-started'
+    | '/issues'
     | '/new'
     | '/pull-requests'
     | '/settings'
@@ -783,6 +807,7 @@ export interface FileRouteTypes {
     | '/settings/scientific-computing/$languageId'
     | '/settings/skills/external'
     | '/settings/skills/project'
+    | '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
     | '/settings/extensions/item/account/$serviceId'
@@ -802,6 +827,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/_chat/getting-started'
+    | '/_chat/issues'
     | '/_chat/new'
     | '/_chat/pull-requests'
     | '/_chat/settings'
@@ -853,6 +879,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/scientific-computing_/$languageId'
     | '/_chat/settings/skills_/external'
     | '/_chat/settings/skills_/project'
+    | '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
     | '/_chat/settings/extensions_/category/$category'
     | '/_chat/settings/extensions_/store/$instanceId'
     | '/_chat/settings/extensions_/item/account/$serviceId'
@@ -975,6 +1002,13 @@ declare module '@tanstack/react-router' {
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/issues': {
+      id: '/_chat/issues'
+      path: '/issues'
+      fullPath: '/issues'
+      preLoaderRoute: typeof ChatIssuesRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/getting-started': {
@@ -1306,6 +1340,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsExtensionsCategoryCategoryRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': {
+      id: '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
+      path: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
+      fullPath: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
+      preLoaderRoute: typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/settings/extensions_/item/server/$': {
       id: '/_chat/settings/extensions_/item/server/$'
       path: '/extensions/item/server/$'
@@ -1476,6 +1517,7 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 
 interface ChatRouteChildren {
   ChatGettingStartedRoute: typeof ChatGettingStartedRoute
+  ChatIssuesRoute: typeof ChatIssuesRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
@@ -1485,10 +1527,12 @@ interface ChatRouteChildren {
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
   ChatCloudIndexRoute: typeof ChatCloudIndexRoute
   ChatCloudComputerIdConversationIdRoute: typeof ChatCloudComputerIdConversationIdRoute
+  ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute: typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatGettingStartedRoute: ChatGettingStartedRoute,
+  ChatIssuesRoute: ChatIssuesRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
@@ -1499,6 +1543,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatCloudIndexRoute: ChatCloudIndexRoute,
   ChatCloudComputerIdConversationIdRoute:
     ChatCloudComputerIdConversationIdRoute,
+  ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute:
+    ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 import {
   Children,
@@ -16,6 +17,7 @@ export function MarkdownDetails({
   open = false,
   dir,
 }: Pick<ComponentProps<"details">, "children" | "open" | "dir">) {
+  const gt = useGT();
   const [isOpen, setIsOpen] = useState(open);
   const searching = use(MarkdownFindContext);
   const expanded = isOpen;
@@ -31,7 +33,7 @@ export function MarkdownDetails({
   const summary =
     isValidElement<{ children?: ReactNode }>(summaryNode) && summaryNode.props.children
       ? summaryNode.props.children
-      : "Details";
+      : gt("Details", { $context: "fallback title of a collapsible section" });
   const content = childNodes.filter((_, index) => index !== summaryIndex);
 
   return (
@@ -53,10 +55,10 @@ export function MarkdownDetails({
           <span>{summary}</span>
         </CollapsibleTrigger>
         <CollapsiblePanel ref={revealRef} hiddenUntilFound={searching}>
-          <div
-            className="pb-3 ps-6 text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]"
-            data-markdown-details-content=""
-          >
+          {/* SCIENT-FORK:START — details text inherits the chat's full-strength foreground
+              (scient/typography; upstream: 90% opacity). */}
+          <div className="pb-3 ps-6" data-markdown-details-content="">
+            {/* SCIENT-FORK:END */}
             {content}
           </div>
         </CollapsiblePanel>

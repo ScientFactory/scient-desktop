@@ -31,8 +31,6 @@ parentPort.postMessage({ type: "probe", attemptTimeout: NodeNet.getDefaultAutoSe
         workerData: {
           outboxPath: NodePath.join(root, "outbox.sqlite"),
           endpoint: "http://127.0.0.1:1/v1/events",
-          consent: "off",
-          purpose: "deletion",
         } satisfies AnalyticsWorkerInput,
       },
     );

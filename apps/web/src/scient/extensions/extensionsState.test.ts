@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   AVAILABLE_CONNECTION_STATE,
   EnvironmentRegistry,
@@ -127,21 +128,36 @@ describe("extensions mutation lane", () => {
   it("runs a different mutation of the same environment only after the pending one", async () => {
     const { atoms, events, releaseUpdate, updateStarted } = makeHarness();
     const registry = AtomRegistry.make();
-    const update = atoms.updateConnector.run(registry, {
-      environmentId: LOCAL,
-      input: { connectorId: CONNECTOR, enabled: false },
-    });
+    const update = runAtomCommand(
+      registry,
+      atoms.updateConnector,
+      {
+        environmentId: LOCAL,
+        input: { connectorId: CONNECTOR, enabled: false },
+      },
+      { reportFailure: false },
+    );
     await updateStarted;
-    const install = atoms.installScientPlugin.run(registry, {
-      environmentId: LOCAL,
-      input: { path: "/bundles/local" },
-    });
+    const install = runAtomCommand(
+      registry,
+      atoms.installScientPlugin,
+      {
+        environmentId: LOCAL,
+        input: { path: "/bundles/local" },
+      },
+      { reportFailure: false },
+    );
     // A command outside the lane, started after the install, completes while
     // the install still waits for the pending update.
-    const signIn = await atoms.startConnectorSignIn.run(registry, {
-      environmentId: LOCAL,
-      input: { connectorId: CONNECTOR, callbackOrigin: "http://127.0.0.1:3773" },
-    });
+    const signIn = await runAtomCommand(
+      registry,
+      atoms.startConnectorSignIn,
+      {
+        environmentId: LOCAL,
+        input: { connectorId: CONNECTOR, callbackOrigin: "http://127.0.0.1:3773" },
+      },
+      { reportFailure: false },
+    );
     expect(signIn).toMatchObject({ _tag: "Success" });
     expect(events).toEqual(["update:start", "sign-in"]);
 
@@ -155,19 +171,34 @@ describe("extensions mutation lane", () => {
   it("keeps other environments and non-mutating commands concurrent", async () => {
     const { atoms, events, releaseUpdate, updateStarted } = makeHarness();
     const registry = AtomRegistry.make();
-    const update = atoms.updateConnector.run(registry, {
-      environmentId: LOCAL,
-      input: { connectorId: CONNECTOR, enabled: false },
-    });
+    const update = runAtomCommand(
+      registry,
+      atoms.updateConnector,
+      {
+        environmentId: LOCAL,
+        input: { connectorId: CONNECTOR, enabled: false },
+      },
+      { reportFailure: false },
+    );
     await updateStarted;
-    const remoteInstall = atoms.installScientPlugin.run(registry, {
-      environmentId: REMOTE,
-      input: { path: "/bundles/remote" },
-    });
-    const signIn = atoms.startConnectorSignIn.run(registry, {
-      environmentId: LOCAL,
-      input: { connectorId: CONNECTOR, callbackOrigin: "http://127.0.0.1:3773" },
-    });
+    const remoteInstall = runAtomCommand(
+      registry,
+      atoms.installScientPlugin,
+      {
+        environmentId: REMOTE,
+        input: { path: "/bundles/remote" },
+      },
+      { reportFailure: false },
+    );
+    const signIn = runAtomCommand(
+      registry,
+      atoms.startConnectorSignIn,
+      {
+        environmentId: LOCAL,
+        input: { connectorId: CONNECTOR, callbackOrigin: "http://127.0.0.1:3773" },
+      },
+      { reportFailure: false },
+    );
     expect(await remoteInstall).toMatchObject({ _tag: "Success" });
     expect(await signIn).toMatchObject({ _tag: "Success" });
     expect(events).toEqual(["update:start", "install:/bundles/remote", "sign-in"]);
@@ -182,10 +213,15 @@ it("refuses a mutation before reaching the owner without a destination settings 
   const { atoms, events } = makeHarness();
   const registry = AtomRegistry.make();
   registry.set(sessions(LOCAL), AsyncResult.success({ ...grant, scopes: [], permissions: [] }));
-  const result = await atoms.installScientPlugin.run(registry, {
-    environmentId: LOCAL,
-    input: { path: "/bundles/local" },
-  });
+  const result = await runAtomCommand(
+    registry,
+    atoms.installScientPlugin,
+    {
+      environmentId: LOCAL,
+      input: { path: "/bundles/local" },
+    },
+    { reportFailure: false },
+  );
   expect(result._tag).toBe("Failure");
   expect(events).toEqual([]);
   registry.dispose();

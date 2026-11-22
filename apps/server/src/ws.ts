@@ -1,4 +1,5 @@
 import {
+  GitCommandError,
   WsWorkspaceRpcGroup,
   WsConversationRpcGroup,
   WsServerManagementRpcGroup,
@@ -18,12 +19,15 @@ import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -47,6 +51,7 @@ import {
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
   AuthSessionId,
@@ -137,8 +142,10 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
@@ -199,6 +206,8 @@ import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+// SCIENT-FORK: stale Antigravity model lists reload when the picker opens.
+import * as ProviderModelFreshness from "./scient/providerLifecycle/ProviderModelFreshness.ts";
 import { dispatchCommandRpcError } from "./orchestration-v2/DispatchCommandRpcError.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -227,6 +236,8 @@ import { persistChatAttachments } from "./AttachmentPersistence.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
@@ -266,6 +277,9 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as ThreadIssueService from "./orchestration-v2/ThreadIssueService.ts";
+import * as IssueTrackerConnections from "./issue/IssueTrackerConnections.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -332,6 +346,9 @@ import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcH
 import { makeLiveVoiceRpcHandlers } from "./scient/liveVoice/LiveVoiceRpcHandlers.ts";
 import { makeChatGptDictationRpcHandlers } from "./scient/voice/ChatGptDictationRpcHandlers.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+import { makePluginSignInRpcHandlers } from "./scient/antigravity/PluginSignInRpcHandlers.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
 import { makeScientConnectRpcHandlers } from "./scient/connect/ScientConnectRpcHandlers.ts";
 // SCIENT-FORK:END
@@ -342,6 +359,10 @@ import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
+// SCIENT-FORK:START — linked results: what fresh script runs published, for manuscripts.
+import * as ComputeResults from "./scient/results/ComputeResults.ts";
+import { makeResultOperations } from "./scient/results/resultOperations.ts";
+// SCIENT-FORK:END
 import { makeComputeConsoleNotebook } from "./scient/compute/ComputeConsoleNotebook.ts";
 import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
 import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
@@ -1591,6 +1612,7 @@ export const layerWsRpc = (
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
+      const mcpSignIn = yield* McpSignIn.McpSignIn;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
@@ -1616,6 +1638,7 @@ export const layerWsRpc = (
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
+      const threadViewers = yield* ThreadViewers.ThreadViewers;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -1623,6 +1646,9 @@ export const layerWsRpc = (
       // SCIENT-FORK: thread rooms.
       const threadRooms = yield* ThreadRoomService.ThreadRoomService;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const issues = yield* IssueService.IssueService;
+      const threadIssues = yield* ThreadIssueService.ThreadIssueService;
+      const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -1660,6 +1686,7 @@ export const layerWsRpc = (
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
+      const featureFlags = yield* FeatureFlags.FeatureFlags;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
@@ -1697,6 +1724,8 @@ export const layerWsRpc = (
       };
       // SCIENT-FORK:END
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      // SCIENT-FORK: the picker's new-model check also reloads a stale Antigravity list.
+      const providerModelFreshness = yield* ProviderModelFreshness.ProviderModelFreshness;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
       const acpRegistryRuntimeCoordinator =
         yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
@@ -1714,8 +1743,12 @@ export const layerWsRpc = (
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
+      const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+      const taskFolders = yield* TaskFolders.TaskFolders;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2050,9 +2083,8 @@ export const layerWsRpc = (
               message: cause instanceof Error ? cause.message : fallbackMessage,
               cause,
             });
-      const forkRpc = makeConversationForkRpcHandlers({
+      const forkRpcHandlers = makeConversationForkRpcHandlers({
         observeRpcEffect,
-        startup,
         conversationForks,
       });
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -2152,6 +2184,10 @@ export const layerWsRpc = (
           secretProviderSettings: true,
           secretReferences: true,
           secretRequestReferences: true,
+          featureFlags: {
+            secretProviders: featureFlags.secretProviders,
+            tanstackSource: featureFlags.tanstackSource,
+          },
           ...Option.match(scratchWorkspaceRoot, {
             onNone: () => ({}),
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
@@ -2243,6 +2279,13 @@ export const layerWsRpc = (
         }),
         ...makeChatGptDictationRpcHandlers({ observeRpcEffect, providerInstances }),
         // SCIENT-FORK:END
+        // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+        ...makePluginSignInRpcHandlers({
+          observeRpcEffect,
+          threadManagement,
+          providerSessions: providerSessionsV2,
+        }),
+        // SCIENT-FORK:END
         // SCIENT-FORK:START — thread rooms.
         [WS_METHODS.threadRoomInvite]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -2281,6 +2324,11 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.workspaceListFolders]: (input) => workspaceFolders.list(input),
+        [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
+        [WS_METHODS.workspaceTaskFolder]: (input) =>
+          taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
+        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
@@ -2306,6 +2354,7 @@ export const layerWsRpc = (
           if (
             input.resource._tag === "attachment" ||
             input.resource._tag === "native-app-icon" ||
+            input.resource._tag === "environment-theme-background" ||
             input.resource._tag === "tool-output-image" ||
             input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
           ) {
@@ -2391,7 +2440,7 @@ export const layerWsRpc = (
         }),
       });
       const handlers1 = WsConversationRpcGroup.of({
-        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: forkRpc.route((command) =>
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             startup
@@ -2404,6 +2453,9 @@ export const layerWsRpc = (
                         creationSource:
                           "creationSource" in command ? command.creationSource : "web",
                       }),
+                      {
+                        managesProviders: currentSession.scopes.includes(AuthProvidersManageScope),
+                      },
                     )
                 ).pipe(Effect.provide(intakeContext)),
               )
@@ -2412,7 +2464,11 @@ export const layerWsRpc = (
                   result.replayed ? Effect.void : recordClientCommandAnalytics(command),
                 ),
                 Effect.map((result) => ThreadMessageIntake.dispatchCommandReceipt(command, result)),
-                Effect.mapError((cause) => dispatchCommandRpcError(command, cause)),
+                Effect.mapError((cause) =>
+                  cause._tag === "EnvironmentAuthorizationError"
+                    ? cause
+                    : dispatchCommandRpcError(command, cause),
+                ),
               ),
             {
               "rpc.aggregate": "orchestrationV2",
@@ -2433,7 +2489,6 @@ export const layerWsRpc = (
                 : {}),
             },
           ),
-        ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
           threadManagement.forceStopThread(input),
@@ -2696,6 +2751,13 @@ export const layerWsRpc = (
                         message: cause.message,
                         cause,
                       }),
+                    ThreadLaunchBranchExistsError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
                     ThreadLaunchBranchConflictError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
@@ -2704,6 +2766,13 @@ export const layerWsRpc = (
                         cause,
                       }),
                     ThreadLaunchNotRepositoryError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    TaskFolderError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
                         projectId: input.projectId,
@@ -2719,6 +2788,7 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+              Effect.andThen(threadViewers.view(input.threadId)),
               Effect.andThen(subscribeOrchestrationV2Thread(input)),
             ),
           ),
@@ -2885,7 +2955,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
-        ...forkRpc.handlers,
+        ...forkRpcHandlers,
       });
       const handlers2 = WsServerManagementRpcGroup.of({
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
@@ -2899,6 +2969,8 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
             if (input.modelCatalogOnly === true) {
+              // SCIENT-FORK: returns at once; the reload publishes when it finishes.
+              yield* providerModelFreshness.refreshStale;
               yield* providerRegistry.refreshModelCatalog;
               return { providers: [] };
             }
@@ -3004,6 +3076,8 @@ export const layerWsRpc = (
                 }),
             };
           }),
+        [WS_METHODS.providerMcpSignInStart]: (input) => mcpSignIn.start(input),
+        [WS_METHODS.providerMcpSignInComplete]: (input) => mcpSignIn.complete(input),
         [WS_METHODS.providerUploadFeedback]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(
@@ -3130,9 +3204,24 @@ export const layerWsRpc = (
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),
+        [WS_METHODS.peerLinksNames]: (_input) =>
+          peerLinks.names.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
         [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
           peerLinks.unlink(environmentId).pipe(Effect.map((removed) => ({ removed }))),
+        [WS_METHODS.peerLinksSubscribeThread]: (input) => peerThreadRelay.subscribe(input),
+        [WS_METHODS.peerLinksThreadHistoryPage]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(peerThreadRelay.historyPage(input)),
+          ),
+        [WS_METHODS.peerLinksThreadItem]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(peerThreadRelay.item(input)),
+          ),
+        [WS_METHODS.peerLinksPairClient]: (input) =>
+          peerClientPairing.request(input, currentSession),
+        [WS_METHODS.peerLinksPairLink]: (input) =>
+          peerClientPairing.requestForLink(input, currentSession),
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
@@ -3249,6 +3338,20 @@ export const layerWsRpc = (
         }),
       });
       const handlers3 = WsRepositoryRpcGroup.of({
+        [WS_METHODS.issuesList]: (input) => issues.list(input),
+        [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
+        [WS_METHODS.issuesComments]: (input) => issues.comments(input),
+        [WS_METHODS.issuesTemplates]: (input) => issues.templates(input),
+        [WS_METHODS.issuesCandidates]: (input) => issues.candidates(input),
+        [WS_METHODS.issuesLinkedThreads]: (input) => threadIssues.linkedThreads(input),
+        [WS_METHODS.issuesCreate]: (input) => issues.create(input),
+        [WS_METHODS.issuesComment]: (input) => issues.comment(input),
+        [WS_METHODS.issuesUpdate]: (input) => issues.update(input),
+        [WS_METHODS.issuesSetState]: (input) => issues.setState(input),
+        [WS_METHODS.issuesReact]: (input) => issues.react(input),
+        [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
+        [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
+        [WS_METHODS.issueTrackersBindProject]: (input) => issueTrackers.bindProject(input),
         [WS_METHODS.pullRequestsList]: (input) => pullRequests.list(input),
         [WS_METHODS.pullRequestsListStats]: (input) => pullRequests.listStats(input),
         [WS_METHODS.pullRequestsFilterOptions]: (input) => pullRequests.filterOptions(input),
@@ -3810,11 +3913,16 @@ export const layerWsRpc = (
                       ? Effect.void
                       : linkCreatedPullRequest({
                           threadId: input.threadId,
+                          cwd: input.cwd,
                           result,
                           commandId: serverCommandId("pr-created-link"),
                         }).pipe(
                           Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
                           Effect.provideService(ProjectService.ProjectService, projectService),
+                          Effect.provideService(
+                            RepositoryIdentityResolver.RepositoryIdentityResolver,
+                            repositoryIdentityResolver,
+                          ),
                         )
                     ).pipe(
                       Effect.andThen(
@@ -3840,10 +3948,40 @@ export const layerWsRpc = (
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
-          gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(
+          // A project that tracks repositories gets a task folder, as its new worktree threads do.
+          taskFolders.createForProjectFolder(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "TaskFolders.create",
+                  command: "git worktree add",
+                  cwd: input.cwd,
+                  detail: cause.detail,
+                }),
+            ),
+            Effect.filterOrElse(
+              (created) => created !== null,
+              () => gitWorkflow.createWorktree(input),
+            ),
             Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
+        [WS_METHODS.vcsRemoveWorktree]: (input) =>
+          // A thread's worktree may be a task folder: its repositories' worktrees go with it.
+          taskFolders.removeIfTaskFolder({ path: input.path, force: input.force === true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "TaskFolders.remove",
+                  command: "git worktree remove",
+                  cwd: input.cwd,
+                  detail: cause.detail,
+                }),
+            ),
+            Effect.flatMap((removed) =>
+              removed ? Effect.void : gitWorkflow.removeWorktree(input),
+            ),
+            // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
+            // second refresh would queue behind this one and reread an unchanged repository.
             // Subscribers of the removed checkout learn it is no longer a repository.
             Effect.tap(() =>
               vcsStatusBroadcaster
@@ -4235,6 +4373,14 @@ export const layerWsRpc = (
           notebooks: yield* NotebookStore.NotebookStore,
           saveConsoleNotebook,
           computeNotebookOutputs,
+          // SCIENT-FORK:START — linked results share Compute's project resolution.
+          results: makeResultOperations({
+            gateway: computeGateway,
+            results: yield* ComputeResults.ComputeResults,
+            runtimeDescriptors: compute.runtimeDescriptors,
+            workspace: workspaceFileSystem,
+          }),
+          // SCIENT-FORK:END
         }),
       });
       // SCIENT-FORK:START — Scient extensions RPCs.
@@ -4292,9 +4438,14 @@ export const layer = Layer.unwrap(
     const npmRelease = yield* NpmRelease.NpmRelease;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const scientWsServices = yield* captureScientWsServices;
+    const issues = yield* IssueService.IssueService;
+    const threadIssues = yield* ThreadIssueService.ThreadIssueService;
+    const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
+    const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4384,6 +4535,11 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(Layer.succeed(IssueService.IssueService, issues)),
+              Layer.provide(Layer.succeed(ThreadIssueService.ThreadIssueService, threadIssues)),
+              Layer.provide(
+                Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers),
+              ),
               Layer.provide(ScientOtlpEndpointCheck.layer),
               Layer.provide(
                 Layer.succeed(
@@ -4393,6 +4549,8 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
+              Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

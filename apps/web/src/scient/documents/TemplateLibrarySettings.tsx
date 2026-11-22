@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { EllipsisIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -28,9 +29,9 @@ import { userTemplates } from "./userTemplates";
 type Place = keyof TemplateLayout;
 
 const PLACES: ReadonlyArray<{ readonly id: Place; readonly label: string }> = [
-  { id: "page", label: "On the page" },
-  { id: "more", label: "More" },
-  { id: "hidden", label: "Hidden" },
+  { id: "page", label: msg("On the page") },
+  { id: "more", label: msg("More", { $context: "templates under the More menu" }) },
+  { id: "hidden", label: msg("Hidden", { $context: "templates not offered" }) },
 ];
 
 /**
@@ -40,6 +41,8 @@ const PLACES: ReadonlyArray<{ readonly id: Place; readonly label: string }> = [
  * new document's row uses; making or editing a template stays on a document.
  */
 export function TemplatesSettingsRow() {
+  const gt = useGT();
+  const messages = useMessages();
   const templates = useTemplateChoices();
   const { layout, isDefault, update, restoreDefaults } = useTemplateLayout(
     templates.map((entry) => entry.id),
@@ -65,8 +68,8 @@ export function TemplatesSettingsRow() {
     <>
       <SettingsRow
         id="new-document-template"
-        title="Templates"
-        description={`New documents start as ${nameOf(defaultTemplate)}`}
+        title={gt("Templates")}
+        description={gt("New documents start as {name}", { name: nameOf(defaultTemplate) })}
         control={
           <Button
             type="button"
@@ -76,15 +79,17 @@ export function TemplatesSettingsRow() {
             aria-controls="document-template-library"
             onClick={() => setOpen((current) => !current)}
           >
-            {open ? "Done" : "Manage"}
+            {open
+              ? gt("Done", { $context: "button, closes template management" })
+              : gt("Manage", { $context: "button, opens template management" })}
           </Button>
         }
       />
       {open ? (
         <div id="document-template-library" className="px-3 py-2 sm:px-4">
           {PLACES.filter((place) => layout[place.id].length > 0).map((place) => (
-            <section key={place.id} aria-label={place.label} className="py-1.5">
-              <h3 className="px-2 pb-1 text-xs text-muted-foreground">{place.label}</h3>
+            <section key={place.id} aria-label={messages(place.label)} className="py-1.5">
+              <h3 className="px-2 pb-1 text-xs text-muted-foreground">{messages(place.label)}</h3>
               <ul>
                 {layout[place.id].map((id, index, ids) => (
                   <li
@@ -94,7 +99,9 @@ export function TemplatesSettingsRow() {
                   >
                     <span className="min-w-0 flex-1 truncate text-sm">{nameOf(id)}</span>
                     {id === defaultTemplate ? (
-                      <span className="shrink-0 text-xs text-muted-foreground">Default</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        <T context="this template is the default">Default</T>
+                      </span>
                     ) : null}
                     <Menu>
                       <MenuTrigger
@@ -103,7 +110,7 @@ export function TemplatesSettingsRow() {
                             type="button"
                             size="icon-xs"
                             variant="ghost-muted"
-                            aria-label={`${nameOf(id)} actions`}
+                            aria-label={gt("{name} actions", { name: nameOf(id) })}
                           />
                         }
                       >
@@ -111,24 +118,26 @@ export function TemplatesSettingsRow() {
                       </MenuTrigger>
                       <MenuPopup align="end" className="min-w-36">
                         <MenuItem disabled={id === defaultTemplate} onClick={() => setDefault(id)}>
-                          {id === defaultTemplate ? "Default" : "Set as default"}
+                          {id === defaultTemplate
+                            ? gt("Default", { $context: "this template is the default" })
+                            : gt("Set as default")}
                         </MenuItem>
                         {place.id === "hidden" ? (
                           <MenuItem
                             onClick={() => update((current) => moveTemplateToMore(current, id))}
                           >
-                            Show
+                            <T context="show the hidden template">Show</T>
                           </MenuItem>
                         ) : (
                           <>
                             <MenuItem disabled={index === 0} onClick={() => move(place.id, id, -1)}>
-                              Move up
+                              <T>Move up</T>
                             </MenuItem>
                             <MenuItem
                               disabled={index === ids.length - 1}
                               onClick={() => move(place.id, id, 1)}
                             >
-                              Move down
+                              <T>Move down</T>
                             </MenuItem>
                             <MenuItem
                               onClick={() =>
@@ -139,24 +148,26 @@ export function TemplatesSettingsRow() {
                                 )
                               }
                             >
-                              {place.id === "page" ? "Move to More" : "Move to page"}
+                              {place.id === "page" ? gt("Move to More") : gt("Move to page")}
                             </MenuItem>
                           </>
                         )}
                         {isOwn(id) || place.id !== "hidden" ? <MenuSeparator /> : null}
                         {isOwn(id) ? (
                           <>
-                            <MenuItem onClick={() => setRenaming(id)}>Rename…</MenuItem>
+                            <MenuItem onClick={() => setRenaming(id)}>
+                              <T>Rename…</T>
+                            </MenuItem>
                             <MenuItem
                               variant="destructive"
                               onClick={() => void deleteOwnTemplate(id, nameOf(id))}
                             >
-                              Delete
+                              <T context="delete the template">Delete</T>
                             </MenuItem>
                           </>
                         ) : place.id === "hidden" ? null : (
                           <MenuItem onClick={() => update((current) => hideTemplate(current, id))}>
-                            Hide
+                            <T context="hide the template">Hide</T>
                           </MenuItem>
                         )}
                       </MenuPopup>
@@ -169,7 +180,7 @@ export function TemplatesSettingsRow() {
           {isDefault ? null : (
             <div className="px-2 pt-1.5">
               <Button type="button" size="xs" variant="ghost-muted" onClick={restoreDefaults}>
-                Restore defaults
+                <T>Restore defaults</T>
               </Button>
             </div>
           )}
@@ -177,9 +188,9 @@ export function TemplatesSettingsRow() {
       ) : null}
       <TemplateNameDialog
         open={renaming !== null}
-        title="Rename template"
+        title={gt("Rename template")}
         initialName={renaming === null ? "" : nameOf(renaming)}
-        actionFor={() => "Rename"}
+        actionFor={() => gt("Rename", { $context: "button, renames the template" })}
         onSubmit={async (name) => {
           if (renaming !== null) await userTemplates.rename(renaming, name);
         }}

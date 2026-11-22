@@ -89,6 +89,14 @@ import * as Clock from "effect/Clock";
 import type { ProviderNativeInventory } from "../../provider/ScientProviderInstanceSeams.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 
+// Fresh per case: Effect.provide builds the layer again on every call.
+const adapterServices = Layer.mergeAll(
+  IdAllocator.layer,
+  NodeServices.layer,
+  NodeCrypto.layer,
+  McpProviderSessions.layer,
+);
+
 describe("ClaudeAdapterV2 background wake turns (Admission)", () => {
   it.effect(
     "retains uncertain admission when an offered native prompt fails before acknowledgment",
@@ -124,16 +132,7 @@ describe("ClaudeAdapterV2 background wake turns (Admission)", () => {
         assert.equal(turns.at(-1)?.nativeAcceptance, "unknown");
         assert.isTrue(turns.every((turn) => turn.acceptedAt === undefined));
         assert.lengthOf(h.offeredMessages, 1);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
   );
 
   it.effect.each([
@@ -276,16 +275,7 @@ describe("ClaudeAdapterV2 background wake turns (Admission)", () => {
             "owned child replay projection",
           );
         }
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 });
@@ -325,6 +315,9 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -446,16 +439,7 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 });
@@ -489,6 +473,9 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
                 setPermissionMode: () =>
@@ -601,7 +588,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
           },
         });
 
-        assert.equal(offeredMessages[1]?.priority, "now");
+        assert.equal(offeredMessages[1]?.priority, "next");
         assert.deepEqual(offeredMessages[1]?.message.content, [
           expectedImageBlock,
           {
@@ -609,16 +596,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
             text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
         ]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 });
@@ -689,16 +667,7 @@ describe("ClaudeAdapterV2 background wake turns (Errors)", () => {
         ),
       );
       assert.equal(closeCount, 1);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    }).pipe(Effect.provide(adapterServices)),
   );
 
   it.effect.each([
@@ -767,16 +736,7 @@ describe("ClaudeAdapterV2 background wake turns (Errors)", () => {
         assert.equal(harness.terminalEvents().length, 2);
         assert.equal(closeCount, 0);
         assert.isFalse(harness.events.some((event) => event.type === "authentication.invalidated"));
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
   );
 });
 
@@ -949,16 +909,7 @@ describe("ClaudeAdapterV2 provider-native inventory (NativeInventory)", () => {
           ],
         });
       }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    ).pipe(Effect.provide(adapterServices)),
   );
 
   it.effect("keeps the last report when the turn-end sample fails", () =>
@@ -990,16 +941,7 @@ describe("ClaudeAdapterV2 provider-native inventory (NativeInventory)", () => {
         for (let attempt = 0; attempt < 100; attempt++) yield* Effect.yieldNow;
         assert.deepStrictEqual(reports, []);
       }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    ).pipe(Effect.provide(adapterServices)),
   );
 });
 
@@ -1072,6 +1014,9 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -1213,16 +1158,7 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
           }),
         );
         assert.lengthOf(processQueues, 3);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 });
@@ -1260,6 +1196,9 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -1350,6 +1289,9 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                    mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                    reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
@@ -1562,16 +1504,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
             ),
             { behavior: "cancelled" },
           );
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
 });
@@ -1653,16 +1586,7 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
             yield* h.settle(peer.query, peer.turnId);
             assert.lengthOf(h.terminals(peer.turnId), 1);
           }).pipe(Effect.ensuring(h.save));
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
 
@@ -1702,16 +1626,7 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
             assert.lengthOf(h.terminals(b.turnId), 1);
             assert.equal(b.query.closes, 0);
           }).pipe(Effect.ensuring(h.save));
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
 
@@ -1798,16 +1713,7 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
               closeFails ? 1 : 0,
             );
           }).pipe(Effect.ensuring(h.save));
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
 
@@ -1870,16 +1776,7 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
         assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
         assert.equal(closes, 1);
         assert.lengthOf(harness.terminalEvents(), 1);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 
@@ -1939,16 +1836,7 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
         assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
         assert.equal(closes, 1);
         assert.lengthOf(harness.terminalEvents(), 1);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 });
@@ -2044,17 +1932,7 @@ describe("ClaudeAdapterV2 background wake turns (Tools)", () => {
       );
       for (const item of items.filter((item) => item.nativeItemRef?.nativeId !== "image"))
         assert.notProperty(item, "viewedImagePath");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          NodeServices.layer,
-          NodeCrypto.layer,
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(adapterServices)),
   );
 });
 
@@ -2229,16 +2107,7 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
           final.findLast((agent) => agent.id === coordinator?.id)?.presentation?.kind,
           "workflow",
         );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 
@@ -2373,16 +2242,7 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
         assert.equal(reopened?.presentation?.activationCount, 2);
         assert.isNull(reopened?.completedAt);
         assert.equal(reopened?.presentation?.firstSeenAt, before[0]?.presentation?.firstSeenAt);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 
@@ -2491,16 +2351,7 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
           assert.equal(reopened?.presentation?.firstSeenAt, firstSeen);
           assert.deepEqual(reopened?.presentation?.usage, { totalTokens: 60, toolUses: 7 });
           assert.lengthOf(h.offeredMessages, 1);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
 
@@ -2577,16 +2428,7 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
           assert.equal(members.at(-1)?.status, status);
           assert.isNotNull(members.at(-1)?.completedAt);
           assert.isFalse(yield* h.hasPendingBackgroundWork);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
 });
@@ -2688,16 +2530,7 @@ it.effect(
             "the same native thread can start after cleanup joins",
           );
         }).pipe(Effect.provideService(Clock.Clock, controlledClock));
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
 );
 
@@ -2733,6 +2566,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -2777,16 +2613,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           }),
         );
         return openedQueries;
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
@@ -2879,6 +2706,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                    mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                    reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
@@ -3041,16 +2871,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           );
           assert.equal(subagentNodeEvents.at(-1)?.node.status, "completed");
           assert.isFalse(yield* hasPendingBackgroundWork);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3099,16 +2920,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
         ),
       );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    }).pipe(Effect.provide(adapterServices)),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
@@ -3163,16 +2975,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, expected);
       assert.equal(terminal.failure.class, recovered ? "provider_error" : "usage_limit");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    }).pipe(Effect.provide(adapterServices)),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
@@ -3217,16 +3020,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
         if (apiErrorStatus !== 429)
           assert.notInclude(terminal.failure.message.toLowerCase(), "usage limit");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
@@ -3280,16 +3074,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         });
         assert.isDefined(terminal.retryStartedAt);
         assert.equal(terminal.failure.code, "api_error_529");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3432,16 +3217,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
         assert.lengthOf(harness.offeredMessages, 1);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3504,16 +3280,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "queued turn terminal");
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3552,16 +3319,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
             (event) => event.type === "message.updated" && event.message.text === fallbackText,
           ),
         );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3612,16 +3370,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3681,16 +3430,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
             (event) => event.type === "message.updated" && event.message.text === staleText,
           ),
         );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3725,16 +3465,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "failed terminal");
         assert.equal(harness.terminalEvents()[0]?.status, "failed");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3843,16 +3574,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           harness.continuationRequests[1]?.notification?.summary,
           `Command "${WAKE_TASK_DESCRIPTION}" finished`,
         );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3914,16 +3636,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           harness.continuationRequests[0]?.notification?.summary,
           `Command "${WAKE_TASK_DESCRIPTION}" finished`,
         );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -4085,16 +3798,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
             : [],
         );
         assert.deepEqual([...new Set(userRunItems)], ["assistant_message"]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -4201,16 +3905,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           finalSubagent?.type === "subagent.updated" && finalSubagent.subagent.status,
           "completed",
         );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -4288,16 +3983,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           "Part two.",
         ]);
         assert.deepEqual(routing.assistantTexts(harness.threadId), ["The auditor finished."]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -4359,16 +4045,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
             : [],
         );
         assert.deepEqual(retryStatuses, ["running"]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -4402,6 +4079,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -4461,16 +4141,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.equal(error._tag, "ProviderAdapterTurnStartError");
         assert.include(String(error.cause), "Unsupported Claude image attachment type");
         assert.equal(openCount, 0);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -4531,17 +4202,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
         ),
       );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          NodeServices.layer,
-          NodeCrypto.layer,
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(adapterServices)),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
@@ -4647,16 +4308,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               event.message.text === STALE_TASK_NOTIFICATION_RESULT_TEXT,
           ),
         );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -4888,86 +4540,11 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.continuationRequests, 0);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
-  it.effect("clears the roster when a turn fails", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const failedResult = claudeSdkFrame({
-          type: "result",
-          subtype: "error_during_execution",
-          duration_ms: 10,
-          duration_api_ms: 10,
-          is_error: true,
-          num_turns: 1,
-          result: "boom",
-          stop_reason: "end_turn",
-          total_cost_usd: 0,
-          usage: {
-            input_tokens: 1,
-            output_tokens: 1,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-          },
-          modelUsage: {},
-          permission_denials: [],
-          errors: ["boom"],
-          terminal_reason: "model_error",
-          uuid: "00000000-0000-4000-8000-000000000203",
-          session_id: WAKE_NATIVE_SESSION,
-        });
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-roster-fail"),
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* awaitUntil(
-          () =>
-            providerThreadRosterEvents(harness.events).some(
-              (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
-            ),
-          "roster after task_started",
-        );
-        yield* Queue.offer(harness.sdkMessages, failedResult);
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "failed terminal");
-        assert.equal(harness.terminalEvents()[0]?.status, "failed");
-
-        const afterFailure = providerThreadRosterEvents(harness.events).at(-1);
-        assert.deepEqual(afterFailure?.providerThread.pendingBackgroundTasks ?? [], []);
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
-    ),
-  );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect(
@@ -5020,6 +4597,9 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                    mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                    reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
@@ -5176,16 +4756,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
             "continuation request after retry",
           );
           assert.equal(continuationRequests[1]?.detail, "Retry build completed successfully");
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(adapterServices)),
       ),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -5262,16 +4833,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.isTrue(Exit.isFailure(failedStart));
         // No live process ever existed: do not emit a fabricated empty roster.
         assert.lengthOf(providerThreadRosterEvents(events), 0);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-            McpProviderSessions.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(adapterServices)),
     ),
   );
 });
@@ -5402,15 +4964,115 @@ it.effect.each(
         terminal.failure.code,
         terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
       );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          McpProviderSessions.layer,
-        ),
-      ),
-    ),
+    }).pipe(Effect.provide(adapterServices)),
   ),
 );
+
+describe("ClaudeAdapterV2 custom API endpoint failures", () => {
+  it.effect.each([
+    {
+      name: "a custom endpoint",
+      baseUrl: "https://user:secret@gateway.example.test/v1?key=abc",
+      expected: { origin: "https://gateway.example.test", source: "environment" as const },
+    },
+    { name: "Anthropic's own API", baseUrl: "https://api.anthropic.com", expected: undefined },
+    {
+      name: "a turn that failed before any request",
+      baseUrl: "https://gateway.example.test/v1",
+      expected: undefined,
+      setupFailure: true,
+    },
+  ])("records where a failed request went: $name", ({ baseUrl, expected, setupFailure }) =>
+    Effect.gen(function* () {
+      // Windows without ProgramData or ProgramFiles has no managed settings to read, so the
+      // host's own policy cannot change the result.
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: {
+          CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+          ANTHROPIC_BASE_URL: baseUrl,
+        },
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("custom-endpoint-failure"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        setupFailure === true
+          ? makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000799",
+              result: "",
+              terminalReason: "turn_setup_failed",
+              isError: true,
+            })
+          : makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000799",
+              result: "API Error: 404 model not found",
+              terminalReason: "api_error",
+              apiErrorStatus: 404,
+              isError: true,
+            }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      // The provider's own text stays as it was; the app names the endpoint beside it.
+      if (setupFailure !== true) {
+        assert.equal(terminal.failure.message, "API Error: 404 model not found");
+      }
+      assert.deepEqual(terminal.failure.customEndpoint, expected);
+    }).pipe(Effect.provide(adapterServices)),
+  );
+
+  it.effect("takes managed settings over the environment", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const programData = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-managed-" });
+      yield* fileSystem.makeDirectory(`${programData}/ClaudeCode`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${programData}/ClaudeCode/managed-settings.json`,
+        JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://managed.example.test" } }),
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: {
+          CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+          ANTHROPIC_BASE_URL: "https://environment.example.test",
+          ProgramData: programData,
+        },
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("managed-endpoint-failure"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000798",
+          result: "API Error: 404 model not found",
+          terminalReason: "api_error",
+          apiErrorStatus: 404,
+          isError: true,
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.deepEqual(terminal.failure.customEndpoint, {
+        origin: "https://managed.example.test",
+        source: "claude-settings",
+      });
+    }).pipe(Effect.scoped, Effect.provide(adapterServices)),
+  );
+});

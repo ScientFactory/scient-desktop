@@ -9,6 +9,7 @@ import {
   PaletteIcon,
   RefreshCwIcon,
 } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AssetImageDimensions, ScopedThreadRef } from "@t3tools/contracts";
 
@@ -74,6 +75,8 @@ export function ScientPendingWorkspaceImage(props: {
   readonly markdownSource: string;
   readonly reason: "streaming" | "unavailable";
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <span
       aria-label={props.image.alt}
@@ -89,13 +92,13 @@ export function ScientPendingWorkspaceImage(props: {
           {props.image.alt}
         </span>
         <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-          {inlineImageFormatLabel(props.image.fileName)}
+          {inlineImageFormatLabel(props.image.fileName, messages)}
         </span>
       </span>
       <span className="mt-2 block text-muted-foreground text-sm">
         {props.reason === "streaming"
-          ? "Image preview will appear when this response finishes."
-          : "Image preview is unavailable without an active workspace."}
+          ? gt("Image preview will appear when this response finishes.")
+          : gt("Image preview is unavailable without an active workspace.")}
       </span>
       <ScientTooltip content={props.image.displayPath}>
         <span
@@ -107,10 +110,6 @@ export function ScientPendingWorkspaceImage(props: {
       </ScientTooltip>
     </span>
   );
-}
-
-function backgroundLabel(background: InlineImageBackground): string {
-  return background === "automatic" ? "automatic" : background;
 }
 
 function ImageActionButton({
@@ -146,7 +145,7 @@ function ImageActionButton({
 }
 
 function InlineImageActionsMenu(props: {
-  readonly actionMessage: string | null;
+  readonly copiedKind?: Exclude<ImageAction, null> | undefined;
   readonly activeAction: ImageAction;
   readonly background: InlineImageBackground;
   readonly compact?: boolean;
@@ -159,6 +158,8 @@ function InlineImageActionsMenu(props: {
   readonly onOpenFile?: (() => void) | undefined;
   readonly onRefresh: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const compact = props.compact ?? false;
 
   return (
@@ -169,7 +170,7 @@ function InlineImageActionsMenu(props: {
             <MenuTrigger
               render={
                 <Button
-                  aria-label="More image actions"
+                  aria-label={gt("More image actions")}
                   disabled={props.activeAction != null}
                   size={compact ? "icon-xs" : "icon-sm"}
                   type="button"
@@ -181,13 +182,15 @@ function InlineImageActionsMenu(props: {
         >
           <EllipsisIcon className={compact ? "size-3" : undefined} />
         </TooltipTrigger>
-        <TooltipPopup side={compact ? "top" : "bottom"}>More image actions</TooltipPopup>
+        <TooltipPopup side={compact ? "top" : "bottom"}>
+          <T>More image actions</T>
+        </TooltipPopup>
       </Tooltip>
       <VisualCardMenuPopup align="end" className="min-w-52">
         {props.image ? (
           <VisualCardDetails
             title={props.image.alt}
-            detail={`${props.image.displayPath} · ${inlineImageFormatLabel(props.image.fileName)}`}
+            detail={`${props.image.displayPath} · ${inlineImageFormatLabel(props.image.fileName, messages)}`}
           />
         ) : null}
         <MenuItem
@@ -195,32 +198,35 @@ function InlineImageActionsMenu(props: {
           onClick={props.onCopyImage}
         >
           <CopyIcon />
-          {props.activeAction === "copy-image" ? "Copying image…" : "Copy image"}
+          {props.activeAction === "copy-image" ? gt("Copying image…") : gt("Copy image")}
         </MenuItem>
         <MenuItem
           disabled={!props.hasImage || props.activeAction != null}
           onClick={props.onDownload}
         >
           <DownloadIcon />
-          {props.activeAction === "download" ? "Preparing download…" : "Download original"}
+          {props.activeAction === "download" ? gt("Preparing download…") : gt("Download original")}
         </MenuItem>
         <MenuItem disabled={props.activeAction != null} onClick={props.onCopyPath}>
-          {props.actionMessage === "Path copied" ? <CheckIcon /> : <CopyIcon />}
-          Copy relative path
+          {props.copiedKind === "copy-path" ? <CheckIcon /> : <CopyIcon />}
+          <T>Copy relative path</T>
         </MenuItem>
         {props.onOpenFile ? (
           <MenuItem onClick={props.onOpenFile}>
             <FolderOpenIcon />
-            Open image file
+            <T>Open image file</T>
           </MenuItem>
         ) : null}
         <MenuItem onClick={props.onCycleBackground}>
           <PaletteIcon />
-          Background: {backgroundLabel(props.background)}
+          {gt(
+            "{background, select, light {Background: light} dark {Background: dark} other {Background: automatic}}",
+            { background: props.background },
+          )}
         </MenuItem>
         <MenuItem onClick={props.onRefresh}>
           <RefreshCwIcon />
-          Refresh from file
+          <T>Refresh from file</T>
         </MenuItem>
         <VisualCardToolbarMenuItems />
       </VisualCardMenuPopup>
@@ -230,6 +236,7 @@ function InlineImageActionsMenu(props: {
 
 function InlineImageDialog(props: {
   readonly actionMessage: string | null;
+  readonly copiedKind?: Exclude<ImageAction, null> | undefined;
   readonly activeAction: ImageAction;
   readonly alt: string;
   readonly background: InlineImageBackground;
@@ -246,6 +253,7 @@ function InlineImageDialog(props: {
   readonly revisionKey: string;
   readonly url: string;
 }) {
+  const gt = useGT();
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup bottomStickOnMobile={false} layout="visual">
@@ -255,19 +263,21 @@ function InlineImageDialog(props: {
               <span className="block truncate">{props.alt}</span>
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Expanded preview of {props.fileName}. Pinch or Control-scroll to zoom.
+              <T>
+                Expanded preview of <Var>{props.fileName}</Var>. Pinch or Control-scroll to zoom.
+              </T>
             </DialogDescription>
           </div>
           <div
             className="flex items-center gap-1"
             role="toolbar"
-            aria-label="Expanded image actions"
+            aria-label={gt("Expanded image actions")}
           >
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Open image file"
+                    aria-label={gt("Open image file")}
                     disabled={props.activeAction != null}
                     onClick={() => {
                       props.onOpenChange(false);
@@ -281,10 +291,12 @@ function InlineImageDialog(props: {
               >
                 <FolderOpenIcon />
               </TooltipTrigger>
-              <TooltipPopup side="bottom">Open image file</TooltipPopup>
+              <TooltipPopup side="bottom">
+                <T>Open image file</T>
+              </TooltipPopup>
             </Tooltip>
             <InlineImageActionsMenu
-              actionMessage={props.actionMessage}
+              copiedKind={props.copiedKind}
               activeAction={props.activeAction}
               background={props.background}
               hasImage
@@ -325,6 +337,7 @@ export function ScientInlineWorkspaceImage(props: {
   readonly authoredSource?: string | undefined;
   readonly workspaceMutationId?: string | null | undefined;
 }) {
+  const gt = useGT();
   const resolveActionUrl = useMediaActionUrl();
   const controlsRef = useRef<ScientImageControlsHandle>(null);
   const [controlsAnchor, setControlsAnchor] = useState<HTMLSpanElement | null>(null);
@@ -357,7 +370,12 @@ export function ScientInlineWorkspaceImage(props: {
   const autoRetriedRef = useRef<string | null>(null);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeAction, setActiveAction] = useState<ImageAction>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{
+    readonly message: string;
+    readonly copiedKind?: Exclude<ImageAction, null>;
+  } | null>(null);
+  const messages = useMessages();
+  const actionMessage = actionNotice === null ? null : messages(actionNotice.message);
   const [background, setBackground] = useState<InlineImageBackground>("automatic");
   const [expanded, setExpanded] = useState(false);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -396,12 +414,12 @@ export function ScientInlineWorkspaceImage(props: {
     setFailedUrl(null);
   }
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, copiedKind: Exclude<ImageAction, null>) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
-    setActionMessage(message);
+    setActionNotice({ message, copiedKind });
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
-      setActionMessage(null);
+      setActionNotice(null);
     }, 1_500);
   };
 
@@ -410,7 +428,7 @@ export function ScientInlineWorkspaceImage(props: {
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
-    setActionMessage(message);
+    setActionNotice({ message });
   };
 
   const handleImageError = () => {
@@ -433,7 +451,7 @@ export function ScientInlineWorkspaceImage(props: {
     autoRetriedRef.current = null;
     setFailedUrl(null);
     setLoadedUrl(null);
-    setActionMessage(null);
+    setActionNotice(null);
     asset.refresh();
   };
 
@@ -448,7 +466,7 @@ export function ScientInlineWorkspaceImage(props: {
     void operation().then(
       () => {
         setActiveAction(null);
-        if (successMessage) showTransientMessage(successMessage);
+        if (successMessage) showTransientMessage(successMessage, action);
       },
       (cause: unknown) => {
         console.error("[scient-images] Inline image action failed", action, cause);
@@ -460,14 +478,14 @@ export function ScientInlineWorkspaceImage(props: {
 
   const handleCopyPath = () => {
     if (!navigator.clipboard?.writeText) {
-      showPersistentMessage("Clipboard access is unavailable.");
+      showPersistentMessage(msg("Clipboard access is unavailable."));
       return;
     }
     runAction(
       "copy-path",
       () => navigator.clipboard.writeText(props.image.relativePath),
-      "Path copied",
-      "Unable to copy the image path.",
+      msg("Path copied"),
+      msg("Unable to copy the image path."),
     );
   };
 
@@ -486,8 +504,8 @@ export function ScientInlineWorkspaceImage(props: {
             asset: { environmentId: props.threadRef.environmentId, resource },
           }),
         ),
-      "Image copied",
-      "Unable to copy the image.",
+      msg("Image copied"),
+      msg("Unable to copy the image."),
     );
   };
 
@@ -504,7 +522,7 @@ export function ScientInlineWorkspaceImage(props: {
           props.image.fileName,
         ),
       null,
-      "Unable to download the image.",
+      msg("Unable to download the image."),
     );
   };
 
@@ -514,31 +532,31 @@ export function ScientInlineWorkspaceImage(props: {
       asset: { environmentId: props.threadRef.environmentId, resource },
     };
     return [
-      { id: "open-file", label: "Open image file", closeViewer: true, run: handleOpenFile },
+      { id: "open-file", label: gt("Open image file"), closeViewer: true, run: handleOpenFile },
       {
         id: "copy-image",
-        label: "Copy image",
+        label: gt("Copy image"),
         run: () => copyStaticImage(resolveActionUrl(location)),
       },
       {
         id: "download-image",
-        label: "Download original",
+        label: gt("Download original"),
         run: async () =>
           downloadStaticImage(await resolveActionUrl(location), props.image.fileName),
       },
       {
         id: "copy-source",
-        label: "Copy image source",
+        label: gt("Copy image source"),
         run: () => navigator.clipboard.writeText(props.authoredSource ?? props.image.source),
       },
       {
         id: "copy-full-path",
-        label: "Copy full path",
+        label: gt("Copy full path"),
         run: () => navigator.clipboard.writeText(props.image.absolutePath),
       },
       {
         id: "copy-relative-path",
-        label: "Copy relative path",
+        label: gt("Copy relative path"),
         run: () => navigator.clipboard.writeText(props.image.relativePath),
       },
     ];
@@ -610,14 +628,14 @@ export function ScientInlineWorkspaceImage(props: {
             revisionKey={revisionKey}
           />
         ) : (
-          <VisualCardToolbar className="absolute top-1 right-1 z-10" label="Image actions">
+          <VisualCardToolbar className="absolute top-1 right-1 z-10" label={gt("Image actions")}>
             {loaded ? (
-              <ImageActionButton label="Expand image" onClick={() => setExpanded(true)}>
+              <ImageActionButton label={gt("Expand image")} onClick={() => setExpanded(true)}>
                 <Maximize2Icon className="size-3" strokeWidth={1.5} />
               </ImageActionButton>
             ) : null}
             <InlineImageActionsMenu
-              actionMessage={actionMessage}
+              copiedKind={actionNotice?.copiedKind}
               activeAction={activeAction}
               background={background}
               compact
@@ -634,28 +652,33 @@ export function ScientInlineWorkspaceImage(props: {
         )}
         {loadFailed ? (
           <span className="flex flex-col items-center gap-3 px-5 pt-12 pb-5 text-center">
-            <span className="font-medium text-sm">Unable to display this image</span>
+            <span className="font-medium text-sm">
+              <T>Unable to display this image</T>
+            </span>
             <span className="max-w-lg text-muted-foreground text-xs" dir="auto">
-              The file may be missing, incomplete, or in an image format the browser cannot decode.
+              <T>
+                The file may be missing, incomplete, or in an image format the browser cannot
+                decode.
+              </T>
             </span>
             <span className="flex flex-wrap justify-center gap-2">
               <Button onClick={handleRetry} size="xs" type="button" variant="outline">
                 <RefreshCwIcon />
-                Try again
+                <T>Try again</T>
               </Button>
               <Button onClick={handleOpenFile} size="xs" type="button" variant="outline">
                 <FolderOpenIcon />
-                Open file
+                <T>Open file</T>
               </Button>
             </span>
           </span>
         ) : url == null ? (
           <span className="flex min-h-44 items-center justify-center pt-10 text-muted-foreground text-sm">
-            Loading image…
+            <T>Loading image…</T>
           </span>
         ) : (
           <button
-            aria-label={`Expand ${props.image.alt}`}
+            aria-label={gt("Expand {name}", { name: props.image.alt })}
             className={cn(
               "flex max-h-[32rem] max-w-full cursor-zoom-in items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
               loaded ? "opacity-100" : "opacity-0",
@@ -689,7 +712,7 @@ export function ScientInlineWorkspaceImage(props: {
         )}
         {url != null && !loaded && !loadFailed ? (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
-            Loading image…
+            <T>Loading image…</T>
           </span>
         ) : null}
       </span>
@@ -709,6 +732,7 @@ export function ScientInlineWorkspaceImage(props: {
       {url != null && !props.filePresentation ? (
         <InlineImageDialog
           actionMessage={actionMessage}
+          copiedKind={actionNotice?.copiedKind}
           activeAction={activeAction}
           alt={props.image.alt}
           background={background}

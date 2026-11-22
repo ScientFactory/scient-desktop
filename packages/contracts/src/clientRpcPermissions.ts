@@ -17,10 +17,25 @@ import { WS_METHODS } from "./rpc.ts";
 // SCIENT-FORK:START — Extensions mutations share the destination settings grant.
 import { SCIENT_EXTENSION_GUARDED_RPC_SCOPES } from "./scient/extensionsPermissions.ts";
 import { SCIENT_SKILL_GUARDED_RPC_SCOPES } from "./scient/skillsPermissions.ts";
+import {
+  SCIENT_SOURCES_GUARDED_HTTP_SCOPES,
+  scientPaperRequestScopes,
+} from "./scient/sourcesPermissions.ts";
+export * from "./scient/sourcesPermissions.ts";
+// Linked results write project files, so they take the file-write grant.
+import { AuthFilesystemWriteScope } from "./auth.ts";
 // SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  // SCIENT-FORK:START — linked results: placing, updating and undoing write project files, as
+  // any file write does; re-run starts a run.
+  [WS_METHODS.computeResultsPlaceFigure]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsPlaceLatex]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsUpdateFiles]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsUndoUpdate]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
   ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,
   // SCIENT-FORK:END
@@ -89,6 +104,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.documentsExportServerBrowserPdf]: AuthPreviewOperateScope,
   [WS_METHODS.documentsNavigateServerBrowser]: AuthPreviewOperateScope,
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
+  // An MCP sign-in stores a credential for the agent, as an account sign-in does.
+  [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
+  // SCIENT-FORK: an Antigravity plugin sign-in takes the same grant as an MCP sign-in.
+  [WS_METHODS.pluginSignInOpen]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
@@ -111,6 +131,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pullRequestsSetFilesViewed]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsRequestReviewers]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetLabels]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesCreate]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesUpdate]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesSetState]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesReact]: AuthSourceControlWriteScope,
+  // A tracker credential and a project's binding are settings, saved under the same grant.
+  [WS_METHODS.issueTrackersConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.issueTrackersBindProject]: AuthSettingsWriteScope,
   // Writing a guide runs a model on this environment's providers, which reading one does not.
   [WS_METHODS.pullRequestsGenerateReviewGuide]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
@@ -129,6 +157,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
+  [WS_METHODS.workspaceAddTaskFolderRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
@@ -152,8 +181,17 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
+
+// SCIENT-FORK:START — HTTP commands checked like guarded RPCs; the server's RPC table excludes them.
+const CLIENT_GUARDED_HTTP_SCOPES = {
+  ...SCIENT_SOURCES_GUARDED_HTTP_SCOPES,
+} as const;
+export type ClientGuardedHttpTag = keyof typeof CLIENT_GUARDED_HTTP_SCOPES;
+// SCIENT-FORK:END
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
@@ -177,6 +215,12 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  // SCIENT-FORK:START — guarded HTTP commands and Library paper requests share this check.
+  const paperScopes = scientPaperRequestScopes(method, input);
+  if (paperScopes !== undefined) return paperScopes;
+  if (Object.hasOwn(CLIENT_GUARDED_HTTP_SCOPES, method))
+    return [CLIENT_GUARDED_HTTP_SCOPES[method as ClientGuardedHttpTag]];
+  // SCIENT-FORK:END
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];

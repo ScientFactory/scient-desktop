@@ -4,7 +4,10 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-/** Execute only bundled code and installed resources, from two independent processes. */
+/**
+ * Execute only bundled code and installed resources, one fresh process per phase: connect and
+ * restart, then refuse with the helper held aside when the caller names the installed helper.
+ */
 export function qualifyPackagedOverleaf({ executable, entry, helper, electron = false }) {
   const root = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-overleaf-package-")),
@@ -32,16 +35,31 @@ import(pathToFileURL(entry).href).catch(error => { console.error(error); process
 `,
       );
     const args = electron ? [launcher, root, phase] : [entry, root, phase];
+    const started = performance.now();
     const result = NodeChildProcess.spawnSync(executable, args, {
       cwd: root,
       env,
       encoding: "utf8",
       timeout: 120_000,
     });
+    const outcome = {
+      phase,
+      elapsedMs: Math.round(performance.now() - started),
+      status: result.status,
+      signal: result.signal,
+    };
+    console.log(`Overleaf qualification phase ${JSON.stringify(outcome)}`);
     NodeAssert.equal(
       result.status,
       0,
-      result.error?.message ?? `${result.stdout}\n${result.stderr}`,
+      [
+        `Overleaf qualification phase ${phase} failed (status ${result.status}, signal ${result.signal})`,
+        result.error?.message,
+        result.stdout,
+        result.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
     );
     if (phase !== "refuse") {
       const record = result.stdout

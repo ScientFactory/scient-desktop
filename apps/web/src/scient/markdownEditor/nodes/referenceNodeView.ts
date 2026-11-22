@@ -1,6 +1,9 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import {
   scientMarkdownFootnoteDefinitionId,
@@ -23,6 +26,12 @@ export interface ScientMarkdownFootnoteNodeViewRegistration {
 export type ScientMarkdownFootnoteNodeViewRegistrar = (
   registration: ScientMarkdownFootnoteNodeViewRegistration,
 ) => () => void;
+
+/** Opens what the citation at `position` names, clicked at `at`; false when nothing is known. */
+export type ScientMarkdownCitationOpener = (
+  position: number,
+  at: { readonly x: number; readonly y: number },
+) => boolean;
 
 function sourceValue(node: ProseMirrorNode): string {
   return node.type.name === "citation"
@@ -56,6 +65,7 @@ class ScientReferenceNodeView implements NodeView {
     private readonly view: EditorView,
     private readonly getPos: () => number | undefined,
     registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar,
+    private readonly openCitation?: ScientMarkdownCitationOpener,
   ) {
     this.node = node;
     const definition = node.type.name === "footnote_definition";
@@ -98,7 +108,7 @@ class ScientReferenceNodeView implements NodeView {
       this.sourceEditor.dataset.scientMarkdownAtomEditor = "true";
       this.sourceEditor.setAttribute(
         "aria-label",
-        definition ? "Footnote text" : "Citation source",
+        definition ? m(msg("Footnote text")) : m(msg("Citation source")),
       );
       this.sourceEditor.addEventListener("mousedown", this.handleEditorMouseDown);
       this.sourceEditor.addEventListener("input", this.handleInput);
@@ -181,6 +191,15 @@ class ScientReferenceNodeView implements NodeView {
     if (!(event instanceof MouseEvent) || event.button !== 0 || !this.view.editable) return;
     const position = this.getPos();
     if (position === undefined) return;
+    // As with links, Command or Control-click follows a citation while writing.
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      this.node.type.name === "citation" &&
+      this.openCitation?.(position, { x: event.clientX, y: event.clientY })
+    ) {
+      event.preventDefault();
+      return;
+    }
     const selection = this.view.state.selection;
     if (!(selection instanceof NodeSelection) || selection.from !== position) {
       this.view.dispatch(
@@ -276,8 +295,8 @@ class ScientReferenceNodeView implements NodeView {
       this.marker.setAttribute(
         "aria-label",
         entry?.definitionPosition == null
-          ? `Footnote ${visibleNumber} has no definition`
-          : `Go to footnote ${visibleNumber}`,
+          ? m(msg("Footnote {number} has no definition", { number: visibleNumber }))
+          : m(msg("Go to footnote {number}", { number: visibleNumber })),
       );
       if (entry?.definitionPosition == null) this.marker.removeAttribute("aria-describedby");
       else this.marker.setAttribute("aria-describedby", scientMarkdownFootnoteDefinitionId(label));
@@ -309,7 +328,7 @@ class ScientReferenceNodeView implements NodeView {
       backlink.textContent = "↩";
       const tooltip = document.createElement("span");
       tooltip.className = "scient-markdown-footnote-backlink-tooltip";
-      tooltip.textContent = "Back to text";
+      tooltip.textContent = m(msg("Back to text"));
       tooltip.setAttribute("aria-hidden", "true");
       backlink.append(tooltip);
       backlink.setAttribute(
@@ -355,6 +374,7 @@ export function createScientReferenceNodeView(
   view: EditorView,
   getPos: () => number | undefined,
   registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar,
+  openCitation?: ScientMarkdownCitationOpener,
 ): NodeView {
-  return new ScientReferenceNodeView(node, view, getPos, registerFootnote);
+  return new ScientReferenceNodeView(node, view, getPos, registerFootnote, openCitation);
 }

@@ -1,12 +1,12 @@
 {
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.improve-workspace-readiness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Workspace readiness",
   "categoryDescription": "Review and improve a workspace so people and agents can understand it and work safely.",
   "displayOrder": 20,
   "supportedScopes": ["user", "project"],
-  "defaultInvocationPolicy": "explicit",
+  "defaultInvocationPolicy": "automatic",
   "origin": {
     "kind": "scient"
   }

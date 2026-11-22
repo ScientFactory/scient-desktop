@@ -1,6 +1,7 @@
 "use client";
 
 import type { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -30,6 +31,7 @@ export function StaticAssetImageSurface(props: {
   readonly className?: string;
   readonly refreshToken?: number;
 }) {
+  const gt = useGT();
   // The shared asset atom renews signed URLs every 30 minutes (before the
   // server's 60-minute expiry); this surface only owns revision/error retries.
   const asset = useAssetUrlState(props.environmentId, props.image.resource);
@@ -100,12 +102,14 @@ export function StaticAssetImageSurface(props: {
         )}
       >
         {asset._tag !== "Failure" ? (
-          "Loading figure…"
+          gt("Loading figure…")
         ) : (
           <div className="flex items-center gap-2">
-            <span>Unable to load figure</span>
+            <span>
+              <T>Unable to load figure</T>
+            </span>
             <Button size="xs" variant="outline" onClick={refreshAsset}>
-              Try again
+              <T>Try again</T>
             </Button>
           </div>
         )}
@@ -119,7 +123,7 @@ export function StaticAssetImageSurface(props: {
       {...(props.className === undefined ? {} : { className: props.className })}
       {...(props.image.statusLabel === undefined
         ? asset._tag === "Failure"
-          ? { statusLabel: "Unable to refresh" }
+          ? { statusLabel: gt("Unable to refresh") }
           : {}
         : { statusLabel: props.image.statusLabel })}
       onLoadError={() => {

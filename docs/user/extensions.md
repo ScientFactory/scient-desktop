@@ -10,12 +10,15 @@ which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
 - **Discover** lists services you can add. Curated sections come first: **Most used**
-  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, Telegram,
-  PubMed, Semantic Scholar, Exa, Playwright, Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
+  (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, iMessage,
+  Telegram, GitHub, Slack, Notion, PubMed, Semantic Scholar, Exa, Playwright,
+  Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
   literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
-  each agent's store in its own section (**From Claude's store**, **From Codex's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
-  section title to see the whole category. Search covers the catalog, the
-  registry, and what you have already installed.
+  each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
+  section title to see the whole category. Sections and categories list
+  official services, run by the service itself or by Anthropic for it. Community
+  servers and MCP Registry servers appear only when you search. Search covers the
+  catalog, the registry, and what you have already installed.
 - **Installed** lists what this environment already has, grouped by who manages
   it.
 
@@ -210,7 +213,7 @@ offers **Fix with an agent**.
 ## Scient plugins and agents' own items
 
 **Scient plugins** on **Installed** lists the features built into Scient, such
-as Sources and Documents, and any plugin bundles you
+as Library and Documents, and any plugin bundles you
 have installed. A built-in plugin's page describes what it adds and links to
 its settings.
 
@@ -236,7 +239,12 @@ the rest.
 Discover lists plugins from Claude Code's locally available stores and stores
 configured in Scient Agent. Select the heading to search and browse the full
 list. A plugin's page shows its contents when available and the store's review
-state, such as **Reviewed by Anthropic** or **Reviewed by a partner**.
+state, such as **Reviewed by Anthropic** or **Reviewed by a partner**. When other
+agents' stores have the same service, such as Stripe in Claude's, Codex's and
+Antigravity's stores, Discover lists it once and its page shows **Your agents**,
+with an Add for each agent's own copy. The store shelves leave out a plugin that
+is the same service as one of Scient's connectors, which every agent gets from
+one Add.
 
 Choose **Install in Claude Code** when Claude is available. Scient uses Claude
 Code's own installer; if the store was configured only in Scient Agent,
@@ -251,8 +259,11 @@ do not appear in an existing session.
 
 Scient Agent 0.1.3 or newer uses your Claude Code plugins automatically. It
 reads that server's `CLAUDE_CONFIG_DIR` or default Claude home; it does not
-combine separate Claude profiles. Plugins you turn off in Claude Code stay off,
-and Scient Agent's own disabled-source settings still apply.
+combine separate Claude profiles. Adding a plugin for Scient Agent installs it
+into the Claude profile that reads that same home, or into Scient Agent itself
+when none does, and **Works with** names only the agents reading that home.
+Plugins you turn off in Claude Code stay off, and Scient Agent's own
+disabled-source settings still apply.
 
 ## Codex apps and Claude connectors
 
@@ -267,24 +278,69 @@ connection status updates after Codex confirms it. Some apps **connect the
 first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
-**Apps your agents reach through their own accounts** (Gmail, Google Calendar,
-Google Drive and any other app your ChatGPT or Claude account has) each appear
-once: in Discover for the three Google ones, and in Installed as an **App** when
-any agent has them. Scient never holds those sign-ins.
+A Scient Agent build that supports it also uses the skills and MCP servers of
+the Codex plugins installed and turned on in Codex (in `~/.codex/config.toml`,
+or its `CODEX_HOME`). Codex store plugins and Codex's own plugins in Installed
+then say **Works with Codex and Scient Agent**, when that Codex uses the same
+home. Turning off `codex-plugins` in Scient Agent's disabled sources turns this
+off. A Codex plugin server that limits its tools (`enabled_tools` or
+`disabled_tools`) is not loaded, because Scient Agent could not enforce the
+limit. OpenAI's bundled plugins, such as Browser, Computer Use and Messages, need
+the Codex app itself and stay **Codex only**.
 
-An app's page lists **Your agents**, each with its own state and action:
+**Services your agents reach through their own accounts or stores** each appear
+once in Discover, whichever way each agent reaches them: Gmail, Google Calendar,
+Google Drive, Outlook Email, Outlook Calendar, Microsoft Teams, SharePoint, Zoom,
+Figma and Readwise through each agent's ChatGPT or Claude account, and iMessage,
+Telegram and Boltz through a plugin from each agent's store. Any other app your ChatGPT or Claude account
+has is a service too, and appears in Installed as an **App** when any agent has
+it. The store shelves leave out plugins these services list. Scient never holds
+those sign-ins.
+
+A service's page lists **Your agents**, one row per agent, each with its own
+state and action, so one page connects every agent:
 
 - **Connect in ChatGPT** for Codex and Scient Agent. One connection there
   serves both when they use the same ChatGPT account. Scient Agent needs its
   ChatGPT sign-in; the row offers it when it is missing.
 - **Connect on claude.ai** for Claude, when claude.ai has a connector for that
   app. It opens that connector's own page. Where claude.ai names it differently
-  (Outlook is part of Microsoft 365), the row says the name to look for. An app
-  claude.ai does not have shows no Claude row.
+  (Outlook, Teams and SharePoint are part of Microsoft 365), the row says the
+  name to look for. An app claude.ai does not have shows no Claude row.
+- **Add to Claude Code** or **Add to Codex** for a service an agent has no
+  account app for, such as iMessage (Anthropic's iMessage plugin for Claude and
+  Scient Agent, OpenAI's Messages plugin for Codex) and Telegram (Anthropic's
+  Telegram plugin). It installs the plugin from that agent's store right there.
+  One Claude Code plugin serves Claude and Scient Agent. The row then says
+  **Added**, not Connected: any setup the plugin needs, such as a Telegram bot
+  token, happens in chat.
 
-Return to Scient afterwards and the rows update. Under the Installed table,
+The **+** on a service's Discover row takes the next of these steps. Return to
+Scient after a provider page and the rows update. Under the Installed table,
 **Add apps on ChatGPT** and **Add connectors on claude.ai** open each account's
 own page. Scient does not add Google's official MCP servers itself.
+
+## Antigravity plugins
+
+**From the Antigravity Marketplace** lists Google's own Antigravity plugins and
+partner plugins from other developers. It needs an Antigravity agent that uses
+the agy command-line runtime; otherwise the store explains what to change.
+Category pages show these plugins in **From Antigravity's store**.
+
+Choose **Add to Antigravity**. A partner plugin first says which developer makes
+it; add it only if you trust them. The plugin goes into Antigravity's plugins
+for your user account on the computer Scient runs on, so the Antigravity app
+there gets it too. Installed lists it with an On/Off switch and **Remove from
+Antigravity**.
+
+Gmail, Google Drive, Google Calendar, Google Docs, Sheets and Slides list
+Antigravity under **Your agents** on their page, with **Add to Antigravity**
+right there. Once added, the row says the plugin signs in the first time a chat
+uses it; Scient does not see that sign-in. Partner plugins that connect through
+their own MCP server, such as Notion, Linear, Figma or Canva, stay in the
+Antigravity Marketplace and are not offered on service pages: Antigravity signs
+their connection in only in its own plugin manager, so in Scient's chats they
+bring only their skills.
 
 ## See what a conversation received
 

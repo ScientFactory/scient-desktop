@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
@@ -101,6 +102,7 @@ describe("T3's keep-awake hold with Scient's work", () => {
           Layer.provide(Settings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
           Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+          Layer.provide(FileSystem.layerNoop({})),
         ),
       );
 
@@ -114,7 +116,8 @@ describe("T3's keep-awake hold with Scient's work", () => {
       shell = shellWith("command");
       yield* Queue.offer(events, { sequence: 2, event: { type: "turn-item.updated" } });
       yield* settle;
-      expect(yield* Queue.take(spawned)).toBe("caffeinate");
+      // T3 starts caffeinate through sh, which reports once the hold is acquired.
+      expect(yield* Queue.take(spawned)).toBe("sh");
     }),
   );
 });

@@ -168,6 +168,16 @@ export function lowerWhisperProcessPriority(
   }
 }
 
+/**
+ * Half the logical CPUs, at most four. ggml's workers spin-wait for one another, so with a
+ * thread per CPU, programs holding CPUs stall a transcription for minutes.
+ */
+export function defaultWhisperThreads(
+  availableParallelism = NodeOS.availableParallelism(),
+): number {
+  return Math.max(1, Math.min(MAX_THREADS, Math.floor(availableParallelism / 2)));
+}
+
 export function isWhisperRuntimePlatformSupported(
   platform: NodeJS.Platform,
   osRelease: string,
@@ -187,6 +197,8 @@ export class LocalWhisperRuntime {
   private readonly inferenceTimeoutMs: number;
   private readonly osRelease: () => string;
   private child: NodeChildProcess.ChildProcessWithoutNullStreams | null = null;
+  /** Helpers asked to stop that have not exited; disposal waits for them too. */
+  private readonly stopping = new Set<NodeChildProcess.ChildProcessWithoutNullStreams>();
   private endpoint: string | null = null;
   private activeModelPath: string | null = null;
   private starting: Promise<string> | null = null;
@@ -204,7 +216,7 @@ export class LocalWhisperRuntime {
     this.platform = options.platform ?? NodeOS.platform();
     this.osRelease = options.osRelease ?? NodeOS.release;
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-    this.threads = Math.max(1, Math.min(MAX_THREADS, options.threads ?? MAX_THREADS));
+    this.threads = Math.max(1, Math.min(MAX_THREADS, options.threads ?? defaultWhisperThreads()));
     this.inferenceTimeoutMs = Math.max(
       1_000,
       options.inferenceTimeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS,
@@ -266,14 +278,16 @@ export class LocalWhisperRuntime {
       this.stopProcess();
     }
     await this.queueTail;
-    await stopAndWaitForChild(child);
+    await Promise.all([...new Set([child, ...this.stopping])].map(stopAndWaitForChild));
   }
 
   async stopIdle(): Promise<void> {
     if (this.activeRequests > 0) {
       throw new WhisperRuntimeError("busy", "Offline voice transcription is active.");
     }
-    await stopAndWaitForChild(this.stopProcess());
+    // A helper still stopping, as after an aborted transcription, may hold the model open.
+    const child = this.stopProcess();
+    await Promise.all([...new Set([child, ...this.stopping])].map(stopAndWaitForChild));
   }
 
   private async transcribeNow(
@@ -459,18 +473,34 @@ export class LocalWhisperRuntime {
     this.child = null;
     this.endpoint = null;
     this.activeModelPath = null;
-    if (child && child.exitCode === null && !child.killed) child.kill();
+    if (child && !hasExited(child) && !child.killed) {
+      child.kill();
+      // On macOS and Linux the helper's SIGTERM waits for the running transcription to end.
+      const force = setTimeout(() => {
+        if (!hasExited(child)) child.kill("SIGKILL");
+      }, STOP_TIMEOUT_MS);
+      force.unref();
+      this.stopping.add(child);
+      child.once("exit", () => {
+        clearTimeout(force);
+        this.stopping.delete(child);
+      });
+    }
     return child;
   }
 }
 
+/** A helper ended by a signal has no exit code, only its signal. */
+const hasExited = (child: NodeChildProcess.ChildProcess) =>
+  child.exitCode !== null || child.signalCode !== null;
+
 async function stopAndWaitForChild(
   child: NodeChildProcess.ChildProcessWithoutNullStreams | null,
 ): Promise<void> {
-  if (!child || child.exitCode !== null) return;
+  if (!child || hasExited(child)) return;
   if (!child.killed) child.kill();
   if (await waitForChildExit(child, STOP_TIMEOUT_MS)) return;
-  if (child.exitCode === null) child.kill("SIGKILL");
+  if (!hasExited(child)) child.kill("SIGKILL");
   if (!(await waitForChildExit(child, FORCE_STOP_TIMEOUT_MS))) {
     throw new Error("Offline voice helper did not stop.");
   }
@@ -480,7 +510,7 @@ async function waitForChildExit(
   child: NodeChildProcess.ChildProcessWithoutNullStreams,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (child.exitCode !== null) return true;
+  if (hasExited(child)) return true;
   return new Promise<boolean>((resolve) => {
     let settled = false;
     const finish = (exited: boolean) => {
@@ -491,7 +521,7 @@ async function waitForChildExit(
       resolve(exited);
     };
     const onExit = () => finish(true);
-    const timer = setTimeout(() => finish(child.exitCode !== null), timeoutMs);
+    const timer = setTimeout(() => finish(hasExited(child)), timeoutMs);
     timer.unref();
     child.once("exit", onExit);
   });

@@ -1,5 +1,6 @@
 // The Voice settings card for dictation with ChatGPT, beside this computer's Whisper models.
 import { Link } from "@tanstack/react-router";
+import { T } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -26,16 +27,18 @@ export function ChatGptDictationCard({
           <h3 className="font-medium text-sm">ChatGPT</h3>
           {selected ? (
             <Badge variant="success" size="sm">
-              <CheckIcon /> In use
+              <CheckIcon /> <T context="this dictation engine is the one in use">In use</T>
             </Badge>
           ) : null}
         </div>
         <p className="text-muted-foreground text-xs">
-          Accurate in many languages, with nothing to download. Uses your ChatGPT sign-in in Scient
-          Agent or Codex.
+          <T>
+            Accurate in many languages, with nothing to download. Uses your ChatGPT sign-in in
+            Scient Agent or Codex.
+          </T>
         </p>
         <p className="text-muted-foreground/70 text-xs">
-          Recordings go to OpenAI, which keeps them for 30 days.
+          <T>Recordings go to OpenAI, which keeps them for 30 days.</T>
         </p>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -47,22 +50,26 @@ export function ChatGptDictationCard({
               disabled={selected}
               onClick={onSelect}
             >
-              {selected ? "In use" : "Use ChatGPT"}
+              {selected ? (
+                <T context="this dictation engine is the one in use">In use</T>
+              ) : (
+                <T>Use ChatGPT</T>
+              )}
             </Button>
             {offeredOnFirstUse ? (
               <span className="text-muted-foreground text-xs">
-                Offered the first time you dictate.
+                <T>Offered the first time you dictate.</T>
               </span>
             ) : null}
           </>
         ) : (
           <>
             <Button size="xs" render={<Link to="/settings/providers" />}>
-              Sign in to ChatGPT
+              <T>Sign in to ChatGPT</T>
             </Button>
             {selected ? (
               <span className="text-muted-foreground text-xs">
-                Dictation waits for the sign-in.
+                <T>Dictation waits for the sign-in.</T>
               </span>
             ) : null}
           </>

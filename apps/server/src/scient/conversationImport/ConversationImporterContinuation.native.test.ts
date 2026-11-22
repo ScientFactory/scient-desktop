@@ -42,7 +42,6 @@ import {
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
 } from "../../orchestration-v2/threadHistoryPaging.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
-import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
 import { layerFromAdapters as makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -128,6 +127,12 @@ import {
   parseConversationMarkdown,
 } from "@scientfactory/conversation";
 import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
+import {
+  forkConversation,
+  type ConversationForkTestCommand,
+  conversationForkOf,
+  recordConversationFork,
+} from "../../orchestration-v2/testkit/ConversationForkCommand.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
@@ -559,18 +564,16 @@ describe("native import continuation and forks", () => {
         assert.deepStrictEqual(imported.conversationImport?.notices, notices);
 
         const forkId = ThreadId.make("fork-keeps-notices");
-        yield* Effect.flatMap(ConversationForkService, (engine) =>
-          engine.dispatch({
-            type: "thread.fork",
-            commandId: CommandId.make("fork-keeps-notices"),
-            originThreadId: result.threadId,
-            newThreadId: forkId,
-            sourceAssistantMessageId: imported.messages.find(
-              (message) => message.text === "Answer 2",
-            )!.id,
-            workspaceMode: "local",
-          }),
-        );
+        yield* forkConversation({
+          type: "thread.fork",
+          commandId: CommandId.make("fork-keeps-notices"),
+          originThreadId: result.threadId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: imported.messages.find(
+            (message) => message.text === "Answer 2",
+          )!.id,
+          workspaceMode: "local",
+        });
         const fork = (yield* readThread(forkId))!;
         assert.deepStrictEqual(fork.forkLineage?.sourceImport?.notices, notices);
 
@@ -639,18 +642,16 @@ describe("native import continuation and forks", () => {
         const { result } = yield* importOnce(lease);
         const imported = (yield* readThread(result.threadId))!;
         const forkId = ThreadId.make("fork-of-folded-answer");
-        yield* Effect.flatMap(ConversationForkService, (engine) =>
-          engine.dispatch({
-            type: "thread.fork",
-            commandId: CommandId.make("fork-folded-answer"),
-            originThreadId: result.threadId,
-            newThreadId: forkId,
-            sourceAssistantMessageId: imported.messages.find(
-              (message) => message.text === "Answer 2",
-            )!.id,
-            workspaceMode: "local",
-          }),
-        );
+        yield* forkConversation({
+          type: "thread.fork",
+          commandId: CommandId.make("fork-folded-answer"),
+          originThreadId: result.threadId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: imported.messages.find(
+            (message) => message.text === "Answer 2",
+          )!.id,
+          workspaceMode: "local",
+        });
         const fork = (yield* readThread(forkId))!;
         const answer = fork.activities.find(
           (activity) => activity.kind === "user-input.answer-submitted",
@@ -1143,6 +1144,11 @@ describe("native import continuation and forks", () => {
           (thread) => thread.id === first.thread.activeProviderThreadId,
         )!;
         assert.isString(firstProvider.nativeThreadRef?.nativeId);
+        // The handoff's receipt names the native thread it reached and omits nothing.
+        const firstDelivery = first.contextHandoffs.at(-1)?.delivery;
+        assert.strictEqual(firstDelivery?.status, "inline");
+        assert.strictEqual(firstDelivery?.nativeThreadId, firstProvider.nativeThreadRef?.nativeId);
+        assert.deepStrictEqual(firstDelivery?.omittedItemIds, []);
         yield* continueImport(
           result.threadId,
           MessageId.make("same-import-session"),
@@ -1253,7 +1259,6 @@ describe("native import continuation and forks", () => {
           };
           const { lease } = yield* leaseFor({ ...fixture, input });
           const { result } = yield* importOnce(lease);
-          const forks = yield* ConversationForkService;
           const store = yield* ProjectionStoreV2;
           const before = (yield* readThread(result.threadId))!;
           assert.deepInclude(before.conversationImport!.omissions, sourceOmission);
@@ -1284,7 +1289,7 @@ describe("native import continuation and forks", () => {
           assert.deepStrictEqual(reverted.conversationImport, before.conversationImport);
           const sourceAnswer = reverted.messages.find((message) => message.text === "Answer 2")!;
           const forkId = ThreadId.make("fork-of-imported-history");
-          yield* forks.dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make("fork-inherited-imported-answer"),
             originThreadId: result.threadId,
@@ -1335,12 +1340,19 @@ describe("native import continuation and forks", () => {
             fork.forkLineage?.sourceImport,
           );
           assert.isUndefined(transfer.frozenSource);
+          // A portable fork carries no provider identity from its source.
+          assert.isNotNull(transfer.portableReason ?? null);
+          assert.isUndefined(transfer.sourcePoint.providerThreadRef);
+          assert.isNull(nativeFork.thread.forkedFrom);
+          assert.isNull(nativeFork.thread.activeProviderThreadId);
+          assert.strictEqual((yield* conversationForkOf(forkId))?.status, "ready");
           yield* continueImport(
             forkId,
             MessageId.make("fork-continuation"),
             "Continue from answer two",
           );
           const contextPreamble = (yield* ImportPeer).prompts.at(-1)!;
+          assert.include(contextPreamble, "Known source omissions (unverified)");
           assert.include(contextPreamble, "Question 1");
           assert.include(contextPreamble, "Answer 2");
           assert.include(contextPreamble, "range-truncated");
@@ -1392,7 +1404,7 @@ describe("native import continuation and forks", () => {
 
           const secondForkId = ThreadId.make("fork-of-imported-fork");
           const secondSource = fork.messages.find((message) => message.text === "Answer 2")!;
-          yield* forks.dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make("fork-imported-fork"),
             originThreadId: forkId,
@@ -1445,7 +1457,7 @@ it.live(
         for (const contextHandoffSize of ["compact", "standard", "large", "maximum"] as const) {
           yield* settings.updateSettings({ scientFork: { contextHandoffSize } });
           const target = ThreadId.make(`preset-fork:${contextHandoffSize}`);
-          yield* (yield* ConversationForkService).dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make(target),
             originThreadId: result.threadId,
@@ -1476,7 +1488,7 @@ it.live(
         assert.isBelow(counts[2]!, counts[3]!);
         assert.equal(counts[3], source.turnItems.length);
         const small = ThreadId.make("preset-fork:small-model");
-        yield* (yield* ConversationForkService).dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make(small),
           originThreadId: result.threadId,
@@ -1538,7 +1550,7 @@ it.live("the environment cap overrides the maximum preset on actual native fork 
         scientFork: { contextHandoffSize: "maximum" },
       });
       const target = ThreadId.make("environment-capped-fork");
-      yield* (yield* ConversationForkService).dispatch({
+      yield* forkConversation({
         type: "thread.fork",
         commandId: CommandId.make(target),
         originThreadId: result.threadId,
@@ -1597,7 +1609,7 @@ it.live(
         assert.isNull(historicalMessage(thinking));
         assert.isNull(historicalMessage(work));
         const target = ThreadId.make("native-trace-fork");
-        yield* (yield* ConversationForkService).dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make(target),
           originThreadId: sourceId,
@@ -1696,7 +1708,7 @@ it.live.each(["document", "conversation"] as const)(
         const answer = source.messages.findLast((message) => message.text === "Continued");
         assert.ok(answer);
         const target = ThreadId.make(`material-fork-${kind}`);
-        yield* (yield* ConversationForkService).dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make(target),
           originThreadId: result.threadId,
@@ -1790,7 +1802,7 @@ it.live.each(["portable import", "legacy SQL"] as const)(
         const fork = (projection: typeof source, id: string) =>
           Effect.gen(function* () {
             const target = ThreadId.make(id);
-            yield* (yield* ConversationForkService).dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make(id),
               originThreadId: projection.thread.id,
@@ -1881,7 +1893,7 @@ it.live("native rollback of a carrying run restores frozen history from durable 
       const source = yield* store.getThreadProjection(result.threadId);
       const answer = source.messages.find((message) => message.text === "Answer 3")!;
       const childId = ThreadId.make("rollback-carried-fork");
-      yield* (yield* ConversationForkService).dispatch({
+      yield* forkConversation({
         type: "thread.fork",
         commandId: CommandId.make("rollback-carried-fork"),
         originThreadId: result.threadId,
@@ -1934,7 +1946,7 @@ it.live("native empty-prefix forks send only the new request without a history h
       const source = yield* store.getThreadProjection(result.threadId);
       const first = source.messages.find((message) => message.text === "Question 1")!;
       const childId = ThreadId.make("empty-prefix-native-send");
-      yield* (yield* ConversationForkService).dispatch({
+      yield* forkConversation({
         type: "thread.fork",
         commandId: CommandId.make("empty-prefix-native-send"),
         originThreadId: result.threadId,
@@ -1974,7 +1986,7 @@ it.live(
         const store = yield* ProjectionStoreV2;
         const source = yield* store.getThreadProjection(sourceId);
         const childId = ThreadId.make("retained-revert-replacement");
-        yield* (yield* ConversationForkService).dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("retained-revert-replacement"),
           originThreadId: sourceId,
@@ -2211,12 +2223,11 @@ it.live(
         const { lease } = yield* leaseFor(fixture);
         const sourceId = (yield* importOnce(lease)).result.threadId;
         const store = yield* ProjectionStoreV2;
-        const forks = yield* ConversationForkService;
         yield* continueImport(sourceId, MessageId.make("frozen-live-request"), "Continue");
         const live = yield* store.getThreadProjection(sourceId);
         const answer = live.messages.find((message) => message.text === "Continued")!;
         const forkId = ThreadId.make("frozen-live-fork");
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("frozen-live-fork"),
           originThreadId: sourceId,
@@ -2402,7 +2413,7 @@ it.live(
         assert.equal(detail.text, storedAnswer.text);
         // A fork of the fork shows what the fork shows.
         const grandchildId = ThreadId.make("frozen-live-grandchild");
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("frozen-live-grandchild"),
           originThreadId: forkId,
@@ -2469,11 +2480,10 @@ it.live("file release ignores name case and subagent conversations' copied fork 
       const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
       const sourceId = (yield* importOnce(lease)).result.threadId;
       const store = yield* ProjectionStoreV2;
-      const forks = yield* ConversationForkService;
       const orchestrator = yield* OrchestratorV2;
       const source = yield* store.getThreadProjection(sourceId);
       const forkId = ThreadId.make("release-rules-fork");
-      yield* forks.dispatch({
+      yield* forkConversation({
         type: "thread.fork",
         commandId: CommandId.make("release-rules-fork"),
         originThreadId: sourceId,
@@ -2484,7 +2494,7 @@ it.live("file release ignores name case and subagent conversations' copied fork 
         workspaceMode: "local",
       });
       const fork = yield* store.getThreadProjection(forkId);
-      const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+      const file = (yield* conversationForkOf(fork.thread.id))!.attachmentCopies[0]!.source;
       const now = yield* DateTime.now;
       const prompt = fork.messages.find((message) => message.role === "user")!;
       // The fork names the shared file under an uppercase alias.
@@ -2517,7 +2527,7 @@ it.live("file release ignores name case and subagent conversations' copied fork 
       );
       // A subagent conversation of a fork carries its fork metadata but shows none of it.
       const otherForkId = ThreadId.make("release-rules-other-fork");
-      yield* forks.dispatch({
+      yield* forkConversation({
         type: "thread.fork",
         commandId: CommandId.make("release-rules-other-fork"),
         originThreadId: sourceId,
@@ -2570,13 +2580,12 @@ it.live(
         const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
         const sourceId = (yield* importOnce(lease)).result.threadId;
         const store = yield* ProjectionStoreV2;
-        const forks = yield* ConversationForkService;
         const orchestrator = yield* OrchestratorV2;
         const fs = yield* FileSystem.FileSystem;
         const config = yield* ServerConfig;
         const source = yield* store.getThreadProjection(sourceId);
         const forkId = ThreadId.make("guarded-release-fork");
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("guarded-release-fork"),
           originThreadId: sourceId,
@@ -2586,9 +2595,9 @@ it.live(
           )!.id,
           workspaceMode: "local",
         });
-        const files = (yield* store.getThreadProjection(
-          forkId,
-        )).thread.conversationFork!.attachmentCopies.map((copy) => copy.source);
+        const files = (yield* conversationForkOf(forkId))!.attachmentCopies.map(
+          (copy) => copy.source,
+        );
         assert.isAtLeast(files.length, 2);
         const [sent, held] = [files[0]!, files[1]!];
         // An unrelated conversation was sent one of the files.
@@ -2659,13 +2668,12 @@ it.live(
         const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
         const sourceId = (yield* importOnce(lease)).result.threadId;
         const store = yield* ProjectionStoreV2;
-        const forks = yield* ConversationForkService;
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;
         const sql = yield* SqlClient.SqlClient;
         const source = yield* store.getThreadProjection(sourceId);
         const forkId = ThreadId.make("reuse-release-fork");
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("reuse-release-fork"),
           originThreadId: sourceId,
@@ -2676,7 +2684,7 @@ it.live(
           workspaceMode: "local",
         });
         const fork = yield* store.getThreadProjection(forkId);
-        const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+        const file = (yield* conversationForkOf(fork.thread.id))!.attachmentCopies[0]!.source;
         const now = yield* DateTime.now;
         const prompt = source.messages.find((message) => message.role === "user")!;
         // An unrelated conversation that was sent `files`.
@@ -2760,6 +2768,7 @@ it.live(
             },
           ],
         });
+        yield* recordConversationFork(reuserForkId, (yield* conversationForkOf(fork.thread.id))!);
         yield* sql`
           INSERT INTO scient_fork_history
             (thread_id, position, source_thread_id, source_item_id, item_type, message_id,
@@ -2874,6 +2883,10 @@ it.live(
     ),
 );
 
+const recentWindowNativeIds = () => {
+  let generation = 0;
+  return () => `recent-window-native-${generation++}`;
+};
 it.live("opening a recent fork window never reads its older copies", () =>
   withImporter(
     Effect.gen(function* () {
@@ -2884,7 +2897,7 @@ it.live("opening a recent fork window never reads its older copies", () =>
         yield* continueImport(sourceId, MessageId.make(`later-${index}`), "Continue");
       const source = yield* store.getThreadProjection(sourceId);
       const forkId = ThreadId.make("recent-window-fork");
-      yield* (yield* ConversationForkService).dispatch({
+      yield* forkConversation({
         type: "thread.fork",
         commandId: CommandId.make("recent-window-fork"),
         originThreadId: sourceId,
@@ -2947,6 +2960,9 @@ it.live("opening a recent fork window never reads its older copies", () =>
       const anchored = yield* tripwire(anchorItem.id);
       assert.equal(anchored.projection.visibleTurnItems.at(-1)?.sourceItemId, anchorItem.id);
     }),
+    // The turn after the rollback recovers in a fresh native session; upstream 27517 refuses a
+    // replacement that hands back the old session, so the peer opens a new one as Codex does.
+    { nativeIdFactory: recentWindowNativeIds() },
   ),
 );
 
@@ -2984,13 +3000,12 @@ it.live(
         const { lease } = yield* leaseFor(prepared);
         const sourceId = (yield* importOnce(lease)).result.threadId;
         const store = yield* ProjectionStoreV2;
-        const forks = yield* ConversationForkService;
         const orchestrator = yield* OrchestratorV2;
         const fs = yield* FileSystem.FileSystem;
         const config = yield* ServerConfig;
         const source = yield* store.getThreadProjection(sourceId);
         const childId = ThreadId.make("durable-history-fork");
-        const command: import("@t3tools/contracts").ThreadForkCommand = {
+        const command: ConversationForkTestCommand = {
           type: "thread.fork",
           commandId: CommandId.make("durable-history-fork"),
           originThreadId: sourceId,
@@ -3012,7 +3027,7 @@ it.live(
             yield* completion;
           }
         });
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         yield* awaitEffects(command.commandId);
         // Advancing past an active provisioning lease would manufacture a takeover.
         yield* peer.setTime(Date.parse("2026-09-28T09:31:00.000Z"));
@@ -3022,7 +3037,7 @@ it.live(
           .filter((row) => row.visibility === "inherited")
           .map((row) => row.item);
         assert.isAbove(inherited.length, 0);
-        const files = frozen.thread.conversationFork!.attachmentCopies;
+        const files = (yield* conversationForkOf(frozen.thread.id))!.attachmentCopies;
         assert.isAbove(files.length, 0);
         const bytes = new Map<string, Uint8Array>();
         for (const copy of files) {
@@ -3087,7 +3102,7 @@ it.live(
         const localAnswer = withLocal.messages.find((message) => message.text === "Continued")!;
         assert.ok(localAnswer.runId);
         const localReforkId = ThreadId.make("durable-local-refork");
-        yield* forks.dispatch({
+        yield* forkConversation({
           ...command,
           commandId: CommandId.make("durable-local-refork"),
           originThreadId: childId,
@@ -3161,7 +3176,7 @@ it.live(
           sourceAssistantMessageId: staleAnswer.id,
         };
         const beforeSequence = yield* orchestrator.getThreadEventSequence(childId);
-        assert.equal((yield* Effect.exit(forks.dispatch(failedCommand)))._tag, "Failure");
+        assert.equal((yield* Effect.exit(forkConversation(failedCommand)))._tag, "Failure");
         assert.equal(yield* orchestrator.getThreadEventSequence(childId), beforeSequence);
         assert.isNull(yield* store.getThreadShell(failedCommand.newThreadId));
         assert.isTrue(
@@ -3188,7 +3203,7 @@ it.live(
           (yield* store.getThreadProjection(childId)).visibleTurnItems,
           reverted.visibleTurnItems,
         );
-        const replayed = yield* forks.dispatch(command);
+        const replayed = yield* forkConversation(command);
         assert.deepEqual(replayed, receipt);
         const verification = yield* ProjectionReplay.use((maintenance) => maintenance.rebuild).pipe(
           Effect.provide(projectionReplayLayer),
@@ -3198,9 +3213,9 @@ it.live(
         assert.deepEqual(rebuilt.turnItems, reverted.turnItems);
         assert.deepEqual(rebuilt.visibleTurnItems, reverted.visibleTurnItems);
         assert.deepEqual((yield* readThread(childId))!.messages, baseline.messages);
-        assert.deepEqual(rebuilt.thread.conversationFork?.attachmentCopies, files);
+        assert.deepEqual((yield* conversationForkOf(rebuilt.thread.id))?.attachmentCopies, files);
         const reforkId = ThreadId.make("durable-baseline-refork");
-        yield* forks.dispatch({
+        yield* forkConversation({
           ...command,
           commandId: CommandId.make("durable-baseline-refork"),
           originThreadId: childId,
@@ -3231,10 +3246,9 @@ it.live(
         const reforkQuestionFiles = Object.values(
           reforkQuestion.questionAnswer.attachmentsByQuestionId,
         ).flat();
+        const reforkCopies = (yield* conversationForkOf(refork.thread.id))!.attachmentCopies;
         const questionCopies = questionFiles.map((file) => {
-          const matches = refork.thread.conversationFork!.attachmentCopies.filter(
-            (copy) => copy.source.id === file.id,
-          );
+          const matches = reforkCopies.filter((copy) => copy.source.id === file.id);
           assert.lengthOf(matches, 1);
           assert.deepEqual(matches[0]!.source, file);
           return matches[0]!;
@@ -3255,7 +3269,7 @@ it.live(
             bytes.get(questionCopies[index]!.source.id),
           );
         }
-        for (const copy of refork.thread.conversationFork!.attachmentCopies) {
+        for (const copy of (yield* conversationForkOf(refork.thread.id))!.attachmentCopies) {
           assert.isTrue(bytes.has(copy.source.id));
           assert.deepEqual(copy.target, copy.source);
           assert.deepEqual(
@@ -3480,7 +3494,7 @@ it.live(
               scientFork: { contextHandoffSize: "maximum" },
             });
             const threadId = ThreadId.make("reported-capacity-fork");
-            yield* (yield* ConversationForkService).dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make(threadId),
               originThreadId: sourceId,
@@ -3528,7 +3542,7 @@ it.live(
             ) =>
               Effect.gen(function* () {
                 const threadId = ThreadId.make(`capacity-reopen:${suffix}`);
-                yield* (yield* ConversationForkService).dispatch({
+                yield* forkConversation({
                   type: "thread.fork",
                   commandId: CommandId.make(threadId),
                   originThreadId: original.sourceId,
@@ -3636,7 +3650,7 @@ it.live(
                 scientFork: { contextHandoffSize: "maximum" },
               });
               const target = ThreadId.make("capacity-other-profile:fork");
-              yield* (yield* ConversationForkService).dispatch({
+              yield* forkConversation({
                 type: "thread.fork",
                 commandId: CommandId.make(target),
                 originThreadId: sourceId,

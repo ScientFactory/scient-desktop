@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { Play } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -23,6 +24,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useCreateNewDocument } from "~/scient/documents/useCreateNewDocument";
@@ -73,7 +75,8 @@ export function useComputeConsoleRun(input: {
       input.onSubmitted(executionId);
       return true;
     }
-    if (!isAtomCommandInterrupted(result)) reportComputeFailure("Unable to run this code", result);
+    if (!isAtomCommandInterrupted(result))
+      reportComputeFailure(m(msg("Unable to run this code")), result);
     return false;
   };
 }
@@ -88,6 +91,7 @@ export function ComputeConsoleInput(props: {
   readonly onRun: (code: string) => Promise<boolean>;
   readonly footer: ReactNode;
 }) {
+  const gt = useGT();
   const { contextId } = props;
   const parent = useRef<HTMLDivElement>(null);
   const editor = useRef<ScientNestedCodeEditor | null>(null);
@@ -112,7 +116,7 @@ export function ComputeConsoleInput(props: {
       code: initial.current.code,
       editable: true,
       language: initial.current.language,
-      ariaLabel: "Console code",
+      ariaLabel: m(msg("Console code")),
       onUserCodeChange: onChange,
       onEscape: () => undefined,
     });
@@ -161,7 +165,9 @@ export function ComputeConsoleInput(props: {
       <div className="relative">
         {draft === "" ? (
           <span className="pointer-events-none absolute start-3 top-2.5 font-mono text-[13px] leading-[1.4] text-muted-foreground">
-            Run {props.languageName}…
+            <T>
+              Run <Var>{props.languageName}</Var>…
+            </T>
           </span>
         ) : null}
         <div
@@ -192,7 +198,7 @@ export function ComputeConsoleInput(props: {
         <Button
           size="icon-xs"
           variant="ghost-muted"
-          aria-label="Run"
+          aria-label={gt("Run", { $context: "verb, runs the typed code" })}
           disabled={props.disabled || draft.trim() === ""}
           onClick={() => void run()}
         >
@@ -216,6 +222,8 @@ export function ComputeConsoleLanguage(props: {
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { start, session, live } = props;
   const selected = start.selectedRuntime;
   const choices = start.readyRuntimes.map((runtime) => ({
@@ -229,6 +237,7 @@ export function ComputeConsoleLanguage(props: {
         profile: runtime.candidate.profile,
       },
       choices,
+      messages,
     );
   const openConsole = (runtimeKey: string) => {
     const contextId = createComputeContextId();
@@ -238,7 +247,10 @@ export function ComputeConsoleLanguage(props: {
       .openScient(props.threadRef, scientComputeSurface({ cwd: props.cwd, contextId }));
   };
   const languageId = session?.languageId ?? selected?.language.descriptor.languageId ?? null;
-  const missing = session === null ? "Choose a language" : `${session.label} isn't available`;
+  const missing =
+    session === null
+      ? gt("Choose a language")
+      : gt("{name} isn't available", { name: session.label });
   const current = selected === null ? (live ? (session?.label ?? "") : missing) : label(selected);
   const mark =
     languageId === null ? null : (
@@ -265,7 +277,7 @@ export function ComputeConsoleLanguage(props: {
         size="xs"
         variant="ghost"
         className="w-fit min-w-0 max-w-full"
-        aria-label="Language"
+        aria-label={gt("Language")}
       >
         {mark}
         <SelectValue className="max-w-52">{current}</SelectValue>
@@ -294,6 +306,7 @@ export function ComputeConsoleLinks(props: {
   readonly threadRef: ScopedThreadRef;
   readonly languageId: string | null;
 }) {
+  const gt = useGT();
   const { environmentId, cwd, threadRef, languageId } = props;
   const createDocument = useCreateNewDocument();
   const documentFiles = useNewDocumentFiles();
@@ -331,28 +344,28 @@ export function ComputeConsoleLinks(props: {
           })
         }
       >
-        New notebook
+        <T>New notebook</T>
       </button>
       {extension === undefined ? null : (
         <button type="button" className={link} onClick={() => void createScript()}>
-          New script
+          <T>New script</T>
         </button>
       )}
       <button type="button" className={link} onClick={() => setPicking(true)}>
-        Open a file
+        <T>Open a file</T>
       </button>
       <CommandDialog open={picking} onOpenChange={setPicking}>
         {picking ? (
           <CommandDialogPopup
-            aria-label="Open a file"
+            aria-label={gt("Open a file")}
             padding="none"
             className="overflow-hidden"
             onBackdropPointerDown={() => setPicking(false)}
           >
             <ProjectFilePickerForTarget
               setOpen={setPicking}
-              actionLabel="Open"
-              target={{ environmentId, cwd, threadRef, projectName: "Project files" }}
+              actionLabel={gt("Open", { $context: "verb, opens a file" })}
+              target={{ environmentId, cwd, threadRef, projectName: gt("Project files") }}
               onSelectFile={open}
             />
           </CommandDialogPopup>

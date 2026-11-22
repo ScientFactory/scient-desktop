@@ -1,3 +1,4 @@
+import { T, Var } from "gt-react";
 import { pdfCitationText, type PdfCitation } from "@t3tools/contracts";
 import { pdfCitationDocumentLabel, pdfCitationPages } from "@t3tools/shared/pdfCitations";
 import { useId, type ReactElement } from "react";
@@ -26,7 +27,11 @@ export function PdfCitationHoverCard({
               {location}
             </span>
           ) : null}
-          <span className="text-muted-foreground">PDF, {pdfCitationPages(citation)}</span>
+          <span className="text-muted-foreground">
+            <T>
+              PDF, <Var>{pdfCitationPages(citation)}</Var>
+            </T>
+          </span>
           {excerpt ? (
             <span className="mt-0.5 line-clamp-2 border-l-2 border-border pl-1.5 text-muted-foreground">
               {excerpt}

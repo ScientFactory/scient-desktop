@@ -6,6 +6,7 @@ import { Input } from "~/components/ui/input";
 import { MenuRadioGroup } from "~/components/ui/menu";
 import { DockMenu, DockCommandRadioItem } from "../writing/dockChrome";
 import { LatexContextMenuForm } from "./LatexContextMenuForm";
+import { useGT } from "gt-react";
 
 /** Retarget a reference without changing its command or display text. */
 export function LatexCrossReferenceControl(props: {
@@ -15,6 +16,7 @@ export function LatexCrossReferenceControl(props: {
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const targets = useEditorState({
     editor: props.editor,
@@ -38,13 +40,18 @@ export function LatexCrossReferenceControl(props: {
   const options = targets ?? [];
   const unresolved = !options.some((option) => option.value === props.value);
   return (
-    <DockMenu icon={undefined} label="Target" commandScope="latex" disabled={props.disabled}>
-      <LatexContextMenuForm label="Find reference target">
+    <DockMenu
+      icon={undefined}
+      label={gt("Target", { $context: "cross-reference target" })}
+      commandScope="latex"
+      disabled={props.disabled}
+    >
+      <LatexContextMenuForm label={gt("Find reference target")}>
         <Input
           size="compact"
           type="search"
-          aria-label="Find reference target"
-          placeholder="Search targets"
+          aria-label={gt("Find reference target")}
+          placeholder={gt("Search targets")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />

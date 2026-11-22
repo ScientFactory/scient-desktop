@@ -74,11 +74,10 @@ test("only exact queue reuse can suppress unconditional suites and requires repo
   assert.ok(failures(f).some((error) => error.includes("lint: skipped")));
 });
 
-test("false change outputs and focused release notes cannot excuse missing test/build lanes", () => {
+test("false change outputs cannot excuse missing test/build lanes", () => {
   for (const event of ["pull_request", "merge_group", "push"]) {
     for (const job of ["build", "test", "test_web", "test_server"]) {
       const f = normal(event);
-      f.needs.release_notes.outputs.qualified = "true";
       for (const key of ["typecheck", "build", "test", "test_web", "test_server"])
         f.needs.changes.outputs[key] = "false";
       f.needs[job].result = "skipped";
@@ -112,7 +111,6 @@ test("main reuses only confirmed exact queue qualification; unknown and missing 
   reusedPush.needs.queue_ci.result = "failure";
   assert.ok(failures(reusedPush).some((error) => error.includes("lint: skipped")));
   const f = normal("push");
-  f.needs.release_notes.outputs.qualified = "true";
   f.needs.queue_ci.outputs.reused = "false";
   f.needs.lint.result = "skipped";
   assert.ok(failures(f).some((error) => error.includes("lint")));
@@ -231,4 +229,29 @@ test("the nightly run qualifies every lane fresh and cannot claim reuse", () => 
   };
   f.needs.lint.result = "skipped";
   assert.ok(failures(f).includes("lint: skipped without a reason"));
+});
+
+test("only plain test-lane failures are quarantine candidates", () => {
+  const { quarantineCandidate } = require("./ci-check.cjs");
+  const f = normal("merge_group");
+  f.needs.queue_ci.outputs = { reused: "false" };
+  assert.equal(quarantineCandidate(f.needs, failures(f)), false);
+  f.needs.test_web.result = "failure";
+  f.needs.qualification.result = "failure";
+  assert.equal(quarantineCandidate(f.needs, failures(f)), true);
+  for (const [job, result] of [
+    ["build", "failure"],
+    ["lint", "failure"],
+    ["changes", "failure"],
+    ["mobile_native_static_analysis", "failure"],
+    ["test_server", "cancelled"],
+  ]) {
+    const g = structuredClone(f);
+    g.needs[job].result = result;
+    assert.equal(quarantineCandidate(g.needs, failures(g)), false, `${job}: ${result}`);
+  }
+  const receiptOnly = normal("merge_group");
+  receiptOnly.needs.queue_ci.outputs = { reused: "false" };
+  receiptOnly.needs.qualification.result = "failure";
+  assert.equal(quarantineCandidate(receiptOnly.needs, failures(receiptOnly)), false);
 });

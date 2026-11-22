@@ -6,8 +6,10 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
+import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,6 +18,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import { cast, pipe } from "effect/Function";
 import {
   HttpClient,
@@ -53,7 +56,6 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   browserApiCorsAllowedHeaders,
   browserApiCorsAllowedMethods,
@@ -229,7 +231,24 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       ? HttpServerResponse.empty({ status: 200, headers })
       : HttpServerResponse.uint8Array(body, { headers });
   }
-
+  if (
+    asset.renderIntent === "file-preview" &&
+    !asset.download &&
+    headers["Content-Type"] === "text/html; charset=utf-8"
+  ) {
+    const bytes = yield* readMcpAppHtml(asset.path);
+    // A page too large to buffer is served as is, without scroll restoration.
+    if (bytes !== null) {
+      const script = new TextEncoder().encode(FILE_PREVIEW_SCROLL_SCRIPT);
+      const body = new Uint8Array(bytes.byteLength + script.byteLength);
+      body.set(bytes);
+      body.set(script, bytes.byteLength);
+      headers["Content-Length"] = String(body.byteLength);
+      return method === "HEAD"
+        ? HttpServerResponse.empty({ status: 200, headers })
+        : HttpServerResponse.uint8Array(body, { headers });
+    }
+  }
   const isMedia = /^(?:audio|video)\//i.test(headers["Content-Type"] ?? "");
   const etag = isMedia ? undefined : `W/"${fileSize}-${fileMtimeMs ?? 0}"`;
   if (etag) headers.ETag = etag;
@@ -433,17 +452,27 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_P
 // HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
 const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
-  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-  // Signed URLs carry bearer tokens in the path, so they never reach a trace.
-  return (
-    UNTRACED_REQUEST_PATHS.has(path) ||
-    path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`)
+  return UNTRACED_REQUEST_PATHS.has(
+    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
   );
 });
 
+// Signed URLs carry their bearer token in the path; spans and request logs record it as REDACTED.
+const SIGNED_URL_ROUTE_OPTIONS = { redactedParams: ["*"] };
+
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
+
+// Request spans otherwise parent to the server's lifetime span, so every request shares one trace id.
+export const withRootRequestSpans = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
+  Layer.fromBuild((memoMap, scope) =>
+    Layer.buildWithMemoMap(layer, memoMap, scope).pipe(
+      // ParentSpan is optional to every reader, so removing it leaves R satisfied.
+      Effect.updateContext(
+        (context: Context.Context<R>) =>
+          Context.omit(Tracer.ParentSpan)(context) as Context.Context<R>,
+      ),
+    ),
+  );
 
 // Registered for every method so the handler can answer HEAD and refuse the
 // rest with a real 405 plus an Allow header, rather than letting the router
@@ -508,7 +537,12 @@ export const assetRouteHandler = Effect.gen(function* () {
   );
 });
 
-export const layerAssetRoute = HttpRouter.add("*", `${ASSET_ROUTE_PREFIX}/*`, assetRouteHandler);
+export const layerAssetRoute = HttpRouter.add(
+  "*",
+  `${ASSET_ROUTE_PREFIX}/*`,
+  assetRouteHandler,
+  SIGNED_URL_ROUTE_OPTIONS,
+);
 
 export const layerAttachmentUploadRoute = HttpRouter.add(
   "POST",
@@ -547,6 +581,7 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
       ? HttpServerResponse.empty({ status: 204 })
       : HttpServerResponse.text(stored.detail, { status: stored.status });
   }),
+  SIGNED_URL_ROUTE_OPTIONS,
 );
 
 const decodeBuildManifest = Schema.decodeUnknownEffect(

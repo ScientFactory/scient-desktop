@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
+import { useMessages } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
@@ -41,6 +42,7 @@ export function ScientGettingStartedFlow(props: {
   readonly mode: "automatic" | "manual" | "profile";
 }) {
   const navigate = useNavigate();
+  const messages = useMessages();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const sessionState = useEnvironmentSessionState(primaryEnvironmentId);
@@ -112,10 +114,13 @@ export function ScientGettingStartedFlow(props: {
       icon: definition.icon,
       label: definition.label,
       detail:
-        [definition.vendorLabel, definition.accountLabel]
+        [
+          definition.vendorLabel,
+          definition.accountLabel === undefined ? undefined : messages(definition.accountLabel),
+        ]
           .filter((part) => part !== undefined)
           .join(" · ") || null,
-      status: providerOnboardingStatusLabel(entry ?? undefined),
+      status: providerOnboardingStatusLabel(entry ?? undefined, messages),
       ready: entry ? isProviderInstancePickerReady(entry) : false,
       actionable: operateAccess === "granted",
       entry,

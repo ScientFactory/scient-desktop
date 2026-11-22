@@ -285,6 +285,34 @@ export const DesktopUpdateRemoteOutcome = Schema.Literals([
 ]);
 export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
 
+// SCIENT-FORK:START — update facts the desktop journaled, delivered to one backend's analytics.
+export const DESKTOP_UPDATE_FACTS_LIMIT = 64;
+export const DesktopUpdateFact = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: Schema.Literals(["app.update.outcome", "app.update.summary"]),
+  occurredAt: TrimmedNonEmptyString,
+  appVersion: TrimmedNonEmptyString,
+  buildChannel: Schema.Literals(["stable", "beta", "nightly", "development", "unknown"]),
+  properties: Schema.Record(
+    Schema.String,
+    Schema.Union([Schema.String, Schema.Number, Schema.Boolean]),
+  ),
+});
+export type DesktopUpdateFact = typeof DesktopUpdateFact.Type;
+
+/**
+ * A backend started without the telemetry pipes (a WSL-only primary) takes the same facts over
+ * authenticated HTTP; the response lists the ids its outbox holds, as the pipe's ack does.
+ */
+export const DESKTOP_UPDATE_FACTS_HTTP_PATH = "/api/scient/desktop-update-facts/v1";
+export const DesktopUpdateFactsHttpRequest = Schema.Struct({
+  facts: Schema.Array(DesktopUpdateFact).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+});
+export const DesktopUpdateFactsHttpResponse = Schema.Struct({
+  ids: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+});
+// SCIENT-FORK:END
+
 export const DesktopUpdateStatusReport = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("desktopUpdateStatus"),
@@ -293,6 +321,11 @@ export const DesktopUpdateStatusReport = Schema.Struct({
   outcome: Schema.optionalKey(DesktopUpdateRemoteOutcome),
   reason: Schema.optionalKey(TrimmedNonEmptyString),
   state: DesktopUpdateStateSchema,
+  // SCIENT-FORK:START — a report carrying facts delivers them; it is not a status change.
+  facts: Schema.optionalKey(
+    Schema.Array(DesktopUpdateFact).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+  ),
+  // SCIENT-FORK:END
 });
 export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
 
@@ -302,6 +335,10 @@ export const DesktopAppHealthReport = Schema.Struct({
   type: Schema.Literal("scientAppHealth"),
   component: Schema.Literals(["renderer", "desktop"]),
   failureClass: Schema.Literals(["process-crash", "resource-exhaustion", "unknown"]),
+  // SCIENT-FORK:START — how the process ended: exit code 5 on macOS is a Chromium CHECK (SIGTRAP).
+  exitReason: Schema.optionalKey(Schema.Literals(["crashed", "oom", "killed", "abnormal-exit"])),
+  exitCode: Schema.optionalKey(Schema.Int),
+  // SCIENT-FORK:END
 });
 export type DesktopAppHealthReport = typeof DesktopAppHealthReport.Type;
 
@@ -329,9 +366,11 @@ export const ShellEnvironmentPatch = Schema.Struct({
   SSL_CERT_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
   NODE_EXTRA_CA_CERTS: Schema.optionalKey(Schema.NullOr(Schema.String)),
   T3CODE_TELEMETRY_ENABLED: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  T3CODE_GITHUB_APP_CLIENT_ID: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  T3CODE_FEATURE_FLAGS: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  T3CODE_RELEASE_BASE_URL: Schema.optionalKey(Schema.NullOr(Schema.String)),
   __MISE_DIFF: Schema.optionalKey(Schema.NullOr(Schema.String)),
   JAVA_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  PNPM_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
   FNM_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
   FNM_MULTISHELL_PATH: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
@@ -403,6 +442,16 @@ export const DesktopTelemetryServerReady = Schema.Struct({
 });
 export type DesktopTelemetryServerReady = typeof DesktopTelemetryServerReady.Type;
 
+// SCIENT-FORK:START — the backend's analytics outbox holds these facts, or must never send them.
+export const DesktopTelemetryAckDesktopUpdateFacts = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("ackDesktopUpdateFacts"),
+  ids: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+});
+export type DesktopTelemetryAckDesktopUpdateFacts =
+  typeof DesktopTelemetryAckDesktopUpdateFacts.Type;
+// SCIENT-FORK:END
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryServerReady,
   DesktopTelemetrySetDiagnosticsDemand,
@@ -410,6 +459,8 @@ export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryRequestDesktopUpdate,
   DesktopTelemetryCommitDesktopUpdate,
   DesktopTelemetryCancelDesktopUpdate,
+  // SCIENT-FORK: acknowledges journaled update facts.
+  DesktopTelemetryAckDesktopUpdateFacts,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

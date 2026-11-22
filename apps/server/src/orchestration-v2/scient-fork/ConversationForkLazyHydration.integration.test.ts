@@ -31,6 +31,7 @@ import * as Registry from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -126,7 +127,7 @@ function shownItems(child: OrchestrationV2ThreadProjection) {
 }
 
 function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
-  const source = child.thread.conversationFork?.sourceThreadId;
+  const source = child.thread.forkLineage?.originThreadId;
   assert.ok(source);
   const shown = shownItems(child);
   const prefix = shown.filter((item) => item.inheritedFrom?.threadId === source);
@@ -206,7 +207,7 @@ it.live.each(["options-first", "dispatch-only", "archived"] as const)(
             ),
           );
         }
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         const child = yield* store.getThreadProjection(target);
         assertFrozenHistory(child);
         assert.isNull(child.thread.archivedAt);
@@ -216,7 +217,7 @@ it.live.each(["options-first", "dispatch-only", "archived"] as const)(
         const [marker] = yield* sql<{ transcript_imported_at: string | null }>`
           SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${source}`;
         assert.isNotNull(marker?.transcript_imported_at);
-        assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+        assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
         assert.deepEqual((yield* store.getThreadProjection(target)).turnItems, child.turnItems);
         assert.equal((yield* store.getThreadProjection(source)).thread.id, source);
         assert.deepEqual((yield* store.getThreadProjection(source)).runtimeRequests, []);
@@ -241,12 +242,13 @@ it.live(
         assert.isTrue(isDispatchError(optionsError));
         assert.equal(optionsError.forkDisposition, "rejected");
         assert.include(optionsError.message, "hydrate transcript");
-        const rejected = yield* Effect.exit(forks.dispatch(command));
+        const rejected = yield* Effect.exit(forkConversation(command));
         assert.isTrue(Exit.isFailure(rejected));
-        const error = yield* forks.dispatch(command).pipe(Effect.flip);
+        const error = yield* forkConversation(command).pipe(Effect.flip);
         assert.isTrue(isDispatchError(error));
         assert.equal(error.forkDisposition, "rejected");
-        assert.include(error.message, "hydrate transcript");
+        // The client reads T3's database message; the operation stays in the server log.
+        assert.include(error.message, "could not complete this database request");
         const targets =
           yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads WHERE thread_id = ${target}`;
         assert.deepEqual(targets, []);
@@ -257,10 +259,10 @@ it.live(
         SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${source}`;
         assert.equal(marker?.transcript_imported_at, null);
         yield* sql.unsafe("DROP TRIGGER reject_lazy_history");
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         const store = yield* ProjectionStore.ProjectionStoreV2;
         assertFrozenHistory(yield* store.getThreadProjection(target));
-        assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+        assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
       }).pipe(Effect.provide(testLayer), Effect.timeout("15 seconds")),
     ),
 );
@@ -279,7 +281,7 @@ it.live.each(["undecodable", "unbound"] as const)(
         const forks = yield* ConversationForkService;
         const options = yield* Effect.result(forks.getOptions(command));
         if (options._tag === "Success") assert.isFalse(options.success.available);
-        assert.equal((yield* Effect.result(forks.dispatch(command)))._tag, "Failure");
+        assert.equal((yield* Effect.result(forkConversation(command)))._tag, "Failure");
         assert.deepEqual(
           yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads WHERE thread_id = ${target}`,
           [],
@@ -299,7 +301,7 @@ it.live.each(["undecodable", "unbound"] as const)(
             yield* (yield* LegacyV1ThreadImporter).ensureTranscript(source);
           }).pipe(Effect.provide(Layer.fresh(legacyImporterLayer)));
         }
-        yield* forks.dispatch(command);
+        yield* forkConversation(command);
         const child = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(target);
         const typed = shownItems(child).find((item) => item.type === "user_input_request");
         assert.ok(typed?.type === "user_input_request");

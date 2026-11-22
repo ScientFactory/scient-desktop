@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, ProviderThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ThreadId } from "./baseSchemas.ts";
 import {
   getProviderAttachmentLimitError,
@@ -9,6 +9,7 @@ import {
 } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode } from "./providerPolicy.ts";
+import { SignInUrl } from "./providerSetup.ts";
 
 // SCIENT-FORK:START — conversation context handed to a provider session that
 // does not hold it natively (a fork, or a session that lost its history). It is
@@ -49,6 +50,52 @@ export const ProviderUploadFeedbackResult = Schema.Struct({
   feedbackId: TrimmedNonEmptyString,
 });
 export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
+
+const McpServerName = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+
+/** One of an agent's MCP servers, in the thread whose session asked for a sign-in. */
+export const ProviderMcpSignInStartInput = Schema.Struct({
+  threadId: ThreadId,
+  providerThreadId: ProviderThreadId,
+  server: McpServerName,
+});
+export type ProviderMcpSignInStartInput = typeof ProviderMcpSignInStartInput.Type;
+
+export const ProviderMcpSignInStartResult = Schema.Struct({
+  /** The page to approve the sign-in on; null when the server needs none any more. */
+  authorizationUrl: Schema.NullOr(SignInUrl),
+  /** The environment's time when it found the server already signed in. */
+  signedInAt: Schema.NullOr(IsoDateTime),
+});
+export type ProviderMcpSignInStartResult = typeof ProviderMcpSignInStartResult.Type;
+
+export const ProviderMcpSignInCompleteInput = Schema.Struct({
+  ...ProviderMcpSignInStartInput.fields,
+  /** The address the browser was sent to after approving, usually a localhost page. */
+  // SCIENT-FORK:START — without it, wait for the agent to report its own callback page was opened.
+  callbackUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(16_384))),
+  // SCIENT-FORK:END
+});
+export type ProviderMcpSignInCompleteInput = typeof ProviderMcpSignInCompleteInput.Type;
+
+export const ProviderMcpSignInCompleteResult = Schema.Struct({
+  /** The environment's time, so a later notice that needs a sign-in again offers one. */
+  signedInAt: IsoDateTime,
+});
+export type ProviderMcpSignInCompleteResult = typeof ProviderMcpSignInCompleteResult.Type;
+
+/** Safe to show: never carries the callback URL, codes or tokens. */
+export class ProviderMcpSignInError extends Schema.TaggedError<ProviderMcpSignInError>()(
+  "ProviderMcpSignInError",
+  {
+    server: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUploadFeedbackError>()(
   "ProviderUploadFeedbackError",

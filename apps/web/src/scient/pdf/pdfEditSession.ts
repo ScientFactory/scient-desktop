@@ -1,4 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import type { ScientPdfEditSaveResult } from "@t3tools/contracts";
 import {
@@ -121,7 +124,7 @@ export class PdfEditSession {
         await operation();
       } catch (error) {
         this.update({
-          error: error instanceof Error ? error.message : "The PDF operation failed.",
+          error: error instanceof Error ? error.message : m(msg("The PDF operation failed.")),
         });
       } finally {
         this.update({ busy: false });

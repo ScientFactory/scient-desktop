@@ -82,6 +82,14 @@ export const refreshLegacyV1Snapshot = Effect.fn("refreshLegacyV1Snapshot")(func
               )
               .get(),
           );
+          // A tool that opens the missing path leaves an empty database with no schema at all.
+          // It holds nothing to reconcile, so it is treated like a missing file: no failure is
+          // recorded, and one recorded earlier is kept. A source that lost only some tables
+          // still fails below.
+          if (db.prepare("SELECT 1 FROM legacy_source.sqlite_master LIMIT 1").get() === undefined) {
+            db.exec("ROLLBACK");
+            return 0;
+          }
           if (!exists("legacy_source", "projection_threads")) {
             if (
               state.source_token !== null ||

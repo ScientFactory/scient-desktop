@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
@@ -8,6 +9,7 @@ import { useComputeFilePresentationStore } from "./computeFilePresentationStore"
 
 /** Session feed or a MATLAB run; Run fresh runs already appear in the feed. */
 export function ComputeResultPicker({ contextId }: { readonly contextId: ComputeContextId }) {
+  const gt = useGT();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const bindings = useComputeContextStore((state) => state.bindings);
   const selected = useComputeFilePresentationStore(
@@ -18,12 +20,12 @@ export function ComputeResultPicker({ contextId }: { readonly contextId: Compute
   );
   if (batches.length === 0) return null;
   const choices = [
-    { contextId, label: "Session" },
+    { contextId, label: gt("Session", { $context: "the session's own results" }) },
     ...batches.map((binding, index) => ({
       contextId: binding.contextId,
       label:
         binding.startedAt === undefined
-          ? `Run ${index + 1}`
+          ? gt("Run {number}", { number: index + 1, $context: "noun, one batch run" })
           : formatTimestamp(binding.startedAt, timestampFormat),
     })),
   ];
@@ -31,9 +33,15 @@ export function ComputeResultPicker({ contextId }: { readonly contextId: Compute
     <Menu>
       <MenuTrigger
         render={
-          <Button size="xs" variant="ghost-muted" className="max-w-40" aria-label="Choose results">
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            className="max-w-40"
+            aria-label={gt("Choose results")}
+          >
             <span className="truncate">
-              {choices.find((choice) => choice.contextId === selected)?.label ?? "Session"}
+              {choices.find((choice) => choice.contextId === selected)?.label ??
+                gt("Session", { $context: "the session's own results" })}
             </span>
             <ChevronDown className="size-3 shrink-0" />
           </Button>

@@ -4,9 +4,12 @@ import {
   ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
+  // SCIENT-FORK: plugin sign-in failures are safe to show.
+  PluginSignInError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,10 +23,14 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
+import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import {
   antigravityAppendsSystemPrompt,
+  antigravityPermissionDisposition,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
+  antigravitySteersWithPrompt,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
@@ -32,11 +39,14 @@ import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
+  readAntigravityChildrenAtWork,
+  readAntigravityPendingReply,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
+  antigravityToolOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
@@ -48,6 +58,10 @@ import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuth
 // SCIENT-FORK:START Scient ACP application bridge
 import { scientAntigravityBridge } from "./ScientAcpApplicationBridge.ts";
 // SCIENT-FORK:END Scient ACP application bridge
+// SCIENT-FORK:START — plugin sign-in challenges from tool results.
+import { makeAntigravityPluginSignIns } from "../../scient/antigravity/pluginSignIn.ts";
+import { verifyPluginSignIn } from "../../scient/antigravity/pluginAuthManifest.ts";
+// SCIENT-FORK:END
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -74,11 +88,17 @@ const AntigravityProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+/** Thread variables reach the driver here; `makeAntigravityAcpRuntime` never reads them. */
+export type AntigravityAdapterV2RuntimeInput = Omit<
+  AntigravityAcpRuntimeInput,
+  "spawn" | "childProcessSpawner"
+> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
-    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+    input: AntigravityAdapterV2RuntimeInput,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError | ProviderSetupError,
@@ -97,6 +117,10 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  // SCIENT-FORK:START — where `agy` installs plugins; their manifests vouch for sign-ins.
+  /** Defaults to `~/.gemini/config/plugins`; without plugins no sign-in notice is offered. */
+  readonly pluginsDirectory?: string;
+  // SCIENT-FORK:END
 }
 
 /**
@@ -139,12 +163,34 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
-  const { profileDirectory } = options;
+  const { profileDirectory, pluginsDirectory } = options;
+  // SCIENT-FORK:START — daemon commands tracked as background work. A later update can carry only
+  // the tool ID and status, so a tracked daemon is known by its ID until it ends.
+  const daemonToolCallIds = new Set<string>();
+  type ToolCall = Parameters<NonNullable<AcpAdapterV2Flavor["extractBackgroundTaskId"]>>[0];
+  const isDaemonCommand = (toolCall: ToolCall) =>
+    daemonToolCallIds.has(toolCall.toolCallId) ||
+    (toolCall.kind === "execute" && !antigravityToolOutlivesPrompt(toolCall));
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — only sessions that offer agy's native Auto defer to its review. Scient's
+  // managed 1.4.5 harness offers none: it runs Auto as `default`, answered by Scient's policy.
+  const nativeAutoSessionIds = new Set<string>();
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — sign-in challenges a plugin's tool result printed, by agent process.
+  const pluginSignIns = makeAntigravityPluginSignIns();
+  // SCIENT-FORK:END
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
+      // SCIENT-FORK:START — a challenge's loopback listener lives in this process.
+      const generation = pluginSignIns.openGeneration();
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.sync(() => pluginSignIns.closeGeneration(generation)),
+      );
+      // SCIENT-FORK:END
       const platform = yield* HostProcess.Platform;
       const runtime = yield* options
         .withProcess(
@@ -170,7 +216,6 @@ export function makeAntigravityAcpAdapterFlavor(
             ownDescendantProcessGroups: platform === "linux",
             processGroupPlatform: platform,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
-            additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -179,6 +224,15 @@ export function makeAntigravityAcpAdapterFlavor(
       // Served reads are reported from the read handler, so they take turns with agent updates.
       const updates = yield* Semaphore.make(1);
       let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
+      // SCIENT-FORK:START — text held while it could begin a sign-in link goes out at prompt end.
+      const releaseHeldText = Effect.suspend(() =>
+        projectUpdate === undefined
+          ? Effect.void
+          : updates.withPermit(
+              Effect.forEach(pluginSignIns.flush(generation), projectUpdate, { discard: true }),
+            ),
+      ).pipe(Effect.ignore);
+      // SCIENT-FORK:END
       return {
         ...runtime,
         handleReadTextFile: (handler) =>
@@ -203,21 +257,62 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(runtime.prompt(payload, promptOptions)),
+            // SCIENT-FORK: see releaseHeldText.
+            Effect.ensuring(releaseHeldText),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) =>
-            updates.withPermit(handler(reads.repair(notification))),
+            updates.withPermit(
+              // SCIENT-FORK:START — challenges are kept and scrubbed before anything projects them.
+              Effect.gen(function* () {
+                const { notifications, candidate } = pluginSignIns.observe({
+                  generation,
+                  notification: reads.repair(notification),
+                });
+                // Only the installed plugin's own CLI and OAuth client earn a sign-in notice.
+                const verified =
+                  candidate === undefined || pluginsDirectory === undefined
+                    ? undefined
+                    : yield* verifyPluginSignIn({ pluginsDirectory, candidate }).pipe(
+                        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+                        Effect.provideService(Path.Path, options.path),
+                      );
+                if (candidate !== undefined && verified !== undefined) {
+                  pluginSignIns.admit(candidate, {
+                    attemptId: yield* options.random.uuidV4(),
+                    displayName: verified.displayName,
+                    programs: verified.programs,
+                    now: yield* Clock.currentTimeMillis,
+                  });
+                }
+                yield* Effect.forEach(notifications, handler, { discard: true });
+              }),
+              // SCIENT-FORK:END
+            ),
           );
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
+          runtime.start().pipe(
+            // SCIENT-FORK:START — see nativeAutoSessionIds.
+            Effect.tap((started) =>
+              Effect.sync(() => {
+                if (
+                  parseSessionModeState(started.sessionSetupResult)?.availableModes.some(
+                    (mode) => mode.id === "auto",
+                  ) === true
+                ) {
+                  nativeAutoSessionIds.add(started.sessionId);
+                } else {
+                  nativeAutoSessionIds.delete(started.sessionId);
+                }
+              }),
             ),
+            // SCIENT-FORK:END
+            Effect.tap((started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void),
+          ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -246,6 +341,7 @@ export function makeAntigravityAcpAdapterFlavor(
       attachments,
       resolveAttachmentPath,
       promptCapabilities,
+      // SCIENT-FORK: the managed 1.4.5 runtime links MP4 video for Gemini models.
       agentVersion,
       currentModel,
     }) =>
@@ -263,14 +359,34 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    // SCIENT-FORK: Stop ends the whole agent process group, including its commands.
     terminateRuntimeProcessGroupOnInterrupt: true,
-    // A command can keep running after Antigravity returns end_turn. Retain
-    // its owner until the native terminal update or an explicit user Stop.
+    // A finished background command or timer wakes the agent with no prompt open: it streams a
+    // reply and asks for permissions, and no prompt response ever ends that reply.
+    enablePostSettleContinuation: true,
     deferFinalizeForBackgroundWork: true,
-    extractBackgroundTaskId: (toolCall) =>
-      toolCall.kind === "execute" && toolCall.status !== undefined && toolCall.status !== "pending"
-        ? toolCall.toolCallId
-        : undefined,
+    wakeOnDetachedRequest: true,
+    replyEndsWithUsageUpdate: true,
+    toolOutlivesPrompt: antigravityToolOutlivesPrompt,
+    // SCIENT-FORK:START — a daemon (a dev server) never reports its end, so it does not hold the
+    // turn; tracking it as background work keeps its row running and gives Stop its process.
+    extractBackgroundTaskId: (toolCall) => {
+      if (!isDaemonCommand(toolCall) || toolCall.status === undefined) return undefined;
+      if (toolCall.status === "pending") return undefined;
+      if (toolCall.status === "completed" || toolCall.status === "failed") {
+        daemonToolCallIds.delete(toolCall.toolCallId);
+      } else {
+        daemonToolCallIds.add(toolCall.toolCallId);
+      }
+      return toolCall.toolCallId;
+    },
+    isPersistentBackgroundTool: isDaemonCommand,
+    // SCIENT-FORK:END
+    // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
+    // has ended. A message sent while a command runs leaves the command alone.
+    preserveRuntimeOnSettledInterrupt: true,
+    // `agy acp` reads a prompt sent mid-turn as a steer; cancel-and-restart killed its subagents.
+    steersWithPrompt: antigravitySteersWithPrompt,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
@@ -296,6 +412,11 @@ export function makeAntigravityAcpAdapterFlavor(
           request,
         }),
     },
+    // SCIENT-FORK: see nativeAutoSessionIds.
+    permissionDisposition: (policy, request) =>
+      nativeAutoSessionIds.has(request.sessionId)
+        ? antigravityPermissionDisposition(policy, request)
+        : acpPermissionDisposition(policy, request),
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
@@ -306,21 +427,51 @@ export function makeAntigravityAcpAdapterFlavor(
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
+    // SCIENT-FORK:START — plugin sign-in notices and the pages they open.
+    scientToolNotice: (sessionId, toolCallId, owner) =>
+      pluginSignIns.takeToolNotice(sessionId, toolCallId, owner),
+    scientPluginSignIn: {
+      open: Effect.fn("AntigravityAdapterV2.pluginSignIn.open")(function* (input) {
+        const redeemed = pluginSignIns.redeem({
+          attemptId: input.attemptId,
+          owner: input.owner,
+          nativeSessionId: input.nativeSessionId ?? undefined,
+          now: yield* Clock.currentTimeMillis,
+        });
+        if ("url" in redeemed) return { authorizationUrl: redeemed.url };
+        return yield* new PluginSignInError({
+          reason: "expired",
+          detail: "This sign-in has ended. Ask the agent to try again.",
+        });
+      }),
+    },
+    // SCIENT-FORK:END
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    // ACP 1.3.0 treats /compact as ordinary model input.
-    supportsCompaction: false,
+    compactViaAdvertisedCommand: true,
     requiresSignIn: isAntigravitySignInRequiredError,
+    checksVersionAtHandshake: true,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
-    // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
     ...(profileDirectory === undefined
       ? {}
       : {
-          watchPromptOutcome: (sessionId: string) =>
-            watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          // SCIENT-FORK: the session's delivered connectors say whose tool server failed.
+          watchPromptOutcome: (sessionId: string, delivery) =>
+            watchAntigravityPromptOutcome(profileDirectory, sessionId, delivery),
+          subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
+            readAntigravityChildrenAtWork({
+              profileDirectory,
+              rootSessionId: sessionId,
+              toolCallIds: nativeTaskIds,
+            }),
+          hasPendingReply: (sessionId: string) =>
+            readAntigravityPendingReply({
+              profileDirectory,
+              sessionId,
+            }),
         }),
   };
 }
@@ -334,9 +485,14 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,
   };
+  // SCIENT-FORK:START — the agy CLI loads plugins from the OS user's home, not GEMINI_HOME.
+  const pluginsDirectory =
+    options.pluginsDirectory ??
+    services.path.join(yield* HostProcess.HomeDirectory, ".gemini", "config", "plugins");
+  // SCIENT-FORK:END
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
+    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services, pluginsDirectory }),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined

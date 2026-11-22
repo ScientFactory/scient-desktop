@@ -60,6 +60,24 @@ import {
   ComputeVerifyRuntimeInput,
 } from "../scientCompute.ts";
 import {
+  ComputeResultsError,
+  ComputeResultsFilesChangeResult,
+  ComputeResultsPlaceLatexInput,
+  ComputeResultsPlaceLatexResult,
+  ComputeResultsPlacementsInput,
+  ComputeResultsPlacementsResult,
+  ComputeResultsUndoUpdateInput,
+  ComputeResultsUpdateFilesInput,
+  ComputeResultsListInput,
+  ComputeResultsListResult,
+  ComputeResultsPlaceFigureInput,
+  ComputeResultsPlaceFigureResult,
+  ComputeResultsRerunInput,
+  ComputeResultsRerunResult,
+  ComputeResultsResolveInput,
+  ComputeResultsResolveResult,
+} from "../scientComputeResults.ts";
+import {
   ComputeTableInput,
   DataFileTable,
   DataFileTableError,
@@ -113,6 +131,14 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeReadTable: "compute.readTable",
   computeSaveOutput: "compute.saveOutput",
   computeSaveConsoleNotebook: "compute.saveConsoleNotebook",
+  computeResultsResolve: "compute.results.resolve",
+  computeResultsList: "compute.results.list",
+  computeResultsPlaceFigure: "compute.results.placeFigure",
+  computeResultsRerun: "compute.results.rerun",
+  computeResultsPlaceLatex: "compute.results.placeLatex",
+  computeResultsPlacements: "compute.results.placements",
+  computeResultsUpdateFiles: "compute.results.updateFiles",
+  computeResultsUndoUpdate: "compute.results.undoUpdate",
   notebookRead: "notebook.read",
   notebookReadOutput: "notebook.readOutput",
   notebookEdit: "notebook.edit",
@@ -350,6 +376,76 @@ const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSave
   error: ComputeRpcError,
 });
 
+const ComputeResultsRpcError = Schema.Union([
+  ComputeResultsError,
+  ComputeGatewayError,
+  ComputeOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsComputeResultsResolveRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsResolve, {
+  payload: ComputeResultsResolveInput,
+  success: ComputeResultsResolveResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsComputeResultsListRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsList, {
+  payload: ComputeResultsListInput,
+  success: ComputeResultsListResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsComputeResultsPlaceFigureRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPlaceFigure,
+  {
+    payload: ComputeResultsPlaceFigureInput,
+    success: ComputeResultsPlaceFigureResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsRerunRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsRerun, {
+  payload: ComputeResultsRerunInput,
+  success: ComputeResultsRerunResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsComputeResultsPlaceLatexRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPlaceLatex,
+  {
+    payload: ComputeResultsPlaceLatexInput,
+    success: ComputeResultsPlaceLatexResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsPlacementsRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPlacements,
+  {
+    payload: ComputeResultsPlacementsInput,
+    success: ComputeResultsPlacementsResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsUpdateFilesRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsUpdateFiles,
+  {
+    payload: ComputeResultsUpdateFilesInput,
+    success: ComputeResultsFilesChangeResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsUndoUpdateRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsUndoUpdate,
+  {
+    payload: ComputeResultsUndoUpdateInput,
+    success: ComputeResultsFilesChangeResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
 const WsComputeSaveConsoleNotebookRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.computeSaveConsoleNotebook,
   {
@@ -433,6 +529,14 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsDataReadFileTableRpc,
   WsComputeSaveOutputRpc,
   WsComputeSaveConsoleNotebookRpc,
+  WsComputeResultsResolveRpc,
+  WsComputeResultsListRpc,
+  WsComputeResultsPlaceFigureRpc,
+  WsComputeResultsRerunRpc,
+  WsComputeResultsPlaceLatexRpc,
+  WsComputeResultsPlacementsRpc,
+  WsComputeResultsUpdateFilesRpc,
+  WsComputeResultsUndoUpdateRpc,
   WsComputeSubmitCellsRpc,
   WsNotebookReadRpc,
   WsNotebookReadOutputRpc,

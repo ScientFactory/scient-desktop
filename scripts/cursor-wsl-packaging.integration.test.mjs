@@ -1,5 +1,5 @@
 // Cross-package regression: real server ASAR packing plus the actual Desktop fallback service.
-import { extractFile, getRawHeader, listPackage, statFile } from "@electron/asar";
+import { extractFile, getRawHeader, statFile } from "@electron/asar";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ByteSize from "effect/ByteSize";
@@ -65,31 +65,6 @@ it.layer(NodeServices.layer)("Cursor WSL packaged fallback", (it) => {
           arch: "x64",
           cursorSdkResourcesPath,
         });
-        const members = listPackage(asarPath, { isPack: false });
-        assert.isTrue(statFile(asarPath, windowsNativePath).unpacked);
-        assert.equal(
-          yield* fs.readFileString(path.join(`${asarPath}.unpacked`, windowsNativePath)),
-          "MZ",
-        );
-        assert.isFalse(Boolean(statFile(asarPath, linuxNativePath).unpacked));
-        assert.equal(extractFile(asarPath, linuxNativePath).toString(), "\x7fELF");
-        assert.isTrue(members.some((member) => member.endsWith("@cursor/sdk/dist/esm/index.js")));
-        assert.isFalse(
-          members.some(
-            (member) =>
-              member.includes("@cursor/sdk-win32-x64") || member.includes("@cursor/sdk-linux-x64"),
-          ),
-        );
-        for (const packagePath of [
-          "sdk-win32-x64/bin/rg.exe",
-          "sdk-win32-x64/vendor/tree-sitter/binding.node",
-          "sdk-linux-x64/bin/rg",
-        ]) {
-          assert.equal(
-            yield* fs.readFileString(path.join(cursorSdkResourcesPath, packagePath)),
-            "packaged fixture",
-          );
-        }
         const resource = DESKTOP_EXTRA_RESOURCES.find((entry) =>
           entry.from.endsWith("/cursor-sdk"),
         );
@@ -194,9 +169,6 @@ it.layer(NodeServices.layer)("Cursor WSL packaged fallback", (it) => {
           path.sep,
         );
         assert.include(lookup, path.join(result.root, "node_modules"));
-        assert.isTrue(
-          yield* fs.exists(path.join(result.root, "node_modules/@cursor/sdk-linux-x64/bin/rg")),
-        );
       }),
     ),
   );

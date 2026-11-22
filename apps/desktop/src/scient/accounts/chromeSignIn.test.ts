@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import { expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import {
   BrowserProfileId,
@@ -14,11 +15,22 @@ import {
 import type * as Electron from "electron";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
-import { chromeSignIn } from "./chromeSignIn.ts";
+import { chromeSignIn, endChromeSignIn } from "./chromeSignIn.ts";
 
 const state = vi.hoisted(() => ({
   read: { units: [] as string[][], cookies: [] as unknown[] },
   main: null as DesktopFillMainResult | null,
+  /** Whether the window is still there for Done or Cancel to end. */
+  windowOpen: true,
+  windows: 0,
+  /** When set, writing cookies waits for it after the hidden page loads, before the first write. */
+  /** When set, the copy into Main waits for it after staging, as for Main's lock. */
+  mainLock: undefined as
+    | undefined
+    | { waiting: PromiseWithResolvers<void>; free: PromiseWithResolvers<void> },
+  debuggerReady: undefined as
+    | undefined
+    | { loading: PromiseWithResolvers<void>; loaded: PromiseWithResolvers<void> },
 }));
 
 vi.mock("electron", () => ({
@@ -33,15 +45,24 @@ vi.mock("electron", () => ({
 }));
 vi.mock("./chromeWindow.ts", () => ({
   canQuitWindow: () => true,
-  endSignInWindow: () => true,
+  endSignInWindow: () => state.windowOpen,
   installedChromiumBrowsers: () => [{ name: "Edge", executable: "/synthetic/edge" }],
-  signInInWindow: async () => ({ outcome: "read", ...state.read }),
+  signInInWindow: async () => {
+    state.windows += 1;
+    return { outcome: "read", ...state.read };
+  },
 }));
 vi.mock("./sessionCookies.ts", () => ({
-  withCookieDebugger: (
+  withCookieDebugger: async (
     session: { send: (method: string, params?: object) => Promise<unknown> },
     run: (send: (method: string, params?: object) => Promise<unknown>) => Promise<unknown>,
-  ) => run(session.send),
+  ) => {
+    if (state.debuggerReady) {
+      state.debuggerReady.loading.resolve();
+      await state.debuggerReady.loaded.promise;
+    }
+    return run(session.send);
+  },
 }));
 vi.mock("./mainFill.ts", async (importOriginal) => {
   // A mock factory runs before this file's own imports are bound.
@@ -52,7 +73,20 @@ vi.mock("./mainFill.ts", async (importOriginal) => {
       _environmentId: string,
       _input: unknown,
       stage: (scope: string) => Effect.Effect<unknown>,
-    ) => stage("staging").pipe(Effect.as(state.main)),
+      proceed: () => boolean = () => true,
+    ) =>
+      stage("staging").pipe(
+        // Waiting for Main's lock, when a test holds it.
+        Effect.andThen(() =>
+          Effect.promise(async () => {
+            if (state.mainLock) {
+              state.mainLock.waiting.resolve();
+              await state.mainLock.free.promise;
+            }
+          }),
+        ),
+        Effect.map(() => (proceed() ? state.main : null)),
+      ),
   };
 });
 
@@ -89,7 +123,16 @@ const listed = (...valid: number[]) =>
 /** A profile's jar behind a fake debugger, and Google's answers to it in order. */
 function profile(
   answers: ReadonlyArray<Response | Error>,
-  { failWrites = false, signedIn = false } = {},
+  {
+    failWrites = false,
+    signedIn = false,
+    gate,
+  }: {
+    failWrites?: boolean;
+    signedIn?: boolean;
+    /** Google's first answer waits for `release`, once `asked` says it was asked. */
+    gate?: { asked: PromiseWithResolvers<void>; release: PromiseWithResolvers<void> };
+  } = {},
 ) {
   const written: unknown[] = [];
   const asked: string[] = [];
@@ -110,13 +153,17 @@ function profile(
     fetch: async (url: string) => {
       const answer = answers[asked.length] ?? answers.at(-1)!;
       asked.push(url);
+      if (gate && asked.length === 1) {
+        gate.asked.resolve();
+        await gate.release.promise;
+      }
       if (answer instanceof Error) throw answer;
       return answer;
     },
   };
 }
 
-function run(profileId: string, target: ReturnType<typeof profile>) {
+function run(profileId: string, target: ReturnType<typeof profile>, attemptId?: string) {
   const scopes: Array<string | undefined> = [];
   const staging = profile([]);
   const layer = Layer.mergeAll(
@@ -138,6 +185,7 @@ function run(profileId: string, target: ReturnType<typeof profile>) {
     environmentId: EnvironmentId.make(PRIMARY_LOCAL_ENVIRONMENT_ID),
     profileId: BrowserProfileId.make(profileId),
     url: "https://accounts.google.com/",
+    ...(attemptId === undefined ? {} : { attemptId }),
     ...(profileId === "default" ? { main: { mode: "fill-or-replace", skipSites: [] } } : {}),
   }).pipe(
     Effect.provide(layer),
@@ -246,5 +294,96 @@ it.effect("keeps Main's conflicts in the result and asks Google only when Main t
       outcome: "failed",
       browser: "Edge",
     });
+  }),
+);
+
+it.effect("cancels a copy still asking Google after its window closed, writing nothing", () =>
+  Effect.gen(function* () {
+    googleWindow();
+    state.windowOpen = false;
+    const gate = { asked: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+    const target = profile([listed(1)], { signedIn: true, gate });
+    const copying = yield* run("work", target).pipe(Effect.forkChild);
+    yield* Effect.promise(() => gate.asked.promise);
+    expect(yield* endChromeSignIn(false)).toBe(true);
+    // Done has nothing left to end once the window is gone.
+    expect(yield* endChromeSignIn(true)).toBe(false);
+    gate.release.resolve();
+    expect((yield* Fiber.join(copying)).result).toEqual({ outcome: "cancelled", browser: "Edge" });
+    expect(target.written).toEqual([]);
+    // With no sign-in left, Cancel is refused.
+    expect(yield* endChromeSignIn(false)).toBe(false);
+    state.windowOpen = true;
+  }),
+);
+
+it.effect("cancels an attempt before it starts, and never another attempt", () =>
+  Effect.gen(function* () {
+    state.read = { units: [["github.com"]], cookies: [cookie(".github.com")] };
+    // Cancel reached the desktop before the sign-in did: it never opens a window.
+    expect(yield* endChromeSignIn(false, "attempt-early")).toBe(true);
+    const windows = state.windows;
+    const early = profile([listed(1)]);
+    expect((yield* run("work", early, "attempt-early")).result).toEqual({
+      outcome: "cancelled",
+      browser: "Edge",
+    });
+    expect(state.windows).toBe(windows);
+    expect(early.written).toEqual([]);
+    // An attempt that already ended can't be cancelled, by Done or Cancel.
+    expect(yield* endChromeSignIn(false, "attempt-early")).toBe(false);
+    // Another dialog's Cancel, naming its own attempt, leaves this copy alone.
+    state.windowOpen = false;
+    const gate = { asked: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+    googleWindow();
+    const target = profile([listed(1)], { signedIn: true, gate });
+    const copying = yield* run("work", target, "attempt-mine").pipe(Effect.forkChild);
+    yield* Effect.promise(() => gate.asked.promise);
+    expect(yield* endChromeSignIn(false, "attempt-other")).toBe(true);
+    // Nor does a Cancel that names no attempt.
+    expect(yield* endChromeSignIn(false)).toBe(false);
+    gate.release.resolve();
+    expect((yield* Fiber.join(copying)).result).toMatchObject({ outcome: "copied" });
+    expect(target.written).toHaveLength(3);
+    state.windowOpen = true;
+  }),
+);
+
+it.effect("still cancels while the hidden page for writing cookies loads", () =>
+  Effect.gen(function* () {
+    state.read = { units: [["github.com"]], cookies: [cookie(".github.com")] };
+    state.windowOpen = false;
+    state.debuggerReady = { loading: Promise.withResolvers(), loaded: Promise.withResolvers() };
+    const target = profile([listed(1)]);
+    const copying = yield* run("work", target, "attempt-load").pipe(Effect.forkChild);
+    yield* Effect.promise(() => state.debuggerReady!.loading.promise);
+    expect(yield* endChromeSignIn(false, "attempt-load")).toBe(true);
+    state.debuggerReady.loaded.resolve();
+    expect((yield* Fiber.join(copying)).result).toEqual({ outcome: "cancelled", browser: "Edge" });
+    expect(target.written).toEqual([]);
+    state.debuggerReady = undefined;
+    state.windowOpen = true;
+  }),
+);
+
+it.effect("cancels a copy into Main while it waits for Main's lock, leaving Main untouched", () =>
+  Effect.gen(function* () {
+    googleWindow();
+    state.windowOpen = false;
+    state.main = { units: [{ sites: ["google.com"], outcome: "copied" }], unsupported: 0 };
+    state.mainLock = { waiting: Promise.withResolvers(), free: Promise.withResolvers() };
+    const held = profile([listed(1)]);
+    const copying = yield* run("default", held, "attempt-main").pipe(Effect.forkChild);
+    yield* Effect.promise(() => state.mainLock!.waiting.promise);
+    // Staged already, but Main not yet written: Cancel still holds.
+    expect(yield* endChromeSignIn(false, "attempt-main")).toBe(true);
+    state.mainLock.free.resolve();
+    const { result, staging } = yield* Fiber.join(copying);
+    expect(result).toEqual({ outcome: "cancelled", browser: "Edge" });
+    expect(staging.written).toHaveLength(3);
+    expect(held.written).toEqual([]);
+    state.mainLock = undefined;
+    state.main = null;
+    state.windowOpen = true;
   }),
 );

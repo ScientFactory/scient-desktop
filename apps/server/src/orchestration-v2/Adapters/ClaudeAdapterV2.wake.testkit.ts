@@ -288,6 +288,9 @@ const makeWakeHarnessWithOptions = (options?: {
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
                 setPermissionMode: () => Effect.void,
@@ -337,6 +340,9 @@ const makeWakeHarnessWithOptions = (options?: {
               mcpServerStatus: options?.mcpServerStatus ?? Effect.succeed([]),
               // SCIENT-FORK:END
               readMcpResource: () => Effect.die("unexpected MCP resource read in wake fixture"),
+              mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+              mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+              reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
               callMcpTool: () => Effect.die("unexpected MCP tool call in wake fixture"),
               listPermissionRules: Effect.die("unexpected permission rules read in wake fixture"),
             };

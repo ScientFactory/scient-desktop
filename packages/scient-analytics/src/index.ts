@@ -1,5 +1,4 @@
 export {
-  AnalyticsConsent,
   modelKey,
   type CommandCategory,
   type FailureCategory,
@@ -10,10 +9,11 @@ export {
   type NormalizationContext,
   type NormalizedEvent,
 } from "./contract.ts";
-export { analyticsFailureCode } from "./failureCodes.ts";
+export { analyticsFailureClass, analyticsFailureCode } from "./failureCodes.ts";
 export {
   createAnalyticsRuntime,
   type AnalyticsRuntime,
   type AnalyticsRuntimeOptions,
+  type RecordedAnalyticsEvent,
 } from "./runtime.ts";
 export type { AnalyticsWorkerInput } from "./workerProtocol.ts";

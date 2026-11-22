@@ -68,7 +68,6 @@ describe("resolveScientReleaseNotesDecision", () => {
     expect(decision.kind).toBe("show");
     if (decision.kind !== "show") throw new Error("Expected a visible release note.");
     expect(decision.current.version).toBe("2.4.0");
-    expect(decision.history.map((note) => note.version)).toEqual(["2.4.0", "2.3.0", "2.2.0"]);
   });
 
   it("silently advances when approved copy is absent", () => {

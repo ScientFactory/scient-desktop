@@ -22,9 +22,6 @@ import {
   expandCollapsedComposerCursor,
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
-  // SCIENT-FORK:START
-  isStandaloneForkSlashCommand,
-  // SCIENT-FORK:END
   isPathSuggestionCurrent,
   replaceTextRange,
 } from "./composer-logic";
@@ -556,19 +553,6 @@ describe("assistant citation cursor offsets", () => {
     expect(collapseExpandedComposerCursor(result.text, result.text.length)).toBe("(),□!".length);
   });
 });
-
-// SCIENT-FORK:START
-describe("isStandaloneForkSlashCommand", () => {
-  it("recognizes a standalone /fork command", () => {
-    expect(isStandaloneForkSlashCommand(" /FoRk ")).toBe(true);
-  });
-
-  it("does not consume a message that starts with /fork", () => {
-    expect(isStandaloneForkSlashCommand("/fork explain this")).toBe(false);
-  });
-});
-
-// SCIENT-FORK:END
 
 describe("literal editor answer cursor state", () => {
   const prefill = "- [X] done $my-skill ";

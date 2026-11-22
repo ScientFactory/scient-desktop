@@ -15,6 +15,7 @@ describe("Compute CI suite selection", () => {
           inputs: {
             real_kernel: { type: "boolean", default: true },
             managed_python: { type: "boolean", default: true },
+            python_product: { type: "boolean", default: false },
             platforms: { type: "string", default: "all" },
           },
         },
@@ -26,7 +27,7 @@ describe("Compute CI suite selection", () => {
         },
       },
       jobs: {
-        real_kernel: { if: "${{ inputs.real_kernel }}" },
+        real_kernel: { if: "${{ inputs.real_kernel || inputs.python_product }}" },
         managed_python: { if: "${{ inputs.managed_python }}" },
       },
     });
@@ -43,17 +44,20 @@ describe("Compute CI suite selection", () => {
               "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.real_kernel }}",
             managed_python:
               "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.managed_python }}",
+            python_product:
+              "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.python_product }}",
             compute_platforms:
               "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'all' || steps.compute.outputs.platforms }}",
           },
         },
         compute_native: {
-          needs: ["queue_ci", "release_notes", "changes"],
+          needs: ["queue_ci", "changes"],
           if: "${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.compute_changed != 'false' }}",
           uses: "./.github/workflows/scient-compute-python-kernel.yml",
           with: {
             real_kernel: "${{ needs.changes.outputs.real_kernel != 'false' }}",
             managed_python: "${{ needs.changes.outputs.managed_python != 'false' }}",
+            python_product: "${{ needs.changes.outputs.python_product != 'false' }}",
             platforms:
               "${{ needs.changes.outputs.compute_platforms == 'linux' && 'linux' || 'all' }}",
           },
@@ -73,7 +77,7 @@ describe("Compute CI suite selection", () => {
         jobs: Record<
           string,
           {
-            strategy: { matrix: { runner: string } };
+            strategy: { matrix: { runner?: string; include?: string } };
             steps?: Array<{ env?: Record<string, string> }>;
           }
         >;
@@ -83,13 +87,39 @@ describe("Compute CI suite selection", () => {
     const evaluate = (expression: string, context: object) =>
       NodeVM.runInNewContext(expression.slice(3, -2), { fromJSON: JSON.parse, ...context });
     const all = ["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"];
+    // A job split into legs must give every runner the whole proof: one leg that runs all of
+    // it, or one leg per part.
+    const legs: Record<string, { key: string; whole: string; parts: Array<string> }> = {
+      real_kernel: { key: "python", whole: "both", parts: ["3.10", "3.12"] },
+      real_languages: { key: "part", whole: "all", parts: ["files", "kernels", "people"] },
+    };
+    const runners = (id: string, context: object): Array<string> => {
+      const { runner, include } = jobs[id]!.strategy.matrix;
+      if (runner !== undefined) return evaluate(runner, context);
+      const entries = evaluate(include!, context) as Array<Record<string, string>>;
+      const byRunner = Map.groupBy(entries, (entry) => entry.runner!);
+      for (const [name, group] of byRunner) {
+        const parts = group.map((entry) => entry[legs[id]!.key]!).toSorted();
+        expect([[legs[id]!.whole], legs[id]!.parts], `${id} ${name}`).toContainEqual(parts);
+      }
+      return [...byRunner.keys()].toSorted((a, b) => all.indexOf(a) - all.indexOf(b));
+    };
     for (const id of ["managed_python", "real_kernel", "real_languages"]) {
-      const runner = jobs[id]!.strategy.matrix.runner;
-      expect(evaluate(runner, { inputs: { platforms: "linux" } }), id).toEqual(["ubuntu-24.04"]);
-      expect(evaluate(runner, { inputs: { platforms: "all" } }), id).toEqual(all);
+      const inputs = { real_kernel: true };
+      expect(runners(id, { inputs: { ...inputs, platforms: "linux" } }), id).toEqual([
+        "ubuntu-24.04",
+      ]);
+      expect(runners(id, { inputs: { ...inputs, platforms: "all" } }), id).toEqual(all);
       // Manual dispatch has no such input.
-      expect(evaluate(runner, { inputs: {} }), id).toEqual(all);
+      expect(runners(id, { inputs }), id).toEqual(all);
     }
+    // Only the product case changed: one Linux leg on the interpreter its step uses.
+    for (const platforms of ["linux", "all"])
+      expect(
+        evaluate(jobs.real_kernel!.strategy.matrix.include!, {
+          inputs: { real_kernel: false, python_product: true, platforms },
+        }),
+      ).toEqual([{ runner: "ubuntu-24.04", python: "3.12" }]);
     const target = jobs.managed_python!.steps!.find((step) => step.env?.EXPECTED_TARGET)!.env!
       .EXPECTED_TARGET!;
     expect(all.map((runner) => evaluate(target, { matrix: { runner } }))).toEqual([
@@ -98,6 +128,27 @@ describe("Compute CI suite selection", () => {
       "darwin-x64",
       "win32-x64",
     ]);
+  });
+
+  it("runs the Compute product case on Linux 3.12 and the kernel suites only when asked", () => {
+    expect(workflow("scient-compute-python-kernel.yml")).toMatchObject({
+      jobs: {
+        real_kernel: {
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              name: "Run the real-kernel integration suite on Python 3.12",
+              if: "${{ inputs.real_kernel && (matrix.python == 'both' || matrix.python == '3.12') }}",
+            }),
+            expect.objectContaining({
+              name: "Run the Compute product case on Python 3.12",
+              if: "${{ runner.os == 'Linux' && (matrix.python == 'both' || matrix.python == '3.12') }}",
+              "working-directory": "apps/server",
+              run: expect.stringContaining("src/scient/compute/ComputeProduct.integration.test.ts"),
+            }),
+          ]),
+        },
+      },
+    });
   });
 
   it("qualifies recipes and the opted-in managed product in their respective lanes", () => {

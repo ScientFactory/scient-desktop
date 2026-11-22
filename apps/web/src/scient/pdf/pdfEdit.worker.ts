@@ -10,6 +10,7 @@ self.addEventListener("message", (event: MessageEvent<PdfEditWorkerRequest>) => 
       self.postMessage({
         id: event.data.id,
         kind: "error",
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- a worker has no UI language; the session words its fallback
         message: error instanceof Error ? error.message : "The PDF operation failed.",
       } satisfies PdfEditWorkerResponse),
   );

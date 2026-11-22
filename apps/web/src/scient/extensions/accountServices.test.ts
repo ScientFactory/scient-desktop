@@ -10,13 +10,16 @@ import {
   installedAccountServices,
   accountServiceOfServer,
   accountServiceRoutes,
+  isAccountRoute,
   isAccountServiceStoreEntry,
   nextAccountServiceStep,
+  storeEntryAudience,
 } from "./accountServices";
-import { audienceLabel } from "./extensionsView";
+import { areStoreTwins, audienceLabel, storeInstallTarget } from "./extensionsView";
 
-const gmail = ACCOUNT_SERVICES.find((service) => service.id === "gmail")!;
-const GMAIL_PAGE = `https://chatgpt.com/apps/gmail/${gmail.chatgptAppId}`;
+const service = (id: string) => ACCOUNT_SERVICES.find((candidate) => candidate.id === id)!;
+const gmail = service("gmail");
+const GMAIL_PAGE = `https://chatgpt.com/apps/gmail/${gmail.chatgptAppId!}`;
 const LINEAR_PAGE = "https://chatgpt.com/apps/linear/connector_linear";
 
 const provider = (driver: string, overrides: Partial<ServerProvider> = {}): ServerProvider => ({
@@ -75,7 +78,7 @@ describe("account services", () => {
       ["Codex", "connect"],
       ["Claude", "connect"],
     ]);
-    expect(nextAccountServiceStep(before)).toEqual({ page: GMAIL_PAGE, family: "chatgpt" });
+    expect(nextAccountServiceStep(before)).toMatchObject({ page: GMAIL_PAGE, family: "chatgpt" });
 
     const afterChatGpt = accountServiceRoutes(gmail, [scient(true), codex, claude(false)]);
     expect(afterChatGpt.map((route) => route.state)).toEqual(["connected", "connected", "connect"]);
@@ -83,8 +86,24 @@ describe("account services", () => {
     const audience = accountServiceAudience(afterChatGpt);
     expect(audienceLabel(audience)).toBe("Works with Scient Agent and Codex");
     expect(audience.pending).toEqual([
-      { instanceId: claude(false).instanceId, reason: "Connect Gmail on claude.ai" },
+      {
+        instanceId: claude(false).instanceId,
+        reason: "Gmail is on claude.ai but not signed in yet",
+      },
     ]);
+    // The row names the claude.ai account to use, and tells a listed connector from a missing one.
+    const signedInAs = (mcpServers: NonNullable<ServerProvider["mcpServers"]>) =>
+      accountServiceRoutes(gmail, [
+        provider("claudeAgent", {
+          accountAppsAvailable: true,
+          auth: { status: "authenticated", email: "me@lab.edu" },
+          mcpServers,
+        }),
+      ])[0]?.reason;
+    expect(signedInAs([{ name: "claude.ai Gmail", status: "needs-auth", scope: "claudeai" }])).toBe(
+      "Gmail is on claude.ai for me@lab.edu but not signed in yet",
+    );
+    expect(signedInAs([])).toBe("Connect Gmail on claude.ai as me@lab.edu");
 
     // Before the agents are read nothing is claimed and nothing is offered.
     // An agent whose inventory has not arrived is checking; one that arrived is not held back.
@@ -184,9 +203,111 @@ describe("account services", () => {
     ).toEqual(["chatgpt"]);
     expect(claudeConnectorFor("figma")?.name).toBe("Figma");
     // ChatGPT pages are built as Codex builds them: every other character becomes "-".
-    expect(accountServiceRoutes(outlook, [scient(false)])[0]?.page).toBe(
-      "https://chatgpt.com/apps/microsoft-outlook-email/connector_outlook",
-    );
+    expect(accountServiceRoutes(outlook, [scient(false)])[0]).toMatchObject({
+      page: "https://chatgpt.com/apps/microsoft-outlook-email/connector_outlook",
+    });
+  });
+
+  it("connects Outlook through ChatGPT and claude.ai's Microsoft 365", () => {
+    const outlook = service("outlook-email");
+    const microsoft365 = claudeConnectorFor("Microsoft 365")!;
+    expect(outlook.claude).toEqual(microsoft365);
+    expect(accountServiceRoutes(outlook, [codex, claude(false)])).toMatchObject([
+      {
+        family: "chatgpt",
+        state: "connect",
+        page: "https://chatgpt.com/apps/outlook-email/connector_4aaab2856305417b993eca9a216aaf6e",
+      },
+      {
+        family: "claude",
+        state: "connect",
+        reason: "Connect Microsoft 365 on claude.ai",
+        page: microsoft365.page,
+      },
+    ]);
+    const withMicrosoft365 = provider("claudeAgent", {
+      accountAppsAvailable: true,
+      mcpServers: [{ name: "claude.ai Microsoft 365", status: "connected", scope: "claudeai" }],
+    });
+    expect(
+      ["outlook-email", "outlook-calendar", "microsoft-teams", "sharepoint"].map(
+        (id) => accountServiceRoutes(service(id), [withMicrosoft365])[0]?.state,
+      ),
+    ).toEqual(["connected", "connected", "connected", "connected"]);
+  });
+
+  it("reaches a service without account apps through each agent's store plugin", () => {
+    const imessage = service("imessage");
+    const scientAgent = { ...scient(false), version: "0.1.3", usesClaudePlugins: true };
+    const claudePlugin = {
+      id: "claude:user:imessage@claude-plugins-official:0",
+      name: "imessage@claude-plugins-official",
+      source: "local" as const,
+      enabled: true,
+    };
+    const routes = accountServiceRoutes(imessage, [scientAgent, codex, claude(false)]);
+    expect(
+      routes.map((route) => [
+        route.label,
+        route.family,
+        route.state,
+        isAccountRoute(route) ? undefined : route.entry,
+      ]),
+    ).toEqual([
+      ["Scient Agent", "claude-store", "add", { kind: "shared", id: claudePlugin.name }],
+      ["Codex", "codex-store", "add", { kind: "codex", id: "messages@openai-bundled" }],
+      ["Claude", "claude-store", "add", { kind: "shared", id: claudePlugin.name }],
+    ]);
+    // One Claude plugin serves Claude and Scient Agent, so it comes first; nothing opens a page.
+    expect(nextAccountServiceStep(routes)).toMatchObject({ family: "claude-store" });
+    expect(nextAccountServiceStep(routes)).not.toHaveProperty("page");
+    expect(accountServiceAudience(routes).pending).toContainEqual({
+      instanceId: codex.instanceId,
+      reason: "Add the iMessage plugin",
+    });
+
+    const installed = accountServiceRoutes(imessage, [
+      { ...scientAgent, plugins: [claudePlugin] },
+      {
+        ...codex,
+        plugins: [
+          { id: "messages@openai-bundled", name: "messages", source: "local", enabled: false },
+        ],
+      },
+      { ...claude(false), plugins: [claudePlugin] },
+    ]);
+    // An added plugin is never claimed connected: its sign-in, if any, happens in chat.
+    expect(installed.map((route) => route.state)).toEqual(["added", "off", "added"]);
+    const audience = accountServiceAudience(installed);
+    expect(audienceLabel(audience)).toBe("Works with Scient Agent and Claude");
+    expect(audience.pending).toEqual([
+      { instanceId: codex.instanceId, reason: "iMessage is turned off in Codex" },
+    ]);
+    expect(nextAccountServiceStep(installed)).toBeUndefined();
+    // A plugin added to an agent is listed as that agent's plugin, not again as the service.
+    expect(
+      installedAccountServices(
+        [{ ...claude(false), mcpServers: [], plugins: [claudePlugin] }],
+        null,
+      ),
+    ).toEqual([]);
+
+    // Not read yet, nothing is claimed; a Scient Agent too old for Claude's plugins needs an update.
+    expect(accountServiceRoutes(imessage, [scientAgent], () => false)[0]?.state).toBe("checking");
+    expect(
+      accountServiceRoutes(imessage, [
+        { ...scientAgent, version: "0.1.2", usesClaudePlugins: false },
+      ])[0]?.state,
+    ).toBe("update");
+    // Telegram has no Codex plugin, so Codex has no row.
+    expect(
+      accountServiceRoutes(service("telegram"), [scientAgent, codex, claude(false)]).map(
+        (route) => [route.driver, route.family],
+      ),
+    ).toEqual([
+      ["scient", "claude-store"],
+      ["claudeAgent", "claude-store"],
+    ]);
   });
 
   it("holds only Anthropic's own Add to Claude ids in the checked-in list", () => {
@@ -229,11 +350,202 @@ describe("account services", () => {
     expect(accountServiceOfServer(scient(true), { name: "Linear", scope: "chatgpt" })).toBe(
       undefined,
     );
-    expect(isAccountServiceStoreEntry({ name: "gmail", displayName: "Gmail", apps: [] })).toBe(
-      true,
+    expect(
+      isAccountServiceStoreEntry({
+        id: "gmail@x",
+        name: "gmail",
+        displayName: "Gmail",
+        kind: "codex",
+        apps: [],
+      }),
+    ).toBe(true);
+    expect(
+      isAccountServiceStoreEntry({
+        id: "linear@openai-curated",
+        name: "linear",
+        displayName: "Linear",
+        kind: "codex",
+        apps: [],
+      }),
+    ).toBe(false);
+    // A plugin a service names as its store route is the service's row, not a shelf's.
+    for (const [id, name, displayName, kind] of [
+      ["imessage@claude-plugins-official", "imessage", "iMessage", "shared"],
+      ["telegram@claude-plugins-official", "telegram", "Telegram", "shared"],
+      ["messages@openai-bundled", "messages", "Messages", "codex"],
+    ] as const)
+      expect(isAccountServiceStoreEntry({ id, name, displayName, kind, apps: [] })).toBe(true);
+    // A same-named entry stays listed when the service's page has no route to that store's agent.
+    expect(
+      isAccountServiceStoreEntry({
+        id: "zoom@antigravity-plugins-partners",
+        name: "zoom",
+        displayName: "Zoom",
+        kind: "antigravity",
+        apps: [],
+      }),
+    ).toBe(false);
+    expect(
+      isAccountServiceStoreEntry({
+        id: "telegram@openai-curated",
+        name: "telegram",
+        displayName: "Telegram",
+        kind: "codex",
+        apps: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("lets Scient Agent reach Codex store plugins it loads, but not OpenAI's bundled ones", () => {
+    const loads = { ...scient(false), version: "0.1.3", usesCodexPlugins: true };
+    const entry = (id: string) => ({ kind: "codex" as const, id, apps: [] });
+    expect(
+      audienceLabel(storeEntryAudience(codex, entry("linear@openai-curated"), [codex, loads])),
+    ).toBe("Works with Codex and Scient Agent");
+    // iMessage's Codex route is OpenAI's bundled Messages plugin, which only Codex runs.
+    expect(
+      audienceLabel(storeEntryAudience(codex, entry("messages@openai-bundled"), [codex, loads])),
+    ).toBe("Codex only");
+    expect(
+      accountServiceRoutes(service("imessage"), [codex, loads]).map((route) => [
+        route.driver,
+        route.family,
+      ]),
+    ).toEqual([
+      ["codex", "codex-store"],
+      ["scient", "claude-store"],
+    ]);
+    // A Codex plugin built on a ChatGPT app keeps the app's own reach.
+    const app = { id: gmail.chatgptAppId, name: "Gmail", connected: true, enabled: true };
+    expect(
+      storeEntryAudience(codex, { ...entry("gmail@openai-curated"), apps: [app] }, [codex, loads])
+        .layer,
+    ).toBe("account");
+  });
+
+  it("installs and claims reach only through the plugin home an agent reads", () => {
+    const claudeAt = (id: string, home: string) => ({
+      ...provider("claudeAgent", { pluginHomes: { claude: home } }),
+      instanceId: ProviderInstanceId.make(id),
+    });
+    const work = claudeAt("claude-work", "/u/.claude-work");
+    const main = claudeAt("claude-main", "/u/.claude");
+    const agent = {
+      ...scient(false),
+      version: "0.1.3",
+      usesClaudePlugins: true,
+      usesCodexPlugins: true,
+      pluginHomes: { claude: "/u/.claude", codex: "/u/.codex" },
+    };
+    // Claude Work comes first, but Scient Agent reads the default Claude home.
+    expect(storeInstallTarget(agent, "shared", [work, main, agent])?.instanceId).toBe(
+      main.instanceId,
     );
-    expect(isAccountServiceStoreEntry({ name: "linear", displayName: "Linear", apps: [] })).toBe(
-      false,
-    );
+    // No Claude reads that home: Scient Agent installs it itself.
+    expect(storeInstallTarget(agent, "shared", [work, agent])?.instanceId).toBe(agent.instanceId);
+    const codexAt = (home: string) => ({ ...codex, pluginHomes: { codex: home } });
+    expect(storeInstallTarget(agent, "codex", [codexAt("/u/.codex"), agent])?.driver).toBe("codex");
+    expect(storeInstallTarget(agent, "codex", [codexAt("/u/other"), agent])).toBeUndefined();
+    const linear = { kind: "codex" as const, id: "linear@openai-curated", apps: [] };
+    expect(
+      audienceLabel(storeEntryAudience(codexAt("/u/other"), linear, [codexAt("/u/other"), agent])),
+    ).toBe("Codex only");
+    // A store-only service: Scient Agent adds Boltz through the Codex reading its Codex home.
+    const noClaudeStore = {
+      ...service("boltz"),
+      stores: { codex: "boltz-api-cli@openai-curated" },
+    };
+    expect(
+      accountServiceRoutes(noClaudeStore, [codexAt("/u/.codex"), agent]).map((route) => [
+        route.driver,
+        route.family,
+      ]),
+    ).toEqual([
+      ["codex", "codex-store"],
+      ["scient", "codex-store"],
+    ]);
+    expect(accountServiceRoutes(noClaudeStore, [codexAt("/u/other"), agent])).toHaveLength(1);
+  });
+
+  it("treats store entries as one service only on the same site", () => {
+    const at = (website: string) => ({ displayName: "Plotter", website });
+    expect(areStoreTwins(at("https://docs.stripe.com"), at("https://stripe.com"))).toBe(true);
+    expect(areStoreTwins(at("https://foo.co.uk"), at("https://bar.co.uk"))).toBe(false);
+    expect(areStoreTwins(at("https://a.github.io"), at("https://b.github.io"))).toBe(false);
+    expect(areStoreTwins(at("https://plotter.dev"), { displayName: "Plotter" })).toBe(true);
+    expect(areStoreTwins(at("https://plotter.dev"), { displayName: "Plotter Pro" })).toBe(false);
+    // Claude's Stripe plugin points at its GitHub repository, which names no site.
+    expect(
+      areStoreTwins(at("https://github.com/stripe/ai/tree/main"), at("https://stripe.com")),
+    ).toBe(true);
+  });
+
+  it("routes Antigravity through its marketplace plugin, never as connected", () => {
+    const entryId = "gmail@antigravity-plugins-official";
+    const antigravity = (plugins: ServerProvider["plugins"]) =>
+      provider("antigravity", plugins === undefined ? {} : { plugins });
+    const plugin = (enabled: boolean) => ({
+      id: entryId,
+      name: "gmail",
+      source: "local" as const,
+      enabled,
+    });
+    const state = (plugins: ServerProvider["plugins"]) =>
+      accountServiceRoutes(gmail, [antigravity(plugins)]).map((route) => [
+        route.family,
+        route.state,
+      ]);
+    expect(state(undefined)).toEqual([["antigravity-store", "checking"]]);
+    expect(state([])).toEqual([["antigravity-store", "add"]]);
+    expect(state([plugin(true)])).toEqual([["antigravity-store", "added"]]);
+    expect(state([plugin(false)])).toEqual([["antigravity-store", "off"]]);
+    // A same-name plugin from another source is not the marketplace entry.
+    expect(state([{ ...plugin(true), id: "antigravity:gmail" }])).toEqual([
+      ["antigravity-store", "add"],
+    ]);
+    const routes = accountServiceRoutes(gmail, [antigravity([plugin(true)])]);
+    // An added plugin counts as the agent having it, as Claude's and Codex's store plugins do;
+    // its route state stays "added", never "connected".
+    expect(accountServiceAudience(routes)).toEqual({
+      layer: "account",
+      connected: [{ instanceId: routes[0]!.instanceId, label: "Antigravity" }],
+      pending: [],
+    });
+    expect(nextAccountServiceStep(routes)).toBeUndefined();
+    expect(installedAccountServices([antigravity([plugin(false)])], null)).toEqual([]);
+    // A service without an Antigravity plugin gets no Antigravity row.
+    expect(
+      accountServiceRoutes(accountServiceForApp({ name: "Pets", id: "connector_pets" })!, [
+        antigravity([]),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("names Google's Antigravity plugins for services, never partner ones, and hides only those", () => {
+    expect(gmail.stores?.antigravity).toBe("gmail@antigravity-plugins-official");
+    expect(accountServiceForApp({ name: "Google Docs", id: "connector_docs" })?.stores).toEqual({
+      antigravity: "gdocs@antigravity-plugins-official",
+    });
+    // A partner plugin connects through an MCP server agy can't sign in from a chat.
+    expect(accountServiceForApp({ name: "Canva", id: "connector_canva" })?.stores).toBeUndefined();
+    const entry = (id: string, name: string, displayName: string) => ({
+      id,
+      name,
+      displayName,
+      kind: "antigravity" as const,
+      apps: [],
+    });
+    expect(
+      isAccountServiceStoreEntry(
+        entry("gdrive@antigravity-plugins-official", "gdrive", "Drive files"),
+      ),
+    ).toBe(true);
+    expect(
+      isAccountServiceStoreEntry(entry("canva@antigravity-plugins-partners", "canva", "Canva")),
+    ).toBe(false);
+    // Figma's page has no Antigravity route, so its Marketplace entry stays in the store.
+    expect(
+      isAccountServiceStoreEntry(entry("figma@antigravity-plugins-partners", "figma", "Figma")),
+    ).toBe(false);
   });
 });

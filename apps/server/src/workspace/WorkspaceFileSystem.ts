@@ -49,6 +49,7 @@ import {
   ensureNativePrivateRetentionDirectory,
   acceptedNativeFilePublicationHelper,
   nativeFilePublicationHelper,
+  nativeFilePublicationHelperRefusal,
 } from "../scient/workspace/NativeFilePublication.ts";
 import { RetainedMutationError } from "../scient/workspace/RetainedFileMutation.ts";
 import {
@@ -57,7 +58,7 @@ import {
 } from "../scient/workspace/WorkspaceFileWatch.ts";
 // SCIENT-FORK:END
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
-import { toWslDrivePath } from "./wslDrivePath.ts";
+import { toHostDrivePath } from "./hostDrivePath.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -261,7 +262,16 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const helperPath = config.filePublicationHelperPath;
   // Checked before saves start, so they begin on the path they keep; a refusal is checked again.
-  yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
+  // SCIENT-FORK:START — say why it was refused: Windows reads it for file identity.
+  const startupHelper = yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
+  if (startupHelper === undefined)
+    yield* Effect.logWarning("native file publication helper unavailable").pipe(
+      Effect.annotateLogs({
+        reason: nativeFilePublicationHelperRefusal(helperPath) ?? "not checked",
+      }),
+      Effect.withSpan("WorkspaceFileSystem.nativePublicationHelper"),
+    );
+  // SCIENT-FORK:END
   const configuredRetentionStorageDirectory =
     config.filePublicationRetentionRoot ?? path.join(config.baseDir, "file-publications");
   // Resolve only ancestors: the final private directory must still reject a symlink.
@@ -334,7 +344,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const toHostPath = (requestedPath: string) =>
-    toWslDrivePath(requestedPath).pipe(
+    toHostDrivePath(requestedPath).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
@@ -541,7 +551,22 @@ export const make = Effect.gen(function* () {
           operation: "realpath-workspace-root",
           cause,
         }),
-    });
+    }).pipe(
+      // Storage cleanup removes idle worktrees but keeps their path, so nothing below them exists.
+      Effect.catchIf(
+        (error) =>
+          input.allowMissing === true && (error.cause as NodeJS.ErrnoException).code === "ENOENT",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (realWorkspaceRoot === null) {
+      return {
+        relativePath: target.relativePath,
+        realTargetPath: null,
+        readOnly: false,
+        outsideWorkspace: false,
+      };
+    }
     const resolved = yield* Effect.tryPromise({
       try: () => canonicalReadTarget(target.absolutePath, input.allowMissing),
       catch: (cause) =>
@@ -763,6 +788,14 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
       });
+      // Storage cleanup removes idle worktrees but keeps their path; an optional file there is
+      // absent, with no publication to settle.
+      if (
+        input.allowMissing === true &&
+        !(yield* fileSystem.exists(input.cwd).pipe(Effect.orElseSucceed(() => true)))
+      ) {
+        return yield* readResolvedFile(input, "contained", hostPath);
+      }
     }
     return yield* (path.isAbsolute(hostPath) ? withSettledWorkspaceRead : withSettledFileRead)(
       { ...input, relativePath: hostPath },

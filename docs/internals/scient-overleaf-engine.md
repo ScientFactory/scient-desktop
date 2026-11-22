@@ -305,7 +305,30 @@ folder and each folder above; the server reads them and refuses an owner, or a
 write or delete right, held by anyone but the user, SYSTEM, Administrators or
 TrustedInstaller. The script uses only a cmdlet and a property read, so it runs
 the same under Constrained Language Mode (AppLocker, WDAC), and `whoami` gives
-the user's SID. A descriptor it cannot read refuses. The helper is looked for
+the user's SID. A descriptor it cannot read refuses. So that a per-user install
+also passes in a `/D=` folder that other users may add files to (a drive's
+subfolder, a CI temporary folder), the Windows installer protects its install
+folder after the running-app check and before the old version is uninstalled or
+any file is copied (`scripts/scient/installFolderProtection.ts`). It leaves the
+folder's permissions as they are for a machine-wide install, or when the folder
+or any folder above it is a link or cannot be read. It works through one handle
+to the folder itself, checked as a directory owned by the user, SYSTEM or
+Administrators whose real path is the install path. This app's previous install
+(registered there, with its uninstaller) gets the protected access list (the
+user, SYSTEM and Administrators) in one operation, without propagating to the
+old files, which the old uninstaller moves out. An empty folder that is neither
+encrypted nor compressed and that Windows reports has no named streams is deleted
+through that handle and, like a missing one, created again already protected:
+when the installer creates or replaces it, nothing can be added to it or opened
+in it first. (A missing `/D=` folder is first created by the template's
+initialization with inherited permissions; if something is added to it before
+the protection runs, it is no longer empty and keeps its permissions.) If a folder
+above is swapped for a link while the folder is being created, an empty
+protected folder may remain where the link pointed; it is never deleted, since
+the installer cannot prove it made it. The installer then holds the folder open without delete
+sharing until its files are copied, and every installed file inherits the list.
+Any other folder keeps its own permissions (files are still installed there, as
+before), and the check above decides whether saving works there. The helper is looked for
 when first needed. A pass is used at once and checked again in the background
 once ten minutes old; a refusal is checked again at the next use. A helper that
 fails a check, or that can no longer be launched and is being checked again, is

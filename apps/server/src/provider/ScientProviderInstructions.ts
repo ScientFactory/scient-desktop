@@ -81,9 +81,15 @@ export function buildScientOrchestrationPrompt(input: {
   readonly orchestrationDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
   readonly awareness?: string;
+  /** A provider's own tool guidance, in upstream's words. */
+  readonly providerInstructions?: string;
+  readonly providerInstructionsDelivered?: boolean;
 }): string {
   return t3OrchestrationPrompt({
     ...input,
+    ...(input.providerInstructions === undefined
+      ? {}
+      : { providerInstructions: scientAgentCopy(input.providerInstructions) }),
     instructions: withAwareness(input.awareness),
     deviceInstructions: SCIENT_DEVICE_TOOL_INSTRUCTIONS,
     wrapperElement: "scient_orchestration_instructions",

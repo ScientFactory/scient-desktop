@@ -6,6 +6,8 @@ import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { retainLatexSelection } from "./latexSelectionSession";
 import { latexCitationRevision, type LatexVisualSelectionSnapshot } from "./latexVisualSelection";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 const isFileCitation = Schema.is(FileCitation);
 const acceptsSelection = (target: EventTarget | null) =>
@@ -105,8 +107,8 @@ export function LatexCitationActions({
         ) {
           toastManager.add({
             type: "warning",
-            title: "The selection has changed",
-            description: "Select the content again to cite its current version.",
+            title: m(msg("The selection has changed")),
+            description: m(msg("Select the content again to cite its current version.")),
           });
           return false;
         }
@@ -114,8 +116,8 @@ export function LatexCitationActions({
         if (!accepted)
           toastManager.add({
             type: "warning",
-            title: "Could not add the citation",
-            description: "The chat input is not ready. Your selection is unchanged.",
+            title: m(msg("Could not add the citation")),
+            description: m(msg("The chat input is not ready. Your selection is unchanged.")),
           });
         return accepted;
       }}

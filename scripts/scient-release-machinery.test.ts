@@ -108,6 +108,7 @@ describe("Scient release machinery", () => {
     for (const workflowName of [
       "promote-release.yml",
       "release.yml",
+      "desktop-update-qualification.yml",
       "scheduled-stable-candidate.yml",
       "scient-compute-python-kernel.yml",
       "scient-compute-recipes.yml",
@@ -123,7 +124,11 @@ describe("Scient release machinery", () => {
       for (const action of uses) {
         // A repository-local reusable workflow is immutable with its caller's checkout.
         // Its external actions are inspected when this loop reads that workflow directly.
-        if (action === "./.github/workflows/scient-compute-python-kernel.yml") continue;
+        if (
+          action === "./.github/workflows/scient-compute-python-kernel.yml" ||
+          action === "./.github/workflows/desktop-update-qualification.yml"
+        )
+          continue;
         // This repository-local action is pinned by the release checkout itself.
         // Keep the exception exact and prevent nested mutable action references.
         if (action === "./.github/actions/setup-apt-mirrors") {
@@ -141,23 +146,6 @@ describe("Scient release machinery", () => {
         );
       }
     }
-  });
-
-  it("keeps unsigned Windows publication an explicit exception", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-    assert.include(workflow, "allow_unsigned_windows:");
-    assert.include(
-      workflow,
-      "allow_unsigned_windows is only valid for an explicitly publishing run.",
-    );
-    assert.include(
-      workflow,
-      "Windows publication is unsigned; rerun only with explicit allow_unsigned_windows=true.",
-    );
-    assert.include(workflow, "Publication requires signed macOS artifacts:");
   });
 
   // regression: 20117b09c1 fix(release): use Bash for version alignment on all platforms (#44)

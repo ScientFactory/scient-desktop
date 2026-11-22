@@ -1,3 +1,5 @@
+import { T } from "gt-react";
+
 import { SidebarInset } from "./ui/sidebar";
 
 /** Preserve the chat surface while route state is arriving; no animated skeleton. */
@@ -8,7 +10,7 @@ export function ChatLoadingState() {
         role="status"
         className="flex flex-1 items-center justify-center text-sm text-muted-foreground"
       >
-        Opening conversation…
+        <T>Opening conversation…</T>
       </div>
     </SidebarInset>
   );

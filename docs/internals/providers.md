@@ -76,8 +76,10 @@ session's cwd. Provider switches still use portable handoff summaries.
 See the [adapter](../../packages/provider-pi/src/server/adapter.ts).
 
 Antigravity separates account profiles per instance while sharing installed executables across the
-environment. It forces file-based credential storage because the native macOS keychain entry would
-otherwise be shared across instances. The launch environment removes ambient Google credentials,
+environment. The 1.5 CLI keeps every profile's sign-in in one OS keyring entry and ignores
+`AGY_ACP_FORCE_FILE_STORAGE`; only its SSH-session check stores the sign-in in the profile, so Google
+account instances launch with `SSH_CONNECTION` set and sign in with `--login`. Gemini Enterprise
+has no such sign-in and still shares the keyring entry. The launch environment removes ambient Google credentials,
 so an instance cannot silently use another account or billing project. The agent also resolves
 its user-global skill directories under that profile, so the profile links those two directories
 back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
@@ -273,7 +275,17 @@ instances. The open driver and instance identifiers require no database migratio
 WebSocket and provider-instance scopes. Instances share an explicit download operation and the
 completed runtime. Client disconnects and instance rebuilds do not cancel installation.
 
-The fixed [release table][antigravity-release] supplies the bundled floor. Scient's qualified
+On Scient's ACP targets the managed default is the agy CLI that Scient's catalog lists under the
+`antigravity` key, from 1.5.12 on: it serves ACP as `agy acp` and loads full plugins. The
+catalog's URL policy and T3's CLI release parser both apply. The paired release below is the
+floor where no qualified CLI is listed (no catalog check yet, musl Linux). The CLI supersedes
+every paired release, so a paired install is offered it as an update and an installed CLI is
+never offered a paired release. A paired Google sign-in is not converted: both runtimes use the
+same Google OAuth client, but the paired grant lacks scopes the CLI requests (`openid`,
+`userinfo.profile`, `cclog`, `experimentsandconfigs`), so the user signs in once after the
+switch.
+
+The fixed [release table][antigravity-release] supplies the paired bundled floor. Scient's qualified
 catalog may advance immutable release facts under the separate `antigravityAcp` key; the app
 still owns the allowed targets, Google URL family, exact executable pair, and launch policy.
 The catalog's semver is distinct from the agent's native build version. When the bundled
@@ -298,7 +310,8 @@ the same verified archive updates its receipt without replacing or downloading t
 
 Resolution order is explicit `binaryPath`, active managed release, then the instance's `PATH`.
 An invalid explicit path fails without fallback. Manual installations are never changed by the
-installer. Every launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's sibling.
+installer. Every paired launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's
+sibling.
 
 ### Google profiles and sign-in
 
@@ -310,11 +323,14 @@ the official macOS keychain entry being shared across instances. Profile directo
 `0700` on POSIX. This is file storage, not an encrypted keychain. Windows uses the host profile's
 filesystem permissions.
 
-The private profile links the user's documented loose and provider-managed skill roots. Global
-plugin skills receive a skill-only projection containing each plugin manifest and skill directory;
-plugin MCP servers, hooks, rules, agents, and credentials remain outside the profile. This keeps
-native skill loading available without expanding a provider session's authority as a side effect of
-skill discovery.
+The private profile links the user's documented loose and provider-managed skill roots. The agy
+CLI loads plugins natively from the OS user's `~/.gemini/config/plugins` whatever `GEMINI_HOME`
+says, and `agy plugin enable|disable` keeps their switches in `~/.gemini/config/config.json`;
+installed plugins are therefore shared with the user's own Antigravity. For a paired runtime,
+which loads no plugins of its own, global plugin skills receive a skill-only projection
+containing each enabled plugin's manifest and skill directory; plugin MCP servers, hooks, rules,
+agents, and credentials remain outside the profile. A CLI launch skips the projection and removes
+only a `config/plugins` link that points at one of Scient's projected generations.
 
 The launch environment removes API-key and cloud-billing variables, disables inherited
 environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A tested Node or
@@ -905,12 +921,16 @@ Scient Agent.
   starting it. Oh My Pi is probed with `--version`. Scient Agent is probed with `--runtime-info`,
   which prints one JSON object: `product`, the Scient Agent `version`, the `upstream` Oh My Pi
   release, and `rpcProtocolVersions`. The product must be `scient-agent`, the version 0.1.0 or
-  newer below 1.0, the upstream release one this server supports for Oh My Pi, and RPC v2 offered.
+  newer below 2.0, the upstream release Oh My Pi 18.2.8 or newer on major 18 or 19 (1.x is built on
+  19), and RPC v2 offered. That upstream range is Scient Agent's own, apart from the stock Oh My Pi
+  provider's.
   An `omp` executable fails that probe, and a `scient-agent` executable fails Oh My Pi's. The probe
   runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
 - Two versions. A process reports `version` (the product's, shown to the user) and
   `runtimeVersion` (the Oh My Pi release it runs). Resume cursors and protocol switches follow
-  `runtimeVersion`. For Oh My Pi the two are equal.
+  `runtimeVersion`. For Oh My Pi the two are equal. A cursor resumes on the major that wrote it,
+  and Scient Agent's also resumes forward from 18 to 19 (`resumableUpstreamMajors`), since 19 reads
+  an 18 session.
 - State. The driver assigns `SCIENT_AGENT_ROOT=<stateDir>/scient-agent/instances/<instanceId>`
   and passes no other `SCIENT_AGENT_*` variable, inherited or set on the instance. The agent
   treats that root as authoritative: it ignores `SCIENT_AGENT_DIR` under it and does not take a

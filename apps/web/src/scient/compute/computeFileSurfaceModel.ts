@@ -3,6 +3,9 @@ import {
   type ComputeLanguageRuntimeInspection,
   type ComputeSessionRecord,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { computeScientPart } from "./computeInstallationSettingsModel";
 
@@ -10,26 +13,30 @@ type ComputeRuntimeProfile = ComputeLanguageRuntimeInspection["runtimes"][number
 
 export const SCIENTIFIC_PYTHON_TOOLKIT_ID = "python-data-and-figures";
 
-function computeRuntimeSourceLabel(source: ComputeRuntimeProfile["source"]): string {
+function computeRuntimeSourceLabel(
+  source: ComputeRuntimeProfile["source"],
+  resolve: MessageResolver,
+): string {
   switch (source) {
     case "managed":
-      return "Scient-managed";
+      return resolve(msg("Scient-managed"));
     case "project":
-      return "Project";
+      return resolve(msg("Project", { $context: "where a runtime comes from" }));
     case "configured":
-      return "Custom";
+      return resolve(msg("Custom", { $context: "where a runtime comes from" }));
     case "path":
     case "conventional":
-      return "System";
+      return resolve(msg("System", { $context: "where a runtime comes from" }));
   }
 }
 
 export function computeRuntimeDisplayLabel(
   profile: ComputeRuntimeProfile,
   languageName = "Python",
+  resolve: MessageResolver = m,
 ): string {
   const version = profile.languageVersion.trim();
-  return `${version.length > 0 && version !== "unknown" ? `${languageName} ${version}` : languageName} · ${computeRuntimeSourceLabel(profile.source)}`;
+  return `${version.length > 0 && version !== "unknown" ? `${languageName} ${version}` : languageName} · ${computeRuntimeSourceLabel(profile.source, resolve)}`;
 }
 
 /** A runtime as the Console's picker names it; where it came from only tells two apart. */
@@ -40,6 +47,7 @@ export function computeRuntimeChoiceLabel(
     readonly profile: ComputeRuntimeProfile;
   },
   runtimes: ReadonlyArray<{ readonly languageId: string }>,
+  resolve: MessageResolver = m,
 ): string {
   const version = runtime.profile.languageVersion.trim();
   // SQL's version is DuckDB's, and a kernel may not report one.
@@ -49,7 +57,11 @@ export function computeRuntimeChoiceLabel(
       : `${runtime.languageName} ${version}`;
   if (runtimes.filter((other) => other.languageId === runtime.languageId).length < 2) return name;
   const { source, origin } = runtime.profile;
-  return `${name} · ${source === "managed" ? "Scient-managed" : (origin ?? "System")}`;
+  return `${name} · ${
+    source === "managed"
+      ? resolve(msg("Scient-managed"))
+      : (origin ?? resolve(msg("System", { $context: "where a runtime comes from" })))
+  }`;
 }
 
 /** A stop or read proves shutdown only for the exact session and generation, in a terminal status. */
@@ -182,10 +194,11 @@ export type ComputeFileResultsView = Exclude<ComputeFileView, "code">;
 const COMPUTE_FILE_SPLIT_LAYOUTS = ["side-by-side", "stacked"] as const;
 export type ComputeFileSplitLayout = (typeof COMPUTE_FILE_SPLIT_LAYOUTS)[number];
 
+/** `msg()` strings: resolve them where they are shown. */
 export const COMPUTE_FILE_VIEW_LABELS: Readonly<Record<ComputeFileView, string>> = {
-  code: "Code",
-  split: "Split",
-  results: "Results",
+  code: msg("Code", { $context: "file view: the code only" }),
+  split: msg("Split", { $context: "file view: code and results side by side" }),
+  results: msg("Results", { $context: "file view: the results only" }),
 };
 
 export const DEFAULT_COMPUTE_FILE_RESULTS_VIEW: ComputeFileResultsView = "split";
@@ -233,11 +246,14 @@ export type ComputeRuntimeToolbarState =
       readonly note: string;
     };
 
-export function computeRuntimeSetupActionLabel(languageName: string): string {
-  return `Set up ${languageName}`;
+export function computeRuntimeSetupActionLabel(
+  languageName: string,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(msg("Set up {language}", { language: languageName }));
 }
 
-const SCIENTIFIC_PACKAGES_NOTE = "Some scientific packages are missing";
+const SCIENTIFIC_PACKAGES_NOTE = msg("Some scientific packages are missing");
 
 export function isComputeCapacityReachedError(error: unknown): boolean {
   return (
@@ -296,33 +312,36 @@ export function computeRuntimeVersionLabel(
   return trimmed && trimmed !== "unknown" ? `${languageName} ${trimmed}` : languageName;
 }
 
-export function resolveComputeRuntimeToolbarState(input: {
-  readonly languageId?: string;
-  readonly languageName?: string;
-  readonly runtimeVersion?: string | null;
-  readonly liveSession: ComputeRuntimeToolbarSession | null;
-  readonly runtimeInspectionPending: boolean;
-  readonly readyRuntimeAvailable: boolean;
-  readonly preferredRuntimeExecutable: string | null;
-  readonly scientificPackagesMissing: boolean;
-  /** The runtime check failed or returned nothing for this language. */
-  readonly runtimeCheckFailure?: string | null;
-  readonly runtimeBlocker?: ReturnType<typeof computeRuntimeBlocker>;
-  readonly capacityRecoveryAvailable?: boolean;
-  readonly startingRetryAvailable?: boolean;
-  readonly contextLifecycle?:
-    | "unbound"
-    | "starting"
-    | "live"
-    | "closing"
-    | "close-failed"
-    | "terminal";
-}): ComputeRuntimeToolbarState {
+export function resolveComputeRuntimeToolbarState(
+  input: {
+    readonly languageId?: string;
+    readonly languageName?: string;
+    readonly runtimeVersion?: string | null;
+    readonly liveSession: ComputeRuntimeToolbarSession | null;
+    readonly runtimeInspectionPending: boolean;
+    readonly readyRuntimeAvailable: boolean;
+    readonly preferredRuntimeExecutable: string | null;
+    readonly scientificPackagesMissing: boolean;
+    /** The runtime check failed or returned nothing for this language. */
+    readonly runtimeCheckFailure?: string | null;
+    readonly runtimeBlocker?: ReturnType<typeof computeRuntimeBlocker>;
+    readonly capacityRecoveryAvailable?: boolean;
+    readonly startingRetryAvailable?: boolean;
+    readonly contextLifecycle?:
+      | "unbound"
+      | "starting"
+      | "live"
+      | "closing"
+      | "close-failed"
+      | "terminal";
+  },
+  resolve: MessageResolver = m,
+): ComputeRuntimeToolbarState {
   const languageId = input.languageId ?? "python";
   const languageName = input.languageName ?? "Python";
   const session = input.liveSession;
   const label = computeRuntimeVersionLabel(languageName, input.runtimeVersion);
-  const note = input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {};
+  const note = input.scientificPackagesMissing ? { note: resolve(SCIENTIFIC_PACKAGES_NOTE) } : {};
   if (input.contextLifecycle === "starting") {
     return input.capacityRecoveryAvailable || input.startingRetryAvailable
       ? { kind: "status", label, canRun: true }
@@ -366,7 +385,7 @@ export function resolveComputeRuntimeToolbarState(input: {
   if (input.runtimeCheckFailure != null) {
     return {
       kind: "retry",
-      label: `Couldn't check ${languageName}`,
+      label: resolve(msg("Couldn't check {language}", { language: languageName })),
       canRun: false,
       ...(input.runtimeCheckFailure ? { note: input.runtimeCheckFailure } : {}),
     };
@@ -376,8 +395,8 @@ export function resolveComputeRuntimeToolbarState(input: {
       kind: "choose",
       label:
         input.runtimeBlocker.mode === "project"
-          ? "Project environment can't run"
-          : `${languageName} unavailable`,
+          ? resolve(msg("Project environment can't run"))
+          : resolve(msg("{language} unavailable", { language: languageName })),
       canRun: false,
       note: input.runtimeBlocker.problem,
     };
@@ -386,14 +405,14 @@ export function resolveComputeRuntimeToolbarState(input: {
   if (computeScientPart(languageId) === null) {
     return {
       kind: "status",
-      label: "Not found",
+      label: resolve(msg("Not found")),
       canRun: false,
-      note: `${languageName} was not found on this computer`,
+      note: resolve(msg("{language} was not found on this computer", { language: languageName })),
     };
   }
   return {
     kind: "setup",
-    label: computeRuntimeSetupActionLabel(languageName),
+    label: computeRuntimeSetupActionLabel(languageName, resolve),
     canRun: false,
   };
 }

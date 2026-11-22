@@ -55,6 +55,9 @@ import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 // SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
 import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK:START — a five-minute cache compacts when the agent's warming stops on it.
+import { ompWarmingStopped } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK: /goal drives Scient Agent's goal command.
 import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
 // SCIENT-FORK: /plan drives Scient Agent's plan mode.
@@ -76,6 +79,7 @@ import {
 } from "@t3tools/provider-core/server/attachmentPrompt";
 import type { ServerConfig } from "../../config.ts";
 import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
+import { buildWorkspaceInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
@@ -356,11 +360,22 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           return yield* new NativeSessionOperationError({
             detail: "The tool session belongs to another provider instance.",
           });
+        const extensionId = yield* options.random.uuidV4();
+        // The thread's folder list, which the extension reads at each agent start; rewritten
+        // when a turn's folders change. Its name is one the crash cleanup above removes.
+        const workspacePath = path.join(root, `scient-context-${extensionId}.txt`);
+        const workspaceText = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+          buildWorkspaceInstructions({ cwd: policy.cwd ?? cwd, workspace: policy.workspace });
+        let writtenWorkspace = workspaceText(input.runtimePolicy);
+        yield* Effect.acquireRelease(
+          fs.writeFileString(workspacePath, writtenWorkspace, { mode: 0o600 }),
+          () => fs.remove(workspacePath, { force: true }).pipe(Effect.ignore),
+        );
         const extension = yield* writeOmpExtensionFiles({
           target,
           directory: root,
-          name: `scient-extension-${yield* options.random.uuidV4()}`,
-          source: (bootstrapPath) => ompScientExtensionSource(target, bootstrapPath),
+          name: `scient-extension-${extensionId}`,
+          source: (bootstrapPath) => ompScientExtensionSource(target, bootstrapPath, workspacePath),
           bootstrap: {
             endpoint: mcp?.endpoint ?? null,
             authorization: mcp?.authorizationHeader ?? null,
@@ -488,6 +503,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           catalogCurrent = true;
           return available;
         });
+        // A turn that needs the catalog asks again once after a timeout; the late first reply is ignored.
+        const refreshCatalogForTurn = () =>
+          refreshCatalog().pipe(
+            Effect.retry({
+              times: 1,
+              while: (cause) => cause._tag === "OmpRpcCommandError" && cause.code === "timeout",
+            }),
+          );
 
         const home = expandHomePath(
           options.homePath?.trim() ||
@@ -912,6 +935,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   ...(request === undefined ? {} : { request }),
                 });
               }
+              // SCIENT-FORK:START — warming stopped: the five-minute entry it left times idle compaction.
+              if (event.type === "cache_warming_stopped")
+                return onUpdate({
+                  type: "usage",
+                  promptCacheWarmingStopped: ompWarmingStopped(event),
+                });
+              // SCIENT-FORK:END
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);
               // SCIENT-FORK: the thread's goal row follows the agent's goal.
@@ -1648,7 +1678,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   model.input !== undefined,
               )
             )
-              yield* refreshCatalog().pipe(
+              yield* refreshCatalogForTurn().pipe(
                 Effect.mapError(
                   () =>
                     new NativeSessionOperationError({
@@ -1900,6 +1930,20 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 return yield* new NativeSessionOperationError({
                   detail: `${target.name} supports only full access and has no native sandbox.`,
                 });
+              const workspace = workspaceText(turnInput.runtimePolicy);
+              if (workspace !== writtenWorkspace) {
+                yield* fs.writeFileString(workspacePath, workspace, { mode: 0o600 }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new NativeSessionOperationError({
+                        detail: `Could not update ${target.name}'s list of the thread's folders.`,
+                        breaksSession: false,
+                        cause,
+                      }),
+                  ),
+                );
+                writtenWorkspace = workspace;
+              }
               const model =
                 turnInput.modelSelection.model === "default"
                   ? state.model === undefined
@@ -1968,7 +2012,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     breaksSession: false,
                   });
                 if (level !== undefined) {
-                  const available = yield* refreshCatalog();
+                  const available = yield* refreshCatalogForTurn();
                   const selectedModel = available.models.find(
                     (candidate) =>
                       candidate.provider === model.provider && candidate.id === model.modelId,
@@ -2246,6 +2290,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           // SCIENT-FORK: a spoken conversation through Scient Agent's ChatGPT sign-in.
           ...(target.driverKind === "scient" ? { liveVoice: liveVoice.runtime } : {}),
           interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
+          // The RPC has no message-less continue, so Continue after a limit or Stop asks for one.
+          continuationPrompt: "Continue where you left off.",
           resume,
           rewindBefore: Effect.fn("OmpAdapterV2.rewindBefore")(
             function* (entryId: string) {

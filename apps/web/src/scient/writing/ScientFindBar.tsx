@@ -9,6 +9,7 @@ import {
   WholeWord,
   X,
 } from "lucide-react";
+import { useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
@@ -54,6 +55,7 @@ export function ScientFindBar({
   readonly controller: ScientFindBarController;
   readonly snapshot: ScientFindBarState;
 }) {
+  const gt = useGT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [replacement, setReplacement] = useState("");
@@ -88,14 +90,17 @@ export function ScientFindBar({
     snapshot.findQuery === ""
       ? null
       : noMatches
-        ? "No results"
-        : `${snapshot.findActiveIndex + 1} of ${snapshot.findMatchCount}`;
+        ? gt("No results")
+        : gt("{current} of {total}", {
+            current: snapshot.findActiveIndex + 1,
+            total: snapshot.findMatchCount,
+          });
 
   return (
     <div
       className="scient-markdown-find-bar flex flex-col gap-1 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
       role="search"
-      aria-label="Find and replace"
+      aria-label={gt("Find and replace")}
       onKeyDown={(event) => {
         if (!event.defaultPrevented && !event.nativeEvent.isComposing && event.key === "Escape") {
           event.preventDefault();
@@ -106,7 +111,7 @@ export function ScientFindBar({
       <div className="flex items-center gap-1">
         {snapshot.editable ? (
           <DockButton
-            label={replaceOpen ? "Hide replace" : "Show replace"}
+            label={replaceOpen ? gt("Hide replace") : gt("Show replace")}
             icon={
               <ChevronRight
                 className={cn(
@@ -124,8 +129,8 @@ export function ScientFindBar({
           <InputGroupInput
             ref={inputRef}
             size="sm"
-            aria-label="Find text"
-            placeholder="Find"
+            aria-label={gt("Find text")}
+            placeholder={gt("Find", { $context: "search field placeholder" })}
             type="search"
             value={snapshot.findQuery}
             onChange={(event) => configure({ query: event.target.value })}
@@ -156,26 +161,26 @@ export function ScientFindBar({
         </InputGroup>
 
         <DockButton
-          label="Match case"
+          label={gt("Match case")}
           icon={<CaseSensitive className={findIconClassName} />}
           active={snapshot.findCaseSensitive}
           onClick={() => configure({ caseSensitive: !snapshot.findCaseSensitive })}
         />
         <DockButton
-          label="Match whole word"
+          label={gt("Match whole word")}
           icon={<WholeWord className={findIconClassName} />}
           active={snapshot.findWholeWord}
           onClick={() => configure({ wholeWord: !snapshot.findWholeWord })}
         />
         <DockButton
-          label="Previous match"
+          label={gt("Previous match")}
           icon={<ChevronUp className={findIconClassName} />}
           disabled={snapshot.findMatchCount === 0}
           shortcut={scientMarkdownShortcut("findPrevious")}
           onClick={() => controller.navigateFind(-1)}
         />
         <DockButton
-          label="Next match"
+          label={gt("Next match")}
           icon={<ChevronDown className={findIconClassName} />}
           disabled={snapshot.findMatchCount === 0}
           shortcut={scientMarkdownShortcut("findNext")}
@@ -183,7 +188,7 @@ export function ScientFindBar({
         />
         <div className="ms-auto">
           <DockButton
-            label="Close"
+            label={gt("Close")}
             icon={<X className={findIconClassName} />}
             shortcut={scientMarkdownShortcut("close")}
             onClick={close}
@@ -199,8 +204,8 @@ export function ScientFindBar({
           >
             <InputGroupInput
               size="sm"
-              aria-label="Replacement text"
-              placeholder="Replace"
+              aria-label={gt("Replacement text")}
+              placeholder={gt("Replace", { $context: "replacement text field placeholder" })}
               type="text"
               value={replacement}
               onChange={(event) => setReplacement(event.target.value)}
@@ -217,14 +222,14 @@ export function ScientFindBar({
             />
           </InputGroup>
           <DockButton
-            label="Replace current match"
+            label={gt("Replace current match")}
             icon={<Replace className={findIconClassName} />}
             disabled={snapshot.findMatchCount === 0}
             shortcut={scientMarkdownShortcut("replaceCurrent")}
             onClick={() => controller.replaceFind(replacement, false)}
           />
           <DockButton
-            label="Replace all matches"
+            label={gt("Replace all matches")}
             icon={<ReplaceAll className={findIconClassName} />}
             disabled={snapshot.findMatchCount === 0}
             onClick={() => controller.replaceFind(replacement, true)}

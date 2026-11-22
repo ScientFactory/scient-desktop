@@ -15,6 +15,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { decodeClaudeAuthStatus } from "../../provider/Drivers/ClaudeAuthStatus.ts";
 import {
   findClaudeAuthorizationUrl,
+  invalidateClaudeCapabilitiesAfterAccountChange,
   makeClaudeConnectionActions,
   makeClaudeConnectionActionsFromRuntime,
   officialClaudeAccountEnvironment,
@@ -332,6 +333,7 @@ describe("ClaudeConnectionActions", () => {
         const failure = yield* Fiber.join(starting).pipe(Effect.flip);
 
         assert.match(failure.message, /too long to open/iu);
+        assert.strictEqual(failure.failureReason, "no_signin_page");
         assert.strictEqual(killed, true);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -364,8 +366,62 @@ describe("ClaudeConnectionActions", () => {
         const failure = yield* Fiber.join(completion).pipe(Effect.flip);
 
         assert.match(failure.message, /took too long/iu);
+        assert.strictEqual(failure.failureReason, "timeout");
         assert.strictEqual(killed, true);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops a login still running once Claude reports the account connected", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let killed = false;
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeHandle({
+              all: "Open https://claude.com/cai/oauth/authorize?state=secure\n",
+              exitCode: Effect.never,
+              onKill: () => {
+                killed = true;
+              },
+            }),
+          ),
+        );
+        const actions = yield* makeClaudeConnectionActions(
+          claudeSettings,
+          { HOME: "/Users/test", PATH: "/usr/bin" },
+          spawner,
+        );
+
+        const attempt = yield* actions.start("claude_subscription");
+        assert.ok(attempt.finishWhenAccountConnected);
+        yield* attempt.finishWhenAccountConnected;
+        assert.strictEqual(killed, true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("clears Claude's account caches when the account finishes a sign-in", () =>
+    Effect.gen(function* () {
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const record = (event: string) => Ref.update(events, (current) => [...current, event]);
+      const actions = invalidateClaudeCapabilitiesAfterAccountChange(
+        makeClaudeConnectionActionsFromRuntime({
+          startLogin: () =>
+            Effect.succeed({
+              authorizationUrl: "https://claude.com/cai/oauth/authorize",
+              submitAuthorizationCode: () => Effect.void,
+              waitForExit: Effect.never,
+              cancel: record("cancel"),
+            }),
+          verifyLoggedIn: Effect.void,
+          logout: Effect.void,
+        }),
+        record("invalidate"),
+      );
+      const attempt = yield* Effect.scoped(actions.start("claude_subscription"));
+      yield* attempt.finishWhenAccountConnected!;
+      assert.deepStrictEqual(yield* Ref.get(events), ["cancel", "invalidate"]);
+    }),
   );
 });

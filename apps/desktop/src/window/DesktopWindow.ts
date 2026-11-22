@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
+import { msg } from "gt-i18n";
 
 import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
@@ -39,9 +40,11 @@ import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
 // SCIENT-FORK:START — near-full default size and one-time size updates for older profiles.
 import { applyOneTimeMainWindowSizing, nearFullMainWindowSize } from "./scientMainWindowSizing.ts";
 export {
@@ -436,6 +439,7 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const telemetry = yield* Effect.serviceOption(DesktopTelemetryPublisher);
+  const restartTiming = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
   let mainClosedDuringStartup = false;
@@ -743,6 +747,7 @@ export const make = Effect.gen(function* () {
     const installContextMenu = (
       ownerWindow: Electron.BrowserWindow,
       contents: Electron.WebContents,
+      isBrowserContents = false,
     ): void => {
       if (contextMenuContents.has(contents)) return;
       contextMenuContents.add(contents);
@@ -754,6 +759,18 @@ export const make = Effect.gen(function* () {
 
         const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
+        if (isBrowserContents) {
+          menuTemplate.push(
+            {
+              label: m(msg("Reload")),
+              click: () => {
+                if (!contents.isDestroyed()) contents.reload();
+              },
+            },
+            { type: "separator" },
+          );
+        }
+
         // SCIENT-FORK:START — Scient's spelling suggestions and the Spelling Languages submenu.
         menuTemplate.push(...spellingMenuItems(contents, params));
         // SCIENT-FORK:END
@@ -761,7 +778,7 @@ export const make = Effect.gen(function* () {
         if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
           menuTemplate.push(
             {
-              label: "Copy Link",
+              label: m(msg("Copy Link")),
               click: () => {
                 void runPromise(electronShell.copyText(params.linkURL));
               },
@@ -774,7 +791,7 @@ export const make = Effect.gen(function* () {
         if (Option.isSome(mailtoAddress)) {
           menuTemplate.push(
             {
-              label: "Copy Email Address",
+              label: m(msg("Copy Email Address")),
               click: () => {
                 void runPromise(electronShell.copyText(mailtoAddress.value));
               },
@@ -785,7 +802,7 @@ export const make = Effect.gen(function* () {
 
         if (params.mediaType === "image") {
           menuTemplate.push({
-            label: "Copy Image",
+            label: m(msg("Copy Image")),
             click: () => {
               void runPromise(
                 Effect.tryPromise({
@@ -799,10 +816,26 @@ export const make = Effect.gen(function* () {
         }
 
         menuTemplate.push(
-          { role: "cut", enabled: params.editFlags.canCut },
-          { role: "copy", enabled: params.editFlags.canCopy },
-          { role: "paste", enabled: params.editFlags.canPaste },
-          { role: "selectAll", enabled: params.editFlags.canSelectAll },
+          {
+            role: "cut",
+            label: m(msg("Cut", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canCut,
+          },
+          {
+            role: "copy",
+            label: m(msg("Copy", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canCopy,
+          },
+          {
+            role: "paste",
+            label: m(msg("Paste", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canPaste,
+          },
+          {
+            role: "selectAll",
+            label: m(msg("Select All", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canSelectAll,
+          },
         );
 
         void runPromise(
@@ -814,12 +847,12 @@ export const make = Effect.gen(function* () {
         );
       });
       contents.on("did-create-window", (popup) => {
-        installContextMenu(popup, popup.webContents);
+        installContextMenu(popup, popup.webContents, isBrowserContents);
       });
     };
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
-      installContextMenu(window, contents);
+      installContextMenu(window, contents, true);
       void runPromise(previewManager.prepareWebview(contents));
     });
 
@@ -1038,6 +1071,9 @@ export const make = Effect.gen(function* () {
               type: "scientAppHealth",
               component: "renderer",
               failureClass: details.reason === "oom" ? "resource-exhaustion" : "process-crash",
+              // `recoverable` admitted only these reasons.
+              exitReason: details.reason as "crashed" | "oom" | "killed" | "abnormal-exit",
+              exitCode: details.exitCode,
             })
             .pipe(Effect.ignoreCause()),
         );
@@ -1290,6 +1326,7 @@ export const make = Effect.gen(function* () {
       backendHasStarted = true;
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
+      if (Option.isSome(restartTiming)) yield* restartTiming.value.backendReady;
       if (!mainClosedDuringStartup) yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(

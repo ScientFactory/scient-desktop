@@ -64,9 +64,16 @@ const handlers = {
       const source = yield* pageSource(input);
       const { png, ...preview } = yield* htmlRender
         .preview({ ...source, width: input.width, appearance: input.appearance })
-        // SCIENT-FORK:START — analytics keeps each refusal's own reason.
+        // SCIENT-FORK:START — analytics keeps each refusal's own reason; a browser still unpacking
+        // after the wait is told apart from one still downloading.
         .pipe(
-          Effect.tapError((error) => noteToolFailureClass(error._tag)),
+          Effect.tapError((error) =>
+            noteToolFailureClass(
+              error._tag === "PreviewBrowserInstallingError" && error.unpacking
+                ? "preview_browser_unpacking"
+                : error._tag,
+            ),
+          ),
           Effect.mapError(toFailure),
         );
       // SCIENT-FORK:END

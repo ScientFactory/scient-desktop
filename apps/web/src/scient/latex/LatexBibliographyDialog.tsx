@@ -11,6 +11,7 @@ import {
   DialogPanel,
 } from "~/components/ui/dialog";
 import { withoutComments } from "./latexAuthoringModel";
+import { T, useGT } from "gt-react";
 
 export function LatexBibliographyDialog(props: {
   open: boolean;
@@ -19,6 +20,7 @@ export function LatexBibliographyDialog(props: {
   onCancel: () => void;
   onInsert: (source: string) => void;
 }) {
+  const gt = useGT();
   const source = withoutComments(props.source);
   const biblatex = /\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\s*\{[^{}]*\bbiblatex\b/u.test(
     source,
@@ -52,11 +54,13 @@ export function LatexBibliographyDialog(props: {
     >
       <DialogPopup finalFocus={false} data-dock-command-scope="latex">
         <DialogHeader>
-          <DialogTitle>Insert bibliography</DialogTitle>
+          <DialogTitle>
+            <T>Insert bibliography</T>
+          </DialogTitle>
           <DialogDescription>
             {biblatex
-              ? "Use this document’s existing bibliography resources and style."
-              : "Choose an existing .bib file, or create a manual reference list."}
+              ? gt("Use this document’s existing bibliography resources and style.")
+              : gt("Choose an existing .bib file, or create a manual reference list.")}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -78,21 +82,21 @@ export function LatexBibliographyDialog(props: {
             {!biblatex && (
               <>
                 <label>
-                  Reference list
+                  <T>Reference list</T>
                   <LatexSelect
                     value={mode}
                     onValueChange={(value) => setMode(value)}
-                    aria-label="Reference list"
+                    aria-label={gt("Reference list")}
                     options={[
-                      { value: "file", label: "From a .bib file" },
-                      { value: "manual", label: "Manual entries" },
+                      { value: "file", label: gt("From a .bib file") },
+                      { value: "manual", label: gt("Manual entries") },
                     ]}
                   />
                 </label>
                 {mode === "file" && (
                   <>
                     <label>
-                      File path (relative to the root document)
+                      <T>File path (relative to the root document)</T>
                       <Input
                         value={file}
                         placeholder="references.bib"
@@ -101,16 +105,21 @@ export function LatexBibliographyDialog(props: {
                     </label>
                     {!/\\bibliographystyle\b/u.test(source) && (
                       <label>
-                        Style
+                        <T context="bibliography style">Style</T>
                         <LatexSelect
                           value={style}
                           onValueChange={(value) => setStyle(value)}
-                          aria-label="Bibliography style"
+                          aria-label={gt("Bibliography style")}
                           options={[
-                            { value: natbib ? "plainnat" : "plain", label: "Alphabetical" },
-                            { value: natbib ? "unsrtnat" : "unsrt", label: "Citation order" },
-                            { value: natbib ? "abbrvnat" : "abbrv", label: "Abbreviated names" },
-                            ...(!natbib ? [{ value: "alpha", label: "Author/year labels" }] : []),
+                            { value: natbib ? "plainnat" : "plain", label: gt("Alphabetical") },
+                            { value: natbib ? "unsrtnat" : "unsrt", label: gt("Citation order") },
+                            {
+                              value: natbib ? "abbrvnat" : "abbrv",
+                              label: gt("Abbreviated names"),
+                            },
+                            ...(!natbib
+                              ? [{ value: "alpha", label: gt("Author/year labels") }]
+                              : []),
                           ]}
                         />
                       </label>
@@ -120,14 +129,16 @@ export function LatexBibliographyDialog(props: {
               </>
             )}
             {biblatex && !linked && (
-              <p role="status">Link a bibliography resource in the document source first.</p>
+              <p role="status">
+                <T>Link a bibliography resource in the document source first.</T>
+              </p>
             )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={props.onClose}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button type="submit" disabled={!valid}>
-                Insert bibliography
+                <T>Insert bibliography</T>
               </Button>
             </div>
           </form>

@@ -768,14 +768,25 @@ class TestWriteRecorder(unittest.TestCase):
         )
         # Audit hooks cannot be removed; this one stays inert outside the cells run below.
         recorder = bridge.PYTHON_RICH_DISPLAY_SETUP.split("# Note which figure and table", 1)[1]
-        exec(
-            "# Note which figure and table" + recorder,
-            {"_scient_shell": shell, "os": os, "sys": sys, "json": json},
-        )
+        # The kernel starts in the project folder, which is where reads are recorded.
+        cls.project = tempfile.TemporaryDirectory()
+        previous = os.getcwd()
+        os.chdir(cls.project.name)
+        try:
+            exec(
+                "# Note which figure and table" + recorder,
+                {"_scient_shell": shell, "os": os, "sys": sys, "json": json},
+            )
+        finally:
+            os.chdir(previous)
         cls.take = staticmethod(sys.modules["_scient_compute_writes"].take)
 
+    @classmethod
+    def tearDownClass(cls):
+        cls.project.cleanup()
+
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(dir=self.project.name)
         self.root = os.path.realpath(self.directory.name)
         self.addCleanup(self.directory.cleanup)
 
@@ -836,6 +847,30 @@ class TestWriteRecorder(unittest.TestCase):
                 self.path("e.png"),
             ]),
         )
+
+    def test_records_project_files_read_with_their_state_when_opened(self):
+        with open(self.path("cohort.csv"), "w") as file:
+            file.write("id\n1\n")
+        opened = os.stat(self.path("cohort.csv"))
+        with tempfile.NamedTemporaryFile("w", delete=False) as outside:
+            outside.write("not in the project")
+        self.addCleanup(os.remove, outside.name)
+
+        def body():
+            for _ in range(2):
+                with open(self.path("cohort.csv")) as file:
+                    file.read()
+            with open(outside.name) as file:
+                file.read()
+            with open(self.path("cohort.csv"), "a") as file:
+                file.write("2\n")
+
+        record = self.cell(body)
+        self.assertEqual(
+            record["reads"],
+            [[self.path("cohort.csv"), opened.st_size, str(opened.st_mtime_ns), str(opened.st_ctime_ns)]],
+        )
+        self.assertFalse(record["readsTruncated"])
 
     def test_a_cell_that_raises_after_saving_still_reports_the_save(self):
         def body():

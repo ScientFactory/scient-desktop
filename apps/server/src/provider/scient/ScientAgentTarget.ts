@@ -1,15 +1,23 @@
+import { OMP_MINIMUM_VERSION } from "@scientfactory/provider-runtime";
 import { ProviderDriverKind, type ProviderInstanceEnvironment } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
 
 import { agentProcessEnvironment } from "../agentProcessEnvironment.ts";
-import { isSupportedOmpRuntimeVersion, type OmpTarget } from "../omp/OmpTarget.ts";
+import type { OmpTarget } from "../omp/OmpTarget.ts";
 
 /** The oldest Scient Agent release this server drives. */
 const SCIENT_AGENT_MINIMUM_VERSION = "0.1.0";
-/** The Scient Agent major this server is qualified against. */
-const SCIENT_AGENT_SUPPORTED_MAJOR = 0;
+/** The first Scient Agent release this server is not qualified against. */
+const SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE = "2.0.0";
+/** The Scient Agent majors this server is qualified against: 1.x is built on Oh My Pi 19. */
+const SCIENT_AGENT_SUPPORTED_MAJORS = [0, 1];
+/**
+ * The Oh My Pi majors a Scient Agent build may run here. Scient Agent is qualified release by
+ * release, so this range is its own, apart from the stock Oh My Pi provider's.
+ */
+const SCIENT_AGENT_UPSTREAM_MAJORS = [18, 19];
 
 const SCIENT_AGENT_PRODUCT = "scient-agent";
 
@@ -34,6 +42,19 @@ export const scientAgentHostCommands = (stdout: string): ReadonlyArray<string> =
   return info._tag === "Some" ? info.value.hostCommands : [];
 };
 
+const decodeEnableSources = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ enableSources: Schema.Array(Schema.String) })),
+);
+
+/**
+ * The opt-in discovery sources this executable can load (`claude-plugins`, `codex-plugins`). An
+ * older one lists none.
+ */
+export const scientAgentEnableSources = (stdout: string): ReadonlyArray<string> => {
+  const info = decodeEnableSources(stdout.trim());
+  return info._tag === "Some" ? info.value.enableSources : [];
+};
+
 const SCIENT_AGENT_UPSTREAM = "oh-my-pi";
 /**
  * A release version: three numbers without leading zeros, and an optional
@@ -47,7 +68,11 @@ const SEMVER =
 const isSupportedScientAgentVersion = (version: string): boolean =>
   SEMVER.test(version) &&
   compareSemverVersions(version, SCIENT_AGENT_MINIMUM_VERSION) >= 0 &&
-  Number(version.split(".")[0]) === SCIENT_AGENT_SUPPORTED_MAJOR;
+  SCIENT_AGENT_SUPPORTED_MAJORS.includes(Number(version.split(".")[0]));
+
+const isSupportedUpstreamVersion = (version: string): boolean =>
+  compareSemverVersions(version, OMP_MINIMUM_VERSION) >= 0 &&
+  SCIENT_AGENT_UPSTREAM_MAJORS.includes(Number(version.split(".")[0]));
 
 /**
  * Scient Agent: ScientFactory's agent, built from Oh My Pi. It speaks the same
@@ -77,15 +102,17 @@ export const scientAgentTarget: OmpTarget = {
       isSupportedScientAgentVersion(version) &&
       upstream.name === SCIENT_AGENT_UPSTREAM &&
       SEMVER.test(upstream.version) &&
-      isSupportedOmpRuntimeVersion(upstream.version) &&
+      isSupportedUpstreamVersion(upstream.version) &&
       rpcProtocolVersions.includes(OMP_RPC_PROTOCOL_V2)
       ? { version, runtimeVersion: upstream.version }
       : undefined;
   },
-  unsupportedDetail: `This is not a Scient Agent release this version of Scient supports (${SCIENT_AGENT_MINIMUM_VERSION} or newer ${SCIENT_AGENT_SUPPORTED_MAJOR}.x). Check the configured executable.`,
+  unsupportedDetail: `This is not a Scient Agent release this version of Scient supports (${SCIENT_AGENT_MINIMUM_VERSION} or newer, before ${SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE}). Check the configured executable.`,
   minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,
   noModelsHint:
     "Sign in to a model account, add a custom model in Settings, or start a local model server such as Ollama.",
+  // Oh My Pi 19 resumes an 18 session, so threads keep their native history across the update.
+  resumableUpstreamMajors: SCIENT_AGENT_UPSTREAM_MAJORS,
 };
 
 /** The directory Scient Agent keeps all of its own files in, assigned by this server. */

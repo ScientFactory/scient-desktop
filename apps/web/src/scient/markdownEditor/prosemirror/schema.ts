@@ -15,6 +15,12 @@ import type {
   SchemaSpec,
 } from "prosemirror-model";
 import { Fragment, Mark, Schema } from "prosemirror-model";
+import {
+  escapeMarkdownLabel,
+  parseResultTarget,
+  RESULT_PROTOCOL,
+  unescapeMarkdownLabel,
+} from "@t3tools/shared/computeResults";
 import { tableNodes } from "prosemirror-tables";
 
 import {
@@ -223,6 +229,30 @@ const wikiLinkSpec: NodeSpec = {
   ],
 };
 
+/** A value pinned from a linked result: `[0.72](scient-result:<revision>/values.json#/hr)`. */
+const resultValueSpec: NodeSpec = {
+  attrs: { target: { default: "" }, text: { default: "" } },
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  leafText: (node) => String(node.attrs.text),
+  parseDOM: [
+    {
+      tag: "span[data-scient-result-value]",
+      getAttrs: (element) => ({
+        target: element.getAttribute("data-result-target") ?? "",
+        text: element.textContent ?? "",
+      }),
+    },
+  ],
+  toDOM: (node) => [
+    "span",
+    { "data-scient-result-value": "true", "data-result-target": String(node.attrs.target) },
+    String(node.attrs.text),
+  ],
+};
+
 const citationSpec: NodeSpec = {
   attrs: { source: { default: "@citation" } },
   group: "inline",
@@ -416,6 +446,7 @@ let nodes = defaultMarkdownParser.schema.spec.nodes.addBefore(
 );
 nodes = nodes.addBefore("image", "wiki_link", wikiLinkSpec);
 nodes = nodes.addBefore("image", "citation", citationSpec);
+nodes = nodes.addBefore("image", "result_value", resultValueSpec);
 nodes = nodes.addBefore("image", "footnote_reference", footnoteReferenceSpec);
 nodes = nodes.addBefore("image", "display_math", displayMathSpec);
 nodes = nodes.addBefore("image", "footnote_definition", footnoteDefinitionSpec);
@@ -427,7 +458,8 @@ if (!headingSpec) throw new Error("Missing ProseMirror node spec 'heading'.");
 // cannot contain.
 nodes = nodes.update("heading", {
   ...headingSpec,
-  content: "(text | image | inline_math | wiki_link | citation | footnote_reference)*",
+  content:
+    "(text | image | inline_math | wiki_link | citation | result_value | footnote_reference)*",
 });
 const imageSpec = nodes.get("image");
 if (!imageSpec) throw new Error("Missing ProseMirror node spec 'image'.");
@@ -725,6 +757,36 @@ gfmTokenizer.inline.ruler.before("link", "scient_footnote_reference", (state, si
   return true;
 });
 
+// A linked result's value. Its figure form, `[![alt](src)](scient-result:…)`, stays an ordinary
+// linked image so every image feature keeps working.
+gfmTokenizer.inline.ruler.before(
+  "scient_footnote_reference",
+  "scient_result_value",
+  (state, silent) => {
+    const start = state.pos;
+    if (state.src[start] !== "[" || state.src[start + 1] === "!") return false;
+    const labelEnd = state.md.helpers.parseLinkLabel(state, start, true);
+    if (labelEnd < 0 || state.src[labelEnd + 1] !== "(") return false;
+    if (!state.src.startsWith(RESULT_PROTOCOL, labelEnd + 2)) return false;
+    const destination = state.md.helpers.parseLinkDestination(
+      state.src,
+      labelEnd + 2,
+      state.posMax,
+    );
+    if (!destination.ok || state.src[destination.pos] !== ")") return false;
+    if (parseResultTarget(destination.str) === null) return false;
+    if (!silent) {
+      const token = state.push("scient_result_value", "span", 0);
+      token.meta = {
+        target: destination.str,
+        text: unescapeMarkdownLabel(state.src.slice(start + 1, labelEnd)),
+      };
+    }
+    state.pos = destination.pos + 1;
+    return true;
+  },
+);
+
 gfmTokenizer.inline.ruler.before("link", "scient_citation", (state, silent) => {
   const start = state.pos;
   if (state.src[start] !== "[") return false;
@@ -852,6 +914,7 @@ function imageAlternativeText(tokens: ReadonlyArray<Token>): string {
       if (token.type === "scient_wiki_link") return token.meta.label ?? token.meta.target;
       if (token.type === "scient_footnote_reference") return `[^${token.meta.label}]`;
       if (token.type === "scient_citation") return `[${token.meta.source}]`;
+      if (token.type === "scient_result_value") return token.meta.text;
       // Formatting delimiters have empty content. Text, escapes, entities,
       // inline code and math each contribute their complete readable content.
       return token.content;
@@ -926,6 +989,10 @@ export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfm
   },
   scient_citation: {
     node: "citation",
+    getAttrs: (token) => token.meta,
+  },
+  scient_result_value: {
+    node: "result_value",
     getAttrs: (token) => token.meta,
   },
   scient_footnote_reference: {
@@ -1042,6 +1109,10 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       state.write(`[[${target}${label}]]`);
     },
     citation: (state, node) => state.write(`[${String(node.attrs.source)}]`),
+    result_value: (state, node) =>
+      state.write(
+        `[${escapeMarkdownLabel(String(node.attrs.text))}](${String(node.attrs.target)})`,
+      ),
     footnote_reference: (state, node) => state.write(`[^${String(node.attrs.label)}]`),
     footnote_definition: (state, node) => {
       state.write(String(node.attrs.source));
@@ -1118,7 +1189,7 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       open: "~~",
     },
   },
-  { escapeExtraCharacters: /[<&]/gu },
+  { escapeExtraCharacters: /[<&$]/gu },
 );
 
 const tableCellSerializer = new ScientMarkdownSerializer(
@@ -1127,7 +1198,7 @@ const tableCellSerializer = new ScientMarkdownSerializer(
     hard_break: (state) => state.write("<br>"),
   },
   scientMarkdownSerializer.marks,
-  { escapeExtraCharacters: /[<&]/gu },
+  { escapeExtraCharacters: /[<&$]/gu },
 );
 
 export function withMarkdownSourceId(node: ProseMirrorNode, sourceId: string): ProseMirrorNode {

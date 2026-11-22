@@ -3,9 +3,11 @@ import type { Node as DocumentNode } from "@tiptap/pm/model";
 interface NavigationEntry {
   level: number;
   position: number;
+  /** Empty for a heading without text; the outline shows "Untitled heading". */
   title: string;
   runningTitle: string;
   unnumbered: boolean;
+  untitled?: boolean;
 }
 
 const entries = new WeakMap<DocumentNode, NavigationEntry[]>();
@@ -20,7 +22,8 @@ export function latexNavigationEntries(node: DocumentNode): NavigationEntry[] {
       {
         level: node.attrs.level === 6 ? 0 : Number(node.attrs.level ?? 1),
         position: 0,
-        title: node.textContent.trim() || "Untitled heading",
+        title: node.textContent.trim(),
+        untitled: !node.textContent.trim(),
         runningTitle: node.textContent,
         unnumbered: Boolean(node.attrs.unnumbered),
       },

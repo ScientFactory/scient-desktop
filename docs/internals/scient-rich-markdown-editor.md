@@ -712,7 +712,7 @@ These are the intentional overlaps to inspect during every bounded T3 alignment:
 
 The static seam test records the UI mounts. The server tests cover containment, exclusive create,
 revision-aware rename, atomic publication, and image validation. Scient-owned
-`MarkdownTransportServerTests.ts` cases register through the existing `server.test.ts` harness:
+`MarkdownTransportServerTests.ts` cases register through the shared `server.testkit.ts` harness in `server.workspace.test.ts`:
 real authenticated WebSocket saves/renames and multipart HTTP uploads must preserve revisions,
 typed failures, exact asset paths, and scope denial without writes. This loopback transport proof
 does not replace remote-client acceptance. An upstream change that supplies equivalent behavior

@@ -14,6 +14,7 @@ import {
 import { nativePluginSkill } from "./pluginSkillInvocation";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { BookOpenIcon, ChevronDownIcon, ChevronRightIcon, ServerIcon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useContext, useEffect, useRef, useState } from "react";
 import { RegistryContext } from "@effect/atom-react";
 import { Button } from "../../components/ui/button";
@@ -49,6 +50,7 @@ function PluginSkillCard({
   readonly provider?: ServerProvider | undefined;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const { environmentId, providers } = useExtensionsEnvironment();
   const managed = useEnvironmentQuery(
     skill.releaseKey ? scientSkillsInventory({ environmentId, input: {} }) : null,
@@ -86,7 +88,9 @@ function PluginSkillCard({
       environmentId={environmentId}
       instructions={document.data?.instructions ?? null}
       error={
-        skill.documentAvailable ? document.error : "Install this plugin to read its skill document."
+        skill.documentAvailable
+          ? document.error
+          : gt("Install this plugin to read its skill document.")
       }
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -115,6 +119,7 @@ function PluginContentsView({
   readonly canConnectApps?: boolean | undefined;
   readonly iconUrl?: string | undefined;
 }) {
+  const gt = useGT();
   const { environmentId } = useExtensionsEnvironment();
   const [appDialog, setAppDialog] = useState<ExtensionPluginContents["apps"][number] | null>(null);
   const toolCounts = appDialog?.toolCounts ?? {
@@ -123,14 +128,24 @@ function PluginContentsView({
   };
   const [expanded, setExpanded] = useState(false);
   const hidden = contents.skills.slice(5);
-  const more = `See ${hidden
-    .slice(0, 2)
-    .map((skill) => formatProviderSkillDisplayName(skill))
-    .join(", ")}${hidden.length > 2 ? `, and ${hidden.length - 2} more` : ""}`;
+  const names = hidden.slice(0, 2).map((skill) => formatProviderSkillDisplayName(skill));
+  const more =
+    hidden.length > 2
+      ? gt("See {first}, {second}, and {count} more", {
+          first: names[0] ?? "",
+          second: names[1] ?? "",
+          count: hidden.length - 2,
+        })
+      : names.length === 2
+        ? gt("See {first}, {second}", { first: names[0] ?? "", second: names[1] ?? "" })
+        : gt("See {name}", { name: names[0] ?? "" });
   return (
     <>
       {contents.apps.length ? (
-        <DetailSection title="Apps" count={contents.apps.length}>
+        <DetailSection
+          title={gt("Apps", { $context: "ChatGPT apps" })}
+          count={contents.apps.length}
+        >
           <div className="grid min-w-0 grid-cols-1 gap-3">
             {contents.apps.map((app) => {
               const service = accountServiceForApp(app);
@@ -139,7 +154,7 @@ function PluginContentsView({
                   <div className="flex items-center gap-3 rounded-lg px-3 hover:bg-muted/50 focus-within:bg-muted/50">
                     <button
                       type="button"
-                      aria-label={`View ${app.name} app`}
+                      aria-label={gt("View {name} app", { name: app.name })}
                       onClick={() => setAppDialog(app)}
                       className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                     >
@@ -154,11 +169,17 @@ function PluginContentsView({
                       </div>
                     </button>
                     {!app.enabled ? (
-                      <span className="text-sm text-muted-foreground">Disabled</span>
+                      <span className="text-sm text-muted-foreground">
+                        <T>Disabled</T>
+                      </span>
                     ) : app.connected ? (
-                      <span className="text-sm text-muted-foreground">Connected</span>
+                      <span className="text-sm text-muted-foreground">
+                        <T>Connected</T>
+                      </span>
                     ) : !canConnectApps ? (
-                      <span className="text-sm text-muted-foreground">Install to connect</span>
+                      <span className="text-sm text-muted-foreground">
+                        <T>Install to connect</T>
+                      </span>
                     ) : service ? null : provider?.driver === "codex" && app.installUrl ? (
                       <ProviderAppConnect
                         provider={provider}
@@ -167,7 +188,9 @@ function PluginContentsView({
                         onConnectionChange={onConnectionChange}
                       />
                     ) : (
-                      <span className="text-sm text-muted-foreground">Not connected</span>
+                      <span className="text-sm text-muted-foreground">
+                        <T>Not connected</T>
+                      </span>
                     )}
                   </div>
                   {/* Which agents reach this app through their accounts, each with its step. */}
@@ -179,7 +202,7 @@ function PluginContentsView({
         </DetailSection>
       ) : null}
       {contents.mcpServers.length ? (
-        <DetailSection title="MCP servers" count={contents.mcpServers.length}>
+        <DetailSection title={gt("MCP servers")} count={contents.mcpServers.length}>
           <div>
             {contents.mcpServers.map((server) => (
               <div
@@ -197,7 +220,7 @@ function PluginContentsView({
         </DetailSection>
       ) : null}
       {contents.skills.length ? (
-        <DetailSection title="Skills" count={contents.skills.length}>
+        <DetailSection title={gt("Skills")} count={contents.skills.length}>
           <div>
             {(expanded ? contents.skills : contents.skills.slice(0, 5)).map((skill) => (
               <button
@@ -265,7 +288,7 @@ function PluginContentsView({
                 />
               ) : (
                 <Button variant="outline" onClick={() => setAppDialog(null)}>
-                  Close
+                  <T>Close</T>
                 </Button>
               )}
             </DialogFooter>
@@ -275,11 +298,23 @@ function PluginContentsView({
             {appDialog.toolSummaries ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  The {appDialog.name} app contains {toolCounts.read + toolCounts.write} tools (
-                  {toolCounts.write} write, {toolCounts.read} read)
                   {appDialog.toolSummaries.length < toolCounts.read + toolCounts.write
-                    ? `. Showing the first ${appDialog.toolSummaries.length}.`
-                    : null}
+                    ? gt(
+                        "The {name} app contains {total} tools ({write} write, {read} read). Showing the first {shown}.",
+                        {
+                          name: appDialog.name,
+                          total: toolCounts.read + toolCounts.write,
+                          write: toolCounts.write,
+                          read: toolCounts.read,
+                          shown: appDialog.toolSummaries.length,
+                        },
+                      )
+                    : gt("The {name} app contains {total} tools ({write} write, {read} read)", {
+                        name: appDialog.name,
+                        total: toolCounts.read + toolCounts.write,
+                        write: toolCounts.write,
+                        read: toolCounts.read,
+                      })}
                 </p>
                 <div className="divide-y divide-border overflow-hidden rounded-xl border bg-card">
                   {[false, true].map((readOnly) => {
@@ -290,7 +325,9 @@ function PluginContentsView({
                     return (
                       <Collapsible key={String(readOnly)}>
                         <CollapsibleTrigger className="group flex w-full items-center gap-2 px-4 py-3 text-left text-sm outline-none transition-colors hover:bg-foreground/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-                          {readOnly ? "Read" : "Write"}{" "}
+                          {readOnly
+                            ? gt("Read", { $context: "group of read-only tools" })
+                            : gt("Write", { $context: "group of tools that make changes" })}{" "}
                           <span className="text-muted-foreground">
                             {readOnly ? toolCounts.read : toolCounts.write}
                           </span>
@@ -317,20 +354,25 @@ function PluginContentsView({
                 </div>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">Tool details are not available.</p>
+              <p className="text-sm text-muted-foreground">
+                <T>Tool details are not available.</T>
+              </p>
             )}
           </div>
         </ExtensionContentDialog>
       ) : null}
       {contents.commands.length || contents.agents.length || contents.hooks?.length ? (
-        <DetailSection title="More">
+        <DetailSection title={gt("More", { $context: "other plugin contents" })}>
           <GroupsCard
-            label="Other contents"
+            label={gt("Other contents")}
             groups={[
-              { label: "Commands", rows: contents.commands.map((name) => ({ key: name, name })) },
-              { label: "Agents", rows: contents.agents.map((name) => ({ key: name, name })) },
               {
-                label: "Hooks",
+                label: gt("Commands"),
+                rows: contents.commands.map((name) => ({ key: name, name })),
+              },
+              { label: gt("Agents"), rows: contents.agents.map((name) => ({ key: name, name })) },
+              {
+                label: gt("Hooks"),
                 rows: [...new Set(contents.hooks ?? [])].map((name) => ({ key: name, name })),
               },
             ]}
@@ -354,6 +396,8 @@ export function PluginContents({
   readonly canConnectApps?: boolean | undefined;
   readonly iconUrl?: string | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const atom = extensionsPluginContents({ environmentId, input });
@@ -396,17 +440,20 @@ export function PluginContents({
   useWindowFocusRefresh(() => registry.refresh(atom));
   const [selected, setSelected] = useState<ExtensionPluginSkill | null>(null);
   const knownServers = input.cwd ? [] : (provider?.mcpServers ?? []);
-  if (!contents.data) return <MutedLine>{contents.error ?? "Loading contents…"}</MutedLine>;
+  if (!contents.data) return <MutedLine>{contents.error ?? gt("Loading contents…")}</MutedLine>;
   const value = {
     ...contents.data,
     mcpServers: contents.data.mcpServers.map((server) => ({
       ...server,
       status: (() => {
         const status = knownServers.find((item) => item.name === server.name)?.status;
+        const text = status === undefined ? null : MCP_SERVER_STATUS_TEXT[status];
         return status === "connected"
-          ? "Connected"
+          ? gt("Connected")
           : status
-            ? (MCP_SERVER_STATUS_TEXT[status] ?? undefined)
+            ? text === null
+              ? undefined
+              : messages(text)
             : server.status;
       })(),
     })),
@@ -414,7 +461,9 @@ export function PluginContents({
   return (
     <>
       {contents.data.deferred ? (
-        <MutedLine>Skills and tools appear after you install it.</MutedLine>
+        <MutedLine>
+          <T>Skills and tools appear after you install it.</T>
+        </MutedLine>
       ) : null}
       <PluginKeys input={input} provider={provider} pluginName={pluginName} />
       <PluginContentsView

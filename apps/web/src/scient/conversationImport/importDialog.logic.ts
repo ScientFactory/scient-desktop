@@ -8,8 +8,10 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 
 import { resolveEnvironmentOptionLabel } from "../../components/BranchToolbar.logic";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 /** Imports always start supervised: the history is unverified. */
 export const IMPORT_RUNTIME_MODE = "approval-required";
@@ -29,18 +31,22 @@ export class ConversationImportNotice extends Schema.TaggedError<ConversationImp
 export const isConversationImportNotice = Schema.is(ConversationImportNotice);
 
 /** Why a chosen file cannot be sent at all, or null when it can. */
-export function importFileProblem(fileName: string, sizeBytes: number): string | null {
+export function importFileProblem(
+  fileName: string,
+  sizeBytes: number,
+  resolve: MessageResolver = m,
+): string | null {
   const name = fileName.toLowerCase();
   const markdown = name.endsWith(".md");
   if (!markdown && !name.endsWith(SCIC_FILE_EXTENSION)) {
-    return "Choose a Scient conversation file (.scic) or a Markdown file (.md).";
+    return resolve(msg("Choose a Scient conversation file (.scic) or a Markdown file (.md)."));
   }
-  if (sizeBytes <= 0) return "This file is empty.";
+  if (sizeBytes <= 0) return resolve(msg("This file is empty."));
   if (
     sizeBytes >
     (markdown ? MARKDOWN_IMPORT_MAX_BYTES : SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES)
   ) {
-    return "This file is larger than Scient can import.";
+    return resolve(msg("This file is larger than Scient can import."));
   }
   return null;
 }
@@ -137,7 +143,7 @@ export function desktopUploadOutcome(
 ): { readonly _tag: "uploaded" } | { readonly _tag: "stopped" } | ConversationImportNotice {
   if (result === undefined) {
     return new ConversationImportNotice({
-      message: "This Scient can't send opened files. Choose the file instead.",
+      message: m(msg("This Scient can't send opened files. Choose the file instead.")),
     });
   }
   if (result._tag === "uploaded") return result;
@@ -147,18 +153,18 @@ export function desktopUploadOutcome(
       return { _tag: "stopped" };
     case "rejected":
       return new ConversationImportNotice({
-        message: "The destination didn't accept the file. Try again.",
+        message: m(msg("The destination didn't accept the file. Try again.")),
       });
     case "file-unavailable":
     case "file-changed":
       return new ConversationImportNotice({
-        message: "Open the file again to import it.",
+        message: m(msg("Open the file again to import it.")),
         terminal: true,
       });
     case "invalid-url":
     case "network-failed":
       return new ConversationImportNotice({
-        message: "The file couldn't be sent. Check the connection and try again.",
+        message: m(msg("The file couldn't be sent. Check the connection and try again.")),
       });
   }
 }

@@ -5,7 +5,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
-  ROOM_ROLE_LABEL,
   roomPeople,
   type RoomAccessDuration,
   type RoomParticipant,
@@ -14,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { CheckIcon, CopyIcon, RotateCwIcon, UsersIcon, XIcon } from "lucide-react";
 import { Atom } from "effect/reactivity";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -42,8 +42,9 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useNowMinute } from "~/hooks/useNowMinute";
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useQuietThreadProjection } from "~/state/entities";
@@ -58,11 +59,12 @@ import {
   useScientConnectInviteReady,
 } from "~/scient/connect/ScientConnectReadiness";
 import { RoomFaces } from "./RoomFaces";
+import { roomRoleLabel } from "./guest/roomGuest.logic";
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
-  day: "1 day",
-  week: "7 days",
-  month: "30 days",
+  day: msg("1 day"),
+  week: msg("7 days"),
+  month: msg("30 days"),
 };
 
 const expiryLabel = (expiresAt: string) =>
@@ -128,11 +130,15 @@ function ShareDialog({
   readonly threadRef: ScopedThreadRef;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const canInvite = useAtomValue(
     serverEnvironment.inviteToThreadRoom.permissionAtom(threadRef.environmentId),
   );
   const invite = useAtomCommand(serverEnvironment.inviteToThreadRoom, { reportFailure: false });
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "invite link" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("invite link"),
+  });
   const [role, setRole] = useState<RoomRole>("discuss");
   const [duration, setDuration] = useState<RoomAccessDuration>("week");
   const [creating, setCreating] = useState(false);
@@ -151,31 +157,39 @@ function ShareDialog({
     setCreating(false);
     if (result._tag === "Success") copyToClipboard(result.value.url);
     else if (!isAtomCommandInterrupted(result))
-      setError(failureMessage(result, "Could not create an invite."));
+      setError(failureMessage(result, m(msg("Could not create an invite."))));
   };
 
   return (
     <Dialog open onOpenChange={(open) => (!open && !creating ? onClose() : null)}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Share</DialogTitle>
-          <DialogDescription>Each link lets one person follow this thread live.</DialogDescription>
+          <DialogTitle>
+            <T context="share this thread">Share</T>
+          </DialogTitle>
+          <DialogDescription>
+            <T>Each link lets one person follow this thread live.</T>
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel spacing="compact">
           <ScientConnectReadiness environmentId={threadRef.environmentId} onLeave={onClose} />
           <div className="flex items-center gap-2">
-            <RolePicker label="Permission" size="sm" value={role} onChange={setRole} />
+            <RolePicker label={gt("Permission")} size="sm" value={role} onChange={setRole} />
             <Select
               value={duration}
               onValueChange={(next) => setDuration(next as RoomAccessDuration)}
             >
-              <SelectTrigger size="sm" className="w-24 min-w-0 shrink-0" aria-label="Access for">
-                <SelectValue>{DURATION_LABEL[duration]}</SelectValue>
+              <SelectTrigger
+                size="sm"
+                className="w-24 min-w-0 shrink-0"
+                aria-label={gt("Access for")}
+              >
+                <SelectValue>{messages(DURATION_LABEL[duration])}</SelectValue>
               </SelectTrigger>
               <SelectPopup alignItemWithTrigger={false}>
                 {DURATIONS.map((value) => (
                   <SelectItem key={value} value={value}>
-                    {DURATION_LABEL[value]}
+                    {messages(DURATION_LABEL[value])}
                   </SelectItem>
                 ))}
               </SelectPopup>
@@ -191,10 +205,10 @@ function ShareDialog({
               {/* Both words hold their space, so the button keeps its width when it changes. */}
               <span className="grid">
                 <span className={cn("col-start-1 row-start-1", isCopied && "invisible")}>
-                  Copy link
+                  <T>Copy link</T>
                 </span>
                 <span className={cn("col-start-1 row-start-1", !isCopied && "invisible")}>
-                  Copied
+                  <T>Copied</T>
                 </span>
               </span>
             </Button>
@@ -218,6 +232,7 @@ function PeopleDialog({
   readonly threadRef: ScopedThreadRef;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
   const online = useRoomPresence(threadRef);
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
@@ -233,15 +248,17 @@ function PeopleDialog({
     <Dialog open onOpenChange={(open) => (!open ? onClose() : null)}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>People</DialogTitle>
+          <DialogTitle>
+            <T>People</T>
+          </DialogTitle>
           <DialogDescription>
             {joined.length === 0
-              ? "Nobody has joined yet."
-              : "Changes apply at once. Removing everyone stops sharing."}
+              ? gt("Nobody has joined yet.")
+              : gt("Changes apply at once. Removing everyone stops sharing.")}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          <ul className="flex flex-col gap-1" aria-label="People in this thread">
+          <ul className="flex flex-col gap-1" aria-label={gt("People in this thread")}>
             {joined.map((participant) => (
               <ParticipantRow
                 key={participant.id}
@@ -261,9 +278,10 @@ function PeopleDialog({
               // Links nobody has opened yet are one line, not a row each: they are not people.
               <li className="flex h-7 items-center gap-2 ps-4 text-muted-foreground text-sm">
                 <span className="min-w-0 flex-1 truncate">
-                  {unopened.length === 1
-                    ? "1 link not opened yet"
-                    : `${unopened.length} links not opened yet`}
+                  {gt(
+                    "{count, plural, =1 {1 link not opened yet} other {{count} links not opened yet}}",
+                    { count: unopened.length },
+                  )}
                 </span>
                 <Button
                   size="xs"
@@ -274,7 +292,7 @@ function PeopleDialog({
                       void act({ type: "remove", participantId: participant.id });
                   }}
                 >
-                  {unopened.length === 1 ? "Cancel it" : "Cancel them"}
+                  {unopened.length === 1 ? gt("Cancel it") : gt("Cancel them")}
                 </Button>
               </li>
             ) : null}
@@ -293,6 +311,7 @@ function RolePicker(props: {
   readonly disabled?: boolean;
   readonly onChange: (role: RoomRole) => void;
 }) {
+  const messages = useMessages();
   return (
     <Select
       value={props.value}
@@ -304,12 +323,12 @@ function RolePicker(props: {
         className={cn("min-w-0 shrink-0", props.size === "sm" ? "w-36" : "w-32")}
         aria-label={props.label}
       >
-        <SelectValue>{ROOM_ROLE_LABEL[props.value]}</SelectValue>
+        <SelectValue>{roomRoleLabel(props.value, messages)}</SelectValue>
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
         {ROLES.map((value) => (
           <SelectItem key={value} value={value}>
-            {ROOM_ROLE_LABEL[value]}
+            {roomRoleLabel(value, messages)}
           </SelectItem>
         ))}
       </SelectPopup>
@@ -326,7 +345,10 @@ function ParticipantRow(props: {
   readonly onRemove: () => void;
 }) {
   const { participant } = props;
-  const name = participant.name ?? "Invited";
+  const gt = useGT();
+  const messages = useMessages();
+  const name =
+    participant.name ?? gt("Invited", { $context: "a person invited who has not joined" });
   const nowMinute = useNowMinute();
   const expired = Date.parse(participant.expiresAt) <= Date.parse(`${nowMinute}Z`);
   return (
@@ -344,15 +366,22 @@ function ParticipantRow(props: {
           }
         >
           {name}
-          {expired ? <span className="text-muted-foreground"> · Expired</span> : null}
-          <span className="sr-only">{props.online ? ", here now" : ""}</span>
+          {expired ? (
+            <span className="text-muted-foreground">
+              {" · "}
+              {gt("Expired", { $context: "access to the room has ended" })}
+            </span>
+          ) : null}
+          <span className="sr-only">{props.online ? `, ${gt("here now")}` : ""}</span>
         </TooltipTrigger>
         <TooltipPopup side="top">
-          {expired ? "Access ended" : "Access until"} {expiryLabel(participant.expiresAt)}
+          {expired
+            ? gt("Access ended {date}", { date: expiryLabel(participant.expiresAt) })
+            : gt("Access until {date}", { date: expiryLabel(participant.expiresAt) })}
         </TooltipPopup>
       </Tooltip>
       <RolePicker
-        label={`Permission of ${name}`}
+        label={gt("Permission of {name}", { name })}
         size="xs"
         value={participant.role}
         disabled={!props.canManage}
@@ -368,7 +397,7 @@ function ParticipantRow(props: {
                     size="icon-xs"
                     variant="ghost-muted"
                     disabled={!props.canManage}
-                    aria-label={`Renew ${name}'s access`}
+                    aria-label={gt("Renew {name}'s access", { name })}
                   />
                 }
               />
@@ -376,14 +405,18 @@ function ParticipantRow(props: {
           >
             <RotateCwIcon />
           </TooltipTrigger>
-          <TooltipPopup side="top">Renew access</TooltipPopup>
+          <TooltipPopup side="top">
+            <T>Renew access</T>
+          </TooltipPopup>
         </Tooltip>
         <MenuPopup align="end" className="w-max min-w-28">
           <MenuGroup>
-            <MenuGroupLabel>Renew from now for</MenuGroupLabel>
+            <MenuGroupLabel>
+              <T>Renew from now for</T>
+            </MenuGroupLabel>
             {DURATIONS.map((value) => (
               <MenuItem key={value} onClick={() => props.onRenew(value)}>
-                {DURATION_LABEL[value]}
+                {messages(DURATION_LABEL[value])}
               </MenuItem>
             ))}
           </MenuGroup>
@@ -396,14 +429,16 @@ function ParticipantRow(props: {
               size="icon-xs"
               variant="ghost-muted"
               disabled={!props.canManage}
-              aria-label={`Remove ${name}`}
+              aria-label={gt("Remove {name}", { name })}
               onClick={props.onRemove}
             />
           }
         >
           <XIcon />
         </TooltipTrigger>
-        <TooltipPopup side="top">Remove</TooltipPopup>
+        <TooltipPopup side="top">
+          <T context="verb, removes the person from the room">Remove</T>
+        </TooltipPopup>
       </Tooltip>
     </li>
   );
@@ -414,6 +449,7 @@ function ParticipantRow(props: {
  * With only unopened links, a people icon stands in for the faces.
  */
 export function RoomPeopleButton({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const gt = useGT();
   const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
   const online = useRoomPresence(threadRef);
   if (room === null || room.participants.length === 0) return null;
@@ -427,7 +463,11 @@ export function RoomPeopleButton({ threadRef }: { readonly threadRef: ScopedThre
             size="xs"
             variant="ghost"
             className="shrink-0"
-            aria-label={joined.length === 0 ? "People: nobody has joined yet" : `People: ${names}`}
+            aria-label={
+              joined.length === 0
+                ? gt("People: nobody has joined yet")
+                : gt("People: {names}", { names })
+            }
             onClick={() => appAtomRegistry.set(roomPeopleThreadAtom, threadRef)}
           />
         }
@@ -439,7 +479,7 @@ export function RoomPeopleButton({ threadRef }: { readonly threadRef: ScopedThre
         )}
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        {joined.length === 0 ? "Invited. Nobody has joined yet." : names}
+        {joined.length === 0 ? gt("Invited. Nobody has joined yet.") : names}
       </TooltipPopup>
     </Tooltip>
   );

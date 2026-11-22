@@ -2,6 +2,7 @@
 // and every linked folder on this computer, by project; Project Settings ▸
 // Overleaf holds one project's links.
 import type { EnvironmentId, ScientOverleafUnreadableRecord } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -12,10 +13,11 @@ import {
   SettingsSection,
   useSettingsSearchTargetId,
 } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
+import type { SettingsSearchItemId } from "~/components/settings/settingsSearch";
 import { Button, InlineButton } from "~/components/ui/button";
 import { Collapsible, CollapsibleContent } from "~/components/ui/collapsible";
 import { Label } from "~/components/ui/label";
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjects } from "~/state/entities";
@@ -48,6 +50,7 @@ import {
 /** The token: Create a token on Overleaf, Save, Remove and whether one is saved. */
 function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const messages = useMessages();
   const token = useOverleafTokenSaved(environmentId);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -61,7 +64,7 @@ function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId })
         setOverleafTokenSaved(environmentId, status.saved);
         setDraft("");
       },
-      (failure) => setError(operationErrorText(failure)),
+      (failure) => setError(operationErrorText(failure, "sync", messages)),
       () => setBusy(false),
     );
   };
@@ -75,13 +78,15 @@ function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId })
     >
       <fieldset disabled={busy} className="contents">
         <div className="flex items-center justify-between gap-2">
-          <Label htmlFor={`overleaf-token-${environmentId}`}>Git token</Label>
+          <Label htmlFor={`overleaf-token-${environmentId}`}>
+            <T>Git token</T>
+          </Label>
           <InlineButton
             tone="muted"
             className="text-xs"
             render={<a href={OVERLEAF_TOKEN_PAGE_URL} target="_blank" rel="noreferrer noopener" />}
           >
-            Create a token on Overleaf
+            <T>Create a token on Overleaf</T>
             <ExternalLinkIcon aria-hidden className="size-3" />
           </InlineButton>
         </div>
@@ -101,11 +106,11 @@ function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId })
               type="button"
               onClick={() => void run(() => removeOverleafToken(environmentId))}
             >
-              Remove
+              <T context="button, removes the saved token">Remove</T>
             </Button>
           ) : null}
           <Button type="submit" size="xs" disabled={!draft.trim()}>
-            Save
+            <T context="button, saves the token">Save</T>
           </Button>
         </div>
         {error ? (
@@ -133,6 +138,8 @@ function OverleafProjectLinks(props: {
   readonly asSettingsRows?: boolean;
 }) {
   const { environmentId, workspaceRoot, asSettingsRows = false } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const workspace = useOverleafWorkspace(environmentId, workspaceRoot);
   const [unlinking, setUnlinking] = useState<string | null>(null);
   if (workspace.connections.length === 0) {
@@ -140,7 +147,7 @@ function OverleafProjectLinks(props: {
     const padded = asSettingsRows && "px-3 py-3 sm:px-4";
     return workspace.error !== null ? (
       <p className={cn("text-xs text-destructive", padded)} role="alert">
-        {listErrorText(workspace.error)}
+        {listErrorText(workspace.error, messages)}
       </p>
     ) : workspace.loaded ? (
       <p className={cn("text-xs text-muted-foreground", padded)}>{props.empty}</p>
@@ -159,6 +166,7 @@ function OverleafProjectLinks(props: {
       syncing,
       workspace.lastSync.get(connection.connectionId)?.result ?? null,
       workspace.remoteStates.get(connection.connectionId) ?? null,
+      messages,
     );
     const folderGone =
       workspace.statuses.get(connection.connectionId)?.availability === "unavailable";
@@ -169,7 +177,8 @@ function OverleafProjectLinks(props: {
           ? {
               "data-slot": "settings-row",
               role: "group",
-              "aria-label": connection.folder === "" ? "Project's top folder" : connection.folder,
+              "aria-label":
+                connection.folder === "" ? gt("Project's top folder") : connection.folder,
             }
           : {})}
         className={cn(
@@ -180,19 +189,22 @@ function OverleafProjectLinks(props: {
       >
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium tracking-subtle text-foreground">
-            {connection.folder === "" ? "Project's top folder" : connection.folder}
+            {connection.folder === "" ? gt("Project's top folder") : connection.folder}
           </p>
           {view.state === "problem" ? (
             <p className="text-xs text-destructive">{view.detail}</p>
           ) : (
             <p className="truncate text-xs text-muted-foreground">
               {view.label} ·{" "}
-              {lastSyncLabel({
-                lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
-                completedSyncCount: connection.completedSyncCount,
-                updatedAt: connection.updatedAt,
-              })}
-              {connection.linkedHere ? "" : " · Another copy"}
+              {lastSyncLabel(
+                {
+                  lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
+                  completedSyncCount: connection.completedSyncCount,
+                  updatedAt: connection.updatedAt,
+                },
+                messages,
+              )}
+              {connection.linkedHere ? "" : ` · ${gt("Another copy")}`}
             </p>
           )}
         </div>
@@ -204,7 +216,7 @@ function OverleafProjectLinks(props: {
               disabled={syncing}
               onClick={() => void runOverleafSync({ environmentId, workspaceRoot, connection })}
             >
-              {syncing ? "Syncing…" : "Sync now"}
+              {syncing ? gt("Syncing…") : gt("Sync now")}
             </Button>
           )}
           <Button
@@ -212,7 +224,7 @@ function OverleafProjectLinks(props: {
             variant="ghost"
             onClick={() => openOverleafProject(connection.projectId)}
           >
-            Open in Overleaf
+            <T>Open in Overleaf</T>
           </Button>
           <Button
             size="xs"
@@ -220,7 +232,7 @@ function OverleafProjectLinks(props: {
             disabled={unlinking === connection.connectionId || syncing}
             onClick={() => void unlink(connection.connectionId)}
           >
-            Unlink
+            <T>Unlink</T>
           </Button>
         </div>
       </Row>
@@ -229,7 +241,7 @@ function OverleafProjectLinks(props: {
   // Rows of the card itself: the settings group divides them like its other rows.
   if (asSettingsRows) return <>{rows}</>;
   return (
-    <div className="grid gap-1" aria-label={props.projectName ?? "Linked folders"}>
+    <div className="grid gap-1" aria-label={props.projectName ?? gt("Linked folders")}>
       {props.projectName ? (
         <p className="text-xs font-medium text-muted-foreground">{props.projectName}</p>
       ) : null}
@@ -238,7 +250,8 @@ function OverleafProjectLinks(props: {
   );
 }
 
-const listErrorText = (error: string) => `Couldn't read the linked folders. ${error}`;
+const listErrorText = (error: string, resolve: MessageResolver) =>
+  resolve(msg("Couldn't read the linked folders. {error}", { error }));
 
 /**
  * Link records this release can't read (damaged, or made by a newer Scient), one row each
@@ -251,6 +264,8 @@ function OverleafUnreadableRecords(props: {
   readonly records: ReadonlyArray<ScientOverleafUnreadableRecord>;
 }) {
   const { environmentId, workspaceRoots, records } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const [firstRoot] = workspaceRoots;
@@ -274,27 +289,32 @@ function OverleafUnreadableRecords(props: {
         );
       },
       (cause) =>
-        setErrors((current) => new Map(current).set(record.recordId, operationErrorText(cause))),
+        setErrors((current) =>
+          new Map(current).set(record.recordId, operationErrorText(cause, "sync", messages)),
+        ),
       () => setBusy(null),
     );
   };
   return (
     <div className="grid gap-3">
       <p className="text-xs text-foreground">
-        {records.length === 1
-          ? "Scient can't read one of its Overleaf link records."
-          : `Scient can't read ${records.length} of its Overleaf link records.`}
+        {gt(
+          "{count, plural, =1 {Scient can't read one of its Overleaf link records.} other {Scient can't read {count} of its Overleaf link records.}}",
+          { count: records.length },
+        )}
       </p>
       {records.some((record) => record.setAside !== "held") ? (
         <p className="text-xs text-muted-foreground">
-          Setting a record aside moves it to a recovery folder, and nothing on Overleaf changes. The
-          link's kept copies stay on disk, but Scient can no longer list or restore them.
+          <T>
+            Setting a record aside moves it to a recovery folder, and nothing on Overleaf changes.
+            The link's kept copies stay on disk, but Scient can no longer list or restore them.
+          </T>
         </p>
       ) : null}
       <div className="grid divide-y divide-border">
         {records.map((record) => {
-          const lines = unreadableRecordLines(record);
-          const action = setAsideAction(record);
+          const lines = unreadableRecordLines(record, messages);
+          const action = setAsideAction(record, messages);
           const error = errors.get(record.recordId);
           return (
             <div
@@ -303,7 +323,7 @@ function OverleafUnreadableRecords(props: {
               data-unreadable-record
             >
               <p className="break-all text-xs font-medium text-foreground">
-                {record.folder ?? "Folder not recorded"}
+                {record.folder ?? gt("Folder not recorded")}
               </p>
               <p className="text-xs text-muted-foreground">{lines.state}</p>
               <p className="text-xs text-muted-foreground">{lines.holds}</p>
@@ -335,6 +355,7 @@ function OverleafUnreadableRecords(props: {
 /** Every project's links on this computer, or a line saying none is linked. */
 export function OverleafLinkedFolders(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const messages = useMessages();
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const workspaceRoots = projects.map((project) => project.workspaceRoot);
   const noneLinked = useNoOverleafLinks(environmentId, workspaceRoots);
@@ -342,7 +363,9 @@ export function OverleafLinkedFolders(props: { readonly environmentId: Environme
   const unreadable = useOverleafUnreadableRecords(environmentId, workspaceRoots);
   return (
     <div className="grid gap-3">
-      <p className="text-xs font-medium text-foreground">Linked folders</p>
+      <p className="text-xs font-medium text-foreground">
+        <T>Linked folders</T>
+      </p>
       {unreadable.length > 0 ? (
         <OverleafUnreadableRecords
           environmentId={environmentId}
@@ -352,10 +375,12 @@ export function OverleafLinkedFolders(props: { readonly environmentId: Environme
       ) : null}
       {listError !== null ? (
         <p className="text-xs text-destructive" role="alert">
-          {listErrorText(listError)}
+          {listErrorText(listError, messages)}
         </p>
       ) : noneLinked ? (
-        <p className="text-xs text-muted-foreground">No folder is linked.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>No folder is linked.</T>
+        </p>
       ) : null}
       {projects.map((project) => (
         <OverleafProjectLinks
@@ -376,9 +401,10 @@ export function OverleafLinkedFolders(props: { readonly environmentId: Environme
  */
 export function OverleafSyncedFolderRow(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const gt = useGT();
   const token = useOverleafTokenSaved(environmentId);
   const [expanded, setExpanded] = useState(false);
-  const target = searchableSetting("synced-folders-overleaf").id;
+  const target = "synced-folders-overleaf" satisfies SettingsSearchItemId;
   // A search jump to Overleaf opens its details.
   const searchTargetId = useSettingsSearchTargetId();
   const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
@@ -399,10 +425,15 @@ export function OverleafSyncedFolderRow(props: { readonly environmentId: Environ
                 Mark={OverleafMark}
                 dot={!token.loaded ? null : token.saved ? "bg-success" : "bg-warning"}
               />
+              {/* oxlint-disable-next-line t3code/no-untranslated-copy -- product name */}
               <span className="truncate text-sm font-medium text-foreground">Overleaf</span>
             </div>
             <p className="text-xs leading-normal text-muted-foreground/80" role="status">
-              {!token.loaded ? "Checking…" : token.saved ? "Token saved" : "No token saved"}
+              {!token.loaded
+                ? gt("Checking…")
+                : token.saved
+                  ? gt("Token saved")
+                  : gt("No token saved")}
             </p>
           </div>
           <Button
@@ -410,7 +441,7 @@ export function OverleafSyncedFolderRow(props: { readonly environmentId: Environ
             variant="ghost-muted"
             onClick={() => setExpanded((open) => !open)}
             aria-expanded={expanded}
-            aria-label="Toggle Overleaf details"
+            aria-label={gt("Toggle Overleaf details")}
           >
             <ChevronDownIcon
               className={cn("size-3.5 transition-transform", expanded && "rotate-180")}
@@ -455,12 +486,14 @@ export function OverleafProjectSettingsSection(props: {
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string;
 }) {
+  const gt = useGT();
   return (
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
     <SettingsSection title="Overleaf" icon={<OverleafMark aria-hidden className="size-4" />}>
       <OverleafProjectLinks
         environmentId={props.environmentId}
         workspaceRoot={props.workspaceRoot}
-        empty="No folder is linked."
+        empty={gt("No folder is linked.")}
         asSettingsRows
       />
     </SettingsSection>

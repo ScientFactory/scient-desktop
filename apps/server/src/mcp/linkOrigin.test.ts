@@ -325,14 +325,11 @@ it.layer(
         creationSource: "mcp",
       });
       assert.deepEqual(child.linkOrigin, shell?.linkOrigin);
-      const sourceRun = { id: RunId.make("run:source"), status: "completed" } as OrchestrationV2Run;
       const fork = yield* ThreadForkService.ThreadForkServiceV2.pipe(
         Effect.flatMap((forks) =>
           forks.plan({
-            sourceProjection: { ...projection, runs: [sourceRun] },
-            commandId: CommandId.make("plan:fork"),
-            cwd: "/",
-            sourceRun,
+            sourceProjection: { thread },
+            sourceRun: { id: RunId.make("run:source"), status: "completed" } as OrchestrationV2Run,
             sourceProviderThread: undefined,
             canonicalSourcePoint: { threadId: launched },
             transferId: ContextTransferId.make("transfer:fork"),

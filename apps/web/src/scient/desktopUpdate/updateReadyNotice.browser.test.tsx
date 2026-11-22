@@ -25,7 +25,6 @@ vi.mock("~/components/ui/toast", () => ({
 import {
   installDesktopUpdateNow,
   isUpdateNoticeAnchorVisible,
-  SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS,
   showScientUpdateReadyNotice,
 } from "./updateReadyNotice";
 
@@ -145,36 +144,6 @@ describe("isUpdateNoticeAnchorVisible", () => {
 });
 
 describe("showScientUpdateReadyNotice", () => {
-  it("anchors above a visible update button with a Restart action and a 5s timeout", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const anchor = visibleAnchor(_fixture);
-    showScientUpdateReadyNotice({ shell: shell(), state: downloadedState(), anchor });
-
-    expect(toasts.add).not.toHaveBeenCalled();
-    const notice = lastNotice(toasts.anchoredAdd);
-    expect(notice.title).toBe("Update 0.6.19 is ready");
-    expect(notice.timeout).toBe(SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS);
-    expect(SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS).toBe(5_000);
-    expect(notice.actionProps.children).toBe("Restart now");
-    expect(notice.positionerProps).toMatchObject({ anchor, side: "top" });
-  });
-
-  it("falls back to the corner stack when the button is not on screen", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    showScientUpdateReadyNotice({ shell: shell(), state: downloadedState(), anchor: null });
-
-    expect(toasts.anchoredAdd).not.toHaveBeenCalled();
-    const notice = lastNotice(toasts.add);
-    expect(notice.actionProps.children).toBe("Restart now");
-    expect(notice.positionerProps).toBeUndefined();
-  });
-
   it("Restart now runs the caller's install when one is given", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -193,35 +162,6 @@ describe("showScientUpdateReadyNotice", () => {
 
     expect(install).toHaveBeenCalledTimes(1);
     expect(installUpdate).not.toHaveBeenCalled();
-    expect(toasts.close).toHaveBeenCalledWith("corner-toast");
-  });
-
-  it("Restart now closes the notice and installs exactly once, with no confirmation", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const confirm = vi.spyOn(window, "confirm");
-    const installUpdate = vi.fn(async () => installResult());
-    showScientUpdateReadyNotice({
-      shell: shell(installUpdate),
-      state: downloadedState(),
-      anchor: visibleAnchor(_fixture),
-    });
-
-    lastNotice(toasts.anchoredAdd).actionProps.onClick();
-
-    expect(toasts.anchoredClose).toHaveBeenCalledWith("anchored-toast");
-    await vi.waitFor(() => expect(installUpdate).toHaveBeenCalledTimes(1));
-    expect(confirm).not.toHaveBeenCalled();
-  });
-
-  it("close() dismisses the notice from whichever stack showed it", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    showScientUpdateReadyNotice({ shell: shell(), state: downloadedState(), anchor: null }).close();
     expect(toasts.close).toHaveBeenCalledWith("corner-toast");
   });
 

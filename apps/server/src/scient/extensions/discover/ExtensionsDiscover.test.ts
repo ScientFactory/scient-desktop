@@ -27,7 +27,6 @@ import {
   curatedServerForUrl,
   curatedDiscoverEntry,
   MOST_USED_SERVER_IDS,
-  MOST_USED_CAP,
   type CuratedServer,
 } from "./curatedCatalog.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
@@ -633,6 +632,26 @@ describe("curated Discover catalog", () => {
     }).pipe(Effect.provide(http.layer()));
   });
 
+  it.effect("lists community servers only in search", () => {
+    const http = harness(
+      () => Response.json(recordedPage),
+      [...CURATED_FIXTURE, curated("wrapper", ["most-used", "papers"], { hosting: "Community" })],
+    );
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const catalog = yield* discover.catalog();
+      const titles = catalog.sections.flatMap((section) =>
+        section.entries.map((entry) => entry.title),
+      );
+      expect(titles).not.toContain("wrapper");
+      expect(catalog.sections.find((section) => section.category === "papers")?.total).toBe(9);
+      const browsed = yield* discover.search({ scope: "curated", category: "papers" });
+      expect(browsed.entries.map((entry) => entry.title)).not.toContain("wrapper");
+      const searched = yield* discover.search({ scope: "curated", query: "wrapper" });
+      expect(searched.entries).toMatchObject([{ title: "wrapper", hosting: "Community" }]);
+    }).pipe(Effect.provide(http.layer()));
+  });
+
   it.effect("returns registry results that alias a curated server in curated shape", () => {
     const http = harness(() => Response.json(recordedPage), CURATED_FIXTURE);
     return Effect.gen(function* () {
@@ -674,7 +693,7 @@ describe("curated Discover catalog", () => {
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? MOST_USED_CAP : 40);
+      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 12 : 40);
       expect(size, category).toBeGreaterThan(0);
     }
   });
@@ -941,26 +960,18 @@ describe("split Discover search", () => {
     return { requests, layer };
   };
 
-  it.effect(
-    "bounds hanging category searches and reports their failure without hiding picks",
-    () => {
-      const registry = hangingRegistry();
-      return Effect.gen(function* () {
-        const discover = yield* ExtensionsDiscover;
-        const fiber = yield* discover
-          .search({ scope: "registry", category: "biology" })
-          .pipe(Effect.forkChild);
-        yield* TestClock.adjust(Duration.seconds(8));
-        const page = yield* Fiber.join(fiber);
-        expect(page.entries).toEqual([]);
-        expect(page.message).toContain("could not finish");
-        expect(registry.requests).toHaveLength(4);
-        expect(
-          (yield* discover.search({ scope: "curated", category: "papers" })).entries.length,
-        ).toBeGreaterThan(0);
-      }).pipe(Effect.provide(registry.layer));
-    },
-  );
+  it.effect("refuses Registry category browsing without asking the Registry", () => {
+    const registry = hangingRegistry();
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const error = yield* Effect.flip(discover.search({ scope: "registry", category: "biology" }));
+      expect(error.reason).toBe("invalid-input");
+      expect(registry.requests).toHaveLength(0);
+      expect(
+        (yield* discover.search({ scope: "curated", category: "papers" })).entries.length,
+      ).toBeGreaterThan(0);
+    }).pipe(Effect.provide(registry.layer));
+  });
 
   it.effect("answers curated searches locally, even while the registry hangs", () => {
     const registry = hangingRegistry();
@@ -1034,67 +1045,4 @@ describe("split Discover search", () => {
       );
     }).pipe(Effect.provide(http.layer()));
   });
-
-  it.effect(
-    "merges category keyword pages, deduplicates names and endpoints, and caches reads",
-    () => {
-      const alias = {
-        server: {
-          name: "org.example/alias",
-          version: "1.0.0",
-          remotes: [{ type: "streamable-http", url: "https://unique.example/mcp/" }],
-        },
-        _meta: { "io.modelcontextprotocol.registry/official": { status: "active" } },
-      };
-      const http = harness(
-        () =>
-          Response.json({
-            ...recordedPage,
-            servers: [
-              ...recordedPage.servers,
-              alias,
-              {
-                ...alias,
-                server: {
-                  ...alias.server,
-                  name: "org.example/alias-other",
-                  remotes: [
-                    { type: "streamable-http", url: "https://unique.example/mcp#fragment" },
-                  ],
-                },
-              },
-            ],
-          }),
-        CURATED_FIXTURE,
-      );
-      return Effect.gen(function* () {
-        const discover = yield* ExtensionsDiscover;
-        const first = yield* discover.search({ scope: "registry", category: "biology" });
-        expect(http.requests.map((url) => url.searchParams.get("search"))).toEqual([
-          "genomics",
-          "protein",
-          "clinical",
-          "bioinformatics",
-        ]);
-        expect(first.entries.length).toBeGreaterThan(0);
-        expect(new Set(first.entries.map((entry) => entry.name)).size).toBe(first.entries.length);
-        const urls = first.entries.flatMap((entry) =>
-          entry.remotes.map((remote) => canonicalConnectorUrl(remote.url)),
-        );
-        expect(new Set(urls).size).toBe(urls.length);
-        yield* discover.search({ scope: "registry", category: "biology" });
-        expect(http.requests).toHaveLength(4);
-        if (first.nextCursor) {
-          const next = yield* discover.search({
-            scope: "registry",
-            category: "biology",
-            cursor: first.nextCursor,
-          });
-          expect(next.entries).toEqual([]);
-        }
-        const featured = yield* discover.search({ scope: "registry", category: "most-used" });
-        expect(featured.entries).toEqual([]);
-      }).pipe(Effect.provide(http.layer()));
-    },
-  );
 });

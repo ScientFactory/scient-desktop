@@ -41,6 +41,20 @@ export const OrchestrationV2ProviderRuntimePolicy = Schema.Struct({
    * it; adapters use it to refuse native mode choices a user makes beside Scient's own.
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
+  /** The folders of a multi-folder thread besides `cwd`. Single-folder threads omit it. */
+  workspace: Schema.optional(
+    Schema.Struct({
+      folders: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          path: Schema.String,
+          isGitRepository: Schema.Boolean,
+        }),
+      ),
+      /** Folder paths outside `cwd`. Adapters grant them as writable roots where the provider can. */
+      extraRoots: Schema.Array(Schema.String),
+    }),
+  ),
 });
 export type OrchestrationV2ProviderRuntimePolicy = typeof OrchestrationV2ProviderRuntimePolicy.Type;
 
@@ -188,5 +202,13 @@ export const ScientInternalCommands = [
     commandId: CommandId,
     threadId: ThreadId,
     requestId: CommandId,
+  }),
+  /** A saved steer the provider-input limit refused; records why it was not sent. */
+  Schema.Struct({
+    type: Schema.Literal("steer-input.refuse"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    message: TrimmedNonEmptyString,
   }),
 ] as const;

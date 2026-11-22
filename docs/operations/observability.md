@@ -105,6 +105,85 @@ It reads `T3CODE_TRACE_FILE` if set, else `<home>/userdata/logs/server.trace.ndj
 a copied file, set `T3CODE_TRACE_FILE`. `--since 30m` keeps spans that ended in the last 30
 minutes. The rate is per minute between the first and last span end.
 
+### Desktop update restart timing
+
+Desktop restarts emit local `desktop-restart` component logs with message
+`restart timing`. In `desktop.trace.ndjson` these appear as events on their
+owning desktop spans; stdout also carries them. They use the existing local
+observability sink, not an analytics service or a network endpoint.
+
+Every event has `event`, random `attemptId`, exact `fromVersion`, and exact
+`targetVersion`. The matched next process adds a separate random `launchId`
+and its actual `processId` for exact native-relaunch ownership.
+The sequence and timing fields are:
+
+| `event`            | Meaning and fields                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `confirmed`        | The user explicitly chose Restart now; native preparation can still be running.                                                                                                                                                                                                                                                                                      |
+| `shutdown-started` | Required preparation and save barriers finished; safe backend shutdown starts. `elapsedMs` is monotonic time since confirmation.                                                                                                                                                                                                                                     |
+| `native-handoff`   | Safe shutdown finished; calling the native installer next. `elapsedMs` is monotonic time since confirmation.                                                                                                                                                                                                                                                         |
+| `launched`         | The next process has the exact expected target version. `confirmToLaunchMs` and `handoffToLaunchMs` span the process boundary.                                                                                                                                                                                                                                       |
+| `backend-ready`    | The local backend passed the existing HTTP readiness check. `launchToBackendMs` uses the new process's monotonic clock.                                                                                                                                                                                                                                              |
+| `workspace-ready`  | A committed local workspace has a connected backend, live initial shell snapshot, hydrated client settings, settled navigation, and loaded selected project/thread detail or local draft. `confirmToReadyMs`, `launchToReadyMs`, `launchToBackendMs`, and `projectRestored` describe this endpoint. An initialized empty workspace reports `projectRestored: false`. |
+| `abandoned`        | No successful restart measurement: `reason` describes cancellation, persistence failure, version mismatch, expiry/clock change, or an attempt already claimed by an earlier launch.                                                                                                                                                                                  |
+
+Subtract the two pre-quit `elapsedMs` values for safe-shutdown/native-handoff
+time; neither changes the five-second concurrent backend stop allowance.
+`launchToReadyMs` includes backend startup and renderer initialization, not
+merely window reveal, DOM readiness or an IPC availability check.
+
+The versioned attempt lives at
+`<resolved desktop baseDir>/runtime/desktop-restart-attempt.json`, beside the
+existing install record, with atomic replacement. Qualification must isolate
+this base directory and the Electron profile, including the native relaunch.
+An attempt expires after 15 minutes. The first eligible launch claims it
+persistently before issuing an acknowledgement token; a later manual launch
+cannot turn a previously unusable launch into success. Native IPC accepts only
+registered app windows' top frames, and acknowledgements must match both IDs.
+Duplicate acknowledgements never emit a second success.
+
+Within each process, durations use monotonic time. Across processes the wall
+clock is necessary: negative or out-of-window differences invalidate the
+attempt, never become a fabricated zero-duration success. Cross-process
+durations include time the app was closed and are not pure CPU/startup costs.
+Legacy install records, including those without `startedAt`, retain their
+existing update recovery semantics; `installToLaunchMs` remains a launch-only
+measure and must not be counted as workspace-ready evidence.
+
+The timing events contain no project paths, project names, contents or
+credentials. Packaged-upgrade evidence should correlate by `attemptId` and
+verify the synthetic selected project's actual restored controls in addition
+to the `projectRestored: true` event.
+
+Qualification must use the release's actual platform filenames: a Linux `x64`
+host consumes the `x86_64.AppImage` asset, with its manifest size and SHA-512
+still verified. Managed updater feeds require HTTPS even on loopback, with a
+certificate trusted by the native updater; an HTTP policy can stop the backend
+before a workspace exists. A connecting splash or startup-error window is not
+the main workspace, and a fresh profile must finish or skip onboarding.
+An unsigned Windows build cannot supply a valid Authenticode qualification.
+
+Before native preparation and again before shutdown, the native update owner
+requests saves from every currently registered app window. Each request uses
+a fresh random nonce and waits at most 20 seconds. A response must come from
+that captured window's top frame; another window, an old response, or an
+unsolicited response cannot release the barrier. New, destroyed, reloaded or
+unresponsive windows fail it closed. Window bounds are flushed as well.
+Renderer saves reuse the document/file/LaTeX/input-composition registries,
+including dirty editors held for disconnected environments, and explicitly
+flush composer draft persistence. The final synchronous unsaved check catches
+edits made while another environment was saving. Failure leaves the app and
+backends running, with the reason beside the update control of the window
+Restart was chosen in, and a Restart paused notice in any other window that could
+not save; neither native preparation nor
+backend shutdown may proceed from a failed save barrier.
+
+The first save leaves the app editable during native preparation. The final
+save makes each renderer inert before flushing and holds that input lock
+through backend shutdown, preventing new edits after acknowledgement.
+Failed saves or installer handoff release the matching lock in every window;
+an unrelated or stale release cannot unlock another request.
+
 ### Metrics
 
 Metrics are not written to a local file.
@@ -488,6 +567,13 @@ Usually one of these is true:
 - Grafana is looking at the wrong time range or service name
 
 If the local NDJSON file is updating, local tracing is working. The problem is almost always OTLP export configuration or process startup.
+
+If metrics arrive but logs or traces have gaps, read `t3_otlp_export_attempt_failures_total` by
+`signal` and `reason` (`status_<code>`, `transport`, `encode`). The exporter drops a batch once it
+fails (transport errors and 408, 429, 500, 502, 503 and 504 after 3 retries; other statuses and
+encoding at once) and then drops that signal for 60 s, logging it only at Debug, so at the default
+log level this counter is the only record. Every retry counts, so one dropped batch reads as up to
+four.
 
 ## How To Think About Adding Tracing To Future Code
 

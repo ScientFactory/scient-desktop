@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -24,6 +25,7 @@ import {
   currentOptimisticProviderValue,
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type ModelDisabledReason = (instanceId: ProviderInstanceId, model: string) => string | null;
 
@@ -44,6 +46,8 @@ export function useComposerProviderRuntimeUpdate(input: {
   const { selectedProviderEntry, selectedInstanceId, lockedProvider, getModelDisabledReason } =
     input;
   useObserveProviderPick(input.environmentId, selectedProviderEntry);
+  const gt = useGT();
+  const messages = useMessages();
   const [localRuntimeUpdate, setLocalRuntimeUpdate] =
     useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
   const [preparingRuntimeUpdateInstanceId, setPreparingRuntimeUpdateInstanceId] =
@@ -59,10 +63,12 @@ export function useComposerProviderRuntimeUpdate(input: {
     preparingRuntimeUpdateInstanceId === selectedInstanceId ||
     activeSelectedProviderRuntimeUpdate !== null;
   const selectedProviderUpdateLabel = selectedProviderEntry
-    ? `Updating ${selectedProviderEntry.displayName}…`
-    : "Updating provider…";
+    ? gt("Updating {provider}…", { provider: selectedProviderEntry.displayName })
+    : gt("Updating provider…");
   const providerRuntimeUpdateSendDisabledReason = selectedProviderIsUpdating
-    ? `${selectedProviderEntry?.displayName ?? "Provider"} is updating.`
+    ? selectedProviderEntry
+      ? gt("{provider} is updating.", { provider: selectedProviderEntry.displayName })
+      : gt("Provider is updating.")
     : null;
   const getComposerModelDisabledReason = (instanceId: ProviderInstanceId, model: string) =>
     instanceId === selectedInstanceId && providerRuntimeUpdateSendDisabledReason
@@ -82,6 +88,7 @@ export function useComposerProviderRuntimeUpdate(input: {
       ));
   const selectedProviderConnectionKind = providerConnectionPresentation(
     selectedProviderEntry?.snapshot,
+    messages,
   ).kind;
   // A signed-out model account is named in a new chat too, before its first send fails.
   const reconnectProviderEntry =
@@ -105,7 +112,9 @@ export function useComposerProviderRuntimeUpdate(input: {
     modelPickerUpdateStatusProps: selectedProviderIsUpdating
       ? {
           statusLabel: selectedProviderUpdateLabel,
-          triggerAriaLabel: `${selectedProviderEntry?.displayName ?? "Provider"} update in progress`,
+          triggerAriaLabel: selectedProviderEntry
+            ? gt("{provider} update in progress", { provider: selectedProviderEntry.displayName })
+            : gt("Provider update in progress"),
         }
       : {},
   };
@@ -194,8 +203,11 @@ export function createComposerProviderUpdateFooter(input: {
     | "setPreparingRuntimeUpdateInstanceId"
     | "setLocalRuntimeUpdate"
   >;
+  /** Components pass `useMessages()`. */
+  readonly resolve?: MessageResolver;
 }) {
   const { environmentId, environmentUnavailable } = input;
+  const resolve = input.resolve ?? m;
   const {
     preparingRuntimeUpdateInstanceId,
     setPreparingRuntimeUpdateInstanceId,
@@ -204,7 +216,9 @@ export function createComposerProviderUpdateFooter(input: {
   // The server stages an update while turns run and switches runtimes only
   // once the provider is idle, so a running turn does not block starting one.
   const providerUpdateDisabledReason =
-    environmentUnavailable !== null ? "Available when this environment reconnects." : undefined;
+    environmentUnavailable !== null
+      ? resolve(msg("Available when this environment reconnects."))
+      : undefined;
   return (entry: ProviderInstanceEntry) => (
     <ComposerProviderUpdateFooter
       key={entry.instanceId}
@@ -212,7 +226,7 @@ export function createComposerProviderUpdateFooter(input: {
       entry={entry}
       {...(preparingRuntimeUpdateInstanceId !== null &&
       preparingRuntimeUpdateInstanceId !== entry.instanceId
-        ? { disabledReason: "Another provider update is being prepared." }
+        ? { disabledReason: resolve(msg("Another provider update is being prepared.")) }
         : providerUpdateDisabledReason
           ? { disabledReason: providerUpdateDisabledReason }
           : {})}

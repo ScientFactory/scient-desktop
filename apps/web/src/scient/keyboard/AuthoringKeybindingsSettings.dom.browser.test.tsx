@@ -167,11 +167,11 @@ it("edits, disables and resets a filtered command without changing application b
   await act(() => button(_fixture, "Save").click());
   expect(getKeyboardPreferences().preferences.overrides["markdown.bold"]).toEqual(["alt+q"]);
   expect(buttonStartingWith(_fixture, "Edit markdown.bold: Alt+Q")).toBeTruthy();
-  await act(() => button(_fixture, "Actions for bold").click());
+  await act(() => button(_fixture, "Actions for Bold").click());
   await act(() => document.querySelector<HTMLElement>('[role="menuitem"]')?.click());
   expect(getKeyboardPreferences().preferences.overrides["markdown.bold"]).toEqual([]);
   expect(_fixture.host.textContent).toContain("Disabled");
-  await act(() => button(_fixture, "Actions for bold").click());
+  await act(() => button(_fixture, "Actions for Bold").click());
   await act(() => document.querySelector<HTMLElement>('[role="menuitem"]')?.click());
   expect(getKeyboardPreferences().preferences.overrides["markdown.bold"]).toBeUndefined();
 });
@@ -273,7 +273,7 @@ it("keeps the inline edit open for its Save and portaled row menu", async () => 
   expect(getKeyboardPreferences().preferences.overrides["markdown.bold"]).toEqual(["alt+q"]);
 
   await act(() => buttonStartingWith(_fixture, "Edit markdown.bold").click());
-  await act(() => button(_fixture, "Actions for bold").click());
+  await act(() => button(_fixture, "Actions for Bold").click());
   const remove = document.querySelector<HTMLElement>('[role="menuitem"]')!;
   await act(() => remove.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
   expect(_fixture.host.querySelector("[data-keybinding-capture]")).not.toBeNull();
@@ -315,7 +315,7 @@ it("adds, edits, and removes individual alternative shortcuts in one row", async
         <AuthoringKeybindingsSettings scope="markdown" query="markdown.bold" />,
       ),
   );
-  await act(() => button(_fixture, "Add shortcut for bold").click());
+  await act(() => button(_fixture, "Add shortcut for Bold").click());
   await press(_fixture, "q", { altKey: true });
   await act(() => button(_fixture, "Save").click());
   expect(getKeyboardPreferences().preferences.overrides["markdown.bold"]).toEqual([
@@ -330,7 +330,7 @@ it("adds, edits, and removes individual alternative shortcuts in one row", async
     "alt+w",
   ]);
   await act(() => buttonStartingWith(_fixture, "Edit markdown.bold: Alt+W").click());
-  await act(() => button(_fixture, "Actions for bold").click());
+  await act(() => button(_fixture, "Actions for Bold").click());
   await act(() => document.querySelector<HTMLElement>('[role="menuitem"]')?.click());
   expect(getKeyboardPreferences().preferences.overrides["markdown.bold"]).toEqual(defaults);
 });

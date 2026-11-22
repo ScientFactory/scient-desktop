@@ -16,6 +16,9 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 // SCIENT-FORK:START — Scient Accounts: expose the desktop accounts bridge.
 import { makeDesktopAccountsBridge } from "./scient/accounts/preloadBridge.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — feedback reports to the Scient team.
+import { makeDesktopFeedbackBridge } from "./scient/feedback/preloadBridge.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — several app windows share one desktop process.
 import { makeMultiWindowBridge } from "./scient/multiWindow/preloadBridge.ts";
 // SCIENT-FORK:END
@@ -115,6 +118,40 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+  getRestartReadinessToken: () =>
+    ipcRenderer.invoke(IpcChannels.GET_RESTART_READINESS_TOKEN_CHANNEL),
+  reportWorkspaceReady: (input) =>
+    ipcRenderer.invoke(IpcChannels.REPORT_WORKSPACE_READY_CHANNEL, input),
+  onPrepareUpdateSave: (listener) => {
+    const handle = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      if (typeof input !== "object" || input === null) return;
+      const { requestId, lockForRestart } = input as {
+        requestId?: unknown;
+        lockForRestart?: unknown;
+      };
+      if (
+        typeof requestId === "string" &&
+        requestId.length > 0 &&
+        requestId.length <= 128 &&
+        typeof lockForRestart === "boolean"
+      )
+        listener({ requestId, lockForRestart });
+    };
+    ipcRenderer.on(IpcChannels.PREPARE_UPDATE_SAVE_CHANNEL, handle);
+    return () => ipcRenderer.removeListener(IpcChannels.PREPARE_UPDATE_SAVE_CHANNEL, handle);
+  },
+  onReleaseUpdateSave: (listener) => {
+    const handle = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
+      if (typeof requestId === "string" && requestId.length > 0 && requestId.length <= 128)
+        listener(requestId);
+    };
+    ipcRenderer.on(IpcChannels.RELEASE_UPDATE_SAVE_CHANNEL, handle);
+    return () => ipcRenderer.removeListener(IpcChannels.RELEASE_UPDATE_SAVE_CHANNEL, handle);
+  },
+  completeUpdateSave: (input) =>
+    ipcRenderer.invoke(IpcChannels.COMPLETE_UPDATE_SAVE_CHANNEL, input),
+  // SCIENT-FORK:END
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {
@@ -122,8 +159,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
-  getRelayTelemetryEnabled: () =>
-    ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
+  getRelayTelemetryEnabled: () => {
+    const enabled = ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL);
+    return enabled === null ? null : enabled === true;
+  },
   getClientPlatform: () => clientPlatform,
   restartAudioService: () => ipcRenderer.invoke(IpcChannels.RESTART_AUDIO_SERVICE_CHANNEL),
   // SCIENT-FORK:START — keep the computer awake while threads work.
@@ -305,10 +344,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL, url),
   cancelProviderAuthCallback: (url: string) =>
     ipcRenderer.invoke(IpcChannels.CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL, url),
+  startFileDrag: (input) => ipcRenderer.invoke(IpcChannels.START_FILE_DRAG_CHANNEL, input),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   readMedia: (url: string) => ipcRenderer.invoke(IpcChannels.READ_MEDIA_CHANNEL, url),
   checkSystemPermission: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
+  appleSpeech: {
+    supportedLocales: () =>
+      ipcRenderer.invoke(IpcChannels.APPLE_SPEECH_AVAILABLE_CHANNEL, undefined),
+    prepare: (locale: string) =>
+      ipcRenderer.invoke(IpcChannels.APPLE_SPEECH_PREPARE_CHANNEL, locale),
+    transcribe: (input: { locale: string; pcm: Uint8Array }) =>
+      ipcRenderer.invoke(IpcChannels.APPLE_SPEECH_TRANSCRIBE_CHANNEL, input),
+  },
   openSystemSettings: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
@@ -483,8 +531,42 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, { environmentId, profileId }),
     clearCache: (environmentId, profileId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
-    getPreviewConfig: (environmentId, profileId) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    getPreviewConfig: (environmentId, profileId, tunnelLoopback) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, {
+        environmentId,
+        profileId,
+        tunnelLoopback,
+      }),
+    onTunnelAccessRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+        if (typeof request !== "object" || request === null) return;
+        listener(request as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL,
+          wrappedListener,
+        );
+    },
+    resolveTunnelAccess: (requestId, url) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL, { requestId, url }),
+    forwardPort: (environmentId, remotePort) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_START_CHANNEL, { environmentId, remotePort }),
+    stopPortForward: (environmentId, remotePort) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_CHANNEL, { environmentId, remotePort }),
+    listPortForwards: () => ipcRenderer.invoke(IpcChannels.PORT_FORWARD_LIST_CHANNEL),
+    sharesLoopback: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_SHARES_LOOPBACK_CHANNEL, { environmentId }),
+    onPortForwards: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, forwards: unknown) => {
+        if (!Array.isArray(forwards)) return;
+        listener(forwards);
+      };
+      ipcRenderer.on(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, wrappedListener);
+    },
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     setAnnotationSendEnabled: (tabId, enabled) =>
@@ -513,6 +595,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     exportPdf: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL, { tabId }),
     renderHtmlPdf: (sourceUrl) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_RENDER_HTML_PDF_CHANNEL, { sourceUrl }),
+    // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+    readLibraryPage: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_LIBRARY_PAGE_CHANNEL, { tabId }),
+    // SCIENT-FORK:END
     revealArtifact: (path) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),
     copyArtifactToClipboard: (path) =>
@@ -599,6 +685,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   voice: makeDesktopVoiceBridge(ipcRenderer),
   // SCIENT-FORK:START — Scient Accounts: mount the desktop accounts bridge.
   accounts: makeDesktopAccountsBridge(ipcRenderer),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — feedback reports to the Scient team.
+  feedback: makeDesktopFeedbackBridge(ipcRenderer),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — several app windows share one desktop process.
   ...makeMultiWindowBridge(ipcRenderer),

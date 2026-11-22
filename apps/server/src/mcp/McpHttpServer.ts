@@ -1,6 +1,9 @@
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -36,7 +39,11 @@ import packageJson from "../../package.json" with { type: "json" };
 import { dispatchScientOperation } from "../scient/operations/AgentOperationDispatcher.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
-import { scientOperationCatalog, scientTools } from "./ScientOperationCatalog.ts";
+import {
+  scientOperationCatalog,
+  scientTools,
+  scientToolVariants,
+} from "./ScientOperationCatalog.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
@@ -51,6 +58,8 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as PullRequestWatchService from "../pullRequest/PullRequestWatchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
@@ -59,6 +68,7 @@ import {
   BrowserToolCalls,
   isBrowserTool,
   noteToolFailure,
+  recordBrowserCall,
   refusedDelegateTarget,
   scientMcpAnalyticsInput,
   scientToolOutcome,
@@ -90,6 +100,10 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
+// SCIENT-FORK:START — agents manage Settings → Custom models.
+import { CustomModelsToolkit } from "../scient/customModels/agent/tools.ts";
+import * as CustomModelsHandlers from "../scient/customModels/agent/handlers.ts";
+// SCIENT-FORK:END
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -109,8 +123,27 @@ import {
   PreviewToolkit,
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
-import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
-import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+// SCIENT-FORK:START — PDF annotation agent tools.
+import { layer as ScientAnnotationsLive } from "../scient/annotations/ScientAnnotations.ts";
+import { ScientAnnotationsToolkitHandlersLive } from "./toolkits/annotations/handlers.ts";
+import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
+// SCIENT-FORK:END
+import {
+  ScientSourcesLibraryToolkitHandlersLive,
+  ScientSourcesToolkitHandlersLive,
+} from "./toolkits/sources/handlers.ts";
+import { ScientSourcesLibraryToolkit, ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientSourcesBackend } from "../scient/sources/SourcesBackend.ts";
+import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
+import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
+import {
+  ScientSystematicReviewsLibraryToolkitHandlersLive,
+  ScientSystematicReviewsToolkitHandlersLive,
+} from "./toolkits/systematicReviews/handlers.ts";
+import {
+  ScientSystematicReviewsLibraryToolkit,
+  ScientSystematicReviewsToolkit,
+} from "./toolkits/systematicReviews/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
@@ -131,6 +164,8 @@ import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import * as ToolSearchHandlers from "./toolkits/toolSearch/handlers.ts";
 import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import * as IssuesHandlers from "./toolkits/issues/handlers.ts";
+import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
@@ -225,6 +260,39 @@ const normalizeMcpHttpResponse = (
     : response;
 };
 
+// The first protocol is the fallback for clients that offer an unknown version.
+// SCIENT-FORK: Scient serves its tool-list protocols, which keep these versions and RPCs.
+const mcpProtocols = [ScientMcpProtocol, ScientMcpProtocol2026] as const;
+
+/**
+ * Effect answers 400 to a notification a sessionless protocol does not define, because it requires
+ * `_meta` before it checks the method. The Go MCP SDK still sends `notifications/roots/list_changed`
+ * there and closes its connection on that 400. Remove once Effect ignores undefined notifications.
+ */
+const isUndefinedNotification = Effect.fnUntraced(function* (
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const method = request.headers["mcp-method"];
+  const protocol = mcpProtocols.find(
+    (candidate) => candidate.protocolVersion === request.headers["mcp-protocol-version"],
+  );
+  if (
+    request.method !== "POST" ||
+    protocol?.runtime._tag !== "Stateless" ||
+    !method?.startsWith("notifications/") ||
+    protocol.clientRpcs.requests.has(method)
+  ) {
+    return false;
+  }
+  const message = yield* Effect.orElseSucceed(request.json, () => undefined);
+  return (
+    Predicate.isReadonlyObject(message) &&
+    message.jsonrpc === "2.0" &&
+    message.method === method &&
+    !Predicate.hasProperty(message, "id")
+  );
+});
+
 // Session tokens are `<payload>.<signature>`; registry tokens are a bare base64url secret.
 const looksLikeProviderToken = (token: string) => token.length > 0 && !token.includes(".");
 
@@ -303,6 +371,24 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+  const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
+  const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+  // Every request reads it, and a remote added mid-thread shows the tools within a minute.
+  const forgeOfThread = yield* Cache.make({
+    capacity: 1_000,
+    timeToLive: Duration.minutes(1),
+    lookup: (threadId: ThreadId): Effect.Effect<boolean | undefined> =>
+      Option.isNone(pullRequests) || Option.isNone(projections)
+        ? Effect.undefined
+        : projections.value.getThreadShell(threadId).pipe(
+            Effect.flatMap((thread) =>
+              thread === null
+                ? Effect.undefined
+                : pullRequests.value.servesProject(thread.projectId),
+            ),
+            Effect.orElseSucceed(() => undefined),
+          ),
+  });
   const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
     request: HttpServerRequest.HttpServerRequest,
   ) {
@@ -336,7 +422,11 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
-    return { ...limited, linkedEnvironments, origin };
+    const forge =
+      limited.thread === undefined
+        ? undefined
+        : yield* Cache.get(forgeOfThread, limited.thread.threadId);
+    return { ...limited, linkedEnvironments, origin, ...(forge === undefined ? {} : { forge }) };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -345,9 +435,20 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     if (request.headers.origin !== undefined) return HttpServerResponse.empty({ status: 403 });
     const admitted = yield* authenticateRequest(request);
     if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
+    if (yield* isUndefinedNotification(request)) return HttpServerResponse.empty({ status: 202 });
+    const linkExpiresAt = admitted.client?.linkExpiresAt;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
+      Effect.map((response) =>
+        linkExpiresAt === undefined
+          ? response
+          : HttpServerResponse.setHeader(
+              response,
+              McpInvocationContext.LINK_EXPIRES_AT_HEADER,
+              DateTime.formatIso(linkExpiresAt),
+            ),
+      ),
     );
   }) satisfies McpAuthMiddleware;
 }).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));
@@ -361,7 +462,6 @@ export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
 // Page text and the ARIA tree both shrink to this before either drops below it.
 const SNAPSHOT_TEXT_FLOOR_CHARS = 2_000;
-const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
 const MAX_SNAPSHOT_LOG_ENTRIES = 40;
 const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
 const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
@@ -394,10 +494,6 @@ type SnapshotMetadata = {
   readonly url: string;
   readonly title: string;
   readonly visibleText: string;
-  readonly interactiveElements: ReadonlyArray<{
-    readonly name: string;
-    readonly [key: string]: unknown;
-  }>;
   readonly consoleEntries: ReadonlyArray<unknown>;
   readonly networkEntries: ReadonlyArray<unknown>;
   readonly actionTimeline: ReadonlyArray<unknown>;
@@ -414,7 +510,7 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const { accessibilityTree, ...withoutTree } = metadata;
   const ariaTree = typeof accessibilityTree === "string" ? accessibilityTree : undefined;
   if (accessibilityTree !== undefined && ariaTree === undefined) {
-    omitted.push("accessibilityTree (use interactiveElements locators or preview_evaluate)");
+    omitted.push("accessibilityTree (use preview_evaluate)");
   }
   const tail = <A>(entries: ReadonlyArray<A>, label: string) => {
     if (entries.length > MAX_SNAPSHOT_LOG_ENTRIES) {
@@ -432,41 +528,23 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   ) {
     omitted.push(`url or title after ${MAX_SNAPSHOT_IDENTIFIER_CHARS} characters`);
   }
-  if (
-    metadata.interactiveElements.some(
-      (element) => element.name.length > MAX_SNAPSHOT_ELEMENT_NAME_CHARS,
-    )
-  ) {
-    omitted.push(`element names longer than ${MAX_SNAPSHOT_ELEMENT_NAME_CHARS} characters`);
-  }
   const bounded = {
     ...withoutTree,
     url: cutText(metadata.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
     title: cutText(metadata.title, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-    interactiveElements: metadata.interactiveElements.map((element) => ({
-      ...element,
-      name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
-    })),
     consoleEntries: tail(metadata.consoleEntries, "console entries"),
     networkEntries: tail(metadata.networkEntries, "network entries"),
     actionTimeline: tail(metadata.actionTimeline, "action timeline entries"),
   };
 
   // Per-field character caps can still exceed the total byte ceiling.
-  const shedOrder = [
-    "actionTimeline",
-    "networkEntries",
-    "consoleEntries",
-    "interactiveElements",
-  ] as const;
+  const shedOrder = ["actionTimeline", "networkEntries", "consoleEntries"] as const;
   const lists: Record<(typeof shedOrder)[number], ReadonlyArray<unknown>> = {
-    interactiveElements: bounded.interactiveElements,
     consoleEntries: bounded.consoleEntries,
     networkEntries: bounded.networkEntries,
     actionTimeline: bounded.actionTimeline,
   };
   const dropped: Record<(typeof shedOrder)[number], number> = {
-    interactiveElements: 0,
     consoleEntries: 0,
     networkEntries: 0,
     actionTimeline: 0,
@@ -481,22 +559,18 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   });
   let text = encodeJsonText(value());
   while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
-    // Logs shed first, oldest first. Below the floors, locator-bearing elements and tree go last.
+    // Logs shed first, oldest first. Below the floors, the locator-bearing tree goes last.
     const key =
-      shedOrder.find(
-        (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
-      ) ??
+      shedOrder.find((candidate) => lists[candidate].length > 0) ??
       (visibleTextChars > SNAPSHOT_TEXT_FLOOR_CHARS
         ? "visibleText"
         : ariaTreeChars > SNAPSHOT_TEXT_FLOOR_CHARS
           ? "accessibilityTree"
           : visibleTextChars > 0
             ? "visibleText"
-            : lists.interactiveElements.length > 0
-              ? "interactiveElements"
-              : ariaTreeChars > 0
-                ? "accessibilityTree"
-                : undefined);
+            : ariaTreeChars > 0
+              ? "accessibilityTree"
+              : undefined);
     if (key === undefined) break;
     if (key === "visibleText") {
       visibleTextChars = halveToFloor(visibleTextChars);
@@ -505,12 +579,7 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     } else {
       const keep = Math.floor(lists[key].length / 2);
       dropped[key] += lists[key].length - keep;
-      lists[key] =
-        keep === 0
-          ? []
-          : key === "interactiveElements"
-            ? lists[key].slice(0, keep)
-            : lists[key].slice(-keep);
+      lists[key] = keep === 0 ? [] : lists[key].slice(-keep);
     }
     text = encodeJsonText(value());
   }
@@ -986,7 +1055,10 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
     withToolAnalytics(
       Effect.gen(function* () {
         for (const tool of Object.values(toolkit.tools)) {
-          if (tool !== scientTools.find((registered) => registered.name === tool.name)) {
+          if (
+            tool !== scientTools.find((registered) => registered.name === tool.name) &&
+            !scientToolVariants.includes(tool)
+          ) {
             return yield* Effect.die(
               new Error(`Unregistered Scient tool definition: ${tool.name}`),
             );
@@ -1413,12 +1485,16 @@ const withToolAnalytics =
                     const invocation = Option.getOrUndefined(
                       yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
                     )?.thread;
+                    // SCIENT-FORK: each browser call's tool, time, outcome and site, per turn.
                     if (isBrowserTool(tool) && invocation !== undefined)
-                      browserCalls.record(
-                        invocation.threadId,
+                      recordBrowserCall(browserCalls, invocation.threadId, {
+                        tool,
+                        args: payload,
+                        result: analyticsResult,
+                        failure,
+                        startedAt,
                         endedAt,
-                        scientToolOutcome(analyticsResult, failure).outcome !== "ok",
-                      );
+                      });
                     yield* record(
                       options.tool.name,
                       payload,
@@ -1541,9 +1617,41 @@ export const layerPreviewToolkit = Layer.mergeAll(
   layerPreviewSnapshotRegistration,
 );
 
-export const ScientSourcesToolkitRegistrationLive = registerScientToolkit(
-  ScientSourcesToolkit,
-).pipe(Layer.provide(ScientSourcesToolkitHandlersLive));
+// The backend constant picks the Sources tool list; both lists share operations and handlers.
+export const ScientSourcesToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return (yield* ScientSourcesBackend) === "library"
+      ? registerScientToolkit(ScientSourcesLibraryToolkit).pipe(
+          Layer.provide(ScientSourcesLibraryToolkitHandlersLive),
+        )
+      : registerScientToolkit(ScientSourcesToolkit).pipe(
+          Layer.provide(ScientSourcesToolkitHandlersLive),
+        );
+  }),
+);
+
+const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientReferencesToolkit).pipe(
+  Layer.provide(ScientReferencesToolkitHandlersLive),
+);
+
+/** Library mode adds the pick between a review's versions to the same two tools. */
+const ScientSystematicReviewsToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return (yield* ScientSourcesBackend) === "library"
+      ? registerScientToolkit(ScientSystematicReviewsLibraryToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsLibraryToolkitHandlersLive),
+        )
+      : registerScientToolkit(ScientSystematicReviewsToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsToolkitHandlersLive),
+        );
+  }),
+);
+
+// SCIENT-FORK:START — PDF annotation agent tools.
+export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(
+  ScientAnnotationsToolkit,
+).pipe(Layer.provide(ScientAnnotationsToolkitHandlersLive), Layer.provide(ScientAnnotationsLive));
+// SCIENT-FORK:END
 
 export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientSkillsToolkit).pipe(
   Layer.provide(ScientSkillsToolkitHandlersLive),
@@ -1605,6 +1713,12 @@ const layerThemeToolkit = toolkitRegistration(ThemeToolkit, ThemeHandlers.layer)
   Layer.provide(ThreadCommandExecutor.layer),
 );
 
+// SCIENT-FORK: agents manage Settings → Custom models.
+const layerCustomModelsToolkit = toolkitRegistration(
+  CustomModelsToolkit,
+  CustomModelsHandlers.layer,
+).pipe(Layer.provide(ThreadCommandExecutor.layer));
+
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
@@ -1616,6 +1730,8 @@ export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsToolkit,
   PullRequestsHandlers.layer,
 ).pipe(Layer.provide(PullRequestWatchService.layer));
+
+const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer);
 
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
@@ -1643,6 +1759,8 @@ const orchestrationTools = [
   ...Object.values(ProjectToolkit.tools),
   ...Object.values(EnvironmentToolkit.tools),
   ...Object.values(ThemeToolkit.tools),
+  // SCIENT-FORK: agents manage Settings → Custom models.
+  ...Object.values(CustomModelsToolkit.tools),
 ];
 const previewTools = [
   ...Object.values(PreviewToolkit.tools),
@@ -1655,11 +1773,14 @@ const worktreeTools = [
   WorktreeToolkit.tools.scient_worktree_status,
 ];
 const deviceTools = Object.values(DeviceToolkit.tools);
+// Every issue tool route checks the `issues` grant, and none forwards to a linked environment.
+const issueTools = Object.values(IssuesToolkit.tools);
 export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...orchestrationTools,
   ...previewTools,
   ...Object.values(WorktreeToolkit.tools),
   ...Object.values(PullRequestsToolkit.tools),
+  ...issueTools,
   ...Object.values(HtmlRenderToolkit.tools),
   ...Object.values(HtmlPreviewToolkit.tools),
   ...deviceTools,
@@ -1673,6 +1794,7 @@ export const hostMcpToolGrants = {
   preview: previewTools,
   worktree: worktreeTools,
   device: deviceTools,
+  issues: issueTools,
 };
 const layerScientToolList = makeScientToolListLayer(hostMcpTools, hostMcpToolGrants);
 // SCIENT-FORK:END
@@ -1697,15 +1819,19 @@ export const layerInProcessMcpServer = McpServer.middleware<{
 ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
 // SCIENT-FORK:START — Scient's server name and request-scoped tool discovery.
+/** One line clients show for this server: Codex as its namespace, Scient Agent as its catalog row. */
+const SCIENT_MCP_INSTRUCTIONS =
+  "Scient workspace tools: papers and sources, Compute, notebooks, documents and PDF builds, Overleaf, browser preview, devices, skills, connectors, accounts, projects, threads and delegation.";
+
 export const makeLayerMcpTransport =
   (toolList: ReturnType<typeof makeScientToolListLayer>) =>
   <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
     McpServer.layerHttp({
       name: "Scient",
       version: packageJson.version,
+      instructions: SCIENT_MCP_INSTRUCTIONS,
       path: MCP_HTTP_PATH,
-      // The first protocol is the fallback for clients that offer an unknown version.
-      protocols: [ScientMcpProtocol, ScientMcpProtocol2026],
+      protocols: mcpProtocols,
       allowSessionTermination: true,
       registrations,
     }).pipe(Layer.provide(layerMcpAuthMiddleware), Layer.provide(toolList));
@@ -1723,6 +1849,11 @@ export const layerTools = Layer.mergeAll(
   ),
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
+  ScientReferencesToolkitRegistrationLive,
+  ScientSystematicReviewsToolkitRegistrationLive,
+  // SCIENT-FORK:START — PDF annotation agent tools.
+  ScientAnnotationsToolkitRegistrationLive,
+  // SCIENT-FORK:END
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
   // SCIENT-FORK:START — Overleaf agent tools.
@@ -1740,9 +1871,12 @@ export const layerTools = Layer.mergeAll(
   layerProjectRegistration,
   layerEnvironmentToolkit,
   layerThemeToolkit,
+  // SCIENT-FORK: agents manage Settings → Custom models.
+  layerCustomModelsToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
+  layerIssuesToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,

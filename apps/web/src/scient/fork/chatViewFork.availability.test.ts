@@ -73,6 +73,33 @@ describe("fork command live timeline ownership", () => {
   });
 });
 
+describe("/fork-worktree", () => {
+  it("opens the fork card with New worktree switched on", () => {
+    let target: ForkCommandTarget | null = null;
+    const fork = createForkConversationCommand({
+      timelineEntries: [],
+      readTimelineEntries: () => [answer("completed")],
+      activeLatestRun: null,
+      activeRunningTurnId: null,
+      activeThreadId: ThreadId.make("thread"),
+      activeThreadEnvironmentId: EnvironmentId.make("environment"),
+      setForkCommandTarget: (next) => {
+        target = typeof next === "function" ? next(target) : next;
+      },
+    });
+    fork({ workspaceMode: "new-worktree" });
+    expect(target).toMatchObject({
+      kind: "assistant-response",
+      messageId: "completed",
+      source: "latest-response",
+      newWorktree: true,
+    });
+    // `/fork` opens the same card with the switch off.
+    fork();
+    expect(target).not.toHaveProperty("newWorktree");
+  });
+});
+
 describe("run fork commands share the Scient dialog owner", () => {
   it("uses a live completed response and fences a stale source thread", async () => {
     let target: ForkCommandTarget | null = null;

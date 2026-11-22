@@ -1634,7 +1634,7 @@ it.effect(
   },
 );
 
-it.effect("targeted Send uses the same automatic-completion priority as queue delivery", () =>
+it.effect("Send now starts the chosen held message before a waiting automatic completion", () =>
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const sink = yield* EventSinkV2;
@@ -1691,7 +1691,7 @@ it.effect("targeted Send uses the same automatic-completion priority as queue de
     });
     const automaticSend = yield* orchestrator
       .dispatch({
-        type: "queue.resume",
+        type: "queued-run.start",
         threadId,
         commandId: CommandId.make("priority-send-automatic"),
         runId: projection.runs[1]!.id,
@@ -1706,16 +1706,17 @@ it.effect("targeted Send uses the same automatic-completion priority as queue de
         ["queued", true],
       ],
     );
-    // Send on the ordinary message: the automatic completion still goes first.
+    // Send on the ordinary message starts it first, as upstream's queued-run.start does; the
+    // automatic completion is released and follows it.
     yield* orchestrator.dispatch({
-      type: "queue.resume",
+      type: "queued-run.start",
       threadId,
       commandId: CommandId.make("priority-send-ordinary"),
       runId: projection.runs[0]!.id,
     });
     const delivered = yield* orchestrator.getThreadProjection(threadId);
-    assert.equal(delivered.runs[1]?.status, "starting");
-    assert.equal(delivered.runs[0]?.status, "queued");
-    assert.equal(delivered.runs[0]?.queueHeld, false);
+    assert.equal(delivered.runs[0]?.status, "starting");
+    assert.equal(delivered.runs[1]?.status, "queued");
+    assert.equal(delivered.runs[1]?.queueHeld, false);
   }).pipe(Effect.provide(testLayer)),
 );

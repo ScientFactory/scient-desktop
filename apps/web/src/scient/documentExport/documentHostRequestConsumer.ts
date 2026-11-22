@@ -24,7 +24,8 @@ export function serializeScientDocumentHostError(
     _tag: "ScientDocumentHostExecutionError",
     message: isScientDocumentHostExecutionError(error)
       ? error.message
-      : "The controlled document operation failed.",
+      : // oxlint-disable-next-line t3code/no-untranslated-copy -- error returned to the agent's document tool
+        "The controlled document operation failed.",
     detail: {
       environmentId,
       threadId: request.threadId,

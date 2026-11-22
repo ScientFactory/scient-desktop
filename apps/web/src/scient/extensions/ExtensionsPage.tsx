@@ -16,6 +16,7 @@ import {
   ChevronUpIcon,
   type LucideIcon,
 } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { createContext, type ReactNode, useContext, useEffect } from "react";
 
 import {
@@ -137,7 +138,7 @@ export function ExtensionsPage({
     <SettingsPageContainer>
       {environmentId === null ? (
         <p className="text-sm text-muted-foreground">
-          Connect an execution environment to manage extensions.
+          <T>Connect an execution environment to manage extensions.</T>
         </p>
       ) : (
         <ExtensionsEnvironmentProvider
@@ -172,6 +173,8 @@ export function ExtensionsTopBar({
   readonly kind: ExtensionKind | undefined;
   readonly children?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const show = (nextTab: ExtensionsTab, nextKind: ExtensionKind | undefined) =>
     void navigate({
@@ -186,7 +189,7 @@ export function ExtensionsTopBar({
       {/* Fixed heights: the bar stays put whichever tab, kind or control is showing. */}
       <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
         <ToggleGroup
-          aria-label="Extensions"
+          aria-label={gt("Extensions")}
           variant="segmented"
           value={[tab]}
           onValueChange={(next) => {
@@ -196,14 +199,18 @@ export function ExtensionsTopBar({
             }
           }}
         >
-          <Toggle value="discover">Discover</Toggle>
-          <Toggle value="installed">Installed</Toggle>
+          <Toggle value="discover">
+            <T>Discover</T>
+          </Toggle>
+          <Toggle value="installed">
+            <T>Installed</T>
+          </Toggle>
         </ToggleGroup>
         {children}
       </div>
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
         <ToggleGroup
-          aria-label="Show"
+          aria-label={gt("Show", { $context: "which kind of extension to list" })}
           variant="pill"
           size="sm"
           className="-ms-3"
@@ -216,7 +223,7 @@ export function ExtensionsTopBar({
         >
           {EXTENSION_KINDS.map((item) => (
             <Toggle key={item} value={item}>
-              {EXTENSION_KIND_LABELS[item]}
+              {messages(EXTENSION_KIND_LABELS[item])}
             </Toggle>
           ))}
         </ToggleGroup>
@@ -226,7 +233,7 @@ export function ExtensionsTopBar({
             to="/settings/extensions/all"
             className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
           >
-            Browse all MCP servers
+            <T>Browse all MCP servers</T>
             <ChevronRightIcon
               aria-hidden
               className="size-3.5 transition-transform group-hover:translate-x-0.5"
@@ -322,6 +329,7 @@ export function SectionShowAllToggle({
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
 }) {
+  const gt = useGT();
   const Icon = expanded ? ChevronUpIcon : ChevronDownIcon;
   return (
     <Button
@@ -339,7 +347,7 @@ export function SectionShowAllToggle({
         onExpandedChange(!expanded);
       }}
     >
-      {expanded ? "Show less" : `Show all ${total}`}
+      {expanded ? gt("Show less") : gt("Show all {total}", { total })}
       <Icon aria-hidden />
     </Button>
   );

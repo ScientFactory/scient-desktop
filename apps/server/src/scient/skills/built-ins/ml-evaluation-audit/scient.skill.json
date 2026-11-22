@@ -1,0 +1,13 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.ml-evaluation-audit",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 140,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}

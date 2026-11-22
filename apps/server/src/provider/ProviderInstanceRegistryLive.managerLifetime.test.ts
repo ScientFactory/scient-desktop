@@ -26,6 +26,7 @@ import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { layerProviderRuntimeTestServices } from "../orchestration-v2/testkit/ProviderRuntimeTestServices.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
@@ -98,6 +99,8 @@ const managerLayer = Effect.fnUntraced(function* (h: NativeHarness) {
     Layer.succeed(McpSessionRegistry.McpSessionRegistry, observedMcp),
     ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
       Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
+      // The registry rates provider versions against the manifest's compatibility policy.
+      Layer.provide(ModelManifest.layerTest),
     ),
     ProviderEventIngestor.layer.pipe(
       Layer.provide(

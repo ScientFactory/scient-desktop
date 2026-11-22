@@ -1,4 +1,4 @@
-import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
+import type { PdfSourceDescriptor, PdfSourceResolver } from "@scientfactory/document-artifacts";
 import {
   EnvironmentId,
   ThreadId,
@@ -212,14 +212,14 @@ function setup() {
   return {
     container,
     citeText,
-    async render(bytes: Uint8Array) {
+    async render(bytes: Uint8Array, readerSource: PdfSourceDescriptor = source) {
       const ui = (
         // The app's development replay must not drop a pending quote.
         <StrictMode>
           <ComposerHandleContext value={composerRef as RefObject<ChatComposerHandle | null>}>
             <div style={{ width: "min(800px, 100vw)", height: "100dvh", display: "flex" }}>
               <ScientPdfReader
-                source={source}
+                source={readerSource}
                 resolver={blobResolver(bytes, urls)}
                 readerScope={readerScope}
                 citeThread={threadRef}
@@ -267,6 +267,60 @@ describe("PDF quotes in the reader", () => {
     });
     await waitForTestReceipt(context.signal, highlight.receipt);
     expect(highlightedText().join("")).toBe(QUOTE);
+  });
+
+  it("shows a quote another PDF.js version stored at its place, without a notice", async (context) => {
+    await using fixture = setup();
+    const { container, citeText } = fixture;
+    await fixture.render(
+      pdfBytes([["Introduction"], ["Results", `The ${QUOTE} as the inverse square.`]]),
+    );
+    await waitForText(container, QUOTE);
+    const button = await askAbout(textNode(container, QUOTE), QUOTE, context);
+    await act(async () => button.click());
+    const { target } = citeText.mock.calls[0]![0] as PdfCitation;
+
+    using notices = vi.spyOn(toastManager, "add");
+    using highlight = observeQuoteHighlight(QUOTE);
+    await act(async () => {
+      requestPdfReveal(pdfRevealDocumentKey(source), {
+        ...target,
+        extractor: { ...target.extractor, version: "6.2.108" },
+      });
+    });
+    await waitForTestReceipt(context.signal, highlight.receipt);
+    expect(highlightedText().join("")).toBe(QUOTE);
+    expect(notices).not.toHaveBeenCalled();
+  });
+
+  it("records the proven bytes of a Sources PDF on its quote", async (context) => {
+    await using fixture = setup();
+    const { container, citeText } = fixture;
+    const material = { sha256: "ab".repeat(32), byteLength: 2_048 };
+    const sourcePdf = workspacePdfSource({
+      environmentId,
+      fileName: "paper.pdf",
+      workspaceRoot: "/project",
+      relativePath: `.scient/sources/files/sha256/ab/${material.sha256}.pdf`,
+      origin: {
+        _tag: "source",
+        workspaceRoot: "/project",
+        sourceId: "source-1",
+        attachmentId: "pdf-1",
+      },
+      material,
+    });
+    await fixture.render(pdfBytes([[`The ${QUOTE} as the inverse square.`]]), sourcePdf);
+    await waitForText(container, QUOTE);
+    const button = await askAbout(textNode(container, QUOTE), QUOTE, context);
+    await act(async () => button.click());
+
+    const citation = citeText.mock.calls[0]![0] as PdfCitation;
+    expect(citation.target.material).toEqual(material);
+    expect(citation.target.document.locator).toMatchObject({
+      _tag: "source",
+      sourceId: "source-1",
+    });
   });
 
   it("finds a quote again by its text after the PDF changed", async (context) => {

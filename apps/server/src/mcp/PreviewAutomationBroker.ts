@@ -43,6 +43,8 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
 import * as AgentInvocationContext from "../scient/operations/AgentInvocationContext.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK: a page-reported script exception keeps its class for analytics.
+import { withRemoteFailureClass } from "../telemetry/ScientMcpAnalytics.ts";
 
 const HOST_RESPONSE_GRACE_MS = 1_000;
 // SCIENT-FORK:START — Scient's account check before an action spends this same budget.
@@ -362,14 +364,17 @@ const classifyResponseError = (
         ...context,
         ...remoteDiagnostics,
       });
-    default:
-      return new PreviewAutomationExecutionError({
+    default: {
+      const failure = new PreviewAutomationExecutionError({
         ...context,
         ...remoteDiagnostics,
         ...(context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
           ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
           : {}),
       });
+      // SCIENT-FORK: a page-reported script exception is the caller's code, for analytics.
+      return withRemoteFailureClass(failure, error);
+    }
   }
 };
 

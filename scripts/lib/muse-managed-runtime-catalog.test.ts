@@ -2,9 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   MUSE_DOWNLOAD_URL,
   MUSE_STABLE_CHANNEL_URL,
-  MUSE_TARGETS,
   resolveMuseArtifactPolicy,
 } from "@scientfactory/provider-runtime";
+import { MUSE_SUPPORTED_TARGETS as MUSE_TARGETS } from "@scientfactory/provider-runtime/testing";
 import {
   refreshManagedRuntimeProvider,
   validateManagedRuntimeCandidate,
@@ -32,7 +32,8 @@ const manifest = {
         {
           url: `${MUSE_DOWNLOAD_URL}?channel=muse&version=${version}&file=${artifactName}`,
           checksum: "a".repeat(64),
-          size: 463_719_160,
+          // Muse 1.4.24's x64 Windows executable passes the shared 512 MiB limit.
+          size: key === "x86_windows" ? 578 * 1024 * 1024 : 463_719_160,
         },
       ];
     }),
@@ -54,6 +55,8 @@ describe("Muse stable release discovery", () => {
     expect(result.changedProviders).toEqual(["muse"]);
     const candidate = validateManagedRuntimeCandidate(result.catalog, "muse");
     expect(candidate.version).toBe(version);
+    expect(candidate.contractRevision).toBe(2);
+    expect(candidate.artifacts["win32-x64"]?.size).toBe(578 * 1024 * 1024);
     expect(Object.keys(candidate.artifacts).sort()).toEqual([
       "darwin-arm64",
       "darwin-x64",
@@ -77,7 +80,7 @@ describe("Muse stable release discovery", () => {
         ...manifest,
         artifacts: {
           ...manifest.artifacts,
-          x86_windows: { ...manifest.artifacts.x86_windows, size: 600 * 1024 * 1024 },
+          x86_windows: { ...manifest.artifacts.x86_windows, size: 1024 * 1024 * 1024 + 1 },
         },
       },
     },

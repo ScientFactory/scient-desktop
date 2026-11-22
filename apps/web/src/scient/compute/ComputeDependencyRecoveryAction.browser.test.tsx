@@ -34,6 +34,7 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => mocks.get }));
 vi.mock("~/components/ui/toast", () => ({
   toastManager: { add: mocks.toast },
+  anchoredToastManager: { add: vi.fn(), close: vi.fn() },
   stackedThreadToast: (toast: unknown) => toast,
 }));
 vi.mock("@tanstack/react-router", async (_actualRouter) => ({

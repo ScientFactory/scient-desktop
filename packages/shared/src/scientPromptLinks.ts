@@ -1,11 +1,12 @@
+import type { MFunctionType } from "gt-i18n/types";
+
 import {
   buildNewThreadLink,
-  parseNewThreadLink,
-  parseThreadLinkPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
   type PromptLinkRepository,
 } from "./promptLinks.ts";
+import { parseNewThreadLink, parseThreadLinkPrompt } from "./promptLinksCopy.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "./scientDesktopIdentity.ts";
 
 const APP_PROTOCOLS = [
@@ -33,7 +34,8 @@ export function scientPromptLinkDeepLink(appPath: string): string {
   return promptLinkDeepLink(appPath, SCIENT_DESKTOP_IDENTITY.productionScheme);
 }
 
-export const parseScientNewThreadLink = (search: string) =>
-  parseNewThreadLink(search, SCIENT_DESKTOP_IDENTITY.baseName);
-export const parseScientThreadLinkPrompt = (search: string) =>
-  parseThreadLinkPrompt(search, SCIENT_DESKTOP_IDENTITY.baseName);
+/** Errors name Scient and follow the app language when the caller passes its resolver. */
+export const parseScientNewThreadLink = (search: string, resolve?: MFunctionType) =>
+  parseNewThreadLink(search, resolve);
+export const parseScientThreadLinkPrompt = (search: string, resolve?: MFunctionType) =>
+  parseThreadLinkPrompt(search, resolve);

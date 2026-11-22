@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import type { SnapShotSource } from "@t3tools/contracts";
 import { SnapShotAttachmentDetails } from "~/components/chat/SnapShotAttachmentDetails";
@@ -14,7 +15,10 @@ export interface ScientChatImageItem {
 function ScientChatImageTile(props: {
   readonly image: ScientChatImageItem;
   readonly onExpand: (imageId: string) => void;
+  readonly onCopySnapshot?: ((imageId: string) => Promise<void>) | undefined;
 }) {
+  const gt = useGT();
+  const onCopySnapshot = props.onCopySnapshot;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const previewAvailable =
     props.image.previewUrl !== undefined && failedUrl !== props.image.previewUrl;
@@ -23,7 +27,7 @@ function ScientChatImageTile(props: {
     <div className="relative min-w-0 overflow-hidden rounded-lg border border-border/80 bg-background/70">
       {previewAvailable ? (
         <button
-          aria-label={`Preview ${props.image.name}`}
+          aria-label={gt("Preview {name}", { name: props.image.name })}
           className="block h-full min-h-20 w-full cursor-zoom-in"
           onClick={() => props.onExpand(props.image.id)}
           type="button"
@@ -44,11 +48,16 @@ function ScientChatImageTile(props: {
           <span className="max-w-full truncate text-secondary-label text-xs">
             {props.image.name}
           </span>
-          <span className="text-muted-foreground text-[11px]">Preview unavailable</span>
+          <span className="text-muted-foreground text-[11px]">
+            <T>Preview unavailable</T>
+          </span>
         </div>
       )}
       {previewAvailable && props.image.source?.kind === "snap-shot" ? (
-        <SnapShotAttachmentDetails source={props.image.source} />
+        <SnapShotAttachmentDetails
+          source={props.image.source}
+          onCopySnapshot={onCopySnapshot ? () => onCopySnapshot(props.image.id) : undefined}
+        />
       ) : null}
     </div>
   );
@@ -58,11 +67,13 @@ export function ScientChatImageGallery(props: {
   readonly className?: string | undefined;
   readonly images: ReadonlyArray<ScientChatImageItem>;
   readonly onExpand: (imageId: string) => void;
+  readonly onCopySnapshot?: ((imageId: string) => Promise<void>) | undefined;
 }) {
+  const gt = useGT();
   if (props.images.length === 0) return null;
   return (
     <div
-      aria-label={props.images.length === 1 ? "Image attachment" : "Image attachments"}
+      aria-label={props.images.length === 1 ? gt("Image attachment") : gt("Image attachments")}
       className={cn(
         "grid w-full min-w-0 max-w-[720px] gap-2",
         props.images.length === 1 ? "grid-cols-1" : "grid-cols-2",
@@ -71,7 +82,12 @@ export function ScientChatImageGallery(props: {
       role="group"
     >
       {props.images.map((image) => (
-        <ScientChatImageTile image={image} key={image.id} onExpand={props.onExpand} />
+        <ScientChatImageTile
+          image={image}
+          key={image.id}
+          onExpand={props.onExpand}
+          onCopySnapshot={props.onCopySnapshot}
+        />
       ))}
     </div>
   );

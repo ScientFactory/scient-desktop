@@ -40,6 +40,6 @@ describe("Python active-cell editor seam", () => {
     expect(fileEditorSource).toContain("enableFileComments &&");
     expect(fileEditorSource).toContain("enableFileComments ? lineAnnotations : []");
     expect(fileEditorSource).toContain('gutterUtilityVisibility = "always"');
-    expect(fileEditorSource).toContain('aria-label="Add comment"');
+    expect(fileEditorSource).toContain('aria-label={gt("Add comment")}');
   });
 });

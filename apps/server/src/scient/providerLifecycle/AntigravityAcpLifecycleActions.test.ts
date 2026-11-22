@@ -21,6 +21,7 @@ import {
   bundledAntigravityAcpAsset,
 } from "./antigravityAcpCatalog.ts";
 import { ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE } from "./antigravityAuthDiagnostics.ts";
+import type { AntigravityManagedRelease } from "./antigravityRuntimeRelease.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-lifecycle-test");
 const driver = ProviderDriverKind.make("antigravity");
@@ -102,6 +103,64 @@ it.effect("bridges official Google auth into Scient's one-click connection flow"
       "logout",
     ]);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "sends the agy CLI's Antigravity page code through the controller's code interaction",
+  () =>
+    Effect.gen(function* () {
+      const codeAuthorizationUrl =
+        "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=cli-test";
+      let current = authState("waiting", {
+        flowId: "flow-cli",
+        authorizationUrl: codeAuthorizationUrl,
+        interaction: {
+          type: "credentials",
+          id: "flow-cli",
+          fields: [{ name: "code", label: "Code from the Antigravity page", secret: false }],
+        },
+      });
+      const calls: string[] = [];
+      const controller: ProviderAuthController = {
+        start: (_owner, stopSessions) => (stopSessions ?? Effect.void).pipe(Effect.as(current)),
+        complete: (_owner, input) =>
+          Effect.sync(() => {
+            calls.push(`complete:${input.callbackUrl}`);
+            return current;
+          }),
+        respond: (owner, input) =>
+          Effect.sync(() => {
+            calls.push(`respond:${owner}:${input.flowId}:${input.interactionId}`);
+            calls.push(JSON.stringify(input.response));
+            current = authState("succeeded", { flowId: input.flowId });
+            return current;
+          }),
+        cancel: (_owner, flowId) => Effect.succeed(authState("cancelled", { flowId })),
+        logout: (stopSessions) => stopSessions.pipe(Effect.as(authState("idle"))),
+        subscribe: () => Stream.suspend(() => Stream.make(current)),
+      };
+      const actions = makeAntigravityConnectionActionsFromController({
+        instanceId,
+        authMethod: "oauth-personal",
+        controller,
+        stopSessions: Effect.void,
+        randomOwnerId: Effect.succeed("owner"),
+      });
+
+      const attempt = yield* actions.start("antigravity_google");
+      expect(attempt.authorizationUrl).toBe(codeAuthorizationUrl);
+      expect(attempt.authorizationResponseKind).toBe("code");
+      if (!attempt.submitAuthorizationCode) {
+        return yield* Effect.die("Expected the Antigravity code handoff.");
+      }
+      yield* attempt.submitAuthorizationCode("4/0Afixture-code");
+      yield* attempt.waitForCompletion;
+
+      expect(calls).toEqual([
+        "respond:scient-provider-lifecycle-owner:flow-cli:flow-cli",
+        JSON.stringify({ type: "credentials", values: { code: "4/0Afixture-code" } }),
+      ]);
+    }).pipe(Effect.scoped),
 );
 
 it.effect(
@@ -190,6 +249,7 @@ it.effect("classifies system, custom, and managed ACP runtimes without taking ow
     const source = { current: "path" as "path" | "override" | "managed" };
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
+      compatibility: () => Effect.undefined,
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       startRelease: () => Effect.die("not used"),
@@ -261,6 +321,7 @@ it.effect("never removes a managed runtime when its repair download or verificat
     };
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
+      compatibility: () => Effect.undefined,
       latestRelease: Effect.sync(() => current),
       refreshLatestRelease: Effect.sync(() => {
         refreshes++;
@@ -356,6 +417,103 @@ it.effect("never removes a managed runtime when its repair download or verificat
     yield* actions.run("remove", removePlan.catalogRevision, () => Effect.void, Effect.void);
     expect(removes).toBe(1);
     expect(refreshes).toBe(1);
+  }),
+);
+
+it.effect("offers the agy CLI as the update for a paired runtime and never back again", () =>
+  Effect.gen(function* () {
+    const paired = bundledAntigravityAcpAsset("linux", "x64")!;
+    const cliRelease = (version: string) => ({
+      version,
+      url: `https://storage.googleapis.com/antigravity-public/antigravity-cli/${version}-1/linux-x64/cli_linux_x64.tar.gz`,
+      sha512: version.replaceAll(".", "").padEnd(128, "a"),
+      archiveBytes: 56_000_000,
+      executable: { name: "antigravity" },
+      format: "tar.gz" as const,
+    });
+    const state = {
+      latest: cliRelease("1.5.14") as AntigravityManagedRelease,
+      installed: {
+        harnessPath: "/managed/localharness_external" as string | null,
+        version: "1.4.5",
+      },
+    };
+    const started: AntigravityManagedRelease[] = [];
+    const installation = AntigravityInstallation.of({
+      managedDirectory: "/managed/antigravity",
+      compatibility: () => Effect.undefined,
+      latestRelease: Effect.sync(() => state.latest),
+      refreshLatestRelease: Effect.sync(() => state.latest),
+      resolve: () =>
+        Effect.sync(() => ({
+          executablePath: "/managed/runtime",
+          harnessPath: state.installed.harnessPath,
+          source: "managed" as const,
+          version: state.installed.version,
+          managedVersionDirectory: "/managed/antigravity/versions/current",
+        })),
+      acquire: () => Effect.die("not used"),
+      start: Effect.die("Use the exact reviewed release"),
+      startRelease: (asset) =>
+        Effect.sync(() => {
+          started.push(asset);
+          return installState("downloading", { operationId: "switch", version: asset.version });
+        }),
+      checkForUpdate: Effect.void,
+      cancel: () => Effect.die("not used"),
+      state: Effect.sync(() => installState("idle", { installedVersion: state.installed.version })),
+      changes: Stream.make(installState("succeeded", { operationId: "switch" })),
+      remove: () => Effect.die("not used"),
+    });
+    const actions = makeAntigravityManagedRuntimeActions({
+      installation,
+      settings: {
+        enabled: true,
+        authMethod: "oauth-personal",
+        apiKey: "",
+        gcpProject: "",
+        gcpLocation: "",
+        binaryPath: "",
+        customModels: [],
+      },
+      environment: {},
+      platform: "linux",
+      arch: "x64",
+      protectedBinaryPaths: Effect.succeed([]),
+    });
+
+    const fromPaired = yield* actions.getSummary;
+    expect(fromPaired).toMatchObject({
+      actions: ["update", "repair", "remove"],
+      availableManagedVersion: "1.5.14",
+    });
+    expect(fromPaired.message).toContain("sign in to Google again");
+    const plan = yield* actions.plan("update");
+    expect(plan).toMatchObject({
+      version: "1.5.14",
+      downloadBytes: 56_000_000,
+      sourceLabel: "Official Google Antigravity CLI release",
+      catalogRevision: `antigravity-cli:1.5.14:${cliRelease("1.5.14").sha512}`,
+    });
+    expect(plan.message).toContain("sign in to Google again");
+    yield* actions.run("update", plan.catalogRevision, () => Effect.void, Effect.void);
+    expect(started).toEqual([cliRelease("1.5.14")]);
+
+    // An installed CLI is never offered the paired release, not even as a repair.
+    state.installed = { harnessPath: null, version: "1.5.14" };
+    state.latest = paired;
+    expect(yield* actions.getSummary).toMatchObject({
+      actions: ["remove"],
+      availableManagedVersion: null,
+    });
+    // A newer CLI is an ordinary update; the same one is a repair.
+    state.latest = cliRelease("1.5.20");
+    expect((yield* actions.getSummary).actions).toEqual(["update", "repair", "remove"]);
+    state.latest = cliRelease("1.5.14");
+    const current = yield* actions.getSummary;
+    expect(current.actions).toEqual(["repair", "remove"]);
+    expect(current.message).not.toContain("sign in");
+    expect((yield* actions.plan("repair")).message).not.toContain("sign in");
   }),
 );
 

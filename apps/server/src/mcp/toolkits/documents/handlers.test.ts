@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -93,6 +94,7 @@ const assetLayer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
+  WorkspacePreviewRevisions.layer,
   AssetSigner.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(configLayer))),
   ),

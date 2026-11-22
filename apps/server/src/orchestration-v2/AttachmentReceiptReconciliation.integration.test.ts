@@ -197,14 +197,17 @@ it.live(
           Effect.gen(function* () {
             const sink = yield* EventSink.EventSinkV2;
             yield* sink.write({ events: [event("thread.created", thread)] });
-            const result = yield* dispatchCommand({
-              type: "runtime-request.respond",
-              threadId,
-              commandId: CommandId.make("lost-answer"),
-              requestId: RuntimeRequestId.make("lost-question"),
-              answers: { q: ["yes"] },
-              attachmentsByQuestionId: { q: [pending.attachment] },
-            }).pipe(
+            const result = yield* dispatchCommand(
+              {
+                type: "runtime-request.respond",
+                threadId,
+                commandId: CommandId.make("lost-answer"),
+                requestId: RuntimeRequestId.make("lost-question"),
+                answers: { q: ["yes"] },
+                attachmentsByQuestionId: { q: [pending.attachment] },
+              },
+              { managesProviders: true },
+            ).pipe(
               Effect.provide(
                 Layer.mergeAll(
                   Layer.mock(ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
@@ -298,14 +301,17 @@ it.live(
             // the fresh invocation even when its caller receives an ambiguous error.
             const sink = yield* EventSink.EventSinkV2;
             let fresh: UserInputAttachments[string] = [];
-            const liveResult = yield* dispatchCommand({
-              type: "runtime-request.respond",
-              threadId,
-              commandId: CommandId.make("live-lost-answer"),
-              requestId: RuntimeRequestId.make("live-question"),
-              answers: { q: ["yes"] },
-              attachmentsByQuestionId: { q: [pending.attachment] },
-            }).pipe(
+            const liveResult = yield* dispatchCommand(
+              {
+                type: "runtime-request.respond",
+                threadId,
+                commandId: CommandId.make("live-lost-answer"),
+                requestId: RuntimeRequestId.make("live-question"),
+                answers: { q: ["yes"] },
+                attachmentsByQuestionId: { q: [pending.attachment] },
+              },
+              { managesProviders: true },
+            ).pipe(
               Effect.provide(
                 Layer.mergeAll(
                   Layer.mock(ProjectCloneTracker)({ get: () => Effect.succeed(null) }),

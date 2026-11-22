@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off -- Delivery times are UI labels; decisions use revisions.
+import { msg } from "gt-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { type AtomCommand, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   ACCOUNTS_PROTOCOL,
   AuthSettingsWriteScope,
@@ -27,6 +28,7 @@ import { environmentSession, readEnvironmentScope, readPreparedConnection } from
 import { accountsState } from "./accountsState";
 import { activeProfiles } from "./activeProfiles";
 import { parseUrl } from "@t3tools/shared/url";
+import { m } from "~/i18n/messages";
 
 export type RouteRefusal = "relay" | "unencrypted";
 
@@ -96,7 +98,12 @@ const call = async <I, A, E>(
   environmentId: EnvironmentId,
   input: I,
 ): Promise<A> => {
-  const result = await command.run(registry, { environmentId, input });
+  const result = await runAtomCommand(
+    registry,
+    command,
+    { environmentId, input },
+    { reportFailure: false },
+  );
   if (result._tag !== "Success") throw new DeliveryFailed({ reason: failureReason(result) });
   return result.value;
 };
@@ -429,6 +436,10 @@ export async function withdrawCopies(environmentId: EnvironmentId) {
 /** After removing a computer that didn't answer: its copies stay until this desktop's access goes. */
 export const copiesStayToast = (label: string) => ({
   type: "info" as const,
-  title: `${label} is offline`,
-  description: `The sign-ins copied there stay until you remove this computer's access on ${label}.`,
+  title: m(msg("{label} is offline", { label })),
+  description: m(
+    msg("The sign-ins copied there stay until you remove this computer's access on {label}.", {
+      label,
+    }),
+  ),
 });

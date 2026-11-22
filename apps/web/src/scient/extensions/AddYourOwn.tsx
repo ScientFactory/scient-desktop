@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { ChevronDownIcon, FolderInputIcon, PlusIcon, PlugIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -25,6 +26,8 @@ export function AddYourOwn({
   /** The tab it is on: Skills offers other agents' skills first. */
   readonly kind?: ExtensionKind | undefined;
 }) {
+  const gt = useGT();
+  const addLabel = gt("Add", { $context: "verb, adds an extension" });
   const { environmentId, canWrite, callbackOrigin } = useExtensionsEnvironment();
   const startChat = useConnectorAgentChat(environmentId);
   const create =
@@ -41,27 +44,35 @@ export function AddYourOwn({
       {variant === "button" && create ? (
         <Menu>
           <MenuTrigger
-            render={<Button size="sm" variant="outline" disabled={!canWrite} aria-label="Add" />}
+            render={
+              <Button size="sm" variant="outline" disabled={!canWrite} aria-label={addLabel} />
+            }
           >
             <PlusIcon aria-hidden />
-            Add
+            {addLabel}
             <ChevronDownIcon aria-hidden className="-me-1 size-3.5 opacity-60" />
           </MenuTrigger>
           <MenuPopup align="end" className="w-max">
             <MenuItem onClick={create}>
               <PlugIcon aria-hidden />
-              Create a connector with an agent
+              <T>Create a connector with an agent</T>
             </MenuItem>
             <MenuItem onClick={open}>
               <FolderInputIcon aria-hidden />
-              Add from a file, folder or link
+              <T>Add from a file, folder or link</T>
             </MenuItem>
           </MenuPopup>
         </Menu>
       ) : variant === "button" ? (
-        <Button size="sm" variant="outline" disabled={!canWrite} onClick={open} aria-label="Add">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!canWrite}
+          onClick={open}
+          aria-label={addLabel}
+        >
           <PlusIcon aria-hidden />
-          Add
+          {addLabel}
         </Button>
       ) : (
         <Button
@@ -71,7 +82,7 @@ export function AddYourOwn({
           disabled={!canWrite}
           onClick={open}
         >
-          Not here? Add your own
+          <T>Not here? Add your own</T>
         </Button>
       )}
       {shown?.step === "choose" ? (

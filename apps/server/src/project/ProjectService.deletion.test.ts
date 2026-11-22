@@ -56,6 +56,7 @@ import { layer as ProjectHandlersLive } from "../mcp/toolkits/project/handlers.t
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import { writeConversationFork } from "../orchestration-v2/scient-fork/ConversationForkRecords.ts";
 
 const layerEventPersistence = EventSink.layer.pipe(
   Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
@@ -828,20 +829,20 @@ it.effect("force-deleting a project releases a fork lineage's shared files after
                 relationshipToParent: "fork",
                 rootThreadId: sourceId,
               },
-              conversationFork: {
-                commandId: CommandId.make("command:fork"),
-                sourceThreadId: sourceId,
-                workspaceMode: "local",
-                status: "ready",
-                cwd: `/work/${projectId}`,
-                checkpointRef: null,
-                checkpointOid: null,
-                attachmentCopies: [],
-                error: null,
-              },
             },
           },
         ],
+      });
+      yield* writeConversationFork(sql, forkId, {
+        commandId: CommandId.make("command:fork"),
+        sourceThreadId: sourceId,
+        workspaceMode: "local",
+        status: "ready",
+        cwd: `/work/${projectId}`,
+        checkpointRef: null,
+        checkpointOid: null,
+        attachmentCopies: [],
+        error: null,
       });
       yield* service.delete({ commandId, projectId, force: true });
       const release = yield* sql<{ readonly thread_id: string }>`

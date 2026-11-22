@@ -94,6 +94,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -545,12 +546,12 @@ const withNativeQueue = <A, E, R>(
                               detail: "Synthetic external Git diff failure",
                             });
                           // Park the first real completion capture immediately before
-                          // Git imports its ref, after the actual tree/commit are built.
+                          // Git writes its ref, after the actual tree/commit are built.
                           if (
                             options.holdCheckpointCapture &&
                             !heldCapture &&
                             input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                            input.args.includes("fetch") &&
+                            input.args.includes("update-ref") &&
                             input.args.some((arg) => arg.endsWith("/ordinal/1"))
                           ) {
                             heldCapture = true;
@@ -613,6 +614,12 @@ const withNativeQueue = <A, E, R>(
                   // Use the production worktree/project resolver for relocation
                   // witnesses instead of the fixture's fixed cwd override.
                   runtimePolicyLayer: RuntimePolicy.layerFromProjectStore.pipe(
+                    // SCIENT-FORK: these threads track no other folders.
+                    Layer.provide(
+                      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+                        forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+                      }),
+                    ),
                     Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
                     Layer.provide(
                       Layer.mergeAll(
@@ -634,6 +641,7 @@ const withNativeQueue = <A, E, R>(
                               faviconPath: null,
                               projectIcon: null,
                               scripts: [],
+                              trackedFolders: [],
                               createdAt: "2026-10-12T00:00:00.000Z",
                               updatedAt: "2026-10-12T00:00:00.000Z",
                               deletedAt: null,
@@ -1746,7 +1754,7 @@ it.live(
           // After the reorder, `first` is no longer the head. Send on it starts it
           // now, and the rest of the queue continues after it without a Resume.
           yield* orchestrator.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             threadId,
             runId: first.id,
             commandId: CommandId.make(`${threadId}:send-non-head`),
@@ -1897,21 +1905,14 @@ it.live(
               creationSource: "web",
               ...start,
             });
-            if (label === "continuation") {
-              // This driver has no native resume, so Resume is refused without a prompt.
-              yield* waitFor((projection) =>
-                projection.runs.some(
-                  (run) =>
-                    run.userMessageId === MessageId.make(`${threadId}:message:${label}`) &&
-                    run.status === "failed",
-                ),
-              );
-              yield* assertHeld(`${label} refused`);
-              continue;
-            }
             const started = yield* takeOffer;
-            // The refused Resume never reached the provider, so the next prompt carries it.
-            assert.isTrue(started.input.message.text.endsWith(label), label);
+            // This driver has no native resume, so Continue asks it to continue in a prompt.
+            assert.isTrue(
+              started.input.message.text.endsWith(
+                label === "continuation" ? "Continue where you left off." : label,
+              ),
+              label,
+            );
             yield* assertHeld(`${label} started`);
             yield* started.settle("completed");
             yield* waitFor(
@@ -1923,7 +1924,7 @@ it.live(
           }
           assert.deepEqual(
             offers.map((offer) => offer.split("\n").at(-1)),
-            ["foreground", "queue-fallback", "steer-fallback"],
+            ["foreground", "Continue where you left off.", "queue-fallback", "steer-fallback"],
           );
         }),
     ),
@@ -2152,10 +2153,11 @@ it.live.each(
             stopped.runs.filter((run) => run.status === "queued").every((run) => run.queueHeld),
           );
           const resume = {
-            type: "queue.resume" as const,
+            ...(release === "head"
+              ? { type: "queued-run.start" as const, runId: first.id }
+              : { type: "queue.resume" as const }),
             threadId: childThreadId,
             commandId: CommandId.make(`${childThreadId}:resume`),
-            ...(release === "head" ? { runId: first.id } : {}),
           };
           yield* orchestrator.dispatch(resume);
           stage = "resumed head offer";
@@ -2757,7 +2759,7 @@ it.live(
           assert.equal(
             (yield* Effect.result(
               orchestrator.dispatch({
-                type: "queue.resume",
+                type: "queued-run.start",
                 commandId: CommandId.make(`${threadId}:send-active`),
                 threadId,
                 runId: first.id,
@@ -2824,7 +2826,7 @@ it.live(
           assert.ok(first && second);
           phase = "send-non-head";
           yield* orchestrator.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             threadId,
             runId: second.id,
             commandId: CommandId.make(`${threadId}:non-head`),
@@ -3644,6 +3646,7 @@ it.live(
     ).pipe(
       Effect.provideService(RunFinalizationObserver, {
         refresh: () => Effect.void,
+        refreshRepositories: () => Effect.void,
         refreshAfterTurn: (projectId) =>
           Effect.sync(() => {
             refreshed.push(projectId);
@@ -4108,6 +4111,12 @@ it.live(
           Layer.provide(NodeServices.layer),
         );
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          // SCIENT-FORK: these threads track no other folders.
+          Layer.provide(
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+            }),
+          ),
           Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(
@@ -4457,7 +4466,10 @@ it.live(
                 // Future project authority is B, but restoring a captured A boundary must use A.
                 yield* relocate(workspaceB);
                 const capturedB = yield* snapshotB;
-                yield* checkpoints.restore({ scope: scopeA, checkpoint: checkpointA });
+                yield* checkpoints.restore({
+                  targets: [{ scope: scopeA, checkpoint: checkpointA }],
+                  scopes: [scopeA],
+                });
                 assert.equal(
                   yield* fs.readFileString(`${workspaceA}/evidence.txt`),
                   "Native A output\n",
@@ -4646,6 +4658,12 @@ it.live(
         );
         const serverConfigLayer = Layer.succeed(ServerConfig, yield* makeReplayServerConfig(name));
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          // SCIENT-FORK: these threads track no other folders.
+          Layer.provide(
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+            }),
+          ),
           Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(
@@ -5067,10 +5085,11 @@ it.live.each(["failed", "interrupted"] as const)(
           ] as const) {
             const refused = yield* orchestrator
               .dispatch({
-                type: "queue.resume",
+                ...(runId === undefined
+                  ? { type: "queue.resume" as const }
+                  : { type: "queued-run.start" as const, runId }),
                 commandId: CommandId.make(`${threadId}:${action}`),
                 threadId,
-                ...(runId === undefined ? {} : { runId }),
               })
               .pipe(Effect.flip);
             assert.include(String(refused.cause), "Retry worktree setup");

@@ -60,24 +60,25 @@ vi.mock("../../scient/desktopUpdate/SidebarOtherUpdates", () => ({
   SidebarOtherUpdates: () => null,
 }));
 
+// SCIENT-FORK: offered updates download in the background, so the pill presents a ready one.
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
   return {
     enabled: true,
-    status: "available",
+    status: "downloaded",
     channel: "nightly",
     currentVersion: "0.0.50-nightly.1",
     hostArch: "arm64",
     appArch: "arm64",
     runningUnderArm64Translation: false,
     availableVersion: "0.0.50-nightly.2",
-    downloadedVersion: null,
+    downloadedVersion: "0.0.50-nightly.2",
     releaseNotes,
     omittedReleaseCount: 0,
-    downloadPercent: null,
+    downloadPercent: 100,
     checkedAt: null,
     message: null,
     errorContext: null,
-    canRetry: false,
+    canRetry: true,
   };
 }
 

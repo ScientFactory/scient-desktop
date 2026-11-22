@@ -47,6 +47,7 @@ export function compactMacKeyLabel(label: string, key: string): string {
 
 function ariaKeyLabel(key: string): string {
   if (key.length === 1) return key.toUpperCase();
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- key name, read out as the key
   if (key === "escape") return "Escape";
   if (key === "enter") return "Enter";
   if (key === "arrowup") return "ArrowUp";

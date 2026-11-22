@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
@@ -438,7 +440,7 @@ export function usePendingThreadRequests(input: {
           // SCIENT-FORK:START
           setRequestResponseError(
             requestId,
-            "Answer changed while preparing attachments. Review it and send again.",
+            m(msg("Answer changed while preparing attachments. Review it and send again.")),
           );
           // SCIENT-FORK:END
           return;
@@ -448,7 +450,7 @@ export function usePendingThreadRequests(input: {
           // SCIENT-FORK:START
           setRequestResponseError(
             requestId,
-            "Wait for attachments to finish uploading, or remove failed uploads.",
+            m(msg("Wait for attachments to finish uploading, or remove failed uploads.")),
           );
           // SCIENT-FORK:END
           return;
@@ -469,7 +471,7 @@ export function usePendingThreadRequests(input: {
         // SCIENT-FORK:START
         setRequestResponseError(
           requestId,
-          "Answer changed while preparing attachments. Review it and send again.",
+          m(msg("Answer changed while preparing attachments. Review it and send again.")),
         );
         // SCIENT-FORK:END
         return;
@@ -487,7 +489,7 @@ export function usePendingThreadRequests(input: {
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         // SCIENT-FORK:START
-        setRequestResponseError(requestId, "Your response could not be sent. Try again.");
+        setRequestResponseError(requestId, m(msg("Your response could not be sent. Try again.")));
         // SCIENT-FORK:END
       }
       return result;
@@ -510,7 +512,7 @@ export function usePendingThreadRequests(input: {
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       // SCIENT-FORK:START
-      setRequestResponseError(requestId, "The question could not be dismissed. Try again.");
+      setRequestResponseError(requestId, m(msg("The question could not be dismissed. Try again.")));
       // SCIENT-FORK:END
     }
     setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
@@ -548,8 +550,8 @@ export function usePendingThreadRequests(input: {
       });
       toastManager.add({
         type: "info",
-        title: "Your typed text was set aside",
-        description: "It will be back in the composer once the question is answered.",
+        title: m(msg("Your typed text was set aside")),
+        description: m(msg("It will be back in the composer once the question is answered.")),
         data: { threadRef: activeThreadId ? { environmentId, threadId: activeThreadId } : null },
       });
       if (activeThreadId) {

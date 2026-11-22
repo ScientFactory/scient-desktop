@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import {
   PROVIDER_DISPLAY_NAMES,
   type EnvironmentId,
@@ -7,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 
 import { PROVIDER_UPDATE_SUCCESS_VISIBLE_MS } from "~/components/ProviderUpdateLaunchNotification.logic";
+import { m } from "~/i18n/messages";
 
 export interface ProviderEnvironment {
   readonly environmentId: EnvironmentId;
@@ -129,10 +131,12 @@ export type ManagedRuntimeUpdateOutcome =
   | { readonly status: "failed"; readonly message: string }
   | { readonly status: "cancelled" };
 
-const UNCONFIRMED_MANAGED_UPDATE_MESSAGE =
-  "Scient could not confirm the update. Review the provider in Settings.";
-const DISCONNECTED_MANAGED_UPDATE_MESSAGE =
-  "Scient lost contact with this environment during the update. Review the provider in Settings.";
+const UNCONFIRMED_MANAGED_UPDATE_MESSAGE = msg(
+  "Scient could not confirm the update. Review the provider in Settings.",
+);
+const DISCONNECTED_MANAGED_UPDATE_MESSAGE = msg(
+  "Scient lost contact with this environment during the update. Review the provider in Settings.",
+);
 
 /**
  * The result of a started update, read from the provider snapshot. Until the
@@ -147,7 +151,7 @@ export function resolveManagedRuntimeUpdateOutcome(input: {
 }): ManagedRuntimeUpdateOutcome {
   // The environment's provider list was present when the update started, so a
   // missing provider means the environment went away.
-  if (!input.provider) return { status: "failed", message: DISCONNECTED_MANAGED_UPDATE_MESSAGE };
+  if (!input.provider) return { status: "failed", message: m(DISCONNECTED_MANAGED_UPDATE_MESSAGE) };
   const runtime = input.provider.connection?.runtime;
   const operation = runtime?.operation ?? null;
   if (operation?.operationId === input.operationId) {
@@ -156,7 +160,7 @@ export function resolveManagedRuntimeUpdateOutcome(input: {
       // leaving the system runtime in use; that is not a successful update.
       return runtime?.source === "scient_managed"
         ? { status: "succeeded", version: runtime.managedVersion ?? input.expectedVersion }
-        : { status: "failed", message: runtime?.message ?? UNCONFIRMED_MANAGED_UPDATE_MESSAGE };
+        : { status: "failed", message: runtime?.message ?? m(UNCONFIRMED_MANAGED_UPDATE_MESSAGE) };
     }
     if (operation.status === "failed") return { status: "failed", message: operation.message };
     if (operation.status === "cancelled") return { status: "cancelled" };
@@ -167,7 +171,7 @@ export function resolveManagedRuntimeUpdateOutcome(input: {
     runtime.source === "scient_managed" &&
     runtime.managedVersion === input.expectedVersion
     ? { status: "succeeded", version: runtime.managedVersion }
-    : { status: "failed", message: UNCONFIRMED_MANAGED_UPDATE_MESSAGE };
+    : { status: "failed", message: m(UNCONFIRMED_MANAGED_UPDATE_MESSAGE) };
 }
 
 export function managedRuntimeUpdateStartFailure(error: unknown): ManagedRuntimeUpdateOutcome {
@@ -176,7 +180,7 @@ export function managedRuntimeUpdateStartFailure(error: unknown): ManagedRuntime
     message:
       error instanceof Error
         ? error.message
-        : "Scient could not start the update. Review the provider in Settings.",
+        : m(msg("Scient could not start the update. Review the provider in Settings.")),
   };
 }
 
@@ -231,10 +235,13 @@ export function settleManagedRuntimeUpdateRuns(
 
 function managedRuntimeUpdateSubject(targets: ReadonlyArray<ManagedRuntimeUpdateTarget>): string {
   const [first] = targets;
-  if (!first || targets.length > 1) return `${targets.length} managed providers`;
+  if (!first || targets.length > 1)
+    return m(msg("{count} managed providers", { count: targets.length }));
   const name = PROVIDER_DISPLAY_NAMES[first.driver] ?? first.driver;
   const environments = new Set(targets.map((target) => target.environmentId));
-  return environments.size > 1 ? `${name} in ${first.environmentLabel}` : name;
+  return environments.size > 1
+    ? m(msg("{provider} in {environment}", { provider: name, environment: first.environmentLabel }))
+    : name;
 }
 
 function formatManagedVersion(version: string | null): string {
@@ -249,7 +256,9 @@ export function getManagedRuntimeUpdateWaitingToastView(
   return {
     phase: "running",
     type: "loading",
-    title: `${managedRuntimeUpdateSubject(targets)} will update when idle`,
+    title: m(
+      msg("{subject} will update when idle", { subject: managedRuntimeUpdateSubject(targets) }),
+    ),
     description: message,
   };
 }
@@ -261,8 +270,13 @@ export function getManagedRuntimeUpdateRunningToastView(
   return {
     phase: "running",
     type: "loading",
-    title: `Updating ${managedRuntimeUpdateSubject(targets)}${version}`,
-    description: "Downloading, verifying, and testing the Scient-managed runtime.",
+    title: m(
+      msg("Updating {subject}{version}", {
+        subject: managedRuntimeUpdateSubject(targets),
+        version,
+      }),
+    ),
+    description: m(msg("Downloading, verifying, and testing the Scient-managed runtime.")),
   };
 }
 
@@ -284,7 +298,11 @@ export function getManagedRuntimeUpdateResultToastView(
     return {
       phase: "failed",
       type: "error",
-      title: `${managedRuntimeUpdateSubject(failed.map(({ target }) => target))} update failed`,
+      title: m(
+        msg("{subject} update failed", {
+          subject: managedRuntimeUpdateSubject(failed.map(({ target }) => target)),
+        }),
+      ),
       description: failed[0]!.message,
     };
   }
@@ -296,10 +314,19 @@ export function getManagedRuntimeUpdateResultToastView(
   return {
     phase: "succeeded",
     type: "success",
-    title: `${managedRuntimeUpdateSubject(results.map(({ target }) => target))} updated${
-      version ? ` to${version}` : ""
-    }`,
-    description: "The verified runtime is active for new turns.",
+    title: version
+      ? m(
+          msg("{subject} updated to{version}", {
+            subject: managedRuntimeUpdateSubject(results.map(({ target }) => target)),
+            version,
+          }),
+        )
+      : m(
+          msg("{subject} updated", {
+            subject: managedRuntimeUpdateSubject(results.map(({ target }) => target)),
+          }),
+        ),
+    description: m(msg("The verified runtime is active for new turns.")),
     dismissAfterVisibleMs: PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
   };
 }

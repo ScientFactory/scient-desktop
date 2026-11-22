@@ -80,6 +80,7 @@ export class DocumentPageTracker {
       {
         severity: "warning",
         code: this.warnings[0]!.code,
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- readiness diagnostics go to the server and the agent
         detail: `${omitted} more limitations were found and are not listed.`,
       },
     ];

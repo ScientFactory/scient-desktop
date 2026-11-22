@@ -1,4 +1,5 @@
 import type * as DateTime from "effect/DateTime";
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
@@ -43,6 +44,7 @@ import {
 } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 import { waitForAtomValue } from "./waitForAtomValue";
+import { m } from "../i18n/messages";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_THREAD_SHELLS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
@@ -78,6 +80,9 @@ const EMPTY_ASSISTANT_MESSAGE_TEXT_ATOM = Atom.make<string | null>(null).pipe(
 );
 const EMPTY_LAST_VISITED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-last-visited:empty"),
+);
+const EMPTY_THREAD_ERROR_ATOM = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("web-thread-error:empty"),
 );
 const EMPTY_UPDATED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-updated-at:empty"),
@@ -233,6 +238,12 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
   );
 }
 
+export function useThreadError(ref: ScopedThreadRef | null): string | null {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
+  );
+}
+
 export function useThreadHistory(ref: ScopedThreadRef | null): ThreadHistoryMeta {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_HISTORY_ATOM : environmentThreadDetails.historyAtom(ref),
@@ -355,7 +366,7 @@ export function waitForProject(
     let unsubscribe: (() => void) | null = null;
     const timeout = setTimeout(() => {
       unsubscribe?.();
-      reject(new Error("The project did not appear in the desktop app."));
+      reject(new Error(m(msg("The project did not appear in the desktop app."))));
     }, timeoutMs);
     const finish = (project: EnvironmentProject | null) => {
       if (project === null) return;
@@ -610,6 +621,7 @@ export function readResponseSubagents(
           }),
         )
         ?.title.trim() ||
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- subagent title stored in the reply record sent to the agent
       "Agent",
   }));
 }

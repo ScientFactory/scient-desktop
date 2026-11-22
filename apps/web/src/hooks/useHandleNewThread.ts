@@ -18,7 +18,9 @@ import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
+  resolveGroupDefaultProject,
   selectProjectGroupingSettings,
+  type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -45,7 +47,7 @@ import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { getClientSettings } from "./useSettings";
+import { getClientSettings, useClientSettings } from "./useSettings";
 import { getLocalStorageItem, useLocalStorage } from "./useLocalStorage";
 import * as Schema from "effect/Schema";
 import { useAtomValue } from "@effect/atom-react";
@@ -54,6 +56,8 @@ import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import { toastManager } from "../components/ui/toast";
 // SCIENT-FORK:START
 import { readCarriedModelSelection } from "../scient/newThread/carriedModelSelection";
@@ -204,8 +208,13 @@ export function createNewThreadHandler(router: AnyRouter) {
         if (remainingCount > 0) {
           toastManager.add({
             type: "warning",
-            title: `${remainingCount} attachment${remainingCount === 1 ? " stayed" : "s stayed"} in the original draft`,
-            description: "Return to the original draft or attach the files again.",
+            title: m(
+              msg(
+                "{count, plural, one {{count} attachment stayed in the original draft} other {{count} attachments stayed in the original draft}}",
+                { count: remainingCount },
+              ),
+            ),
+            description: m(msg("Return to the original draft or attach the files again.")),
           });
         }
       }
@@ -293,6 +302,21 @@ export function createNewThreadHandler(router: AnyRouter) {
     const logicalProjectKey = project
       ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
       : scopedProjectKey(projectRef);
+    // Another opener (home's own first-project draft) may have reached this project's draft first.
+    // Matches lag the location during a navigation, so compare against the location.
+    const resultIfAbandoned = () => {
+      const draft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      if (draft === null || draft.promotedTo != null || readProject(projectRef) === null) {
+        return null;
+      }
+      const draftHref = router.buildLocation({
+        to: "/draft/$draftId",
+        params: { draftId: draft.draftId },
+      }).href;
+      return router.state.location.href === draftHref
+        ? { draftId: draft.draftId, threadId: draft.threadId }
+        : null;
+    };
     const hasBranchOption = options?.branch !== undefined;
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
@@ -337,7 +361,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
         } else if (!isDraftAlreadyOpen) {
           const defaultEnvMode = await resolveDefaultEnvMode();
-          if (abandoned()) return null;
+          if (abandoned()) return resultIfAbandoned();
           // Concurrent calls may change the draft; stale resets, remaps, or navigation could clobber it.
           const routeTargetNow = getCurrentRouteTarget();
           const openedMeanwhile =
@@ -456,7 +480,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     const createdAt = new Date().toISOString();
     return (async () => {
       const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
-      if (abandoned()) return null;
+      if (abandoned()) return resultIfAbandoned();
       // Reuse drafts registered while awaiting so their pending navigation cannot lose them.
       const racedDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       if (
@@ -522,6 +546,7 @@ export function resolveDefaultProjectRef(
   projectOrder: readonly string[],
   lastUsedProjectKey: string | null,
   fallbackReady = true,
+  groupingSettings?: ProjectGroupingSettings,
 ): ScopedProjectRef | null {
   const lastUsed = projects.find(
     (project) =>
@@ -530,8 +555,9 @@ export function resolveDefaultProjectRef(
   );
   if (lastUsed) return scopeProjectRef(lastUsed.environmentId, lastUsed.id);
   if (!fallbackReady) return null;
-  const [defaultProject] = orderItemsByPreferredIds({
-    items: projects.filter((project) => project.archivedAt == null),
+  const liveProjects = projects.filter((project) => project.archivedAt == null);
+  const [firstProject] = orderItemsByPreferredIds({
+    items: liveProjects,
     preferredIds: projectOrder,
     getId: getProjectOrderKey,
     getPreferenceIds: (project) => [
@@ -539,7 +565,11 @@ export function resolveDefaultProjectRef(
       legacyProjectCwdPreferenceKey(project.workspaceRoot),
     ],
   });
-  return defaultProject ? scopeProjectRef(defaultProject.environmentId, defaultProject.id) : null;
+  if (!firstProject) return null;
+  const defaultProject = groupingSettings
+    ? resolveGroupDefaultProject(firstProject, liveProjects, groupingSettings)
+    : firstProject;
+  return scopeProjectRef(defaultProject.environmentId, defaultProject.id);
 }
 
 export function useHandleNewThread() {
@@ -566,11 +596,13 @@ export function useHandleNewThread() {
   );
   const projects = useProjects();
   const handleNewThread = useNewThreadHandler();
+  const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   const defaultProjectRef = resolveDefaultProjectRef(
     projects,
     projectOrder,
     lastUsedProjectKey,
     defaultProjectFallbackReady,
+    groupingSettings,
   );
 
   return {

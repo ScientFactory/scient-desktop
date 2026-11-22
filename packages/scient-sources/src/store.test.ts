@@ -9,18 +9,22 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { editableMetadataFromRecord } from "./editable.ts";
 import { SCIENT_SOURCE_IMPORT_ITEM_LIMIT, type ScientSourceCandidate } from "./model.ts";
+import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import {
   cancelSourceImportOperation,
   attachScientSourcePdf,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
   decodePersistedScientSourceRecord,
+  deleteScientSourcesPermanently,
   detachScientSourcePdf,
   importScientSource,
   importScientSourceOperationItem,
   inspectScientSourcePdf,
+  inspectScientLibrarySources,
   inspectScientSources,
   listScientSourceRecords,
+  listScientSourceTrash,
   readSourceImportOperation,
   readScientSourceRecord,
   resolveScientSourceInputPdf,
@@ -28,15 +32,19 @@ import {
   retryFailedSourceImportOperationItems,
   SCIENT_SOURCES_DIRECTORY,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
-  SCIENT_SOURCE_OPERATIONS_DIRECTORY,
-  SCIENT_SOURCE_RECEIPTS_DIRECTORY,
-  SCIENT_SOURCE_HISTORY_DIRECTORY,
+  scientSourceStoreInternals,
   sourceAttachmentAbsolutePath,
   stageScientSourcePdfUpload,
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
+import {
+  SCIENT_SOURCE_HISTORY_DIRECTORY,
+  SCIENT_SOURCE_OPERATIONS_DIRECTORY,
+  SCIENT_SOURCE_RECEIPTS_DIRECTORY,
+  sourceCandidate,
+} from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -46,10 +54,8 @@ async function fixture(): Promise<string> {
   return root;
 }
 
-const candidate: ScientSourceCandidate = {
+const candidate: ScientSourceCandidate = sourceCandidate({
   sourceKey: "ABC123",
-  type: "article",
-  customType: null,
   title: "A local-first source",
   creators: [
     { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
@@ -57,15 +63,8 @@ const candidate: ScientSourceCandidate = {
   issuedRaw: "2026",
   issuedYear: 2026,
   identifiers: [{ scheme: "doi", value: "10.1000/local" }],
-  abstract: null,
   containerTitle: "Journal",
-  publisher: null,
-  volume: null,
-  issue: null,
-  pages: null,
   language: "en",
-  url: null,
-  tags: [],
   externalReferences: [
     {
       system: "zotero",
@@ -75,11 +74,10 @@ const candidate: ScientSourceCandidate = {
       rawItemType: "journalArticle",
     },
   ],
-  fieldProvenance: [],
   pdfAvailable: true,
   pdfFileName: "paper.pdf",
   pdfAttachmentCount: 1,
-};
+});
 
 async function writeSourceRecordFixture(input: {
   readonly root: string;
@@ -216,7 +214,7 @@ describe("Scient source store", () => {
     );
   });
 
-  it("removes a source and its unshared content-addressed PDF", async () => {
+  it("moves a removed source and its PDF reference to the trash", async () => {
     const root = await fixture();
     await initializeScientProject({ root });
     const pdfContents = "%PDF-1.7\nremove me\n";
@@ -251,11 +249,17 @@ describe("Scient source store", () => {
       outcome: "removed",
       sourceId: record.sourceId,
       revision: 1,
-      removedAttachmentCount: 1,
-      retainedAttachmentCount: 0,
+      removedAttachmentCount: 0,
+      retainedAttachmentCount: 1,
+      restorable: true,
     });
     expect(await listScientSourceRecords(root)).toEqual([]);
-    await expect(NodeFSP.stat(storedPdf)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(NodeFSP.readFile(storedPdf, "utf8")).resolves.toBe(pdfContents);
+    expect(await listScientSourceTrash(root)).toMatchObject({
+      entries: [{ sourceId: record.sourceId, revision: 1, title: "Remove me", removedBy: "user" }],
+      issues: [],
+    });
+    expect(await inspectScientSources(root)).toMatchObject({ trashedCount: 1 });
     await expect(
       removeScientSource({
         root,
@@ -312,7 +316,7 @@ describe("Scient source store", () => {
       candidate,
     });
     if (!reimported.record) throw new Error("Expected the source to be re-imported.");
-    expect(reimported.record).toMatchObject({ sourceId: firstRecord.sourceId, revision: 2 });
+    expect(reimported.record).toMatchObject({ sourceId: firstRecord.sourceId, revision: 3 });
 
     await expect(
       updateScientSourceMetadata({
@@ -338,7 +342,7 @@ describe("Scient source store", () => {
           tags: reimported.record.tags,
         },
       }),
-    ).resolves.toMatchObject({ outcome: "updated", record: { revision: 3 } });
+    ).resolves.toMatchObject({ outcome: "updated", record: { revision: 4 } });
   });
 
   it("keeps a shared PDF and rejects removal from a stale source revision", async () => {
@@ -384,10 +388,10 @@ describe("Scient source store", () => {
         sourceId: record.sourceId,
         expectedRevision: record.revision,
       }),
-    ).resolves.toMatchObject({
-      outcome: "removed",
-      removedAttachmentCount: 0,
-      retainedAttachmentCount: 1,
+    ).resolves.toMatchObject({ outcome: "removed", restorable: true });
+    await expect(deleteScientSourcesPermanently({ root })).resolves.toEqual({
+      deletedSourceIds: [record.sourceId],
+      removedFileCount: 0,
     });
     expect(await NodeFSP.readFile(sourceAttachmentAbsolutePath(root, attachment), "utf8")).toBe(
       "%PDF-1.7\nshared\n",
@@ -554,9 +558,11 @@ describe("Scient source store", () => {
       root,
       operationId: NodeCrypto.randomUUID(),
       candidate,
+      verification: { state: "verified", identifier: { scheme: "doi", value: "10.1000/local" } },
     });
     const record = imported.record;
     if (!record) throw new Error("Expected an imported record.");
+    expect(record.verification?.state).toBe("verified");
 
     const result = await updateScientSourceMetadata({
       root,
@@ -606,6 +612,8 @@ describe("Scient source store", () => {
     );
     expect(result.record.externalReferences).toEqual(record.externalReferences);
     expect(result.record.attachments).toEqual(record.attachments);
+    expect(result.record.updatedBy).toBe("user");
+    expect(result.record).not.toHaveProperty("verification");
     const history = JSON.parse(
       await NodeFSP.readFile(
         NodePath.join(
@@ -729,6 +737,58 @@ describe("Scient source store", () => {
     expect(history).not.toHaveProperty("note");
   });
 
+  it("checks a note base under the source lock despite unrelated metadata revisions", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate,
+    });
+    const record = imported.record!;
+    const request = {
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      expectedNote: null,
+      note: "  My observation.\r\n  ",
+    };
+    await updateScientSourceMetadata({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), title: "Corrected title" },
+    });
+    const saved = await updateScientSourceNote(request);
+    expect(saved).toMatchObject({
+      outcome: "updated",
+      record: { revision: 3, title: "Corrected title", note: "  My observation.\n  " },
+    });
+    const refused = await updateScientSourceNote({
+      ...request,
+      expectedRevision: saved.record.revision,
+      note: "Another editor",
+    });
+    expect(refused).toMatchObject({
+      outcome: "stale",
+      record: { revision: 3, note: "  My observation.\n  " },
+    });
+    expect(
+      await updateScientSourceNote({
+        ...request,
+        expectedNote: "My observation.",
+        note: "Trimmed base must not match",
+      }),
+    ).toMatchObject({ outcome: "stale" });
+    expect(
+      await updateScientSourceNote({
+        ...request,
+        expectedNote: "  My observation.\r\n  ",
+        note: "Checked again",
+      }),
+    ).toMatchObject({ outcome: "updated", record: { revision: 4, note: "Checked again" } });
+  });
+
   it("clears a source note when the draft contains only whitespace", async () => {
     const root = await fixture();
     await initializeScientProject({ root });
@@ -754,6 +814,17 @@ describe("Scient source store", () => {
         note: " \n\t ",
       }),
     ).resolves.toMatchObject({ outcome: "updated", record: { revision: 3, note: null } });
+  });
+
+  it("refuses a source type it could not read back, and writes nothing", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    // An untyped caller (a script) once wrote "conference", which the Library then could not read.
+    const unknownType = { ...candidate, type: "conference" } as unknown as ScientSourceCandidate;
+    await expect(
+      importScientSource({ root, operationId: NodeCrypto.randomUUID(), candidate: unknownType }),
+    ).rejects.toThrow("The source type “conference” is not one Scient knows");
+    expect(await listScientSourceRecords(root)).toEqual([]);
   });
 
   it("rejects incomplete custom types and records that would exceed the readable size limit", async () => {
@@ -1254,6 +1325,80 @@ describe("Scient source store", () => {
     });
   });
 
+  it.each(["project", "library"] as const)(
+    "keeps cached and uncached %s inspection pure until authorized import admission",
+    async (kind) => {
+      const root = await fixture();
+      if (kind === "project") await initializeScientProject({ root });
+      else await ensureScientLibrary(root);
+      const location = (path: string) => (kind === "project" ? path : scientLibraryLocation(path));
+      const operationId = NodeCrypto.randomUUID();
+      const operation = await createSourceImportOperation({
+        root: location(root),
+        operationId,
+        adapter: "zotero",
+        itemKeys: [candidate.sourceKey],
+      });
+      const imported = await importScientSourceOperationItem({
+        root: location(root),
+        operationId,
+        candidate,
+      });
+      if (!imported.record) throw new Error("The fixture source was not imported.");
+      const importedSourceId = imported.record.sourceId;
+      const paths = await scientSourceStoreInternals.sourceStorePaths(location(root));
+      await NodeFSP.writeFile(
+        NodePath.join(paths.operations, `${operationId}.json`),
+        JSON.stringify({
+          ...operation,
+          items: operation.items.map((item) => ({
+            ...item,
+            state: "imported",
+            sourceId: importedSourceId,
+          })),
+        }),
+      );
+      const reloadedRoot = await fixture();
+      await NodeFSP.cp(root, reloadedRoot, { recursive: true });
+      for (const inspectedRoot of [root, reloadedRoot]) {
+        const inspectedLocation = location(inspectedRoot);
+        const inspectedPaths = await scientSourceStoreInternals.sourceStorePaths(inspectedLocation);
+        const operationPath = NodePath.join(inspectedPaths.operations, `${operationId}.json`);
+        const receiptPath = NodePath.join(inspectedPaths.receipts, `${operationId}.json`);
+        const before = await NodeFSP.readFile(operationPath);
+        const overview =
+          kind === "project"
+            ? await inspectScientSources(inspectedRoot)
+            : await inspectScientLibrarySources(scientLibraryLocation(inspectedRoot));
+        expect(overview.activeOperation).toMatchObject({
+          operationId,
+          state: "running",
+          items: [{ state: "imported", sourceId: importedSourceId }],
+        });
+        expect(await NodeFSP.readFile(operationPath)).toEqual(before);
+        await expect(NodeFSP.stat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+        const next = await createSourceImportOperation({
+          root: inspectedLocation,
+          operationId: NodeCrypto.randomUUID(),
+          adapter: "local-files",
+          itemKeys: ["next.pdf"],
+        });
+        expect(next.state).toBe("running");
+        expect(await readSourceImportOperation(inspectedLocation, operationId)).toMatchObject({
+          state: "completed",
+        });
+        const receipt = JSON.parse(await NodeFSP.readFile(receiptPath, "utf8"));
+        expect(receipt).toMatchObject({
+          outcome: "completed",
+          importedSourceIds: [importedSourceId],
+          unprocessedItemKeys: [],
+        });
+        await cancelSourceImportOperation(inspectedLocation, next.operationId);
+      }
+    },
+  );
+
   it("finalizes failed items and allows an explicit retry", async () => {
     const root = await fixture();
     await initializeScientProject({ root });
@@ -1434,11 +1579,46 @@ describe("Scient source store", () => {
     expect(detachedFirst).toMatchObject({
       outcome: "removed",
       record: { revision: 2, attachments: [] },
-      removedAttachmentCount: 1,
+      removedAttachmentCount: 0,
     });
+    // Detached files wait for the trash to be emptied so a revert can bring them back.
     await expect(
-      NodeFSP.stat(sourceAttachmentAbsolutePath(root, firstAttachment)),
-    ).rejects.toMatchObject({ code: "ENOENT" });
+      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, firstAttachment), "utf8"),
+    ).resolves.toBe("%PDF-1.7\nshared\n");
+  });
+
+  it("keeps how a downloaded PDF was reached on its attachment", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const pdfPath = NodePath.join(root, "papers", "preprint.pdf");
+    await NodeFSP.mkdir(NodePath.dirname(pdfPath), { recursive: true });
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\npreprint\n", "utf8");
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: { ...candidate, externalReferences: [] },
+      actor: "agent",
+      intake: "paper",
+      pdfPath,
+      pdfRetrieval: { route: "open-access", version: "preprint" },
+    });
+    if (!imported.record) throw new Error("Expected an imported source.");
+    const publishedPath = NodePath.join(root, "papers", "published.pdf");
+    await NodeFSP.writeFile(publishedPath, "%PDF-1.7\npublished\n", "utf8");
+    await attachScientSourcePdf({
+      root,
+      sourceId: imported.record.sourceId,
+      expectedRevision: imported.record.revision,
+      pdfPath: publishedPath,
+      retrieval: { route: "university", version: "published" },
+    });
+
+    const stored = await readScientSourceRecord(root, imported.record.sourceId);
+    expect(stored?.origin?.intake).toBe("paper");
+    expect(stored?.attachments.map((attachment) => attachment.retrieval)).toEqual([
+      { route: "open-access", version: "preprint" },
+      { route: "university", version: "published" },
+    ]);
   });
 
   it("resolves only regular project-relative PDFs and rejects traversal or symlink escapes", async () => {

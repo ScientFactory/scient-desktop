@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { ComputeSessionId, type ComputeSessionRecord } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ export function ComputeDependencyRecoveryAction(props: {
   readonly executable: string;
   readonly onSettled: () => void;
 }) {
+  const gt = useGT();
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
   const binding = useComputeContextStore((state) => state.bindings[props.contextId]);
@@ -90,7 +92,7 @@ export function ComputeDependencyRecoveryAction(props: {
       if (result.kind === "failed") {
         toastManager.add({
           type: "error",
-          title: "Unable to start managed Python",
+          title: gt("Unable to start managed Python"),
           description: result.error,
         });
       }
@@ -116,9 +118,11 @@ export function ComputeDependencyRecoveryAction(props: {
         onClick={() => void recover()}
       >
         {busy ? <LoaderCircle className="animate-spin" /> : null}
-        Use managed Python
+        <T>Use managed Python</T>
       </Button>
-      <span className="text-[11px] text-muted-foreground">Variables reset</span>
+      <span className="text-[11px] text-muted-foreground">
+        <T>Variables reset</T>
+      </span>
     </span>
   );
 }

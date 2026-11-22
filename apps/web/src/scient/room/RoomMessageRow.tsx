@@ -7,6 +7,7 @@ import {
   type RoomMessageAttribution,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { ArrowUpIcon, XIcon } from "lucide-react";
 import { type ComponentType, createContext, use, useState } from "react";
 
@@ -15,6 +16,7 @@ import { GuestMessageAttachments } from "~/components/chat/GuestMessageAttachmen
 import { TimelineRowCtx } from "~/components/chat/timelineRowContext";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentScope } from "~/state/session";
@@ -78,9 +80,12 @@ const isViewer = (viewer: RoomViewer, author: RoomAuthor) =>
     ? viewer.kind === "owner"
     : viewer.kind === "guest" && viewer.participantId === author.participantId;
 
-function authorLabel(author: RoomAuthor, viewer: RoomViewer): string {
-  if (isViewer(viewer, author)) return "You";
-  return author.kind === "owner" ? "Owner" : author.name;
+function authorLabel(author: RoomAuthor, viewer: RoomViewer, resolve: MessageResolver): string {
+  if (isViewer(viewer, author))
+    return resolve(msg("You", { $context: "author of a room message" }));
+  return author.kind === "owner"
+    ? resolve(msg("Owner", { $context: "the thread's owner, author of a room message" }))
+    : author.name;
 }
 
 /**
@@ -195,10 +200,12 @@ function RoomMessageCard({
   readonly actions: RoomMessageActions | null;
   readonly readOnly: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [busy, setBusy] = useState(false);
   const viewer = actions?.viewer ?? OWNER;
   const mine = isViewer(viewer, item.author);
-  const author = authorLabel(item.author, viewer);
+  const author = authorLabel(item.author, viewer, messages);
   const canSend = !readOnly && actions?.canSendToAgent === true;
   const canDelete =
     !readOnly && actions !== null && (actions.canDelete || (mine && actions.canDeleteOwn));
@@ -209,7 +216,7 @@ function RoomMessageCard({
   return (
     <article
       className={cn("group flex flex-col items-end gap-1", roomPersonClassOf(item.author))}
-      aria-label={`${author}, not sent to the agent`}
+      aria-label={gt("{author}, not sent to the agent", { author })}
       data-room-message={item.roomMessageId}
     >
       <p className="me-1 text-2xs text-guest-foreground">{author}</p>
@@ -229,11 +236,13 @@ function RoomMessageCard({
               size="xs"
               variant="ghost-muted"
               disabled={busy}
-              aria-label={mine ? "Send to agent" : `Send ${author}'s message to agent`}
+              aria-label={
+                mine ? gt("Send to agent") : gt("Send {author}'s message to agent", { author })
+              }
               onClick={() => run(() => actions.onSend(item))}
             >
               <ArrowUpIcon />
-              Send to agent
+              <T>Send to agent</T>
             </Button>
           ) : null}
           {canDelete ? (
@@ -244,14 +253,16 @@ function RoomMessageCard({
                     size="icon-xs"
                     variant="ghost-muted"
                     disabled={busy}
-                    aria-label="Delete message"
+                    aria-label={gt("Delete message")}
                     onClick={() => run(() => actions.onDelete(item))}
                   />
                 }
               >
                 <XIcon />
               </TooltipTrigger>
-              <TooltipPopup side="top">Delete</TooltipPopup>
+              <TooltipPopup side="top">
+                <T context="verb, deletes the message">Delete</T>
+              </TooltipPopup>
             </Tooltip>
           ) : null}
         </div>
@@ -265,6 +276,8 @@ function RoomMessageCard({
  * someone else, then who wrote it, in their colour. The owner's own message needs neither.
  */
 export function RoomSentLine({ room }: { readonly room: RoomMessageAttribution }) {
+  const gt = useGT();
+  const messages = useMessages();
   const viewer = use(RoomViewerContext);
   const { author, sentBy } = room;
   const sameSender =
@@ -275,8 +288,10 @@ export function RoomSentLine({ room }: { readonly room: RoomMessageAttribution }
   return (
     <p className="me-1 text-2xs text-muted-foreground">
       {/* The writer's name ends the line, where it sits above every message of theirs. */}
-      {sameSender ? null : `Sent by ${authorLabel(sentBy, viewer)} · `}
-      <span className="text-guest-foreground">{authorLabel(author, viewer)}</span>
+      {sameSender
+        ? null
+        : `${gt("Sent by {name}", { name: authorLabel(sentBy, viewer, messages) })} · `}
+      <span className="text-guest-foreground">{authorLabel(author, viewer, messages)}</span>
     </p>
   );
 }

@@ -35,6 +35,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -89,6 +90,7 @@ it.live.each(
       EffectOutbox.layer,
       ProjectStore.layer,
       TurnItemPositionStore.layer,
+      ThreadViewers.layer,
     ).pipe(Layer.provideMerge(applicationStore));
 
     yield* Effect.gen(function* () {

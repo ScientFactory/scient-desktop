@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   DEFAULT_PROVIDER_STARTING_MESSAGE,
   type ProviderRuntimeOperation,
@@ -52,6 +53,7 @@ import {
 } from "./providerConnectionPresentation";
 import { browserSignInWaitingView, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type PendingAction =
   | "install"
@@ -63,16 +65,19 @@ type PendingAction =
   | "cancel-sign-in"
   | null;
 
-function runtimeStage(operation: ProviderRuntimeOperation | null): string {
+function runtimeStage(
+  operation: ProviderRuntimeOperation | null,
+  resolve: MessageResolver = m,
+): string {
   const message = operation?.message.trim();
-  return message && message.length > 0 ? message : "Preparing Cursor CLI…";
+  return message && message.length > 0 ? message : resolve(msg("Preparing Cursor CLI…"));
 }
 
-function accountDescription(provider: ServerProvider): string {
+function accountDescription(provider: ServerProvider, resolve: MessageResolver = m): string {
   const email = provider.auth.email?.trim();
   const label = provider.auth.label?.trim();
   if (email && label) return `${email} · ${label}`;
-  return email ?? label ?? "Your Cursor account is connected.";
+  return email ?? label ?? resolve(msg("Your Cursor account is connected."));
 }
 
 export function CursorInlineSetup(props: {
@@ -85,6 +90,8 @@ export function CursorInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   const [optimisticRuntimeOperation, setOptimisticRuntimeOperation] =
     useState<OptimisticProviderValue<ProviderRuntimeOperation> | null>(null);
 
@@ -154,7 +161,7 @@ export function CursorInlineSetup(props: {
     props.displayName,
   );
   // Only this window opens the Cursor page; others offer it.
-  const page = browserSignInWaitingView(browser, activeConnectionOperation);
+  const page = browserSignInWaitingView(browser, activeConnectionOperation, messages);
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels;
@@ -219,21 +226,21 @@ export function CursorInlineSetup(props: {
     run(
       "install",
       () => startReviewedCursorRuntimeAction(props.controller, "install"),
-      "Scient could not install Cursor CLI.",
+      gt("Scient could not install Cursor CLI."),
       true,
     );
   const update = () =>
     run(
       updateOffer?.path === "external" ? "external-update" : "update",
       () => updateCursorRuntime(props.controller, props.provider),
-      "Scient could not update Cursor CLI.",
+      gt("Scient could not update Cursor CLI."),
       true,
     );
   const repair = async () => {
     const provider = await run(
       "repair",
       () => startReviewedCursorRuntimeAction(props.controller, "repair"),
-      "Scient could not repair Cursor CLI.",
+      gt("Scient could not repair Cursor CLI."),
       true,
     );
     if (
@@ -249,7 +256,7 @@ export function CursorInlineSetup(props: {
     await run(
       "cancel-runtime",
       () => props.controller.cancelRuntime(activeRuntimeOperation.operationId),
-      "Scient could not cancel Cursor setup.",
+      gt("Scient could not cancel Cursor setup."),
     );
   };
 
@@ -257,7 +264,7 @@ export function CursorInlineSetup(props: {
     run(
       "sign-in",
       () => startCursorBrowserSignIn(props.controller),
-      "Scient could not start Cursor sign in.",
+      gt("Scient could not start Cursor sign in."),
     );
 
   const cancelSignIn = async () => {
@@ -265,7 +272,7 @@ export function CursorInlineSetup(props: {
     await run(
       "cancel-sign-in",
       () => props.controller.cancelConnection(activeConnectionOperation.operationId),
-      "Scient could not cancel Cursor sign in.",
+      gt("Scient could not cancel Cursor sign in."),
     );
   };
 
@@ -288,19 +295,19 @@ export function CursorInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={runtimeStage(activeRuntimeOperation)}
+          body={runtimeStage(activeRuntimeOperation, messages)}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
             action === "update"
-              ? "Updating Cursor CLI"
+              ? gt("Updating Cursor CLI")
               : action === "repair"
-                ? "Repairing Cursor CLI"
-                : "Installing Cursor CLI"
+                ? gt("Repairing Cursor CLI")
+                : gt("Installing Cursor CLI")
           }
         />
         <AssistedSetupActions>
           <Button
-            aria-label={cancelRuntimeActionLabel("Cursor CLI", action)}
+            aria-label={cancelRuntimeActionLabel("Cursor CLI", action, messages)}
             disabled={!activeRuntimeOperation || pendingAction === "cancel-runtime"}
             onClick={() => void cancelRuntime()}
             size="sm"
@@ -312,7 +319,7 @@ export function CursorInlineSetup(props: {
             ) : (
               <XIcon aria-hidden />
             )}
-            Cancel
+            <T>Cancel</T>
           </Button>
         </AssistedSetupActions>
       </AssistedSetupFrame>
@@ -334,18 +341,18 @@ export function CursorInlineSetup(props: {
   }
 
   if (needsRuntimeRepair) {
-    const error = localError ?? runtimeOperation?.message ?? "The Cursor CLI operation failed.";
+    const error = localError ?? runtimeOperation?.message ?? gt("The Cursor CLI operation failed.");
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={error}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Cursor CLI needs repair"
+          title={gt("Cursor CLI needs repair")}
         />
         <AssistedSetupActions>
           <Button onClick={() => void repair()} size="sm" type="button" variant="ghost-primary">
-            <RefreshCwIcon aria-hidden /> Repair Cursor CLI
+            <RefreshCwIcon aria-hidden /> <T>Repair Cursor CLI</T>
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
@@ -362,8 +369,13 @@ export function CursorInlineSetup(props: {
           body={
             error ??
             (canInstall
-              ? `Cursor CLI is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
-              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Cursor CLI installation.`)
+              ? gt("Cursor CLI is not installed on {computer}.", {
+                  computer: providerRuntimeComputerLabel(props.provider, messages),
+                })
+              : gt(
+                  "Assisted installation is not available for {computer}. You can use an existing Cursor CLI installation.",
+                  { computer: providerRuntimeComputerLabel(props.provider, messages) },
+                ))
           }
           icon={
             error ? (
@@ -373,19 +385,19 @@ export function CursorInlineSetup(props: {
             )
           }
           role={error ? "alert" : undefined}
-          title={error ? "Cursor CLI installation couldn’t finish" : "Install Cursor CLI"}
+          title={error ? gt("Cursor CLI installation couldn’t finish") : gt("Install Cursor CLI")}
         />
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={error ? "Retry installation of Cursor CLI" : "Install Cursor CLI"}
+              aria-label={error ? gt("Retry installation of Cursor CLI") : gt("Install Cursor CLI")}
               onClick={() => void install()}
               size="sm"
               type="button"
               variant="ghost-primary"
             >
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {error ? "Retry installation" : "Install"}
+              {error ? gt("Retry installation") : gt("Install")}
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -405,7 +417,7 @@ export function CursorInlineSetup(props: {
             starting
               ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
               : verifying
-                ? "Finding models for your account…"
+                ? gt("Finding models for your account…")
                 : page.body
           }
           icon={
@@ -420,10 +432,10 @@ export function CursorInlineSetup(props: {
           role={openFailure ? "alert" : undefined}
           title={
             verifying
-              ? "Checking your account"
+              ? gt("Checking your account")
               : page.blocked && !starting
-                ? "Sign-in page blocked"
-                : "Finish signing in"
+                ? gt("Sign-in page blocked")
+                : gt("Finish signing in")
           }
         />
         <AssistedSetupActions>
@@ -436,19 +448,21 @@ export function CursorInlineSetup(props: {
               variant={page.userMustOpen ? "ghost-primary" : "ghost-muted"}
             >
               <ExternalLinkIcon aria-hidden />{" "}
-              {page.notOpenedHere || page.blocked ? "Open Cursor sign-in" : "Reopen Cursor sign-in"}
+              {page.notOpenedHere || page.blocked
+                ? gt("Open Cursor sign-in")
+                : gt("Reopen Cursor sign-in")}
             </Button>
           ) : null}
           {activeConnectionOperation ? (
             <Button
-              aria-label="Cancel Cursor sign-in"
+              aria-label={gt("Cancel Cursor sign-in")}
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
               type="button"
               variant="ghost-destructive-action"
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           ) : null}
         </AssistedSetupActions>
@@ -464,10 +478,10 @@ export function CursorInlineSetup(props: {
           body={
             props.provider.message ??
             (hasModels
-              ? "Cursor is connected, but its readiness check did not finish."
-              : "Cursor is connected but did not report an available model.")
+              ? gt("Cursor is connected, but its readiness check did not finish.")
+              : gt("Cursor is connected but did not report an available model."))
           }
-          title="Cursor needs attention"
+          title={gt("Cursor needs attention")}
           warning
           diagnostics={runtimeDiagnostics}
         />
@@ -498,8 +512,8 @@ export function CursorInlineSetup(props: {
     return (
       <AssistedSetupStatusFrame
         accountAction={props.accountAction}
-        body={accountDescription(props.provider)}
-        title="Cursor is ready"
+        body={accountDescription(props.provider, messages)}
+        title={gt("Cursor is ready")}
       />
     );
   }
@@ -508,8 +522,8 @@ export function CursorInlineSetup(props: {
     return (
       <AssistedSetupStatusFrame
         accountAction={props.accountAction}
-        body={props.provider.message ?? "Cursor's account or model check did not finish."}
-        title="Cursor needs attention"
+        body={props.provider.message ?? gt("Cursor's account or model check did not finish.")}
+        title={gt("Cursor needs attention")}
         warning
       />
     );
@@ -520,10 +534,10 @@ export function CursorInlineSetup(props: {
       <AssistedSetupStatusFrame
         body={
           isReady
-            ? "This Cursor setup does not require account sign-in."
-            : (props.provider.message ?? "Cursor did not report an available model.")
+            ? gt("This Cursor setup does not require account sign-in.")
+            : (props.provider.message ?? gt("Cursor did not report an available model."))
         }
-        title={isReady ? "Cursor is ready" : "Cursor needs attention"}
+        title={isReady ? gt("Cursor is ready") : gt("Cursor needs attention")}
         warning={!isReady}
         diagnostics={isReady ? undefined : runtimeDiagnostics}
       />
@@ -534,9 +548,11 @@ export function CursorInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body="This Cursor instance uses external credentials or custom settings. Manage them in provider Settings."
+          body={gt(
+            "This Cursor instance uses external credentials or custom settings. Manage them in provider Settings.",
+          )}
           icon={<ShieldCheckIcon className="size-5 text-primary" />}
-          title="Custom Cursor setup"
+          title={gt("Custom Cursor setup")}
         />
       </AssistedSetupFrame>
     );
@@ -549,7 +565,7 @@ export function CursorInlineSetup(props: {
       <AssistedSetupStatus
         body={
           signInError ??
-          "Sign in with your existing Cursor subscription. Scient never sees your password."
+          gt("Sign in with your existing Cursor subscription. Scient never sees your password.")
         }
         icon={
           signInError ? (
@@ -559,18 +575,18 @@ export function CursorInlineSetup(props: {
           )
         }
         role={signInError ? "alert" : undefined}
-        title={signInError ? "Cursor sign-in didn’t finish" : "Sign in required"}
+        title={signInError ? gt("Cursor sign-in didn’t finish") : gt("Sign in required")}
       />
       <AssistedSetupActions>
         <Button
-          aria-label={signInError ? "Try again to sign in to Cursor" : undefined}
+          aria-label={signInError ? gt("Try again to sign in to Cursor") : undefined}
           onClick={() => void signIn()}
           size="sm"
           type="button"
           variant="ghost-primary"
         >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
-          {signInError ? "Try again" : "Sign in to Cursor"}
+          {signInError ? gt("Try again") : gt("Sign in to Cursor")}
         </Button>
       </AssistedSetupActions>
       {signInError && !props.managedRuntimePresentedExternally ? (

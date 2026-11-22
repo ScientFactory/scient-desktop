@@ -20,6 +20,7 @@ import {
   managedRuntimeSmokeEnvironment,
   smokeManagedRuntimeExecutable,
   detectManagedRuntimeTarget,
+  fitsManagedRuntimeDownloadLimit,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
   runtimeFilesystem,
@@ -161,6 +162,72 @@ async function terminateProcessTree(root: number): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return descendants !== undefined && !tree.some(isRunning);
+}
+
+interface WindowsRuntimeProcess {
+  readonly ProcessId: number;
+  readonly ParentProcessId: number;
+  readonly Name: string;
+  readonly ExecutablePath: string;
+}
+
+/**
+ * Processes running an executable from inside the uniquely named qualification directory
+ * (Windows only). Matched by that name, so a short-path alias (`RUNNER~1`) on either side still
+ * matches. `undefined` when the listing failed: that is not an empty list.
+ */
+function windowsProcessesUnder(root: string): WindowsRuntimeProcess[] | undefined {
+  const listing = NodeChildProcess.spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Get-CimInstance Win32_Process | Where-Object ExecutablePath | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress",
+    ],
+    { encoding: "utf8", windowsHide: true, timeout: 30_000 },
+  );
+  if (listing.error || listing.status !== 0 || !listing.stdout.trim()) return undefined;
+  const parsed: unknown = JSON.parse(listing.stdout);
+  const marker = `\\${NodePath.basename(root).toLowerCase()}\\`;
+  return (Array.isArray(parsed) ? parsed : [parsed]).filter(
+    (entry): entry is WindowsRuntimeProcess =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as WindowsRuntimeProcess).ExecutablePath === "string" &&
+      (entry as WindowsRuntimeProcess).ExecutablePath.toLowerCase().includes(marker),
+  );
+}
+
+function describeProcesses(processes: readonly WindowsRuntimeProcess[]): string {
+  return processes
+    .map(
+      (entry) =>
+        `${entry.Name} (pid ${entry.ProcessId}, parent ${entry.ParentProcessId}) from ${entry.ExecutablePath}`,
+    )
+    .join("; ");
+}
+
+/** Remove the qualified runtime exactly as the app does; on Windows, a failure says what held it. */
+async function removeQualifiedRuntime(
+  runtime: ManagedProviderRuntime,
+  root: string,
+): Promise<void> {
+  try {
+    await runtime.remove();
+  } catch (cause) {
+    if (HostProcess.Platform.defaultValue() === "win32") {
+      const running = windowsProcessesUnder(root);
+      process.stdout.write(
+        running === undefined
+          ? "Removal failed and Windows processes could not be listed.\n"
+          : running.length > 0
+            ? `Removal failed while processes ran from the runtime: ${describeProcesses(running)}.\n`
+            : "Removal failed with no process running from the runtime; another program held a file open.\n",
+      );
+    }
+    throw cause;
+  }
 }
 
 /**
@@ -392,6 +459,8 @@ const artifact = hydrateManagedRuntimeArtifact(
   artifactData.compressed,
 );
 if (!artifact) throw new Error(`${provider} ${targetKey} violates app-owned runtime policy.`);
+if (!fitsManagedRuntimeDownloadLimit(artifact))
+  throw new Error(`${provider} ${targetKey} exceeds the installer's download limit.`);
 if (artifactData.compressed && !artifact.compressed) {
   throw new Error(`${provider} ${targetKey} names a compressed copy this app cannot use.`);
 }
@@ -451,7 +520,7 @@ try {
     }
     if (provider === "omp") await verifyRpc(provider, repaired.launchPath, artifact.version);
   }
-  await runtime.remove();
+  await removeQualifiedRuntime(runtime, root);
   const removed = await runtime.status(artifact);
   if (removed.installed || removed.selected) {
     throw new Error(`${provider} ${targetKey} did not cleanly remove the qualification runtime.`);

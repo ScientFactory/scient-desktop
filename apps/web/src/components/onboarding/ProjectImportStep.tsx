@@ -8,6 +8,7 @@ import type {
 import { CommandId } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -27,7 +28,9 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { StepShell } from "./StepShell";
 
-const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
+const SCAN_LIMIT_MESSAGE = msg(
+  "Scan limit reached. Some projects or conversations may be missing.",
+);
 
 /**
  * One-decision import (4B): a summary line with Import recent / Choose /
@@ -52,6 +55,8 @@ export function ProjectImportStep({
     importedThreadCount?: number,
   ) => Promise<boolean>;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const scan = useEnvironmentQuery(
     environmentId === null ? null : agentSessionScan({ environmentId, input: {} }),
   );
@@ -133,7 +138,7 @@ export function ProjectImportStep({
   const scanTruncated = scan.data?.truncated === true;
   const scanLimitNotice = scanTruncated ? (
     <p className="mt-3 text-sm text-muted-foreground" role="status">
-      {SCAN_LIMIT_MESSAGE}
+      {messages(SCAN_LIMIT_MESSAGE)}
     </p>
   ) : null;
 
@@ -254,13 +259,22 @@ export function ProjectImportStep({
     importedThreadCountRef.current = importedThreadCount;
     if (importedProjectsCount < selection.length) {
       if (importedThreadCount > 0 && skippedThreadCount > 0) {
-        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`;
+        importWarningRef.current = gt(
+          "{imported, plural, one {Imported {imported} thread.} other {Imported {imported} threads.}} {skipped, plural, one {{skipped} thread could not be imported.} other {{skipped} threads could not be imported.}}",
+          { imported: importedThreadCount, skipped: skippedThreadCount },
+        );
       } else if (skippedThreadCount > 0) {
-        importWarningRef.current = `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`;
+        importWarningRef.current = gt(
+          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
+          { count: skippedThreadCount },
+        );
       } else if (importedThreadCount > 0) {
-        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`;
+        importWarningRef.current = gt(
+          "{count, plural, one {Imported {count} thread. Some thread history could not be imported.} other {Imported {count} threads. Some thread history could not be imported.}}",
+          { count: importedThreadCount },
+        );
       } else {
-        importWarningRef.current = "Could not import thread history.";
+        importWarningRef.current = gt("Could not import thread history.");
       }
     }
     finishAfterImport();
@@ -269,13 +283,13 @@ export function ProjectImportStep({
   if (environmentId === null || (scan.isPending && scan.data === null)) {
     return (
       <StepShell
-        title="Your projects"
-        description="Looking for projects from Claude Code and Codex."
+        title={gt("Your projects")}
+        description={gt("Looking for projects from Claude Code and Codex.")}
         onBack={onBack}
       >
         <div className="mt-6 flex justify-end">
           <Button variant="ghost-muted" onClick={() => void onDone()}>
-            Skip
+            <T context="skip the onboarding step">Skip</T>
           </Button>
         </div>
       </StepShell>
@@ -285,30 +299,34 @@ export function ProjectImportStep({
   if (scan.error !== null || candidates.length === 0) {
     return (
       <StepShell
-        title="Your projects"
+        title={gt("Your projects")}
         description={
           scan.error !== null
-            ? "Could not check this computer for projects."
+            ? gt("Could not check this computer for projects.")
             : scanTruncated
-              ? SCAN_LIMIT_MESSAGE
-              : "No existing Claude Code or Codex projects found."
+              ? messages(SCAN_LIMIT_MESSAGE)
+              : gt("No existing Claude Code or Codex projects found.")
         }
         onBack={onBack}
       >
         {scan.error !== null ? (
-          <p className="mt-3 text-xs text-muted-foreground">You can add projects later.</p>
+          <p className="mt-3 text-xs text-muted-foreground">
+            <T>You can add projects later.</T>
+          </p>
         ) : null}
         <div className="mt-6 flex justify-end gap-2">
           {scan.error !== null ? (
             <Button variant="ghost" onClick={scan.refresh}>
-              Retry
+              <T>Retry</T>
             </Button>
           ) : null}
           <Button
             variant={scan.error !== null || scanTruncated ? "ghost-muted" : "default"}
             onClick={() => void onDone()}
           >
-            {scan.error !== null || scanTruncated ? "Skip" : "Start coding"}
+            {scan.error !== null || scanTruncated
+              ? gt("Skip", { $context: "skip the onboarding step" })
+              : gt("Start coding")}
           </Button>
         </div>
       </StepShell>
@@ -319,10 +337,13 @@ export function ProjectImportStep({
     const selected = candidates.filter((candidate) => !deselected.has(candidate.path));
     return (
       <StepShell
-        title="Choose your projects"
+        title={gt("Choose your projects")}
         onBack={() => setChoosing(false)}
         backDisabled={isImporting}
-        description={`${candidates.length} found on ${machineLabel}.`}
+        description={gt("{count} found on {machine}.", {
+          count: candidates.length,
+          machine: machineLabel,
+        })}
       >
         {scanLimitNotice}
         <div className="mt-6 max-h-72 overflow-x-hidden overflow-y-auto border-y border-border">
@@ -347,10 +368,12 @@ export function ProjectImportStep({
                 {candidate.path}
               </span>
               <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground sm:block">
-                {candidate.sources.map(formatSource).join(", ")} · {candidate.threadCount}{" "}
-                {candidate.threadCount === 1 ? "thread" : "threads"}
+                {candidate.sources.map(formatSource).join(", ")} ·{" "}
+                {gt("{count, plural, one {{count} thread} other {{count} threads}}", {
+                  count: candidate.threadCount,
+                })}
                 {candidate.lastActiveAt
-                  ? ` · ${formatRelativeTimeLabel(candidate.lastActiveAt)}`
+                  ? ` · ${formatRelativeTimeLabel(candidate.lastActiveAt, undefined, messages)}`
                   : ""}
               </span>
             </label>
@@ -358,13 +381,18 @@ export function ProjectImportStep({
         </div>
         <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
           <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
-            Skip
+            <T context="skip the onboarding step">Skip</T>
           </Button>
           <Button
             disabled={isImporting || selected.length === 0}
             onClick={() => void runImport(selected)}
           >
-            {isImporting ? "Importing..." : `Import ${selected.length}`}
+            {isImporting
+              ? gt("Importing...")
+              : gt("Import {count}", {
+                  count: selected.length,
+                  $context: "button, imports the chosen projects",
+                })}
           </Button>
         </div>
       </StepShell>
@@ -373,8 +401,18 @@ export function ProjectImportStep({
 
   return (
     <StepShell
-      title="Your recent projects"
-      description={`${recent.length} ${recent.length === 1 ? "project" : "projects"} found on ${machineLabel}.${more > 0 ? ` ${more} more available.` : ""}`}
+      title={gt("Your recent projects")}
+      description={
+        more > 0
+          ? gt(
+              "{count, plural, one {{count} project found on {machine}.} other {{count} projects found on {machine}.}} {more} more available.",
+              { count: recent.length, machine: machineLabel, more },
+            )
+          : gt(
+              "{count, plural, one {{count} project found on {machine}.} other {{count} projects found on {machine}.}}",
+              { count: recent.length, machine: machineLabel },
+            )
+      }
       onBack={onBack}
       backDisabled={isImporting}
     >
@@ -396,25 +434,30 @@ export function ProjectImportStep({
         ))}
         {recent.length > 4 ? (
           <p className="px-1 py-3 text-xs text-muted-foreground">
-            {recent.length - 4} more projects
+            {gt("{count} more projects", { count: recent.length - 4 })}
           </p>
         ) : null}
       </div>
       <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
         <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
-          Skip
+          <T context="skip the onboarding step">Skip</T>
         </Button>
         <div className="flex items-center gap-2">
           <Button variant="ghost" disabled={isImporting} onClick={() => setChoosing(true)}>
-            Choose
+            <T context="button, choose which projects to import">Choose</T>
           </Button>
           <Button
             disabled={isImporting || recent.length === 0}
             onClick={() => void runImport(recent)}
           >
             {isImporting
-              ? "Importing..."
-              : `Import ${recent.length} ${recent.length === 1 ? "project" : "projects"}`}
+              ? gt("Importing...")
+              : gt(
+                  "{count, plural, one {Import {count} project} other {Import {count} projects}}",
+                  {
+                    count: recent.length,
+                  },
+                )}
           </Button>
         </div>
       </div>

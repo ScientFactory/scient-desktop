@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -29,6 +30,7 @@ import {
 } from "./providerConnectionPresentation";
 import { useProviderEnableAction } from "./useProviderEnableAction";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m } from "~/i18n/messages";
 
 const DEVICE_METHOD = "muse_device";
 const KEY_METHOD = "muse_key";
@@ -42,6 +44,7 @@ export function MuseInlineSetup(props: {
   readonly managedRuntimePresentedExternally?: boolean;
 }) {
   const { access } = useProviderEnableAction(props);
+  const gt = useGT();
   const runtime = props.provider.connection?.runtime;
   if (
     !props.managedRuntimePresentedExternally &&
@@ -53,7 +56,7 @@ export function MuseInlineSetup(props: {
       <ManagedRuntimeComposerSetup
         {...props}
         icon={ShieldCheckIcon}
-        modelSetupHint="Sign in with a Meta account or API key."
+        modelSetupHint={gt("Sign in with a Meta account or API key.")}
       />
     );
   }
@@ -93,6 +96,8 @@ function MuseAccountSetup(props: {
   const [apiKey, setApiKey] = useState("");
   const startedHere = useRef(false);
   const openedInteraction = useRef<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
 
   const auth = query.data;
   const interaction = auth?.interaction ?? null;
@@ -108,7 +113,7 @@ function MuseAccountSetup(props: {
     if (!deviceCode || !startedHere.current || openedInteraction.current === deviceCode.id) return;
     openedInteraction.current = deviceCode.id;
     openAuthorizationPage(deviceCode.url).catch(() => {
-      setError("Couldn’t open Meta’s sign-in page. Use Reopen sign-in page.");
+      setError(m(msg("Couldn’t open Meta’s sign-in page. Use Reopen sign-in page.")));
     });
   }, [deviceCode, openAuthorizationPage]);
 
@@ -132,7 +137,9 @@ function MuseAccountSetup(props: {
           if (!isAtomCommandInterrupted(result)) {
             const failure = squashAtomCommandFailure(result);
             setError(
-              failure instanceof Error ? failure.message : "Muse sign-in failed. Try again.",
+              failure instanceof Error
+                ? failure.message
+                : m(msg("Muse sign-in failed. Try again.")),
             );
           }
           {
@@ -140,7 +147,7 @@ function MuseAccountSetup(props: {
             break finishAction;
           }
         } catch {
-          setError("Muse sign-in failed. Try again.");
+          setError(m(msg("Muse sign-in failed. Try again.")));
           {
             actionResult = false;
             break finishAction;
@@ -169,13 +176,13 @@ function MuseAccountSetup(props: {
   };
   const cancelButton = (
     <Button
-      aria-label="Cancel Muse sign-in"
+      aria-label={gt("Cancel Muse sign-in")}
       disabled={disabled}
       onClick={stop}
       size="sm"
       variant="ghost-destructive-action"
     >
-      Cancel
+      <T>Cancel</T>
     </Button>
   );
 
@@ -186,14 +193,14 @@ function MuseAccountSetup(props: {
       return (
         <AssistedSetupFrame>
           <AssistedSetupStatus
-            body="Muse saves the key on this computer."
+            body={gt("Muse saves the key on this computer.")}
             icon={<ProviderSetupIcon displayName={props.displayName} driver={provider.driver} />}
-            title="Use a Meta API key"
+            title={gt("Use a Meta API key")}
           />
           <ProviderAuthorizationCodeForm
             authorizationCode={apiKey}
             disabled={disabled}
-            inputLabel="Meta API key"
+            inputLabel={gt("Meta API key")}
             onAuthorizationCodeChange={setApiKey}
             onSubmit={() =>
               void run("submit", () =>
@@ -210,7 +217,7 @@ function MuseAccountSetup(props: {
                 if (sent) setApiKey("");
               })
             }
-            placeholder="Paste your Meta API key"
+            placeholder={gt("Paste your Meta API key")}
             providerName="Muse"
             secret
             submitting={pending === "submit"}
@@ -225,13 +232,13 @@ function MuseAccountSetup(props: {
           body={
             error ??
             (verifying
-              ? "Muse is saving your sign-in…"
+              ? gt("Muse is saving your sign-in…")
               : deviceCode
-                ? "Confirm this code on Meta’s sign-in page."
-                : "Starting Muse sign-in…")
+                ? gt("Confirm this code on Meta’s sign-in page.")
+                : gt("Starting Muse sign-in…"))
           }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={verifying ? "Finishing sign-in" : "Finish signing in"}
+          title={verifying ? gt("Finishing sign-in") : gt("Finish signing in")}
         />
         {deviceCode ? (
           <AssistedSetupDeviceCode code={deviceCode.userCode} providerName="Muse" />
@@ -243,13 +250,13 @@ function MuseAccountSetup(props: {
                 disabled={props.readOnly}
                 onClick={() =>
                   void openAuthorizationPage(deviceCode.url).catch(() => {
-                    setError("Couldn’t open Meta’s sign-in page.");
+                    setError(m(msg("Couldn’t open Meta’s sign-in page.")));
                   })
                 }
                 size="sm"
                 variant="ghost-muted"
               >
-                <ExternalLinkIcon aria-hidden /> Reopen sign-in page
+                <ExternalLinkIcon aria-hidden /> <T>Reopen sign-in page</T>
               </Button>
             ) : null}
             {cancelButton}
@@ -269,9 +276,9 @@ function MuseAccountSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body="Muse uses it for new messages."
+          body={gt("Muse uses it for new messages.")}
           icon={<ProviderSetupIcon displayName={props.displayName} driver={provider.driver} />}
-          title="Sign-in saved"
+          title={gt("Sign-in saved")}
         />
         <AssistedSetupActions>
           <Button
@@ -279,7 +286,15 @@ function MuseAccountSetup(props: {
             onClick={() =>
               void ensureLocalApi()
                 .dialogs.confirm(
-                  `Sign out of ${props.displayName} on ${providerRuntimeComputerLabel(provider)}? This stops running threads that share this sign-in. Thread history is kept.`,
+                  m(
+                    msg(
+                      "Sign out of {provider} on {computer}? This stops running threads that share this sign-in. Thread history is kept.",
+                      {
+                        provider: props.displayName,
+                        computer: providerRuntimeComputerLabel(provider, messages),
+                      },
+                    ),
+                  ),
                 )
                 .then((confirmed) => {
                   if (confirmed) void run("sign-out", () => logout(target));
@@ -288,7 +303,7 @@ function MuseAccountSetup(props: {
             size="sm"
             variant="ghost-destructive-action"
           >
-            Sign out
+            <T>Sign out</T>
           </Button>
         </AssistedSetupActions>
       </AssistedSetupFrame>
@@ -297,7 +312,7 @@ function MuseAccountSetup(props: {
   return (
     <AssistedSetupFrame>
       <AssistedSetupStatus
-        body={failure ?? "Use your Meta account or an API key."}
+        body={failure ?? gt("Use your Meta account or an API key.")}
         icon={
           failure ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
@@ -306,7 +321,7 @@ function MuseAccountSetup(props: {
           )
         }
         role={failure ? "alert" : undefined}
-        title={failure ? "Muse sign-in didn’t finish" : "Sign in to Muse"}
+        title={failure ? gt("Muse sign-in didn’t finish") : gt("Sign in to Muse")}
       />
       <AssistedSetupActions>
         {methods.has(KEY_METHOD) ? (
@@ -316,7 +331,7 @@ function MuseAccountSetup(props: {
             size="sm"
             variant="ghost-muted"
           >
-            Use API key
+            <T>Use API key</T>
           </Button>
         ) : null}
         {methods.has(DEVICE_METHOD) ? (
@@ -326,7 +341,7 @@ function MuseAccountSetup(props: {
             size="sm"
             variant="ghost-primary"
           >
-            <ExternalLinkIcon aria-hidden /> {failure ? "Try again" : "Sign in with Meta"}
+            <ExternalLinkIcon aria-hidden /> {failure ? gt("Try again") : gt("Sign in with Meta")}
           </Button>
         ) : null}
       </AssistedSetupActions>

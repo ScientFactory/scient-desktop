@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
@@ -6,6 +7,7 @@ import type {
   PaperRequest,
   ThreadId,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "~/components/ui/button";
@@ -14,24 +16,56 @@ import { UniversityPicker } from "./University";
 import { useSignIn } from "./useSignIn";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
+import { m, type MessageResolver } from "~/i18n/messages";
 
-const waitingWord = (count: number) => (count === 1 ? "1 paper waits" : `${count} papers wait`);
-
-function requestLine(request: PaperRequest) {
+function requestLine(request: PaperRequest, resolve: MessageResolver = m) {
+  const count = request.count;
+  const site = request.site;
   switch (request.kind) {
     case "university":
-      return `${waitingWord(request.count)} for your university.`;
+      return resolve(
+        msg(
+          "{count, plural, one {{count} paper waits} other {{count} papers wait}} for your university.",
+          { count },
+        ),
+      );
     case "sign-in":
-      return `${waitingWord(request.count)} for you to sign in to ${request.site}.`;
+      return resolve(
+        msg(
+          "{count, plural, one {{count} paper waits} other {{count} papers wait}} for you to sign in to {site}.",
+          { count, site },
+        ),
+      );
     case "check":
-      return `${waitingWord(request.count)} for you to pass ${request.site}'s check.`;
+      return resolve(
+        msg(
+          "{count, plural, one {{count} paper waits} other {{count} papers wait}} for you to pass {site}''s check.",
+          { count, site },
+        ),
+      );
+    case "terms":
+      return resolve(
+        msg(
+          "{count, plural, one {{count} paper waits} other {{count} papers wait}} for you to review and accept {site}''s terms.",
+          { count, site },
+        ),
+      );
+    case "access":
+      return resolve(
+        msg(
+          "{count, plural, one {{count} paper waits} other {{count} papers wait}}: this conversation may not use {site}.",
+          { count, site },
+        ),
+      );
   }
 }
 
 const ACTION_LABELS: Readonly<Record<PaperRequest["kind"], string>> = {
-  university: "Connect your university",
-  "sign-in": "Sign in",
-  check: "Open",
+  university: msg("Connect your university"),
+  "sign-in": msg("Sign in"),
+  check: msg("Open", { $context: "verb, opens the site's check page" }),
+  terms: msg("Open", { $context: "verb, opens the site's terms page" }),
+  access: msg("Allow in Settings"),
 };
 
 /** One line per thing only the user can do; acting on it releases every paper waiting on it. */
@@ -50,9 +84,18 @@ function Requests({
   const resume = useAccountCommand(accountsState.continuePapers, environmentId);
   const openBrowser = useAccountBrowser(environmentId);
   const signIn = useSignIn(environmentId);
+  const navigate = useNavigate();
+  const messages = useMessages();
   const [connecting, setConnecting] = useState(false);
   const act = (request: PaperRequest) => {
     if (request.kind === "university") return setConnecting((current) => !current);
+    if (request.kind === "terms" && request.site && request.profileId)
+      return void resume({
+        root: queue.root,
+        terms: { site: request.site, profileId: request.profileId },
+      });
+    // The papers keep trying for a while, so a change made there lets them through.
+    if (request.kind === "access") void navigate({ to: "/settings/accounts" });
     // Papers go on by themselves when the sign-in finishes.
     if (request.kind === "sign-in" && request.accountId)
       return void signIn(request.accountId, threadId ? { threadId } : {});
@@ -67,12 +110,15 @@ function Requests({
   return (
     <>
       {queue.requests.map((request) => (
-        <div key={`${request.kind}:${request.site ?? ""}`} className="flex items-center gap-2">
+        <div
+          key={`${request.kind}:${request.site ?? ""}:${request.profileId ?? ""}`}
+          className="flex items-center gap-2"
+        >
           <span className="min-w-0 flex-1 text-sm text-muted-foreground">
-            {requestLine(request)}
+            {requestLine(request, messages)}
           </span>
           <Button size="xs" variant="outline" disabled={!canWrite} onClick={() => act(request)}>
-            {ACTION_LABELS[request.kind]}
+            {messages(ACTION_LABELS[request.kind])}
           </Button>
         </div>
       ))}
@@ -102,6 +148,7 @@ function UnreachedPapers({
 }) {
   const list = useAccountCommand(accountsState.listPapers, environmentId);
   const [items, setItems] = useState<ReadonlyArray<PaperItem> | null>(null);
+  const gt = useGT();
   const show = async () => {
     const result = await list({ root });
     if (result.ok)
@@ -113,14 +160,17 @@ function UnreachedPapers({
     <>
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 text-sm text-muted-foreground">
-          {count === 1 ? "1 paper couldn't be reached." : `${count} papers couldn't be reached.`}
+          {gt(
+            "{count, plural, one {{count} paper couldn't be reached.} other {{count} papers couldn't be reached.}}",
+            { count },
+          )}
         </span>
         {items === null ? (
           <Button size="xs" variant="ghost" onClick={() => void show()}>
-            Show
+            <T>Show</T>
           </Button>
         ) : null}
-        <Button size="icon-xs" variant="ghost" aria-label="Dismiss" onClick={onDismiss}>
+        <Button size="icon-xs" variant="ghost" aria-label={gt("Dismiss")} onClick={onDismiss}>
           <XIcon />
         </Button>
       </div>
@@ -148,16 +198,26 @@ export function PaperQueueBand({
   const [dismissedFailed, setDismissedFailed] = useState(0);
   const queue = data?.paperQueues?.find((item) => item.root === root);
   const failed = queue && queue.failed !== dismissedFailed ? queue.failed : 0;
+  const gt = useGT();
   if (!queue || (queue.waiting === 0 && queue.requests.length === 0 && failed === 0)) return null;
   return (
     <div className="grid gap-1.5 border-b px-3 py-2">
       {queue.waiting > 0 ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <LoaderCircleIcon className="size-3.5 animate-spin" />
-          Getting {queue.waiting} {queue.waiting === 1 ? "paper" : "papers"}, {queue.saved} saved
           {queue.paused.length > 0
-            ? `. ${queue.paused.map((item) => item.site).join(", ")} asked Scient to slow down`
-            : ""}
+            ? gt(
+                "Getting {count, plural, one {{count} paper} other {{count} papers}}, {saved} saved. {sites} asked Scient to slow down",
+                {
+                  count: queue.waiting,
+                  saved: queue.saved,
+                  sites: queue.paused.map((item) => item.site).join(", "),
+                },
+              )
+            : gt(
+                "Getting {count, plural, one {{count} paper} other {{count} papers}}, {saved} saved",
+                { count: queue.waiting, saved: queue.saved },
+              )}
         </div>
       ) : null}
       <Requests

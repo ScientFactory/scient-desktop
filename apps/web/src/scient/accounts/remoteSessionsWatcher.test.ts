@@ -8,6 +8,8 @@ import {
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+import { promiseCommandRun } from "../../../test/promiseCommandRun";
+
 const MAC = EnvironmentId.make("macbook");
 const LAB = EnvironmentId.make("lab");
 
@@ -73,13 +75,15 @@ vi.mock("~/state/environments", () => ({
 }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 const command = (label: string, answer: () => unknown) => ({
-  run: async (_registry: unknown, { input }: { input: { profileId?: string } }) => {
-    state.calls.push(input.profileId ? `${label}:${input.profileId}` : label);
-    const value = answer();
-    return value === "fail"
-      ? { _tag: "Failure", cause: { reason: "unavailable" } }
-      : { _tag: "Success", value };
-  },
+  run: promiseCommandRun(
+    async (_registry: unknown, { input }: { input: { profileId?: string } }) => {
+      state.calls.push(input.profileId ? `${label}:${input.profileId}` : label);
+      const value = answer();
+      return value === "fail"
+        ? { _tag: "Failure", cause: { reason: "unavailable" } }
+        : { _tag: "Success", value };
+    },
+  ),
 });
 vi.mock("./accountsState", () => ({
   accountsState: {

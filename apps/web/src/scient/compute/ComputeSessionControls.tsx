@@ -3,6 +3,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg, T, useGT } from "gt-react";
 import { LoaderCircle, MoreHorizontal, Power, RotateCcw, Square } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
@@ -10,6 +11,7 @@ import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
@@ -34,7 +36,7 @@ export function reportComputeFailure(
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "The compute operation failed.",
+      description: error instanceof Error ? error.message : m(msg("The compute operation failed.")),
     }),
   );
 }
@@ -52,6 +54,7 @@ export function ComputeSessionControls(props: {
   /** Embedded results belong to a file's page, not to this tab. */
   readonly embedded?: boolean | undefined;
 }) {
+  const gt = useGT();
   const [operation, setOperation] = useState<SessionCommand | null>(null);
   const [confirmation, setConfirmation] = useState<{
     readonly kind: "restart" | "stop";
@@ -77,7 +80,7 @@ export function ComputeSessionControls(props: {
       props.contextId !== undefined &&
       getComputeContext(props.contextId)?.sessionId !== target.sessionId
     ) {
-      toastManager.add({ type: "info", title: "The session changed" });
+      toastManager.add({ type: "info", title: gt("The session changed") });
       return;
     }
     setOperation(kind);
@@ -105,7 +108,14 @@ export function ComputeSessionControls(props: {
       else useComputeContextStore.getState().bindSession(binding);
     }
     if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
-      reportComputeFailure(`Unable to ${kind} compute`, result);
+      reportComputeFailure(
+        kind === "interrupt"
+          ? gt("Unable to interrupt compute")
+          : kind === "restart"
+            ? gt("Unable to restart compute")
+            : gt("Unable to stop compute"),
+        result,
+      );
     }
     props.onSettled();
   };
@@ -116,12 +126,14 @@ export function ComputeSessionControls(props: {
         <Button
           size="xs"
           variant="ghost-muted"
-          aria-label="Interrupt running code and keep session state"
+          aria-label={gt("Interrupt running code and keep session state")}
           disabled={operation !== null || closing}
           onClick={() => void run("interrupt", props.session)}
         >
           {operation === "interrupt" ? <LoaderCircle className="animate-spin" /> : <Square />}
-          <span className="@max-[24rem]:hidden">Interrupt</span>
+          <span className="@max-[24rem]:hidden">
+            {gt("Interrupt", { $context: "verb, interrupts running code" })}
+          </span>
         </Button>
       ) : null}
       <Menu>
@@ -131,7 +143,7 @@ export function ComputeSessionControls(props: {
               ref={anchor}
               size="icon-xs"
               variant="ghost-muted"
-              aria-label="Session actions"
+              aria-label={gt("Session actions")}
               disabled={operation === "stop" || closing}
             />
           }
@@ -153,7 +165,7 @@ export function ComputeSessionControls(props: {
             onClick={() => setConfirmation({ kind: "restart", session: props.session })}
           >
             <RotateCcw />
-            Restart session
+            <T>Restart session</T>
           </MenuItem>
           <MenuSeparator />
           <MenuItem
@@ -161,7 +173,7 @@ export function ComputeSessionControls(props: {
             onClick={() => setConfirmation({ kind: "stop", session: props.session })}
           >
             <Power />
-            Stop session
+            <T>Stop session</T>
           </MenuItem>
           {props.embedded ? null : <PanelTabNewWindowItem separated />}
         </MenuPopup>
@@ -172,13 +184,15 @@ export function ComputeSessionControls(props: {
           if (!open) setConfirmation(null);
         }}
         anchor={anchor}
-        title={confirmation?.kind === "stop" ? "Stop this session?" : "Restart this session?"}
+        title={
+          confirmation?.kind === "stop" ? gt("Stop this session?") : gt("Restart this session?")
+        }
         description={
           props.binding?.borrowed === true
-            ? "Shared with the Console, so its variables clear too. Runs stay in Results."
-            : "Clears variables. Runs stay in Results."
+            ? gt("Shared with the Console, so its variables clear too. Runs stay in Results.")
+            : gt("Clears variables. Runs stay in Results.")
         }
-        confirmLabel={confirmation?.kind === "stop" ? "Stop session" : "Restart session"}
+        confirmLabel={confirmation?.kind === "stop" ? gt("Stop session") : gt("Restart session")}
         destructive={confirmation?.kind === "stop"}
         onConfirm={() => {
           if (confirmation !== null) void run(confirmation.kind, confirmation.session);

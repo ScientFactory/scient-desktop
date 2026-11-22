@@ -117,6 +117,21 @@ describe("theme files", () => {
     }
   });
 
+  it("derives an imported palette from top-level canvas and accent like a published theme", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Teal",
+      appearance: "dark",
+      canvas: "#0b1a1e",
+      accent: "#f08a2c",
+      colors: { sidebar: "#0f2126" },
+    });
+
+    expect(theme.colors.canvas).toBe(canonical("#0b1a1e"));
+    expect(theme.colors.accent).toBe(canonical("#f08a2c"));
+    expect(theme.colors.sidebar).toBe(canonical("#0f2126"));
+  });
+
   it("round-trips custom search colours and fills them in for older theme files", () => {
     const legacy = parseThemeFile({
       version: THEME_FILE_VERSION,
@@ -677,7 +692,7 @@ describe("context chip colors", () => {
 
   it("reads at 5:1 on the standard surfaces as index.css paints them", () => {
     const painted = {
-      light: ["#fcfcfc", "#ffffff", "#ebebed"],
+      light: ["#fcfcfc", "#ffffff", "#efeff0"],
       dark: ["#000000", "#0a0a0a", "#111111", "#141414", "#1e1e1e"],
     } as const;
     const properties = new Map<string, string>();

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import type { ScientPdfRuntime } from "./pdfRuntime";
 import { ReaderPageThumbnail } from "../writing/ReaderPageThumbnail";
@@ -67,6 +68,7 @@ export function PdfThumbnail(props: {
   readonly onDragState: (pages: readonly string[] | null) => void;
   readonly children?: React.ReactNode;
 }) {
+  const gt = useGT();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
@@ -204,7 +206,9 @@ export function PdfThumbnail(props: {
         }}
       >
         {failed ? (
-          <span className="text-[10px] text-muted-foreground">Preview unavailable</span>
+          <span className="text-[10px] text-muted-foreground">
+            <T>Preview unavailable</T>
+          </span>
         ) : null}
         <canvas ref={canvasRef} className={failed ? "hidden" : undefined} aria-hidden="true" />
       </ReaderPageThumbnail>
@@ -212,7 +216,7 @@ export function PdfThumbnail(props: {
         <input
           type="checkbox"
           className="scient-pdf-page-checkbox"
-          aria-label={`Select page ${props.pageNumber}`}
+          aria-label={gt("Select page {pageNumber}", { pageNumber: props.pageNumber })}
           checked={props.selected}
           disabled={props.disabled}
           onChange={(event) => {

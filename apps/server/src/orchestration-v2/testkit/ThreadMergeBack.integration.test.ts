@@ -22,6 +22,7 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { materializeCodexOwnerReload } from "./CodexReplayOwnerReload.ts";
+import { materializeCodexThreadSetup } from "./CodexReplayThreadSetup.ts";
 import {
   CODEX_MODEL_SELECTION,
   THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
@@ -430,7 +431,14 @@ describe("orchestration V2 merge-back provider replay", () => {
                   ...scenario,
                   transcript: yield* CodexOrchestratorReplayHarness.decodeTranscript(
                     materializeReplayTranscriptWorkspace(
-                      materializeCodexOwnerReload(parameterizedTranscript, 3),
+                      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+                      materializeCodexThreadSetup(
+                        materializeCodexOwnerReload(parameterizedTranscript, 3),
+                        (nativeThreadId) =>
+                          nativeThreadId === "01a0d60f-ee79-77b0-8e97-bb27c81fd026"
+                            ? "Merge-back fork"
+                            : "Merge-back source",
+                      ),
                       cwd,
                     ),
                   ),

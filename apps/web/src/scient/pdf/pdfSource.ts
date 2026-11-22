@@ -2,6 +2,7 @@ import {
   ArtifactAuthority,
   LogicalDocumentKey,
   type AttachmentPdfLocator,
+  type PdfMaterial,
   PdfSourceDescriptor,
   type PdfSourceActions,
   type PdfSourceDescriptor as PdfSourceDescriptorType,
@@ -68,6 +69,7 @@ export function workspacePdfSource(input: {
     readonly sourceId: string;
     readonly attachmentId: string;
   };
+  readonly material?: PdfMaterial;
 }): PdfSourceDescriptorType {
   return PdfSourceDescriptor.make({
     _tag: "workspace-pdf",
@@ -82,6 +84,7 @@ export function workspacePdfSource(input: {
     relativePath: input.relativePath,
     ...(input.legacyLocator ? { legacyLocator: input.legacyLocator } : {}),
     ...(input.origin ? { origin: input.origin } : {}),
+    ...(input.material ? { material: input.material } : {}),
   });
 }
 

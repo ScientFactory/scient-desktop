@@ -66,7 +66,7 @@ export const ScientSkillResource = Schema.Struct({
   kind: Schema.Literals(["asset", "reference", "script", "other"]),
 });
 
-export const ScientSkillsListTool = Tool.make("scient_skills_list", {
+const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
     "List the Scient skills available this turn, or search their names and descriptions by keyword; a miss returns a browse page. Your provider's own skills are not included. Results are summaries: load a skill with scient_skill_load before you follow it. Unless scope.includesAllSkills is true, results are partial, and a pending or incomplete scope does not mean there are none. Continue with nextOffset.",
   parameters: ScientSkillListInput,
@@ -96,7 +96,9 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, skillOperation("skills.list"));
+  .annotate(ScientOperation, skillOperation("skills.list"))
+  // Claude Code defers MCP tools behind ToolSearch; these two find and load skills.
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   description:
@@ -115,7 +117,9 @@ export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, skillOperation("skills.load"));
+  .annotate(ScientOperation, skillOperation("skills.load"))
+  // Claude Code defers MCP tools behind ToolSearch; these two find and load skills.
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource", {
   description:

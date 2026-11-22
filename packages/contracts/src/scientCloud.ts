@@ -13,6 +13,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { SignedAssetRelativeUrl } from "./scient/signedAssetPath.ts";
 import { Sha256Digest } from "./scientConversationExport.ts";
 
 /**
@@ -194,7 +195,7 @@ export const ScientCloudShareBlob = Schema.Struct({
   name: ShortText(255),
   mimeType: ShortText(100),
   /** Signed, expiring asset path resolved against the environment's HTTP base URL. */
-  relativeUrl: ShortText(4_096),
+  relativeUrl: SignedAssetRelativeUrl(4_096),
 });
 export type ScientCloudShareBlob = typeof ScientCloudShareBlob.Type;
 

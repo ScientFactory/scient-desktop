@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 import { InfoIcon } from "lucide-react";
 
@@ -7,6 +8,7 @@ import { useProviderSettingsLifecyclePresentation } from "./providerSettingsLife
 
 /** A small info button beside a failed status; hovering or clicking it shows why. */
 export function ProviderFailureInfo(props: { readonly title: string; readonly detail: string }) {
+  const gt = useGT();
   return (
     <Popover>
       <PopoverTrigger
@@ -17,7 +19,7 @@ export function ProviderFailureInfo(props: { readonly title: string; readonly de
             type="button"
             size="icon-tiny"
             variant="ghost-muted"
-            aria-label={`${props.title}: show why`}
+            aria-label={gt("{title}: show why", { title: props.title })}
             className="flex-none self-center"
           />
         }
@@ -47,8 +49,9 @@ export function ProviderSetupFailureLine(props: {
     props.provider,
     props.displayName,
   );
+  const gt = useGT();
   if (presentation.kind !== "failed" || !presentation.detail) return null;
-  const title = presentation.statusLabel ?? "Setup failed";
+  const title = presentation.statusLabel ?? gt("Setup failed", { $context: "provider status" });
   return (
     <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
       <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />

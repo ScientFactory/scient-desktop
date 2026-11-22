@@ -37,7 +37,10 @@ MATLAB helper publication is a separate manual dispatch. It needs a dedicated li
 ARM64 runner and tests each supported release: R2024b, R2025a, R2025b, R2026a. Each matrix entry
 checks that the configured executable really belongs to that release. A missing runner, license,
 installation, or failed/skipped matrix prevents helper promotion. Testing only R2026a locally
-does not qualify the full release matrix.
+does not qualify the full release matrix. The R2026a entry also runs the batch MATLAB adapter
+(`MatlabAdapter.test.ts`, the route a `.m` run takes) and fails unless exactly that case ran.
+`ConcurrentCompute.integration.test.ts`, which runs Python and MATLAB sessions side by side, is
+local only; its header has the command.
 
 ## Promotion and withdrawal
 

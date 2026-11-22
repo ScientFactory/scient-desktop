@@ -1,33 +1,30 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
+import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { makeOperationAnalytics, observeAnalyticsEffect } from "./OperationAnalytics.ts";
 
 function fixture() {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
     flush: Effect.void,
   });
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+  const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      status = { available: true, consent };
-      epoch += 1;
+      availability.available = next;
     });
-  return { events, service, setConsent };
+  return { events, service, availability, setAvailable };
 }
 
 describe("semantic operation analytics", () => {
-  it.effect("runs the product operation exactly once when analytics preflight defects", () => {
+  it.effect("runs the product operation exactly once when recording defects", () => {
     const f = fixture();
     let executions = 0;
     return Effect.gen(function* () {
@@ -42,8 +39,9 @@ describe("semantic operation analytics", () => {
     }).pipe(
       Effect.provideService(AnalyticsService, {
         ...f.service,
-        status: Effect.die("observer unavailable"),
+        record: () => Effect.die("observer unavailable"),
       }),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
     );
   });
   it.effect("observes sign-out completion and failure without account details", () => {
@@ -72,39 +70,37 @@ describe("semantic operation analytics", () => {
       expect(f.events.flatMap((event) => Object.values(event.properties ?? {}))).not.toContain(
         "private account detail",
       );
-    }).pipe(Effect.provideService(AnalyticsService, f.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
   });
-  it.effect(
-    "records one terminal outcome, ignores restored history and clears at consent boundaries",
-    () => {
-      const f = fixture();
-      return Effect.gen(function* () {
-        const observe = yield* makeOperationAnalytics;
-        const operation = {
-          key: "opaque-id",
-          operationKind: "compute-run",
-          startedAt: 1000,
-        } as const;
-        yield* observe({ ...operation, key: "old", status: "completed", finishedAt: 2000 });
-        yield* observe({ ...operation, status: "active" });
-        yield* observe({ ...operation, status: "active" });
-        yield* observe({ ...operation, status: "cancelled", finishedAt: 2000 });
-        yield* observe({ ...operation, status: "cancelled", finishedAt: 2000 });
-        expect(f.events.map((event) => event.name)).toEqual([
-          "scient.operation.started",
-          "scient.operation.cancelled",
-        ]);
-        expect(f.events.flatMap((event) => Object.values(event.properties ?? {}))).not.toContain(
-          "opaque-id",
-        );
-        yield* observe({ ...operation, key: "consent", status: "active" });
-        yield* f.setConsent("off");
-        yield* f.setConsent("product");
-        yield* observe({ ...operation, key: "consent", status: "completed" });
-        expect(f.events).toHaveLength(3);
-      }).pipe(Effect.provideService(AnalyticsService, f.service));
-    },
-  );
+  it.effect("records one terminal outcome and ignores restored history", () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const observe = yield* makeOperationAnalytics;
+      const operation = {
+        key: "opaque-id",
+        operationKind: "compute-run",
+        startedAt: 1000,
+      } as const;
+      yield* observe({ ...operation, key: "old", status: "completed", finishedAt: 2000 });
+      yield* observe({ ...operation, status: "active" });
+      yield* observe({ ...operation, status: "active" });
+      yield* observe({ ...operation, status: "cancelled", finishedAt: 2000 });
+      yield* observe({ ...operation, status: "cancelled", finishedAt: 2000 });
+      expect(f.events.map((event) => event.name)).toEqual([
+        "scient.operation.started",
+        "scient.operation.cancelled",
+      ]);
+      expect(f.events.flatMap((event) => Object.values(event.properties ?? {}))).not.toContain(
+        "opaque-id",
+      );
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
+  });
 
   it.effect("does not change the operation's result or error or capture its contents", () => {
     const f = fixture();
@@ -130,12 +126,15 @@ describe("semantic operation analytics", () => {
         "app.health",
         "app.health",
       ]);
-      yield* f.setConsent("off");
+      yield* f.setAvailable(false);
       yield* observeAnalyticsEffect(Effect.succeed(result), {
         kind: "pdf-export",
         trigger: "agent",
       });
       expect(f.events).toHaveLength(4);
-    }).pipe(Effect.provideService(AnalyticsService, f.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
   });
 });

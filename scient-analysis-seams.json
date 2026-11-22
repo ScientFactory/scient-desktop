@@ -5,6 +5,8 @@
     "apps/server/src/mcp/toolkits/compute",
     "apps/server/src/scient/analysis",
     "apps/server/src/scient/compute",
+    "apps/server/src/scient/results",
+    "apps/web/src/scient/results",
     "apps/server/src/scient/execution",
     "apps/server/src/scient/latex",
     "apps/web/src/scient/analysis",
@@ -211,7 +213,7 @@
     },
     {
       "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
-      "anchor": "MEDIA_FAILURE_COPY",
+      "anchor": "mediaFailureCopy(kind, messages)",
       "purpose": "Use Scient's shared plain-language copy for attachment preview failures."
     },
     {
@@ -321,7 +323,7 @@
     },
     {
       "path": "apps/web/src/components/files/PreviewImageContent.tsx",
-      "anchor": "MEDIA_FAILURE_COPY.image",
+      "anchor": "mediaFailureCopy(\"image\", messages)",
       "purpose": "The shared image preview uses Scient failure copy and chrome while retaining the inherited image rendering and zoom owner. A TIFF draws the plane Scient's TIFF preview decoded and shows its value range and plane stepper."
     },
     {
@@ -343,6 +345,11 @@
       "path": "apps/web/src/routes/__root.tsx",
       "anchor": "ComputeQuitGuardReport",
       "purpose": "Keep the desktop app told how many runs Quit would stop, so Quit can ask first."
+    },
+    {
+      "path": "vite.config.ts",
+      "anchor": "const SCIENT_ENGLISH_ONLY_FILES = [",
+      "purpose": "Scient-owned screens, including the static asset image surface, stay outside T3's untranslated-copy lint until they are translated."
     }
   ],
   "scientMounts": [
@@ -375,6 +382,11 @@
       "path": "apps/server/src/scient/extensions/connectors/LocalConnectorProcesses.ts",
       "anchor": "import { DuplexProcess } from \"../../execution/LocalDuplexProcess.ts\";",
       "purpose": "Start each local connector session as an owned process tree, stopped with it."
+    },
+    {
+      "path": "apps/server/src/server.testkit.ts",
+      "anchor": "export type ScientRpcServerTestHarness = {",
+      "purpose": "Give the registered analysis, compute and Markdown RPC tests the shared server router harness."
     }
   ]
 }

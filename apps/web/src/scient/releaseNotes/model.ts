@@ -37,7 +37,6 @@ export type ScientReleaseNotesDecision =
   | {
       readonly kind: "show";
       readonly current: ScientReleaseNote;
-      readonly history: readonly ScientReleaseNote[];
       readonly nextLastHandledVersion: string;
     }
   | {
@@ -77,9 +76,6 @@ export function resolveScientReleaseNotesDecision({
   return {
     kind: "show",
     current,
-    history: sortScientReleaseNotes(
-      catalog.filter((note) => compareSemverVersions(note.version, currentVersion) <= 0),
-    ),
     nextLastHandledVersion: currentVersion,
   };
 }

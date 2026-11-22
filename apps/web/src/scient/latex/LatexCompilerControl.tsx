@@ -17,6 +17,7 @@ import {
   isLatexCompilerUnavailable,
   type LatexCompilerChoice,
 } from "./latexCompiler";
+import { T, useGT, useMessages, Var } from "gt-react";
 
 export interface LatexCompilerControlProps {
   source: string | null;
@@ -31,6 +32,8 @@ export interface LatexCompilerControlProps {
 }
 
 export function LatexCompilerMenuItems(props: LatexCompilerControlProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const compiler = props.source === null ? null : declaredLatexCompiler(props.source);
   const declaration = props.source === null ? null : latexCompilerDeclaration(props.source);
   const selected =
@@ -41,19 +44,27 @@ export function LatexCompilerMenuItems(props: LatexCompilerControlProps) {
     <DropdownMenuGroup>
       {props.blockedReason ? <DropdownMenuLabel>{props.blockedReason}</DropdownMenuLabel> : null}
       {selected === "source-declaration" ? (
-        <DropdownMenuLabel>Source declaration: {declaration}</DropdownMenuLabel>
+        <DropdownMenuLabel>
+          <T>
+            Source declaration: <Var>{declaration}</Var>
+          </T>
+        </DropdownMenuLabel>
       ) : null}
       {props.capabilityError && !props.offline ? (
-        <DropdownMenuLabel>Availability not checked: {props.capabilityError}</DropdownMenuLabel>
+        <DropdownMenuLabel>
+          <T>
+            Availability not checked: <Var>{props.capabilityError}</Var>
+          </T>
+        </DropdownMenuLabel>
       ) : null}
       <DropdownMenuRadioGroup value={selected}>
         {LATEX_COMPILER_CHOICES.map((choice) => {
           const availability =
             choice.id === "automatic"
               ? props.offline
-                ? "Offline"
+                ? gt("Offline")
                 : null
-              : latexCompilerAvailabilityLabel(props.report, choice.id, props.offline);
+              : latexCompilerAvailabilityLabel(props.report, choice.id, props.offline, messages);
           const unavailable =
             choice.id !== "automatic" && isLatexCompilerUnavailable(props.report, choice.id);
           return (
@@ -66,15 +77,23 @@ export function LatexCompilerMenuItems(props: LatexCompilerControlProps) {
               onClick={() => props.onChange(choice.id)}
             >
               <span>
-                {choice.name}
-                {availability ? ` (${availability})` : ""}
+                {availability
+                  ? gt("{compiler} ({availability})", {
+                      compiler: messages(choice.name),
+                      availability,
+                    })
+                  : messages(choice.name)}
               </span>
             </DockCommandRadioItem>
           );
         })}
       </DropdownMenuRadioGroup>
       {props.onOpenRoot ? (
-        <DockCommandItem onClick={props.onOpenRoot}>Open root: {props.rootPath}</DockCommandItem>
+        <DockCommandItem onClick={props.onOpenRoot}>
+          <T>
+            Open root: <Var>{props.rootPath}</Var>
+          </T>
+        </DockCommandItem>
       ) : null}
     </DropdownMenuGroup>
   );
@@ -85,7 +104,9 @@ export function LatexCompilerMenu(props: LatexCompilerControlProps & { plain?: b
     <MenuSub>
       <MenuSubTrigger>
         {props.plain ? null : <Cog />}
-        <span>Compiler</span>
+        <span>
+          <T>Compiler</T>
+        </span>
       </MenuSubTrigger>
       <MenuSubPopup className="w-max min-w-48 max-w-80">
         <LatexCompilerMenuItems {...props} />

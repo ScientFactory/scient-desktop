@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { CustomMathActionDialog } from "./CustomMathActionDialog";
 import type { CustomMathCommand } from "./customMath";
 import { ShortcutReference } from "./ShortcutReference";
@@ -53,6 +54,8 @@ export function AuthoringKeybindingsSettings({
   readonly query?: string;
   readonly appBindings?: ResolvedKeybindingsConfig;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const snapshot = useSyncExternalStore(
     subscribeKeyboardPreferences,
     getKeyboardPreferences,
@@ -102,7 +105,15 @@ export function AuthoringKeybindingsSettings({
     (command) =>
       (command.scope === scope ||
         (scope === "writing" && ["latex", "math", "table"].includes(command.scope))) &&
-      (command.id + " " + command.label + " " + (keysByCommand.get(command.id)?.join(" ") ?? ""))
+      (
+        command.id +
+        " " +
+        command.label +
+        " " +
+        messages(command.label) +
+        " " +
+        (keysByCommand.get(command.id)?.join(" ") ?? "")
+      )
         .toLowerCase()
         .includes(query.toLowerCase().replace(/^\\/u, "")),
   );
@@ -112,7 +123,7 @@ export function AuthoringKeybindingsSettings({
       setError("");
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Shortcuts were not saved.");
+      setError(cause instanceof Error ? cause.message : gt("Shortcuts were not saved."));
       return false;
     }
   };
@@ -177,10 +188,10 @@ export function AuthoringKeybindingsSettings({
       data-keybinding-capture=""
       autoFocus
       readOnly
-      aria-label={"Shortcut for " + label}
-      title="Press successive keys for a sequence; Escape cancels"
+      aria-label={gt("Shortcut for {command}", { command: label })}
+      title={gt("Press successive keys for a sequence; Escape cancels")}
       value={activeEdit.captured ? activeEdit.draft : ""}
-      placeholder="Press shortcut"
+      placeholder={gt("Press shortcut")}
       font="mono"
       size="sm"
       className="w-44"
@@ -215,13 +226,13 @@ export function AuthoringKeybindingsSettings({
         {scope === "math" ? (
           <Popover>
             <PopoverTrigger render={<Button size="xs" variant="ghost-muted" className="group" />}>
-              Math input behavior and preset
+              <T>Math input behavior and preset</T>
               <ChevronDownIcon className="size-3.5 transition-transform group-aria-expanded:rotate-180" />
             </PopoverTrigger>
             <PopoverPopup
               ref={setMathOptionsCard}
               align="start"
-              aria-label="Math input behavior and preset"
+              aria-label={gt("Math input behavior and preset")}
               className="w-[34rem] max-w-[calc(100vw-2rem)]"
               padding="none"
               side="bottom"
@@ -231,7 +242,7 @@ export function AuthoringKeybindingsSettings({
                   <div>
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
-                      title="Math preset"
+                      title={gt("Math preset")}
                       control={
                         <Select
                           value={snapshot.preferences.mathPreset}
@@ -242,10 +253,12 @@ export function AuthoringKeybindingsSettings({
                           <SelectTrigger
                             size="sm"
                             className="w-44 max-w-full"
-                            aria-label="Math shortcut preset"
+                            aria-label={gt("Math shortcut preset")}
                           >
                             <SelectValue>
-                              {snapshot.preferences.mathPreset === "lyx" ? "LyX" : "Minimal"}
+                              {snapshot.preferences.mathPreset === "lyx"
+                                ? "LyX"
+                                : gt("Minimal", { $context: "math shortcut preset" })}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent
@@ -254,9 +267,11 @@ export function AuthoringKeybindingsSettings({
                             collisionBoundary={mathOptionsCard ?? undefined}
                             className="max-w-(--available-width)"
                           >
-                            <SelectItem value="lyx">Supported LyX-style sequences</SelectItem>
+                            <SelectItem value="lyx">
+                              <T>Supported LyX-style sequences</T>
+                            </SelectItem>
                             <SelectItem value="minimal">
-                              Minimal: palette and equation insertion
+                              <T>Minimal: palette and equation insertion</T>
                             </SelectItem>
                           </SelectContent>
                         </Select>
@@ -264,7 +279,7 @@ export function AuthoringKeybindingsSettings({
                     />
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
-                      title="Command completion"
+                      title={gt("Command completion")}
                       control={
                         <Select
                           value={snapshot.preferences.completion}
@@ -275,7 +290,7 @@ export function AuthoringKeybindingsSettings({
                           <SelectTrigger
                             size="sm"
                             className="w-full sm:w-40"
-                            aria-label="Math command completion"
+                            aria-label={gt("Math command completion")}
                           >
                             <SelectValue />
                           </SelectTrigger>
@@ -285,9 +300,15 @@ export function AuthoringKeybindingsSettings({
                             collisionBoundary={mathOptionsCard ?? undefined}
                             className="max-w-(--available-width)"
                           >
-                            <SelectItem value="space-tab">Space and Tab</SelectItem>
-                            <SelectItem value="tab">Tab only</SelectItem>
-                            <SelectItem value="off">Off</SelectItem>
+                            <SelectItem value="space-tab">
+                              <T>Space and Tab</T>
+                            </SelectItem>
+                            <SelectItem value="tab">
+                              <T>Tab only</T>
+                            </SelectItem>
+                            <SelectItem value="off">
+                              <T context="command completion is off">Off</T>
+                            </SelectItem>
                           </SelectContent>
                         </Select>
                       }
@@ -296,10 +317,10 @@ export function AuthoringKeybindingsSettings({
                   <div className="border-t border-border/40 sm:border-t-0 sm:border-l sm:pl-3">
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
-                      title="Shift+Enter adds a matrix row"
+                      title={gt("Shift+Enter adds a matrix row")}
                       control={
                         <Switch
-                          aria-label="Shift+Enter adds a matrix row"
+                          aria-label={gt("Shift+Enter adds a matrix row")}
                           checked={snapshot.preferences.matrixEnter}
                           onCheckedChange={(checked) => update({ matrixEnter: checked })}
                         />
@@ -309,8 +330,10 @@ export function AuthoringKeybindingsSettings({
                   <div className="border-t border-border/40 sm:col-span-2">
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
-                      title="Sequence timeout"
-                      description="Applies to Write, Tables, Markdown, Math, and PDF shortcuts."
+                      title={gt("Sequence timeout")}
+                      description={gt(
+                        "Applies to Write, Tables, Markdown, Math, and PDF shortcuts.",
+                      )}
                       control={
                         <Select
                           value={String(snapshot.preferences.sequenceTimeoutMs)}
@@ -319,7 +342,7 @@ export function AuthoringKeybindingsSettings({
                           <SelectTrigger
                             size="sm"
                             className="w-full sm:w-32"
-                            aria-label="Shortcut sequence timeout"
+                            aria-label={gt("Shortcut sequence timeout")}
                           >
                             <SelectValue />
                           </SelectTrigger>
@@ -340,7 +363,7 @@ export function AuthoringKeybindingsSettings({
                               .sort((a, b) => a - b)
                               .map((ms) => (
                                 <SelectItem key={ms} value={String(ms)}>
-                                  {ms / 1000} seconds
+                                  {gt("{seconds} seconds", { seconds: ms / 1000 })}
                                 </SelectItem>
                               ))}
                           </SelectContent>
@@ -358,12 +381,12 @@ export function AuthoringKeybindingsSettings({
         <div
           className="flex flex-wrap items-center justify-end gap-1"
           role="group"
-          aria-label="Document shortcut profile"
+          aria-label={gt("Document shortcut profile")}
         >
           <input
             ref={importInput}
             hidden
-            aria-label="Import document shortcuts file"
+            aria-label={gt("Import document shortcuts file")}
             type="file"
             accept=".json,application/json"
             onChange={(event) => {
@@ -372,7 +395,7 @@ export function AuthoringKeybindingsSettings({
               if (!file) return;
               const expected = snapshot;
               if (file.size > 1000000) {
-                setError("Shortcut file is too large.");
+                setError(gt("Shortcut file is too large."));
                 return;
               }
               void file
@@ -381,24 +404,26 @@ export function AuthoringKeybindingsSettings({
                   const imported = importKeyboardPreferences(text);
                   if (
                     window.confirm(
-                      "Replace Write, Tables, Markdown, Math, and PDF shortcuts, custom math actions, and math behavior with this file? Application keybindings will not change.",
+                      gt(
+                        "Replace Write, Tables, Markdown, Math, and PDF shortcuts, custom math actions, and math behavior with this file? Application keybindings will not change.",
+                      ),
                     )
                   )
                     save(imported, expected);
                 })
                 .catch((cause) =>
-                  setError(cause instanceof Error ? cause.message : "Import failed."),
+                  setError(cause instanceof Error ? cause.message : gt("Import failed.")),
                 );
             }}
           />
           {scope === "math" || scope === "writing" ? (
             <Button size="xs" variant="ghost-muted" onClick={() => setCustomAction(null)}>
-              New math action
+              <T>New math action</T>
             </Button>
           ) : null}
           <ShortcutReference appBindings={appBindings} />
           <Button size="xs" variant="ghost-muted" onClick={() => importInput.current?.click()}>
-            Import
+            <T context="verb, imports a shortcuts file">Import</T>
           </Button>
           <Button
             size="xs"
@@ -416,29 +441,33 @@ export function AuthoringKeybindingsSettings({
               setTimeout(() => URL.revokeObjectURL(url), 0);
             }}
           >
-            Export
+            <T context="verb, exports the shortcuts">Export</T>
           </Button>
           <Popover open={restoreOpen} onOpenChange={setRestoreOpen}>
             <PopoverTrigger render={<Button size="xs" variant="ghost-muted" />}>
-              Restore defaults
+              <T>Restore defaults</T>
             </PopoverTrigger>
             <PopoverPopup
               align="end"
-              aria-label="Restore document shortcut defaults"
+              aria-label={gt("Restore document shortcut defaults")}
               className="w-80 max-w-[calc(100vw-2rem)]"
               side="bottom"
             >
               <div className="space-y-3">
                 <div className="space-y-1">
-                  <p className="text-sm font-medium">Restore defaults?</p>
+                  <p className="text-sm font-medium">
+                    <T>Restore defaults?</T>
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    Reset Write, Tables, Markdown, Math, and PDF shortcuts and Math input settings,
-                    and remove custom math actions. General shortcuts stay unchanged.
+                    <T>
+                      Reset Write, Tables, Markdown, Math, and PDF shortcuts and Math input
+                      settings, and remove custom math actions. General shortcuts stay unchanged.
+                    </T>
                   </p>
                 </div>
                 <div className="flex justify-end gap-1">
                   <Button size="xs" variant="ghost-muted" onClick={() => setRestoreOpen(false)}>
-                    Cancel
+                    <T>Cancel</T>
                   </Button>
                   <Button
                     size="xs"
@@ -447,7 +476,7 @@ export function AuthoringKeybindingsSettings({
                       if (save(DEFAULT_KEYBOARD_PREFERENCES)) setRestoreOpen(false);
                     }}
                   >
-                    Restore
+                    <T context="verb, restores the defaults">Restore</T>
                   </Button>
                 </div>
               </div>
@@ -460,8 +489,10 @@ export function AuthoringKeybindingsSettings({
       ) : null}
       {snapshot.migrated ? (
         <p role="status" className="px-3 py-1 text-xs text-muted-foreground sm:px-4">
-          Legacy math shortcuts loaded. Your next save writes the shared format and keeps the
-          original data.
+          <T>
+            Legacy math shortcuts loaded. Your next save writes the shared format and keeps the
+            original data.
+          </T>
         </p>
       ) : null}
       {snapshot.error || error ? (
@@ -491,19 +522,21 @@ export function AuthoringKeybindingsSettings({
               className={SHORTCUT_ROW_CLASS}
               title={
                 <span className="flex items-center gap-2">
-                  {command.label}
+                  {messages(command.label)}
                   {scope === "writing" ? (
                     <span className="text-xs text-muted-foreground">
                       {command.scope === "latex"
-                        ? "Write"
+                        ? gt("Write", { $context: "shortcut section for writing documents" })
                         : command.scope === "table"
-                          ? "Table"
-                          : "Math"}
+                          ? gt("Table", { $context: "shortcut section for tables" })
+                          : gt("Math")}
                     </span>
                   ) : null}
                   {customized ? (
                     <Badge variant="outline" size="sm">
-                      {disabled ? "Disabled" : "Custom"}
+                      {disabled
+                        ? gt("Disabled", { $context: "shortcut is turned off" })
+                        : gt("Custom", { $context: "shortcut was changed from the default" })}
                     </Badge>
                   ) : null}
                 </span>
@@ -512,10 +545,10 @@ export function AuthoringKeybindingsSettings({
                 hasOverlap || reserved ? (
                   <span role="status">
                     {hasOverlap
-                      ? "Also used by an application command; this shortcut takes priority only in its focused document. "
+                      ? `${gt("Also used by an application command; this shortcut takes priority only in its focused document.")} `
                       : ""}
                     {reserved
-                      ? "This shortcut may be reserved by the operating system or input method."
+                      ? gt("This shortcut may be reserved by the operating system or input method.")
                       : ""}
                   </span>
                 ) : undefined
@@ -527,7 +560,7 @@ export function AuthoringKeybindingsSettings({
                 >
                   {activeEdit?.captured && activeEdit.draft.trim() !== activeEdit.original ? (
                     <Button size="sm" onClick={() => saveEditing(keys)}>
-                      Save
+                      <T context="saves the shortcut">Save</T>
                     </Button>
                   ) : null}
                   {keys.length > 0 || customized || custom ? (
@@ -537,7 +570,9 @@ export function AuthoringKeybindingsSettings({
                           <Button
                             size="icon-sm"
                             variant="ghost-muted-row"
-                            aria-label={"Actions for " + command.label}
+                            aria-label={gt("Actions for {command}", {
+                              command: messages(command.label),
+                            })}
                           />
                         }
                       >
@@ -550,7 +585,7 @@ export function AuthoringKeybindingsSettings({
                         {custom ? (
                           <>
                             <MenuItem onClick={() => setCustomAction(custom)}>
-                              Edit expression
+                              <T>Edit expression</T>
                             </MenuItem>
                             <MenuItem
                               onClick={() => {
@@ -564,12 +599,14 @@ export function AuthoringKeybindingsSettings({
                                 });
                               }}
                             >
-                              Delete math action
+                              <T>Delete math action</T>
                             </MenuItem>
                           </>
                         ) : null}
                         {activeEdit && activeEdit.index < keys.length ? (
-                          <MenuItem onClick={() => removeEditing(keys)}>Remove shortcut</MenuItem>
+                          <MenuItem onClick={() => removeEditing(keys)}>
+                            <T>Remove shortcut</T>
+                          </MenuItem>
                         ) : null}
                         {keys.length > 0 ? (
                           <MenuItem
@@ -582,12 +619,12 @@ export function AuthoringKeybindingsSettings({
                               })
                             }
                           >
-                            Disable
+                            <T context="turn the shortcut off">Disable</T>
                           </MenuItem>
                         ) : null}
                         {customized ? (
                           <MenuItem onClick={() => resetCommand(command.id)}>
-                            Reset to default
+                            <T>Reset to default</T>
                           </MenuItem>
                         ) : null}
                       </MenuPopup>
@@ -595,12 +632,14 @@ export function AuthoringKeybindingsSettings({
                   ) : null}
                   {keys.length > 0 ? (
                     activeEdit?.index === keys.length ? (
-                      captureInput(command.id, command.label, keys.length, activeEdit)
+                      captureInput(command.id, messages(command.label), keys.length, activeEdit)
                     ) : (
                       <Button
                         size="icon-xs"
                         variant="ghost-muted-row"
-                        aria-label={"Add shortcut for " + command.label}
+                        aria-label={gt("Add shortcut for {command}", {
+                          command: messages(command.label),
+                        })}
                         onClick={() => beginEditing(command.id, keys.length, "")}
                       >
                         <PlusIcon />
@@ -610,14 +649,17 @@ export function AuthoringKeybindingsSettings({
                   {keyEntries.map(({ key, index, identity }) =>
                     activeEdit?.index === index ? (
                       <Fragment key={identity}>
-                        {captureInput(command.id, command.label, index, activeEdit)}
+                        {captureInput(command.id, messages(command.label), index, activeEdit)}
                       </Fragment>
                     ) : (
                       <button
                         key={identity}
                         type="button"
                         className={SHORTCUT_PILL_BUTTON_CLASS}
-                        aria-label={"Edit " + command.id + ": " + labelKeys(key, mac)}
+                        aria-label={gt("Edit {command}: {keys}", {
+                          command: command.id,
+                          keys: labelKeys(key, mac),
+                        })}
                         onClick={() => beginEditing(command.id, index, key)}
                       >
                         <ShortcutKeys value={key} />
@@ -626,15 +668,17 @@ export function AuthoringKeybindingsSettings({
                   )}
                   {keys.length === 0 ? (
                     activeEdit ? (
-                      captureInput(command.id, command.label, 0, activeEdit)
+                      captureInput(command.id, messages(command.label), 0, activeEdit)
                     ) : (
                       <Button
                         size="xs"
                         variant="ghost-muted"
-                        aria-label={"Edit " + command.id}
+                        aria-label={gt("Edit {command}", { command: command.id })}
                         onClick={() => beginEditing(command.id, 0, "")}
                       >
-                        {disabled ? "Disabled" : "Assign shortcut"}
+                        {disabled
+                          ? gt("Disabled", { $context: "shortcut is turned off" })
+                          : gt("Assign shortcut")}
                       </Button>
                     )
                   ) : null}
@@ -645,7 +689,7 @@ export function AuthoringKeybindingsSettings({
         })}
         {visible.length === 0 ? (
           <p className="px-4 py-12 text-center text-sm text-muted-foreground">
-            No matching document commands.
+            <T>No matching document commands.</T>
           </p>
         ) : null}
       </div>

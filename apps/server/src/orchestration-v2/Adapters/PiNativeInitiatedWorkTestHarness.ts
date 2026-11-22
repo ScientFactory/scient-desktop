@@ -35,6 +35,7 @@ import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderInstances from "../../provider/ProviderInstanceRegistry.ts";
 import { OrchestratorProviderWorkDeferredError, OrchestratorV2 } from "../Orchestrator.ts";
@@ -238,6 +239,12 @@ export default function(pi) {
       const database = probe?.databaseLayer?.(h) ?? SqlitePersistenceMemory;
       const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
       const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+        // SCIENT-FORK: these threads track no other folders.
+        Layer.provide(
+          Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+            forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+          }),
+        ),
         Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
         Layer.provide(
           Layer.mergeAll(
@@ -448,7 +455,7 @@ export default function(pi) {
                     (scenario === "captured" || barrier) &&
                     !heldCapture &&
                     input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                    input.args.includes("fetch") &&
+                    input.args.includes("update-ref") &&
                     input.args.some((arg) => arg.endsWith(barrier ? "/ordinal/1" : "/ordinal/2"))
                   ) {
                     heldCapture = true;

@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
-import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import { RunId, TurnItemId } from "@t3tools/contracts";
 import {
   dismissThreadErrorBannerForSession,
-  getThreadErrorBannerKey,
   getTruncationNoticeKey,
   isThreadErrorBannerDismissedForSession,
   isTokenLimitError,
@@ -41,16 +39,5 @@ describe("Scient thread error notices", () => {
         getTruncationNoticeKey("other-thread", items, "one", "completed"),
       ),
     ).toBe(false);
-  });
-  it("scopes token-limit dismissal to its occurrence, not every future failure", () => {
-    const first = getThreadErrorBannerKey("env:limits", MODEL_TOKEN_LIMIT_MESSAGE, "turn-1");
-    dismissThreadErrorBannerForSession(first);
-    expect(isThreadErrorBannerDismissedForSession(first)).toBe(true);
-    const next = getThreadErrorBannerKey("env:limits", MODEL_TOKEN_LIMIT_MESSAGE, "turn-2");
-    expect(isThreadErrorBannerDismissedForSession(next)).toBe(false);
-    expect(getThreadErrorBannerKey("env:limits", null, "turn-2")).toBeNull();
-    expect(getThreadErrorBannerKey("env:limits", "Other error", "turn-1")).toBe(
-      getThreadErrorBannerKey("env:limits", "Other error", "turn-2"),
-    );
   });
 });

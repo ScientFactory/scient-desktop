@@ -50,6 +50,10 @@ qualification checks exact revision, read-only MSP initialization, `model/list`,
 close, activation and removal, plus repair in qualify-only runs. These checks do not verify authentication
 or account entitlement; private filesystem paths alone do not isolate OS stores.
 Muse revisions compare numerically (`R10` follows `R9`), never lexically.
+Contract 2 raises Muse's download limit from the shared 512 MiB to 1 GiB, because Muse
+1.4.24's Windows executables are 532 MiB (arm64) and 578 MiB (x64). The app refuses a larger
+artifact when the catalog offers it and again while downloading. Contract 1 remains
+historical, so older Scient builds keep the Muse they can download.
 
 When a provider's new releases require changed extraction or execution policy,
 advance only that family's revision and list the previously published revision
@@ -327,7 +331,7 @@ Cursor's complete 2026.09.02 Unix packages expand to 511–570 MiB, so its
 app-owned tar budget is 768 MiB. Windows retains its 384 MiB ZIP budget; both
 remain capped at 768 entries. Do not remove bundled executables to fit an older
 budget or increase the shared defaults. The extractor permits an explicitly
-reviewed budget up to 768 MiB independently of its unchanged 512 MiB download
+reviewed budget up to 768 MiB independently of the 512 MiB default download
 ceiling and default expansion budget. Native probes must finish closing
 before activation or failure cleanup moves the payload.
 

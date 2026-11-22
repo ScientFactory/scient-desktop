@@ -75,6 +75,9 @@ export const ServerProviderAuth = Schema.Struct({
   workspaceId: Schema.optional(TrimmedNonEmptyString),
   /** Origin of the custom endpoint the instance sends its requests to. */
   endpoint: Schema.optional(TrimmedNonEmptyString),
+  // SCIENT-FORK:START — where the custom endpoint was set, so Providers can point to it.
+  endpointSource: Schema.optional(Schema.Literals(["claude-settings", "environment"])),
+  // SCIENT-FORK:END
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -103,6 +106,14 @@ export const ServerProviderModel = Schema.Struct({
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
+
+/** A backend a provider's models run on, such as one of fx's. */
+export const ServerProviderSubProvider = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  /** Why none of its models can run now, such as a signed-out backend. */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderSubProvider = typeof ServerProviderSubProvider.Type;
 
 export const ServerProviderUpdateRequiredModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
@@ -345,6 +356,10 @@ export const ServerProvider = Schema.Struct({
   availability: Schema.optional(ServerProviderAvailability),
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  // Pickers group `models` under these, in order, by `subProvider`.
+  subProviders: Schema.optional(Schema.Array(ServerProviderSubProvider)),
+  // Set for the one failed check that follows a ready one: pickers keep offering `models`.
+  modelsRetained: Schema.optionalKey(Schema.Boolean),
   // Kept apart from `models` so clients that predate it never offer them.
   updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
@@ -354,6 +369,19 @@ export const ServerProvider = Schema.Struct({
   // SCIENT-FORK:START — Scient Extensions native inventory.
   accountAppsAvailable: Schema.optional(Schema.Boolean),
   usesClaudePlugins: Schema.optional(Schema.Boolean),
+  /** Scient Agent loads the skills and MCP servers of Codex's installed plugins. */
+  usesCodexPlugins: Schema.optional(Schema.Boolean),
+  /**
+   * The Claude Code and Codex homes whose installed plugins this agent loads: a Claude
+   * instance's own home, and for Scient Agent the homes it reads. An install reaches an agent
+   * only through its home.
+   */
+  pluginHomes: Schema.optional(
+    Schema.Struct({
+      claude: Schema.optional(TrimmedNonEmptyString),
+      codex: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
   /** Opaque live-instance generation; replacement resets inventory. Never persisted. */
   nativeInventoryGeneration: Schema.optionalKey(TrimmedNonEmptyString),
   /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */
@@ -719,7 +747,7 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
-export const THEME_CSS_MAX_LENGTH = 50_000;
+export const THEME_CSS_MAX_LENGTH = 100_000;
 
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
@@ -745,6 +773,8 @@ export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  /** Revision of the image file published beside the theme; absent without one. */
+  background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 
@@ -777,6 +807,13 @@ export const ServerEventLoopStall = Schema.Struct({
   cpuCount: PositiveInt,
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
+
+/** The boolean `T3CODE_FEATURE_FLAGS` a server started with. Unset flags are off. */
+export const ServerFeatureFlags = Schema.Struct({
+  secretProviders: Schema.optionalKey(Schema.Boolean),
+  tanstackSource: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerFeatureFlags = typeof ServerFeatureFlags.Type;
 
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
@@ -815,6 +852,7 @@ export const ServerConfig = Schema.Struct({
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   threadFind: Schema.optionalKey(Schema.Boolean),
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
+  featureFlags: Schema.optionalKey(ServerFeatureFlags),
   /** Settings patches may carry `secretProviders`; older servers drop the key without an error. */
   secretProviderSettings: Schema.optionalKey(Schema.Boolean),
   /** Secret settings may point at a secret provider; older servers drop the reference. */
@@ -1151,6 +1189,13 @@ export class ServerSelfUpdateError extends Schema.TaggedError<ServerSelfUpdateEr
   "ServerSelfUpdateError",
   {
     reason: TrimmedNonEmptyString,
+    /** Set when the host's desktop app refused only because its build and saved tracks differ. */
+    trackMismatch: Schema.optionalKey(
+      Schema.Struct({
+        buildChannel: DesktopUpdateChannelSchema,
+        savedChannel: DesktopUpdateChannelSchema,
+      }),
+    ),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

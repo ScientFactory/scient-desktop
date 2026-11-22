@@ -5,245 +5,702 @@ export interface BuiltInSkillSource {
   readonly files: Readonly<Record<string, string>>;
 }
 
+const workspaceReadinessReview = `---
+name: workspace-readiness-review
+description: Review reproducibility and onboarding; can another researcher or agent understand this workspace, rerun its work and verify its outputs? Use improve-workspace-readiness to apply the findings. Ordinary project orientation, proofreading and release checks are other tasks.
+---
+
+# Workspace readiness review
+
+Return a prioritized review of whether the next person could pick up the requested work, with file evidence for each finding. The review is read-only: read files, documentation and saved outputs, and leave analyses, builds, installs and anything that writes to the researcher. Judge against the project's own workflow rather than a score or a folder template.
+
+Work out the project's purpose from its files and instructions, then trace one representative workflow end to end: instructions, inputs, environment, entry point, run record, output. Follow the paths and entry points the documentation names, not its headings, and give file and line evidence. Keep what is documented apart from what was actually run.
+
+For research work, look at what matters for that workflow:
+
+- where the inputs come from, their version, access conditions, licence or ethics record, and what the variables mean;
+- raw versus derived data, and anything that overwrites inputs;
+- environment versions and lockfiles, the real commands, relative paths and host requirements;
+- randomness, seeds, how splits are made and where preprocessing is fitted; flag silent choices and leakage risks and leave the analysis design to the researcher;
+- what links important tables and figures to a run and its inputs (saved notebook outputs via \`scient_notebook_read\`, Scient linked results via \`scient_results_check\`). Two files side by side don't prove one made the other.
+
+Check reported counts against the current files or tool results, keeping inputs, filtered data and the analysed sample distinct. A count that depends on randomness with no run record is unverified; mark it so, since choosing a seed and rerunning is the researcher's decision.
+
+Missing access leaves a step unverified; it doesn't show the data or an approval is absent. Read restricted data only when the requested work needs it, not to complete a checklist.
+
+Finish with the purpose, what you covered, what is already in good shape, and the findings in priority order, each with its consequence, the smallest fix and links to the files. Say what you verified and how, and what stays uncertain. If the workspace is ready for the requested work, say so. Offer to apply the fixes; applying them is a separate request.
+`;
+
 const improveWorkspaceReadiness = `---
 name: improve-workspace-readiness
-description: Apply safe changes that materially improve a workspace's clarity, organization, or agent guidance. Use when the user explicitly asks to improve readiness or apply findings from a readiness review.
+description: Apply workspace-readiness findings or improve onboarding and reproducibility guidance once the user asks for changes, including “yes, apply those findings”. Use workspace-readiness-review for a read-only assessment. Research analyses, protocols, manuscripts and application behaviour are out of scope.
 ---
 
-# Improve Workspace Readiness
+# Improve workspace readiness
 
-The goal is to improve the workspace's readiness for a capable human or agent collaborator to understand its purpose, work in it safely, reproduce its work, and verify its results, while preserving the workspace's purpose and the user's intent.
+Make the smallest supporting changes that let the next collaborator follow the real workflow, and leave the research itself exactly as it was. State the routine choices you make.
 
-Use a recent readiness review when available, but verify the relevant workspace evidence before changing it. Without a review, inspect enough to identify grounded improvements.
+Work from the agreed review and recheck its evidence; without one, trace the relevant workflow before editing. Each change answers a real gap in that workflow; style reorganisation and invented documentation requirements are out.
 
-Make only changes that materially advance this goal. Where obstacles exist, remove or reduce them through the smallest coherent changes that address the user's request. Keep documentation truthful and consistent with the workspace.
+Write instructions, paths and provenance only from what you can establish: take counts from the current files or run records, keeping inputs, filtered data and the analysed sample distinct, and link an output to a script or notebook only when a run record or other evidence does. Write unknown access, licences, ethics approvals or run history as unknown and carry on rather than stopping to ask.
 
-Workspace-readiness work must not alter the user's substantive work itself (such as application behavior or source logic, a research or study protocol, an analysis, a draft, or other core content) unless the user separately asks for that change. It may clarify supporting documentation and, when safe, improve organization or names while preserving meaning, behavior, and references. Do not reorganize, rename, remove, broadly rewrite, or change tooling merely to enforce conventions. Ask before destructive, structurally disruptive, or materially broader changes.
+Code behaviour, raw and derived data, analyses, protocols, results and the argument stay unchanged. An unseeded sample, an unclear split or a missing cohort definition is a research decision: flag it for the researcher and leave seeds and logic as they are. Call a change result-preserving only when it cannot alter results. Moves, deletions, renames and tooling changes stay within the scope the user agreed; check links and references before moving anything.
 
-This skill provides guidance only and grants no tools or authority. After making changes, verify them where practical. Report exactly what changed, where it changed, and why each change meaningfully improves readiness. Mention any important recommendation that remains unapplied.
-`;
+Check the edited instructions against the actual paths, inputs and entry points, resolving relative links from their own file, with exact case and paths that contain spaces. Documentation is tested by reading: rerunning workflows that write, installing environments or changing data is outside the job. Say which commands you only read and which you ran.
 
-const pdfAuthoring = `---
-name: pdf-authoring
-description: Create, revise, or export PDF documents in Scient. Use when the user asks to create a PDF, change an existing PDF, or export another document as PDF. Do not use when the task only involves reading or extracting information from a PDF.
----
-
-# PDF Authoring
-
-The goal is to deliver a PDF that meets the user’s requirements and accurately report what was produced and verified.
-
-## Choose a Method
-
-Honor any format or editing method the user requests. When working from an editable source, preserve its format unless the user requests conversion or conversion is required to complete the task.
-
-Choose the method based on the requested changes, available source, future editing needs, and the tools available:
-
-- For an existing PDF, use direct PDF operations when they can make the requested changes while preserving the rest of the document.
-- When authoring a document without an established source format, consider LaTeX for structured typesetting such as equations, citations, and cross-references, or HTML and CSS for browser-based layout and graphics.
-- Consider other available authoring, export, or PDF-editing tools when they better fit the task.
-
-Use the relevant dedicated skill and tools available for the selected method. Use \`latex-authoring\` for LaTeX and \`html-pdf-authoring\` for HTML-to-PDF; follow equivalent guidance for other methods when available.
-
-## Produce and Verify the PDF
-
-This skill grants no tools or authority. When the requested deliverable is a PDF, source alone is not completion: produce the actual PDF using an available build, export, or editing capability. If that cannot be completed, provide any useful work produced and clearly explain what remains.
-
-Review the output against the requirements that matter for that document, including content completeness, readable layout, relevant text fidelity and navigation, and any explicitly requested page count.
-
-Successful generation or editing does not establish visual quality. When visual review is available, inspect rendered pages of the resulting PDF. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Inspect enough of the document to support the claims you make, fix material defects you observe, and verify the updated output. If visual inspection is unavailable, say so.
-
-When reporting completion in Scient chat, provide clickable Markdown links to the final PDF and any editable source created or updated. Use the actual output path; when a tool returns \`outputPath\`, use it for that tool’s output. Wrap destinations containing spaces in angle brackets. If no PDF was produced, link any useful work created and state what remains. Briefly report what was verified and any material limitation.
-`;
-
-const htmlPdfAuthoring = `---
-name: html-pdf-authoring
-description: Create or revise HTML when it is the editable source for a PDF requested in Scient. Do not use for ordinary webpage work.
----
-
-# HTML-to-PDF Authoring
-
-Use this skill when HTML is the editable source for a requested PDF. Preserve the user's requirements and any existing source or design. Do not redesign or convert the document unless the user asks.
-
-Scient's controlled renderer blocks remote resources, so keep required document assets available within the project. If the document depends on dynamic or lazy browser content, verify that the content actually appears in the PDF.
-
-Ensure the document can paginate without clipping or large empty regions. Keep content together only when it can reasonably fit on one page. Treat an explicitly requested page count as a real output constraint. Verify it from the rendered PDF, and preserve the document's content and readability rather than padding, removing, or distorting content merely to reach the number.
-
-This skill grants no tools or authority. When \`scient_pdf_build\` is available, use it to build the project-relative HTML source into the requested project-relative PDF. If no qualified build capability is available, link the editable HTML source, state clearly that no PDF was built, and tell the user they can open the HTML in Scient and choose **Export PDF**.
-
-A successful build proves that a structurally valid PDF was produced; it does not prove visual quality. When visual review is available, inspect rendered page images or an equivalent preview of the resulting PDF, not only extracted text, page count, or metadata. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Inspect enough of the document to support the claims you make, fix material defects you observe, rebuild when appropriate, and verify the updated PDF. If visual inspection is unavailable, say so.
-
-When reporting completion in Scient chat, provide clickable Markdown links to the exact editable HTML source and the final PDF at the exact \`outputPath\` returned by the build. Wrap link destinations containing spaces in angle brackets. Report what was verified and any material property that remains unverified.
-`;
-
-const latexAuthoring = `---
-name: latex-authoring
-description: Create or modify LaTeX documents in Scient. Use when the user asks for LaTeX or a \`.tex\` file, when working in an existing LaTeX project, or when LaTeX is selected for PDF authoring.
----
-
-# LaTeX Authoring
-
-The goal is to produce maintainable LaTeX that meets the user's requirements, respects an existing project's conventions, and accurately reports what was built and verified.
-
-## Author the LaTeX
-
-Preserve an existing project's document class, engine, bibliography system, structure, and naming unless the user asks to change them.
-
-Follow the project's existing engine declarations, magic comments, and preamble choices. Do not assume that a particular engine or package is available. If the document requires one that the available build path cannot support, report that requirement instead of silently changing the document's format or design. In a multi-file project, add a \`% !TEX root\` comment to a subordinate file only when Scient needs it to identify the compiled root, and make its path relative to that file.
-
-Before reporting the source ready, make sure the document's commands, environments, and required characters are supported by its preamble and selected engine.
-
-Preserve an existing project's hyperlink configuration. When the document uses a table of contents, citations, cross-references, or URLs, verify the intended navigation after compilation.
-
-Keep \`.tex\` source files and required assets in the project. A clickable \`.tex\` link opens Scient's LaTeX Source, Split, and PDF surface and starts local compilation; a successful build displays the PDF.
-
-## Build and Verify the PDF
-
-This skill grants no tools or authority.
-
-When the user asks for a PDF and \`scient_latex_build\` is available, call it with the project-relative \`.tex\` source path and intended project-relative \`.pdf\` output path. If it returns \`in-progress\`, wait at least \`retryAfterMs\` and call it again with the same paths; do not start a parallel build. Use the completed result's paths, page count, diagnostics, and warnings as the build evidence.
-
-If direct build access is unavailable, provide a clickable Markdown link to the \`.tex\` source and state that PDF compilation was not verified. The user can open the source in Scient to use its built-in compiler. Creating or opening the source is not evidence that compilation succeeded.
-
-A completed build proves that a structurally valid PDF was produced and published; it does not prove visual quality. When visual review is available, inspect rendered pages of the resulting PDF. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Review the parts that matter for the document, such as equations, citations and references, pagination, figures, tables, and required characters. Fix material defects, rebuild when appropriate, and verify the updated PDF. If visual inspection is unavailable, say so.
-
-When reporting completion in Scient chat, provide clickable Markdown links to the exact \`sourcePath\` and \`outputPath\` returned by the completed build. If \`rootSourcePath\` differs, also link it and identify it as the compiled root. Wrap destinations containing spaces in angle brackets. Report the actual \`pageCount\`, material diagnostics or warnings, and anything that remains unverified. Automatic opening in Scient does not replace these links.
+Reread the diff for scientific changes disguised as cleanup. Reply with links to the changed files, what each change does and how you checked it, and the findings you left unapplied with the decision or evidence each needs. If no edit is justified, say so and leave the files alone.
 `;
 
 const scientSkillAuthoring = `---
 name: scient-skill-authoring
-description: Create or improve skills for Scient. Use when the user asks to design, write, review, simplify, or test a skill, or decide whether recurring work should become one.
+description: Make, write, review, shorten, improve or test a Scient skill; turn a recurring workflow into reusable agent guidance. Use connector-authoring when new service access or tools are needed. A review-only request produces findings, not an installed skill.
 ---
 
-# Scient Skill Authoring
+# Scient skill authoring
 
-The goal is to create or improve a skill that gives a capable agent the minimum missing guidance needed to perform repeatable work well, while preserving the agent's judgment, the user's intent, and Scient's authority boundaries.
+Deliver the skill the user asked for, in the home they asked for, with a description that makes it load at the right time and an honest account of how it was tested. Drafted, saved, active and actually discovered are different states; say which you reached. A review-only request ends with findings.
 
-## Understand the Work
+## Write it
 
-Begin with the work, not the skill. Understand what the user is actually trying to accomplish, inspect relevant context or examples when available, and discuss uncertainty only when it would materially change the skill's purpose, scope, safety, or expected result.
+Start from the user's real task and any example they gave. A skill earns its place when it captures know-how the agent would otherwise lack, for a task that recurs. Read \`references/writing-for-agents.md\` before drafting or reviewing; the essentials:
 
-Identify what a capable agent would otherwise be missing and what a good result would look like. Then decide whether reusable guidance would materially improve the work. If it would not, explain that clearly to the user and recommend against creating a skill, offering a better-fitting alternative when one is apparent.
+- The **description** is how an agent finds an automatic skill: the words the user would say, one trigger per distinct case, and the nearest neighbouring skill it should not be confused with. Make a skill explicit (chosen by the user) when it is a mode the user should deliberately enter.
+- The body states the **outcome**, the steps or rules that aren't obvious, and a **finish line** the agent can check for each step ("every comment answered", not "respond to the comments").
+- Say what to do rather than what not to do; use one well-known term where a sentence would do; leave out what the model already does and what tools and Scient's instructions already say. Write plain prose that keeps related actions together.
+- Move rarely needed detail into resource files and say when to read them. Link copyrighted or restricted checklists rather than reproducing them.
 
-A skill adds reusable domain context, judgment, workflow, resources, or verification to capabilities the agent already has. It does not provide tools or authority. New integrations, persistent runtimes, or privileged capabilities belong in an add-on or another capability layer. One-off work should remain an ordinary task; always-relevant workspace context or broad personal behavior may belong in instructions or preferences.
+## Save it in the right home
 
-## Write Only What Is Missing
+Use the home the user asked for. For a personal skill, read the existing one with \`scient_skill_read\` before changing it, save with \`scient_skill_save\`, and read \`status\`, \`active\` and \`message\`: a name that collides with a built-in or add-on skill is saved but withheld. For a project skill, write \`.scient/skills/<name>/SKILL.md\` in an initialized Scient project, with the frontmatter \`name\` matching the folder; the folder holds \`SKILL.md\` and its resources, without a \`scient.skill.json\`, and unrelated folders stay as they are. Whether a skill is on, and whether it runs automatically or only when chosen, are Settings choices, not frontmatter.
 
-Give the skill a focused purpose. Its description is a routing contract: say what it helps accomplish and when it should be used, adding exclusions only where they prevent likely confusion.
+## Test it
 
-In the body, include the goal, useful first principles or non-obvious context, meaningful constraints, and how success can be verified. Leave room for the agent to adapt to the request and available evidence. Use fixed procedures or scripts only when the work is genuinely fragile, deterministic, repetitive, or risky.
+Run the skill on the user's example, on a disposable copy if it writes files, and compare the result with what they wanted. Try a nearby request where it should not apply. File validation alone is not a test; if you can't test, say what is untested.
 
-Do not impose a universal structure, restate generic model behavior, or encode speculative edge cases. Add supporting resources only when they materially help, and make their use clear. Apply domain standards (such as evidence, uncertainty, and provenance in research) only when relevant.
+For a fuller comparison, when the user asks for one, run the same inputs in fresh contexts with and without the skill, keep expected answers out of the test agent's reach, and record whether the skill loaded separately from how well the task went.
 
-## Choose Its Home and Invocation
-
-A personal skill follows the user across projects. A project skill captures guidance or resources that belong to one initialized Scient workspace. Infer the intended home when the context is clear; otherwise discuss it with the user when the choice would materially affect the skill.
-
-Create a project skill at \`.scient/skills/<name>/SKILL.md\`, with the frontmatter name matching the directory. Do not add \`scient.skill.json\`; that filename is reserved for reviewed packaged releases. A newly valid project skill is available automatically from the next message. The user can later choose Agent access, \`$name\` only, or Deactivated in Settings. Do not edit Scient's app-private preference store.
-
-Save a personal skill with \`scient_skill_save\`, and read one of the user's skills with \`scient_skill_read\` before improving it. A new personal skill is on for every agent from the user's next message; saving over one keeps the earlier version, and the user can turn it off or undo the change in Settings. When the user gave rough material (notes, a document, a partial skill), keep what they meant and finish the rest; ask only about choices that change what the skill is for.
-
-After checking relevant existing skills when available, give the skill a short, distinct name; this is also its explicit \`$name\` invocation. Choose invocation separately from its home. Allow automatic selection when the description can reliably identify work that normally benefits from the skill. Use explicit invocation when applying it depends on intent the request may not reveal or the user should deliberately choose that mode.
-
-Invocation controls how a skill is selected, not what it may do. Scient owns identity, storage, origin, versioning, installation, activation, and authorization. Use only capabilities available in the session, and do not claim a lifecycle action or validation occurred unless it was verified.
-
-## Test and Hand Off
-
-Validate the skill and its resources. Test in proportion to its importance with a representative request, a plausible near-miss, and a variation requiring adaptation. When its value is uncertain, compare the same work without the skill. Use a fresh context when practical so the test does not inherit the intended answer or critique.
-
-Revise from observed failures rather than imagined completeness. Remove instructions that do not improve decisions or outcomes.
-
-Present the candidate or exact changes, its intended home and invocation, non-obvious rationale, testing performed, and remaining uncertainty. Keep drafted, installed, activated, and tested states distinct.
+Reply with where the skill lives (a link for files you wrote; the name and status for a personal skill), what you tested and what happened, and what remains untested. Claim automatic discovery only after you've seen an agent load it on its own.
 `;
 
-const workspaceReadinessReview = `---
-name: workspace-readiness-review
-description: Assess whether a project or workspace contains enough grounded context for effective agent collaboration. Use when the user asks if a workspace is understandable, organized, or ready.
+const connectorAuthoring = `---
+name: connector-authoring
+description: Connect a service, or build, fix, sign in to or test a Scient connector (MCP server) for a website, API, database, file collection or local program, when existing connectors and Scient tools don't give the access needed or a connector fails or returns wrong data. Use scient-skill-authoring for reusable know-how that needs no new tools.
 ---
 
-# Workspace Readiness Review
+# Connector authoring
 
-The goal is to assess the workspace's readiness for a capable human or agent collaborator to understand its purpose, work in it safely, reproduce its work, and verify its results, and to identify meaningful improvements when needed.
+Finish with a connector that answers the user's real questions, proven by a real read through the installed connector whose data you compared with the source, or with the exact step that blocked it. Startup and \`ok: true\` only prove the transport.
 
-Evaluate the workspace from evidence actually present. Judge it by its purpose (code, research, study, writing, or a mixture) not by a universal repository template.
+Start with what exists: \`scient_connector_list\` finds installed and catalogue connectors, and \`scient_connector_add\` adds one that fits. Build only the missing access, and use the user's actual tasks as acceptance cases.
 
-Consider whether essential context is documented clearly enough and still agrees with the workspace. This includes agent instructions when specialized guidance matters, but no particular document is required if equivalent context is discoverable elsewhere.
+Guardrails: passwords, tokens, cookies and captured sessions stay out of chat, code, manifests and logs; CAPTCHAs, two-factor prompts and bot protection are the user's to pass, never the connector's. A read-only diagnosis inspects status and code and stops there; \`scient_connector_check\` runs the connector and the calls you give it, so give it only reads.
 
-Consider whether files and folders make sources of truth, responsibilities, inputs, and outputs reasonably discoverable. Do not enforce a conventional structure. Flag documentation or organization only when it could materially cause misunderstanding, unsafe action, irreproducible work, or unverifiable results. Distinguish blockers from useful refinements and uncertainty from deficiency. Do not invent missing requirements or score the workspace.
+## Build
 
-Use judgment about which evidence matters; there is no fixed checklist. Inspect enough to reach a grounded conclusion. The review is read-only: do not modify files or broaden permissions. This skill provides guidance only and grants no tools or authority.
+1. Read the references the job needs (below). Design a few tools around the user's tasks: strict schemas, bounded outputs, stable identifiers, explicit paging and truncation, writes separate from reads.
+2. \`scient_connector_copy\` gives a working folder (\`name\` for a new connector, \`connector\` for an installed local one). Read its README and code, replace the example tools and update the manifest. Scient supplies Node; keep any dependencies inside the folder, since npm may be absent.
+3. Test the folder with \`scient_connector_check\`: startup, the tool list, then sample calls. Read each call's \`isError\` and \`text\`, plus \`missing\`, \`error\` and \`log\`, and compare the data with the source. Try a next page, an empty result and bad input where they apply. Done when each tool has a checked result and every page cap or cut field (such as shortened author lists) is written down.
+4. For a keyed service, confirm in the folder check that a protected read returns a setup message without the key. For website sign-ins, read \`references/auth-and-sessions.md\`.
+5. Save once with \`scient_connector_save\`. If the returned connector needs a key, run \`scient_connector_setup\` for it; if the user closes or declines the card, report where it stopped and leave it closed this turn. Then test one real read with \`scient_connector_check\` giving \`connector\` and no \`folder\`. Report installed, configured and verified as separate states. Persistent rate limits or bot protection end the attempt; report them.
 
-Report concisely:
+## Repair
 
-- what the workspace appears to be and how work is expected to proceed;
-- material strengths or gaps, tied to observed evidence and practical consequences; and
-- selective, prioritized improvements tied to meaningful practical benefit.
+A hosted connector has no local code: follow its setup or sign-in status (\`scient_connector_control\`). For a local one, copy it and read \`references/fixing.md\`: reproduce the failing read, make the smallest change that keeps its tools' contracts, retest that case and the reads that already worked, and save over that same connector, leaving every other connector as it is.
 
-Omit cosmetic, speculative, or low-value recommendations. If the workspace is already ready for the requested work, say so plainly. If its purpose cannot be inferred reliably, state what remains unknown rather than guessing.
+Read \`references/testing.md\` before calling it done. Report what the connector does, its tools, a real result you inspected and the gaps, with links to its source. Tell the user they can remove it from its page in **Settings → Extensions** (**Remove**), and after a repair that **Undo last change** is there.
 
-When material improvements exist, ask whether the user wants them applied. If they agree, use \`improve-workspace-readiness\` when available; do not begin changes as part of this review.
+## References
+
+Read with \`scient_skill_read_resource\` (this skill's name and the path):
+
+- \`references/tool-design.md\`: schemas, paging, errors and writes.
+- \`references/auth-and-sessions.md\`: keys, website sessions and expiry.
+- \`references/study-a-website.md\`: before building for a site with no documented API.
+- \`references/science-apis.md\`: scholarly APIs and their limits.
+- \`references/local-tools.md\`: local files, databases and command-line tools.
+- \`references/testing.md\`: acceptance and honest completion.
+- \`references/fixing.md\`: diagnosis and repair.
+`;
+
+const pdfAuthoring = `---
+name: pdf-authoring
+description: PDF output. Make, edit or export a PDF of my paper, report, poster, grant, handout or form, including Markdown and HTML-to-PDF. Use latex-authoring for writing or troubleshooting .tex. Reading or extracting a PDF and building an ordinary webpage are other tasks.
+---
+
+# PDF authoring
+
+Deliver the saved PDF, checked against what was asked for in content and layout, together with its editable source. If a build or the visual check can't be done, say which and give the useful files you have.
+
+## Source
+
+Keep the document's existing editable format and design. HTML builds with \`scient_pdf_build\`, Markdown exports with \`scient_document_export\`, and LaTeX builds with \`scient_latex_build\` (load \`latex-authoring\` for source work). For HTML print layout, read this skill's \`references/html-print.md\`.
+
+To change a PDF's content, edit its source and rebuild; an existing PDF is not an HTML build input. For page operations or form filling, work on the PDF itself with a library such as \`pypdf\` in Scient Compute and write a new file, keeping the text and structure as they are rather than retyping or rasterizing; check that links, form fields, bookmarks, selectable text and untouched pages survive. If a text edit needs a source you don't have, say so.
+
+Builds and exports write to \`outputPath\` and replace what is there, so choose it deliberately. A request only to check a PDF needs no rebuild or export; rendering page images in a temporary folder to look at them is fine.
+
+## Check before finishing
+
+1. Confirm the build wrote the PDF at the returned \`outputPath\` and read every warning. An open preview tab is not proof of a built file.
+2. Check the page count against any limit, and that every section, figure, table and equation survived. Fix missing images and blocked assets, or name what is missing. Fit pages with all content kept and type at readable size.
+3. Render the pages to images and look at them (\`references/visual-check.md\` has the commands and \`scripts/render_pdf.py\`). Look at every page of a short document; for a long one, the changed pages, page breaks and each distinct layout, and say which pages you skipped. Rebuild and look again after fixes.
+4. Check what readers will notice: labels readable at print size, clipped tables, equations, glyphs, citations and cross-references. When the venue requires it, also check links, font embedding, image resolution and tagging; appearance alone doesn't show accessibility.
+
+Reply with links to the PDF and its source, the page count, the pages you inspected, warnings and anything unfinished. If you couldn't look at the pages, say "visual inspection not performed" and why, and call the PDF unchecked.
+`;
+
+const latexAuthoring = `---
+name: latex-authoring
+description: LaTeX and .tex files. Write or edit LaTeX; compile my paper; fix LaTeX errors, missing citations, equations or figures. Use overleaf-sync for transferring or resolving synced files, and pdf-authoring for other PDF formats. An Overleaf mention alone is not a sync request.
+---
+
+# LaTeX authoring
+
+Deliver source that still builds and stays maintainable and, when compiling was asked for or is needed to verify a fix, a built PDF you have looked at. For source-only work, say whether you compiled.
+
+Keep the document's class, engine, bibliography system and file structure, and work from its real root file. When a package or font is missing, report what is missing and keep the engine and journal class as they are.
+
+## Citations and content
+
+Cite only with keys from the project's bibliography or from verified source records; every BibTeX entry you add is copied from a record, never written from memory. For new citations in a Library-managed bibliography, add the source to the Library and cite it from there; for a hand-maintained \`.bib\`, copy the details from the registry or publisher record into that file, keeping it hand-maintained. A key that compiles is not evidence for its sentence; load \`references\` to check support.
+
+When you change equations, symbols, units, numbers or labels, compare them with what the researcher gave you, and keep the argument as it was. Check figure paths (exact case and extension) from the root, and that every command you add has its package loaded.
+
+## Build and look
+
+Compile with \`scient_latex_build\` from the real root. Fix undefined citations and references and missing files even when a PDF was produced, look at overfull boxes, especially in two-column layouts, and confirm the PDF is where the result says.
+
+Then render the pages to images and look at them: \`pdftoppm\` if it is installed, otherwise \`pdf-authoring\`'s \`scripts/render_pdf.py\` and \`references/visual-check.md\` (read them with \`scient_skill_read_resource\`). Look at every page of a short document; for a long one, the changed pages, page breaks and each distinct layout, and say which you skipped. Check figures, tables, equations, glyphs and cross-references, and rebuild and look again after fixes. A clean log doesn't show the page; if you couldn't look, say "visual inspection not performed" and why.
+
+For a journal or arXiv submission, check that venue's current instructions (engine, bibliography output, packages, file layout).
+
+Reply with links to the PDF and each edited source, the page count from the latest build, the pages you inspected, the remaining warnings and anything unfinished. If the toolchain is blocked, name the missing engine, package or font.
 `;
 
 const overleafSync = `---
 name: overleaf-sync
-description: Link project folders to Overleaf projects and sync them in Scient. Use when the user mentions Overleaf, asks to bring in, link, sync, push to or pull from an Overleaf project, or when a file has Overleaf conflict marks.
+description: Overleaf transfer. Bring in or link an Overleaf project; sync, push or pull my paper; resolve Overleaf conflicts or conflict marks, recover an interrupted sync or undo a send. Use latex-authoring for editing or compiling .tex without transferring files.
 ---
 
-# Overleaf Sync
+# Overleaf sync
 
-The goal is to keep a paper in a Scient project and its Overleaf project in step, losing nobody's text, and to report plainly what moved each way.
+The goal is to keep a paper in a Scient project and its Overleaf project in step, losing nobody's text, and to report plainly what moved each way. Link, preview or sync only when the user asked to transfer files; resolving conflict marks in a local file is a local merge.
 
-You can do with Overleaf whatever the user can do in Scient. The tools ask no one for approval: do what the user asked, then report the result lines. This skill grants no tools or authority.
+## The folder
 
-Here means the linked folder on this project's server. For a remote project, Git 2.39 or newer and the project files must be on that server.
+One Overleaf project is one document, in its own folder inside the Scient project, and everything in that folder syncs: new files, deletions and renames included. Keep code, data and private notes outside it, and write the paper's figures into it. Bring a project in as a new folder (\`scient_overleaf_connect\`, mode \`new-folder\`) unless an existing folder holds just the paper; when the connect result says a folder looks like more than a paper, tell the user and prefer a new folder.
 
-## The Folder Model
+In a separate worktree, the tools act on the copy the link belongs to and say so; worktree edits reach Overleaf only once merged into that copy.
 
-- One Overleaf project is one document (a paper, thesis, slide deck or grant). It lives in its own folder inside the Scient project, and everything in that folder syncs. Nothing outside it ever does.
-- A project can hold several Overleaf folders side by side, for example \`paper/\` and \`slides/\`. A linked folder is never inside another.
-- Keep code, data and analysis outside Overleaf folders. Write figures for the paper into its folder, for example \`paper/figures/\`; the next sync sends them.
-- Bring a project in as a new folder by default (\`scient_overleaf_connect\` with mode \`new-folder\`), named after the paper. Link an existing folder (mode \`link-folder\`) only when it already holds just the paper. Link the project's top folder only when the whole project is the paper. If the connect result says the folder looks like more than a paper, tell the user and prefer a new folder.
-
-## The Token
-
-Syncing needs the user's Overleaf Git token (Git access needs a paid Overleaf plan, the user's or the project owner's). When a tool says no token is saved, or that Overleaf refused it:
-
-1. Call \`request_secret\` with the label "Overleaf Git token", explaining that the user creates it in Overleaf under Account settings, Git integration.
-2. Call \`scient_overleaf_token\` with action \`save\` and the returned \`secretRef\`.
-
-Never ask for the token in chat, never write it anywhere, and never repeat it.
+When a tool says the Overleaf Git token is missing or refused, ask for it with \`request_secret\` and save it with \`scient_overleaf_token\`; the token never goes through chat.
 
 ## Syncing
 
-1. Find the link with \`scient_overleaf_status\`; it lists each linked folder's \`connectionId\` and status without going online.
-2. Optionally preview with \`scient_overleaf_preview\`: what would come in and be sent, and any conflicts. Pass \`diff: true\` for bounded before/after text from the sync base to the fetched and publication trees; binary and oversized files are listed without contents. A stale diff needs another preview.
-3. Sync with \`scient_overleaf_sync\`. It saves the folder's open editors, brings Overleaf's changes in, then sends the folder's changes. New files, deletions, renames and older versions all sync, then get reported.
-4. New files are sent by default, except build output, hidden files and Scient's own project files. Send one of those with \`files.send\`. Keep a new file only here (notes to self, for example) with \`files.keepOnlyHere\`; it stays out until you send it the same way.
-5. Report the result lines to the user: what came in, what was sent, renames (Overleaf drops comments and tracked changes on renamed files), older versions sent, and any other agents working in the same copy.
+1. \`scient_overleaf_status\` lists each link and its state offline. A check-only question ends here: \`scient_overleaf_preview\` saves open editors and can finish an interrupted sync, so it changes things.
+2. \`scient_overleaf_preview\` shows what would come in and go out, and any conflicts (\`diff: true\` for text differences).
+3. \`scient_overleaf_sync\` brings Overleaf's changes in, then sends the folder's. "Push" and "pull" both sync both ways; tell the user so rather than promising a one-way transfer.
+4. Report from the result: what came in, what was sent, what was held or skipped (counted apart from sent), renames (Overleaf drops comments and tracked changes on renamed files) and any recovery the sync did first.
 
-If the thread works in a separate worktree, the tools act on the copy the link belongs to and say so. Your edits in the worktree reach Overleaf only after they are merged into that copy.
+## Conflicts and merges
 
-## Conflicts
+Decide as you would for a Git merge: follow the user's instructions and use only the choices each conflict allows. When both sides hold real work and \`markers\` is allowed, use it and merge them; when it isn't (binary files, renames, deletions), keep both versions and settle the choice with the user. Pass the review's \`remoteTree\` back as \`reviewedRemote\`; if Overleaf moved meanwhile, decide again for the new review. A file still holding conflict marks is held back; \`files.release\` sends it as it is only when the marks are its real content, and \`files.send\` sends a file that was held. Explain your choices to the user.
 
-A conflict stops a sync until you settle it; other problems stop it with a message to report. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
+As soon as merged text exists locally, and before a sync that would send it, check the merge: citations, captions, figures and numbers keep both sides' content, and no conflict marks remain. Then build with \`scient_latex_build\` from the real root, fix undefined citations, references and missing files, and look at the rendered pages: \`pdftoppm\` if installed, otherwise \`pdf-authoring\`'s \`scripts/render_pdf.py\` (read it with \`scient_skill_read_resource\`). Look at the changed pages, or every page of a short paper. If you couldn't build or look, say so and why.
 
-- \`mine\` keeps this folder's version; \`theirs\` takes Overleaf's.
-- \`markers\` writes both versions into the file between conflict marks (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`).
+## Recovery
 
-Decide the way you would for a Git merge conflict: follow the user's instructions, and when both sides hold real work, choose \`markers\` and merge. Call \`scient_overleaf_sync\` again with one choice per key and the \`reviewedRemote\` the result gave. If Overleaf changed meanwhile, the result shows a new review whose conflicts your choices don't answer; decide again for them. For \`markers\`, edit each marked file so it keeps the intended text from both sides, remove every mark, check the document still builds, then sync again. A file with marks is not sent until its marks are gone; everything else is. If the marks are the file's real content (a guide that quotes them), send it as it is with \`files.release\`. Explain your merge choices to the user.
+The version a sync replaced is kept: \`scient_overleaf_kept_copies\` lists and restores copies. \`scient_overleaf_undo\` puts back what Overleaf had before one send, then syncs; list the sends first. \`scient_overleaf_manage\` relinks, recovers an interrupted sync or cancels a running one. Restoring and undoing change files, so use them only for the recovery the user asked for. When a tool stops with an error, do what it says, or tell the user when only they can fix it.
 
-The version a sync replaced is kept as a copy. \`scient_overleaf_kept_copies\` lists them and restores one.
+Reply with links to the changed sources and any built PDF, what moved each way, the build and visual check, and anything unresolved. For a local-only merge, say that nothing was synced.
+`;
 
-## Undo
+const references = `---
+name: references
+description: >-
+  References, citations or bibliography of a paper, thesis, grant, review or report, for the
+  whole document or a passage, or the project Library's records. Check or verify references,
+  fix citations and bibliography entries, find sources for claims, methods, instruments,
+  software, data or guidelines, find better or newer references, and judge whether cited work
+  supports the text. Use compare-sources for an evidence table of named papers and
+  systematic-review for a database search and screening. Writing a literature review from
+  scratch is a different task.
+---
 
-Undo puts back what Overleaf had before one send: for example after an older branch's files were sent over a collaborator's newer text, or a deletion was sent by mistake. \`scient_overleaf_undo\` without \`attemptNumber\` lists the sends you can undo, with what each changed. With the send's number (\`send #N\` in a sync result) it saves the open editors, puts back the earlier version of every file that send changed, keeps the replaced files as copies, then syncs. A file edited since that send is left as it is and reported. Tell the user what was put back and what was left.
+# References
 
-## When Something Stops
+The goal is a draft in which every citation points to a real work, described correctly, that still stands and supports the sentence citing it, and in which everything that needs support has it. The researcher owns the scholarship: find the problems, show the evidence, fix what is clearly wrong when asked, and leave real choices to them.
 
-Errors name what happened and what to do next: Overleaf unreachable or limiting requests (wait a minute), a missing or refused token, an editor that could not save, a link to relink (\`scient_overleaf_manage\` with action \`relink\`), or an interrupted sync to recover (action \`recover\`). Action \`cancel\` asks a running sync to stop before its next step. Do what the message says, or tell the user when only they can fix it.
+Finish the whole check in this turn. If something can't be finished, say exactly what is left.
 
-- Two names that differ only by letter case or accents are refused with both names; rename one and sync again.
-- A link record Scient can't read (damaged, or made by a newer Scient) can't be settled with the tools. Tell the user to check Settings ▸ Synced folders ▸ Overleaf. While it is listed, Scient won't link folders, and may refuse branch switches, checkpoint restores and worktree removal in that project.
-- A sync result that says nothing came in, or that Overleaf's changes were applied only as far as the folder allowed, sent nothing. Check \`scient_overleaf_status\`, then sync again.
+## What the tools cover
+
+\`scient_references_check\` checks records against registries, one identifier per entry. Its coverage has limits that it doesn't always flag:
+
+- \`ledger\` lists the entries it handled, including ones it could not check; read \`notes\` even when \`complete\` is true.
+- It stops at 500 references and 300 findings (\`omittedFindings\`); a second run covers the same ground.
+- It reads only the file you give it, so LaTeX \`\\input\` and \`\\include\` files need their own check.
+- Hand-typed citations in a Word file with reference-manager fields can be missing from it.
+- It checks records only. A clean result says nothing about support.
+
+\`scient_references_resolve\` applies a finding's \`fix\` as the check returned it; a stale fix means the file changed, so check again. Search the Library before anything else. Many computer-science conference papers and mathematics books have no DOI: use proceedings, publisher and zbMATH records for them, and the issuing body for editions of guidelines, manuals and software.
+
+The writing calls are \`scient_references_resolve\`, \`scient_paper_get\` (saves a PDF), \`scient_sources_add\`, \`scient_sources_cite\` (pins sources and updates \`references.bib\`) and \`scient_sources_bibliography\` (rewrites \`references.bib\`). Keep to the project folder, and leave \`.scient\` files to the tools.
+
+## What to check
+
+- **Records.** Run \`scient_references_check\` and read all of it before editing. Build your own inventory of the citations and reference list in scope and reconcile it with the ledger, so every reference ends up in your report. A difference is a lead, not a verdict: abbreviations, online and print years and indexing gaps all cause them. Find the record yourself for a reference without an identifier.
+- **Support.** For every citation, does the work support the sentence as written? Typical failures: narrower than claimed (association as cause, mice as humans, healthy volunteers as patients, a lab feasibility study as home efficacy), the opposite or a null result, the wrong paper, a review cited for a primary finding, a different number. Grade it supports, partly supports (say which part), does not support, contradicts, or not assessed.
+- **Not only findings.** Methods, instruments, statistical procedures, software, datasets, guidelines, criteria and figures about the world each need the source a reader would check: the original or standard reference for what was used.
+- **Versions and currency.** Guidelines, reporting standards, scoring manuals, criteria and software have versions, and figures about the world date. Search for a later edition or estimate and record what you found. Keep the edition the work actually used and report a newer one as a decision; replace a statistic only with a newer estimate.
+- **Evidence against.** When a sentence states a general or strong effect, look at later work before calling it supported: replications and meta-analyses since the cited year, and papers citing the source. Report important contrary evidence.
+- **Gaps and better references.** Sentences, including paragraph openers, that state a finding, number or trend, or use a named method, instrument or tool, with no citation; and better choices: primary over review, published over preprint, newer where the field has moved. For each gap, give at least one checked candidate, or say what you searched.
+
+Read the abstract for every judgement and the full text where the claim is specific or the abstract leaves it open. For a long document, take claims the argument rests on first, then numbers, then retracted or contested sources, then the rest.
+
+The check is done when every reference in your inventory has a record status and a support grade (or a reason it has none), and every gap has a candidate or a search record.
+
+## Evidence rules
+
+- **Never cite from memory.** Every reference you add or suggest, in the draft or the report, comes from a scholarly record or publisher page found in this task, read far enough to judge support. Copy its details, every author included, from that record; give its DOI or other stable identifier when it has one, and mark any detail you could not confirm.
+- **Report what you observed, and where:** "the DOI does not resolve", "none found in PubMed and Crossref". For each judgement, say whether it rests on full text (opened in this task), abstract or metadata. Say whether a page number is the PDF page or the printed page. Give confidence in words with a reason.
+- **Missing from indexes is common** for books, manuals, reports, theses and proceedings. Search title, authors and venue before calling a reference likely fabricated.
+- **No suitable source is a valid answer.** Propose narrowing the claim rather than attaching a weak citation.
+
+## Changing the draft
+
+A check-only request leaves the draft, its bibliography and the Library as they were: use none of the writing calls, read what the Library holds and open full text on the web (PubMed Central, arXiv, the publisher's page) without saving it, and report a paper you couldn't read as not read, with what reading it would need.
+
+When asked to fix:
+
+- **Apply:** the check's fixes through \`scient_references_resolve\`; other details from the record; missing bibliography entries built from the record, identifying a cited-but-missing key from its sentence, key and year; a citation for something the text names (a method, instrument, software, dataset, guideline, or the authors it names); the paper a true claim actually comes from when it is attributed to the wrong one, including the primary study when a cited review reports it (find it rather than delete the claim); overclaims narrowed to what the cited source shows, in the author's words as far as possible. Narrowing a sentence to its own source is a fix. When the source supports a claim that later work disputes, attribute it in the text ("X et al. reported …") and propose the contrary evidence. Change an identifier only to one you confirmed resolves to the work.
+- **When the cited work can't be found** and its identifier belongs to a different paper, keep the entry as it is, report the work as not found and the claim as unsupported, and list it as a decision for the author.
+- **A claim resting on a retracted, nonexistent or contradicting source** is always flagged. Narrow it if the cited source supports a narrower version; otherwise propose a supported revision or removal as a decision for the author, rather than swapping in a newly found study.
+- **Propose, for the author to decide:** newly found studies as evidence, contrary evidence, new sentences, version changes, published versions of cited preprints, choices between alternatives, and anything that adds to or removes from the argument. The author must stand behind every sentence.
+- **Keep what the author stated:** a venue, year or edition the records lack is marked unconfirmed; uncited bibliography entries stay and are listed; author lists stay complete; verification notes go in the report, not in bibliography fields.
+
+Afterwards reread the changed passages, run \`scient_references_check\` again and, for LaTeX, build with \`scient_latex_build\` if you can; at least check that new text escapes \`_\`, \`&\` and \`%\`.
+
+## Report
+
+When you changed files, save a Markdown report next to the manuscript (for example \`main.references-check.md\`) and reply with a short summary and a link to it. For a check-only request, give the report in your reply and offer to save it.
+
+Put the most serious issues first, each with location, problem, evidence (a short quote with its location and what you read), fix applied or proposed, and confidence. Then the decisions for the user, then the references that were fine (one line each, or grouped for a long list).
+
+Say plainly whether the check is complete, with the coverage: references checked out of the total, claims checked for support, and anything skipped (caps, unvisited files, papers not read). Check that any file you saved holds what you describe.
+`;
+
+const systematicReview = `---
+name: systematic-review
+description: >-
+  Systematic, scoping or rapid reviews in Scient: planning the review question and eligibility
+  criteria, running and logging database searches, removing duplicates, title and abstract or
+  full-text screening, and reporting a PRISMA flow. Use compare-sources for a comparison of a
+  few named papers and references for checking a manuscript's references; an ordinary
+  literature summary is a different task.
+---
+
+# Systematic Review
+
+The goal is a review another researcher could repeat: every search logged exactly, every record accounted for, every decision recorded with who made it and why, and a PRISMA 2020 flow that matches the decisions. The researcher owns the question, the criteria and the final calls. Do the work they ask for, in the open, and finish it in this turn; change the review only for that work.
+
+## Tools
+
+\`scient_sources_systematic_reviews\` reads a review: its searches, exclusion reasons, PRISMA counts and diagram (\`prismaMermaid\`), possible duplicate pairs, and up to 25 records awaiting a decision per read. \`scient_sources_systematic_review_update\` makes every change. Records are Library sources: bring them in with \`scient_sources_add\`, a file import or Zotero, and group a search's records with \`scient_sources_organize\` (a collection per search) or \`scient_sources_bulk_update\`. Read attached full text with \`scient_sources_read_text\` and \`scient_sources_search\`; to fetch a missing PDF, give \`scient_paper_get\` the DOI or URL and the record's \`sourceId\`, and check it is attached before using the Library text tools. Leave \`.scient\` files to the tools.
+
+## Plan
+
+Agree the question and eligibility criteria with the user before screening (population, intervention or exposure, comparator, outcomes, study designs, dates, languages). Criteria the user already gave are used exactly as given. Put the question in the review and set \`exclusionReasons\` from the criteria, so every exclusion names one of them.
+
+Say which review type you are following:
+
+- **Systematic review:** PRISMA 2020 reporting.
+- **Scoping review:** Population, Concept and Context instead of PICO; PRISMA-ScR reporting; chart the evidence; risk of bias only if asked.
+- **Rapid review:** name every shortcut (one database, one screener, English only) and the check that compensates for it.
+
+## Search
+
+Use the databases the user names. Build each search from free-text terms and the database's controlled vocabulary (such as MeSH) where it has one. Page through to the end of the results, or say where you stopped and why.
+
+Log each search once with \`log-search\`, carrying all its records: \`database\` with its platform (PubMed, Ovid MEDLINE), \`query\` exactly as run, \`searchedOn\`, \`resultCount\` as the database reported it, limits and filters in \`notes\`, and the records you brought into the Library (\`sourceIds\` or a \`collectionId\`). Logging the same database, query and date again replaces the earlier log, so log the whole search, not page by page. When you couldn't bring in every result, record how many are missing and why in \`notes\`; the flow counts them as removed for other reasons. Records found another way (reference lists, experts, websites, trial registries) go in with \`add-sources\`.
+
+## Remove duplicates
+
+Importing can return an existing Library record, and a record already in the user's Library is not necessarily a duplicate within this review. Keep each search's raw hit count in its log and reconcile the PRISMA counts against it. Records that disagree with their Library copy are kept separately and listed as pairs (\`scient_sources_list\` with duplicates). Work through those pairs and the review's \`possibleDuplicates\`: mark a duplicate only when both records are the same work, keeping the more complete or published version, and use \`mark-distinct\` for different works that share a title. For a record showing \`libraryMatch\`, read the duplicate notes in \`references/methods.md\` before linking it. Two reports of the same trial are separate reports of one study: keep both and note the link.
+
+## Screen
+
+- **Pilot first.** Screen a varied sample (about 10 to 20 records, or the protocol's pilot), note any criterion that was hard to apply and how you applied it, then carry on with the rest. Show the pilot in your report for the researcher to check.
+- **Title and abstract:** judge each record from its title and abstract alone. Include any record that may meet the criteria, including one with no abstract whose title doesn't rule it out; exclude only when the available text clearly fails a criterion, naming it. Keep \`maybe\` for a decision deferred for adjudication, then resolve it or list it as outstanding. Judge only the text you were given.
+- **Full text:** only records included at title and abstract. Read the full text and exclude with the criterion it fails. A report that can't be obtained gets \`record-retrieval\` with \`not-retrieved\`, not an exclusion; \`sought\` means retrieval is still under way.
+- Screen in batches (\`screen\` takes up to 500 decisions) and read the result: \`skippedSourceIds\` were not applied.
+- **Finish line:** each stage has no pending records, no \`maybe\` decisions (a maybe drops out of the pending count) and no outstanding retrieval. Report whatever is unresolved, by stage.
+- **Who decided.** Your decisions are recorded as the agent's; the user can change any of them, and the latest counts. Agent screening is single screening, so report it as provisional until the protocol's independent screening is done; for a full systematic review that means a second person independently checks every full-text eligibility decision. For a rapid review, name the shortcut and its check.
+
+## Report
+
+Read the review again just before reporting and take every count from that read: searches, records, duplicates, includes, maybes, exclusions and pending. Give the PRISMA counts from the tool, and \`prismaMermaid\` when the user wants the diagram in a document.
+
+The tool's final box counts included _reports_ although it is labelled studies: in a document, label it "Reports included" and give "Studies included" separately once reports are linked to studies. Use the PRISMA 2020 template that fits (registers are counted separately from databases). Mark the flow provisional while selection, retrieval or study linkage is unresolved.
+
+State what is still pending (records awaiting screening, reports awaiting retrieval or assessment, maybes) and every search or decision the user should check, and link any files you saved.
+
+For work after screening (extraction, risk of bias, synthesis, certainty), read \`references/methods.md\` first (with \`scient_skill_read_resource\`) and do only the phases the user asked for.
+`;
+
+const compareSources = `---
+name: compare-sources
+description: >-
+  Compare two or more papers or sources on a question (what each tested, on whom, how, what it
+  found, its limits) as a table the user can check and reuse, or turn such a comparison into a
+  cited paragraph or methods justification in a document they name. The papers can be in the
+  Library or named by title, DOI or citation key. Use references to check a manuscript's
+  references and systematic-review for a systematic review.
+---
+
+# Compare Sources
+
+The goal is a comparison the researcher can check cell by cell: every cell says what the paper reports, where, and what you read to say it. The researcher owns the conclusions: show how the papers differ and why, and leave the judgement to them.
+
+Finish the comparison in this turn. If something can't be finished, say exactly what is left.
+
+## Find the sources
+
+Compare the sources the user named. Find each in the Library (\`scient_sources_list\`, \`scient_sources_get\`) by title, citation key or source ID. When a name fits several sources, ask which one they mean. When it fits none, identify it by its DOI, PMID, arXiv ID, ISBN or publisher record (search first for a title). Ask only if you still can't tell which work is meant.
+
+Writing to the Library is the user's call. When they asked you to fetch or add sources, or said to get what you need, add missing ones with \`scient_sources_add\` and save missing PDFs with \`scient_paper_get\`, passing the Library \`sourceId\` so the PDF attaches; check it is attached before reading it through the Library. Otherwise work from what the Library holds and from open text with a stable link, and mark which cells rest on the abstract. If the user asked you to write nothing, also use the existing citation keys and give the comparison in chat.
+
+## Choose the columns
+
+The question sets the columns. With no question given, compare what the papers have in common (usually design, population, methods, outcomes, findings and limitations), say which focus you chose, and continue. For empirical work the columns are often design, population or setting, intervention or exposure, comparator, outcome and how it was measured, the key result, and risk of bias or limitations. Add a column only when the question needs it.
+
+## Read
+
+Read each paper with the Library tools: the abstract of every source, and the full text wherever a cell is specific (a number, population, measure, method or limitation). Record for each source whether its cells rest on full text (opened in this task), the abstract or metadata only. A source whose PDF is missing or has no readable text (\`no-pdf\`, \`no-text\`, \`unreadable\`) rests on its abstract at most. If a number sits in a figure or table that text extraction garbles, look at the page image or mark the cell \`Could not assess\`.
+
+## Write the comparison
+
+Save it as a Markdown document in the project, such as \`comparisons/<short-title>.md\`, as a new file unless the user asked you to update one. Name the project's \`references.bib\` in its front matter (\`bibliography: ../references.bib\` from \`comparisons/\`) so citations resolve. In order:
+
+1. The question, and the sources compared.
+2. The table, one row per source and one column per aspect.
+3. One short section per finding worth using: what it is, which papers show it, and the citations.
+4. Coverage: for each source, full text, abstract or metadata only, the pages read, and what was not read and why. Then the date.
+
+Every cell:
+
+- **Kind.** Reported (what the paper says); derived, with the derivation and units ("difference 4.2 percentage points: 12.1% vs 7.9%"); or interpretation, beginning "Interpretation:". The reader can always tell which.
+- **Numbers.** Each result with its measure, the population or denominator, the time point, whether it was adjusted, and its uncertainty (confidence or credible interval, or standard error). An SD is the spread of the data, not uncertainty. Odds ratios, risk ratios, hazard ratios and mean differences are different measures, as are estimates of different quantities: keep them in their own terms, with no computed winner or pooled number. Say when a paper's primary outcome is not the outcome of the question.
+- **Citation.** Every substantive cell cites its source with the citation \`scient_sources_cite\` returns, and a locator you actually saw: the PDF page the tool reported, plus the printed page when one is printed (\`[@smith2020, p. 1123] (PDF page 4)\`), or the section, table or figure for a source without pages. \`scient_sources_cite\` also pins the source and updates \`references.bib\`, so it is a Library write; report any problem it flags, such as a retraction.
+- **Empty is never blank.** \`Not reported\` when you checked the relevant text and it doesn't say; \`Could not assess\` when its text was unavailable or unreadable; \`Not checked\` when you didn't look. A search that finds nothing is not proof of absence.
+- **Quotes** are short, checked with \`scient_sources_quote_check\`, and copied from the text it returns.
+
+Between the papers:
+
+- Flag when two may report the same study or overlapping data (same trial, cohort, dataset, authors and period), when one pools the others (a meta-analysis that includes the trials beside it), or that you can't tell. One study counts once as agreement.
+- Explain differences (population, setting, measures, outcomes, datasets, analysis) rather than declaring a winner, in terms of what you observed: "not reported in the full text", not "not done".
+
+The comparison is done when every cell has content or one of the three empty labels, every substantive cell has a citation and locator, and the coverage section covers every source. Reread the document, confirm every citation names a source you read, and reply with a short summary and a link to it.
+
+## Use it in the user's work
+
+When the user asks, write a cited paragraph or methods justification from the comparison into the document they name, at the place they say. Use the comparison's citations and claims only, in the document's citation style: \`scient_sources_cite\` with \`format\` \`markdown\` or \`latex\`; for other formats, the document's own citation mechanism, or clearly marked references and a note on what you couldn't insert. Change only that passage (plus the bibliography updates \`scient_sources_cite\` makes), reread every inserted sentence against the table, and show the user what you inserted.
+`;
+
+const statisticsReview = `---
+name: statistics-review
+description: Check the statistics in my results, table or analysis before I send it; are the tests, uncertainty and conclusions right? Use check-reported-numbers to match draft numbers to outputs, ml-evaluation-audit for model evaluation, and reporting-guideline-check for a journal checklist.
+---
+
+# Statistics review
+
+The goal is a review the researcher can act on: every reported test checked, each problem located and explained, with a concrete fix. It is a review, so leave the draft and the analysis as they are unless asked to change them, and finish it in this turn. Questions for the researcher go at the end, after the finished review.
+
+## Read
+
+Read the results and whatever explains them: methods, table notes, the analysis plan or preregistration, and linked outputs or notebooks (\`scient_notebook_read\` shows saved outputs without rerunning anything). Work out the question, the design, the outcome, the comparison and the analysed population. Note what is missing instead of guessing it.
+
+## Check
+
+Keep a ledger of every reported test and estimate: where it is, the estimate with its uncertainty, n, the test statistic, df where the test has them, and the p-value. Then look for the problems that matter in practice:
+
+- **Wrong test for the design.** Check that each test fits how the data were collected and what they look like. Identify the independent sampling or assignment unit (participant, animal, cluster) and check that the analysis handles clustering and repeated measurements; check each n against its stated unit, and df against the model and test.
+- **Incomplete or inconsistent reporting.** An effect without its size or interval, spread and precision confused (SD, IQR vs SEM, CI), p-values printed as \`.000\` (should be \`p < .001\`), or a p-value that cannot follow from its statistic and df. Recompute what you can from the reported values. Call a mismatch only when the reported details (df, sidedness, corrections) determine the calculation and the result falls outside rounding; if a missing detail could explain the difference, say which detail is needed and mark the value unverified. Use Scient Compute for the arithmetic.
+- **Multiplicity and selection.** Many outcomes, subgroups or analyses with no plan or correction, outcomes that differ from the plan, or selection that reuses the data being tested.
+- **Conclusions the numbers don't support.** A difference claimed from one significant and one non-significant result without a test of the difference; non-significance read as no effect; causal claims without a design and stated assumptions that support them; statistical significance read as importance; post-hoc power used to explain a null.
+
+Say also what is done well, so the researcher knows what to keep. Every number in the review comes from the draft, the outputs or your own recomputation. Done when every ledger row has a status (checked, problem, or not checkable and why).
+
+## Report
+
+For a project draft, save \`<draft-stem>.statistics-review.md\` next to it, without overwriting an existing file. Put the most consequential problems first, each with location, what is wrong, why it matters and the fix. Then give the ledger and what you couldn't check. Reply with a short summary and a link to the report. For a short passage pasted into chat, answer in chat.
+`;
+
+const checkReportedNumbers = `---
+name: check-reported-numbers
+description: Check every number in my abstract, text, tables and figure captions against the project's CSVs, notebook outputs, logs or analysis tables; find mismatches and numbers with no source. Use statistics-review for methods and conclusions, references for other papers' numbers, and workspace-readiness-review for project reproducibility.
+---
+
+# Check reported numbers
+
+The goal is to know, for every number in the draft, whether the analysis outputs support it, and to say honestly how many were checked. Propose corrections in the report and edit the draft only when asked. Finish in this turn and put questions at the end.
+
+## Inventory first
+
+Go through the draft section by section (abstract, text, tables, captions, supplements in scope) and list every reported number, counting repeats separately: counts, percentages, means and spreads, estimates and intervals, p-values, durations, units. Count them before matching anything, so the coverage you report is a count, not an impression. The inventory is done when every section in scope has been read and every number in it has a row. Numbers that aren't results (citation years, section numbers, external facts) can be grouped and counted rather than traced.
+
+## Trace each number
+
+Find where each number comes from: a file and row or cell, a notebook output (\`scient_notebook_read\` shows saved outputs without rerunning), a log line. If the project uses Scient linked results, \`scient_results_check\` reports values that are out of date or edited. Match by meaning, not by resemblance: the same measure, population, time point and adjustment. When several outputs could be the source, prefer the one the methods describe and the run record supports; if they disagree and nothing says which is final, report a source conflict rather than picking the closest value. A file being newer or named "final" is a hint, not proof.
+
+Recompute what is derived: percentages from their numerators and denominators, totals, differences, unit conversions. Use full-precision source values where they exist and round the result to the draft's precision; when only rounded inputs exist, carry their rounding bounds through and call a mismatch only when the draft value falls outside them. No blanket tolerance. Use Scient Compute for the arithmetic. Check against the outputs as they stand: a number that appears only after refitting a model or changing a filter has no source.
+
+Give each number a status: matches, mismatch, source conflict, no source found, source stale or unreadable, or not checked (with the reason). A number without a source is unsupported, not necessarily wrong. Tracing is done when every inventory row has a status.
+
+## Report
+
+Before reporting, check that the ledger has a row for every number in the inventory; fix it if not. For a project draft, save \`<draft-stem>.numbers-check.md\` next to it, under a new name if that file already exists. Put the mismatches that change a result or conclusion first, each with location, draft value, source value and location, and the proposed correction. Then give the coverage (numbers found, checked, matched, unresolved, excluded) and the full ledger. Reply with a short summary and a link to the report.
+`;
+
+const reviewerResponse = `---
+name: reviewer-response
+description: Draft my point-by-point response or rebuttal to journal reviewers, or check my existing response, against the revised manuscript and our actual decisions. Use references for citation support, statistics-review for analyses, and reporting-guideline-check for checklist compliance. Not for an independent peer review of someone else's paper.
+---
+
+# Reviewer response
+
+The goal is a response the authors can send after filling in only what genuinely needs them: every comment answered, every claimed change really in the manuscript, and nothing promised or invented. The authors own the decisions; the response carries them out. Finish the drafts in this turn and put open questions for the authors at the end.
+
+## Read
+
+Read the decision letter, every review, the authors' notes or decisions, the original and revised manuscripts, supplements and any outputs the responses rely on. Follow the journal's required format if it gives one.
+
+## Ledger
+
+Split the reviews into answerable points in reviewer order, with identifiers such as R1.2 (assign them if the reviewers didn't number their points), keeping each point's original wording. Include minor and editorial requests. For each point record what the authors decided: done, decided but not yet done, declined (with their reason), or needs an author decision. The ledger is done when every point in every review has a row and one of these statuses.
+
+## Check every claimed change
+
+For each change the authors say they made, find it in the revised manuscript or supplement and note where it is (section and a short quote, or page and line from the version you read). If you can't find a claimed change in the revision you were given, treat it as unverified, not done, and say which version you checked. Check that numbers quoted in the response match the outputs and the revised text. This step is done when every claimed change has a location or is marked unverified. If you applied LaTeX or bibliography changes, build and check references as far as is in scope, and say what you couldn't check.
+
+## Write the response
+
+For each point, answer directly first, then give the reason and where the change is. Keep reviewer text, response and quoted manuscript text visually distinct. Be courteous; where the authors disagree, or the reviewer is mistaken, say so politely with the evidence rather than conceding. Where reviewers ask for opposite things, explain to each how the authors resolved it.
+
+Claim only what the manuscript shows. Answer work that is decided but not yet done conditionally ("we will revise …") or with a clearly marked placeholder for the authors. Analyses, results, citations, approvals and agreements come from the authors or the files; where one is missing, leave a marked placeholder for the authors to supply, never an invented one. Before finishing, reread the whole response, including the opening and closing paragraphs, for completion claims the manuscript doesn't support.
+
+## Deliver
+
+If the user asked you to check an existing response rather than draft one, report your findings and write files only if asked. Otherwise save \`reviewer-response.md\` beside the manuscript, and \`manuscript-changes.md\` with the ledger, the evidence for each change, proposed edits not yet applied (before and after) and the decisions still needed. Use the journal's template or a file the user named when given, and pick a new name rather than replacing an existing file. Edit the manuscript only if asked. Reply with a short summary, what still blocks submission, and links to the files.
+`;
+
+const mlEvaluationAudit = `---
+name: ml-evaluation-audit
+description: "Audit whether I can trust this machine-learning score before submission: train/test splits, leakage, tuning, baselines, metrics and variation across runs. Use check-reported-numbers for score transcription, statistics-review for general inference, reporting-guideline-check for a checklist, and workspace-readiness-review for reproducibility."
+---
+
+# ML evaluation audit
+
+The goal is an honest answer to "would this score hold up on new data like the intended use?", with every problem located and, where the data allow, measured. It is an audit: leave code, data, splits and project notes as they are and propose fixes instead of retraining, unless asked. Finish in this turn and put questions at the end.
+
+## Read
+
+Read the claim, the methods, the pipeline code and configuration, split files, predictions and run logs. Work out the intended use, the unit that must be independent between training and test (patient, subject, site, document, time period), when predictions would be made in practice, and which inputs exist at that moment. Mark unknowns instead of guessing them.
+
+## Check
+
+- **Leakage across the split.** Where identifiers allow, compute how many test units also appear in training (count, denominator and percentage) rather than saying leakage is possible. Check duplicates and near-duplicates. Trace every fitted step (imputation, scaling, feature selection, resampling, encoding, learned representations) and confirm it was fitted on training data only, within each fold. Look for features that encode the label or would not be available at prediction time.
+- **Tuning and selection.** Hyperparameters, features, thresholds, checkpoints and calibration chosen without touching the final test set; repeated test access or best-of-many runs reported as one.
+- **Baselines and metrics.** Methods compared on the same cases and splits, with simple baselines. Metrics that suit the task and the claim: for a rare outcome, judge results against the prevalence and a trivial baseline, and report discrimination, precision-recall and calibration rather than accuracy alone (the chance level for precision-recall is the prevalence, for ROC AUC 0.5); for multiclass or regression, the averaging and the naive baseline.
+- **Uncertainty.** Variation from training (seeds, splits) is different from sampling uncertainty on the evaluation population (an interval or resampling at the independent unit, keeping pairs when models share test cases). Say which of these the available runs and predictions can show; a single run reported without either is a finding.
+- **Claims.** Generalisation, superiority and readiness for use, each against the evidence actually shown.
+
+Do counts and metric checks in Scient Compute on the project's data, writing nothing to project files. Read saved notebook outputs with \`scient_notebook_read\` and rerun notebooks only when asked. If Scient recorded the evaluation runs, \`scient_results_list\` shows them, and \`scient_results_check\` checks values linked into the manuscript. Every run, count and interval in the audit comes from the project or your own computation. Done when each area above has a located problem, a finding of sound with its evidence, or the reason it couldn't be checked.
+
+## Report
+
+For a project audit, save \`<draft-stem>.ml-evaluation-audit.md\` beside the manuscript (or \`ml-evaluation-audit.md\` beside the evaluation code), without overwriting an existing file. Lead with the problems that most change the trust in the score, each with location, evidence (including the numbers you computed), impact and the proposed fix. Then list what was checked and found sound, and what couldn't be checked. Reply with a short summary and a link to the report.
+`;
+
+const reportingGuidelineCheck = `---
+name: reporting-guideline-check
+description: Which reporting guideline fits my manuscript? Check my paper against the current CONSORT, STROBE, PRISMA, TRIPOD+AI, STARD, ARRIVE, CARE, SPIRIT or another checklist, item by item with manuscript locations. Use systematic-review to conduct a review, statistics-review or ml-evaluation-audit for methods, and references for citation support.
+---
+
+# Reporting guideline check
+
+The goal is to name the right reporting guideline for the study actually done, with its current edition confirmed, and to show item by item what the manuscript already reports and what is missing. Complete reporting is not the same as good methods; say so where it matters. Leave the manuscript unchanged and finish in this turn, with questions at the end.
+
+## Choose the guideline
+
+Read the title, abstract, methods and any protocol, registration or journal instructions. Choose by what the study did, not what it calls itself: a trial report or protocol, an observational study, a systematic review, a prediction model, a diagnostic accuracy study, an animal experiment, a case report, or something else. Check whether an extension applies, such as for AI, cluster designs, non-inferiority or scoping reviews, and whether the field has its own standard (for example COBIDAS for neuroimaging or REFORMS for ML-based science). For health research, start with the EQUATOR Network directory (equator-network.org); for other fields, with the venue and the issuing group. Follow the issuing group's instructions on how an extension relates to its base: some add items to the base checklist, some are complete checklists of their own, and some replace an earlier version. Record which items you audited and which edition they came from.
+
+Take the current edition and its items from the official source, since guidelines are updated, and record the edition, link and date you checked. If the journal requires an older edition, audit against that one and note the difference. If the official checklist can't be opened, still finish: give a clearly labelled provisional review of the main reporting areas and say that item-level compliance couldn't be confirmed.
+
+If the user only asked which guideline fits, answer that in chat with the reasons and the confirmed edition.
+
+## Audit
+
+Go item by item. For each, give a short description in your own words (link the checklist rather than copying its text), where the manuscript reports it (section and quote, or page; say whether a page is printed or PDF), and a status: reported, partly reported, not reported, not applicable (with the reason), or not checked. Read the relevant sections and supplements before calling something missing; a heading is not the content. Credit what is there before listing gaps. Suggested wording states only facts the manuscript gives; mark what the authors must supply.
+
+Before reporting, check that every official item has a row and that your summary counts match the table.
+
+## Report
+
+For a manuscript audit, save \`<draft-stem>.reporting-guideline-check.md\` next to it without overwriting an existing file: the choice and its reasons, the confirmed source, the most important gaps first, then the full item table. Reply with a short summary and a link.
+`;
+
+const diagnoseAnalysis = `---
+name: diagnose-analysis
+description: >-
+  Diagnose analysis code or a pipeline that gives a wrong, changed or inconsistent result,
+  fails, or got slow: a number or figure that moved, results that differ between runs or
+  machines, a script or notebook that errors. Use when the user says something is off,
+  broken or "why did this change?". Use statistics-review to judge whether the method itself
+  is sound.
+---
+
+# Diagnose analysis
+
+A discipline for hard problems in analysis code. Keep raw data as it is throughout; work on copies and in Scient Compute.
+
+## 1. Build a check that goes red
+
+**This is the skill.** If you have a **tight** pass/fail check that goes **red** on _this_ problem, you will find the cause; everything after it consumes that check. Without one, reading code is guessing. Spend most of your effort here, and be creative:
+
+- a short script that recomputes the suspicious number and compares it with the value the user trusts (an earlier output, a published table, a hand calculation);
+- the pipeline run on a small fixture or subset, diffed against a known-good output;
+- the same input through the old and new code (git history, an earlier notebook output) or two environments, with the outputs diffed;
+- for "sometimes different": many runs with and without a fixed seed, to measure how often it happens.
+
+Make it fast and deterministic (small inputs, fixed seeds, pinned versions). Done when one command or Compute run you have already executed detects the user's exact symptom (the same wrong number, the same error) against a stated expectation, as fast as the symptom allows. For an intermittent problem, the finish line is a recorded reproduction rate under fixed conditions; for a slowdown, measured timings against a baseline. If you truly can't build one, say so, list what you tried, and ask for what would make it possible (the trusted earlier output, the data version, the environment). Form no theory before this check exists.
+
+## 2. Reproduce and minimise
+
+Run the check and confirm it shows the problem the user described, not a different one nearby. Then shrink it: remove inputs, steps and options one at a time, rerunning after each, until every remaining piece is needed for the check to go red.
+
+## 3. Hypothesise
+
+Write 3 to 5 ranked hypotheses before testing any. Each must be falsifiable: "if X is the cause, changing Y makes the problem disappear". In analysis code the usual suspects are joins and merges that drop or duplicate rows, filters and missing-value handling, grouping and sort order, type and unit conversions, defaults that changed between package versions, randomness, and the input data itself changing. Show the ranked list to the user, since they may know what changed; carry on with your ranking if they aren't there. Done when the list is written down, before the first probe.
+
+## 4. Test one change at a time
+
+Each probe tests one prediction. Prefer inspecting intermediate results (row counts, keys, summaries at each step) over adding prints everywhere. Tag any temporary print or file with a marker such as \`[DEBUG-a4f2]\` so you can remove them all at the end. Done when one hypothesis's prediction held and the check goes green when you change what it names, with the others ruled out or ranked below it.
+
+## 5. Fix and lock it
+
+If the user asked only why, report the cause, the reproducing check and the exact fix you propose, showing on a copy that it restores the expected result. When they ask for the repair, fix the cause, not the symptom, and keep the check as a lasting one where the problem actually occurs (a test, or an assertion in the pipeline such as an expected row count or unique key): watch it fail before the fix and pass after. If the fix changes results the user has reported, give the old and new values side by side; whether to update a paper or figure is their decision.
+
+## 6. Clean up and report
+
+Remove every tagged debug change, and after a repair confirm the original problem no longer reproduces. Reply with the cause (the hypothesis that held, with the evidence), the fix (applied or proposed), the check, the results that change, and links to any changed files.
+`;
+
+const grillMe = `---
+name: grill-me
+description: >-
+  Grill me on a plan before I commit to it: a research question, study design, analysis
+  plan, preregistration, grant aim, experiment or any decision. Use when the user asks to
+  be grilled, stress-tested or challenged, or wants to think a plan through before running
+  or writing anything. To prepare questions for someone else to answer, use to-questionnaire.
+---
+
+# Grill me
+
+Interview the user relentlessly until you both share one understanding of the plan, with nothing left silently assumed. Map the plan as a **design tree**: every decision branches into the decisions that hang off it. For research, the tree usually runs through the question and estimand, the population and unit of analysis, the design and comparison, outcomes and how they are measured, sample size, the analysis model, missing data, multiplicity, bias and confounding, and ethics and data access; follow the branches this plan actually has.
+
+Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask now without guessing at answers you haven't heard. Ask the whole frontier in one round, number each question, and give your recommended answer with its reason. Then wait for the user's answers.
+
+Format a round like this:
+
+\`\`\`
+❓ **Q1 - <question title>**: <the question, with the options where there are some>
+
+➡️ <your recommended answer, and why>
+
+---
+
+❓ **Q2 - <question title>**: ...
+\`\`\`
+
+Word each question so that "yes" accepts your recommendation.
+
+Each round of answers reshapes the tree: settled decisions unblock the questions that depended on them. Recompute the frontier and ask the next round. A question that depends on another one still open belongs to a later round.
+
+Finding **facts** is your job; the **decisions** are the user's. Before asking, look up what the project already says (its files, data dictionary, protocol, the Library, earlier analyses) and what the field says (guidelines, typical effect sizes, standard methods), and bring those facts into your recommendation with their source. Ask the user only for what they must decide or only they know.
+
+The session is done when the frontier is empty: every branch visited. Then summarise the agreed plan, decision by decision, and ask the user to confirm it. Write it up (as a plan, a preregistration draft or methods text) or start the work only after they confirm, and only if they ask.
+`;
+
+const toQuestionnaire = `---
+name: to-questionnaire
+description: >-
+  Turn a question I can't answer alone into a questionnaire for someone else to fill in,
+  such as a statistician, supervisor, collaborator, ethics committee, data owner or core
+  facility. Use when the user asks for a questionnaire or a structured set of questions to
+  send to someone or take into a meeting. Use grill-me when the user wants to be questioned
+  themselves.
+---
+
+# To questionnaire
+
+Turn what the user can't settle alone into a **questionnaire**: a Markdown document they send to one person to fill in, or go through together in a meeting. The recipient holds knowledge the user lacks; the questionnaire draws it out.
+
+**Grill the send, not the subject.** Ask the user only about the send, which they can always answer: who it goes to, and what they need back. First read what the project already says (notes, protocol, analysis plan, data dictionary, earlier correspondence), so you ask only what the files don't answer and the questions carry the right context.
+
+1. **Who is it going to?** Their role, expertise and relationship to the user. This sets the tone and how much context the document must carry. Done when you know who the recipient is and what they know that the user doesn't.
+2. **What do you need back?** The specific decisions or facts the user needs from this person. Done when you have a concrete list of what the user must be able to do or decide afterwards.
+3. **Write it.** Questions aimed at the gap between steps 1 and 2, in the structure below, saved as \`questionnaire-<topic>.md\` in the project. Done when the file exists and every item from step 2 has a question.
+
+Ask steps 1 and 2 together in one message when the files don't already answer them.
+
+## Structure
+
+- **Title**, then **Purpose** (why it exists and the decision riding on it), **From / To**, and **How your answers will be used**.
+- **Context:** one paragraph for someone who wasn't in the user's head, with the facts they need to answer well (design, sample, the data as it stands), taken from the project, not invented.
+- **How to answer:** deadline and rough effort; "I don't know" and partial answers are welcome.
+- **Questions** under \`##\` headings by theme once there are more than a handful, most important first, since the recipient may answer only once. Each question asks one thing, with space for the answer directly beneath (\`>\`), and a one-line _why this matters_ only where the question could be misread or invite a throwaway answer.
+- **Anything else?** A closing question for what we didn't think to ask.
+
+Reply with a link to the file and the questions you weren't sure belong in it.
+`;
+
+const teach = `---
+name: teach
+description: >-
+  Teach me a method, tool or topic over several sessions, in a learning folder in this
+  project. Use when the user wants to learn to do something themselves, not to have it done.
+---
+
+# Teach
+
+The user wants to learn something over several sessions: a statistical method, a tool, a field. Teach it in a **learning folder** in the project (\`learning/<topic>/\`, unless the user names another place), whose files carry the state from one session to the next. Read them at the start of every session.
+
+## The learning folder
+
+- \`MISSION.md\`: why the user wants this, what they will use it for, and what "able to do it" looks like for them. All teaching is grounded in it.
+- \`RESOURCES.md\`: the trustworthy sources you found (textbooks, papers, official documentation, courses), each with a link and one line on what it is good for.
+- \`lessons/0001-<name>.html\`: the lessons, numbered.
+- \`reference/<name>.html\`: compressed cheat sheets the user will come back to: syntax, decision guides, formulas, a glossary of terms. Once a glossary exists, every lesson uses its terms.
+- \`learning-records/0001-<name>.md\`: what the user has shown they can do, misconceptions you found, and anything that should change later sessions.
+- \`NOTES.md\`: how the user likes to be taught.
+
+## First session: the mission
+
+If \`MISSION.md\` is empty or missing, start by asking why they want to learn this and what they will apply it to. Look at the project first: their data, analysis and draft usually show what the method is for, so ask only what the files don't answer. Write the mission, and update it (with a learning record) when their goal changes. The mission is done when it names the goal, the use, and a concrete "able to do it"; then teach the first lesson in the same session.
+
+## Sources
+
+Ground every lesson in sources you found in this task, not in memory: the project's Library first, then the official documentation, standard textbooks and methods papers. Cite them in the lessons with links, and give each lesson one primary source to read next, the best you found.
+
+## Lessons
+
+A lesson teaches one tightly scoped thing in the user's **zone of proximal development**: the next step their learning records show they are ready for, tied to the mission. Keep it short enough to finish in one sitting, ending with a tangible win. Wherever possible use the user's own data or a small realistic example from their field.
+
+Teach the knowledge needed for the skill, then practise it with a **feedback loop**: a quiz or a small task with immediate feedback, such as code they run in Scient Compute with the expected output to compare. Build lasting memory, not just in-the-moment fluency: ask the user to recall rather than reread, return to earlier material in later lessons, and mix related problems. In quizzes, make every option similar in length and vary where the right answer sits.
+
+Make each lesson a clean, readable HTML page that prints well, linking to related lessons and reference sheets, with a shared stylesheet in the folder so the course looks consistent. End each lesson by inviting questions. A lesson is done when it covers one topic, uses the user's data or field, has a feedback loop with the expected answers, cites its sources and names the primary source to read next.
+
+A session is done when the learning record is written and the reference sheets are updated. Reply with a link to the new lesson and what comes next.
 `;
 
 /**
@@ -260,7 +717,7 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.workspace-readiness-review",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Workspace readiness",
   "categoryDescription": "Review and improve a workspace so people and agents can understand it and work safely.",
   "displayOrder": 10,
@@ -281,12 +738,12 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.improve-workspace-readiness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Workspace readiness",
   "categoryDescription": "Review and improve a workspace so people and agents can understand it and work safely.",
   "displayOrder": 20,
   "supportedScopes": ["user", "project"],
-  "defaultInvocationPolicy": "explicit",
+  "defaultInvocationPolicy": "automatic",
   "origin": {
     "kind": "scient"
   }
@@ -298,11 +755,66 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
     directoryName: "scient-skill-authoring",
     defaultActive: true,
     files: Object.freeze({
+      "LICENSE-upstream.txt": `references/writing-for-agents.md is adapted from "writing-for-agents" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
       "SKILL.md": scientSkillAuthoring,
+      "references/writing-for-agents.md": `# Writing for agents
+
+How to write the text an agent follows: a skill, an instructions file, a document a skill points to.
+
+## The description is a pointer
+
+When agents browse or search the available skills, the name and description are what they choose from, so the wording, not the body, decides when an automatic skill is used. An explicit skill appears only when the user selects it. Put the word users actually say first ("grill", "references", "statistics"), give one trigger per distinct case the skill handles, and drop synonyms that rename the same case. Keep descriptions short. A skill that never loads can't be fixed by improving its body.
+
+## Steps and reference
+
+A skill holds **steps** (what the agent does, in order) and **reference** (rules and facts it consults). Put first what every run needs; move what only some runs need into a resource file, with a line saying when to read it. Keep a concept's rule, exceptions and caveats together under one heading. A body that is too long thins the agent's attention even when every line is true.
+
+## Finish lines
+
+End every step on a **completion criterion** the agent can check: "every number in the draft has a ledger row" beats "check the numbers". A vague finish line ("understand the data") invites stopping early. Demanding, checkable criteria ("every comment answered", "the count of references checked out of the total") drive thorough work without listing every action.
+
+## Say what to do
+
+Name the behaviour you want ("answer conditionally until the change is in the manuscript") rather than the one you don't. A prohibition puts the unwanted behaviour into the agent's mind. Keep "never" for hard guardrails, and pair it with the positive target.
+
+## Leading words
+
+Use a short, well-known term instead of a sentence: _ledger_, _frontier_, _preregistered_, _independent unit_, _tight_ loop, a check that goes _red_. The model already knows what they mean, so one word anchors a whole behaviour. Reach for an existing term before coining one.
+
+## Prune
+
+- **No-ops:** delete any sentence the model would obey anyway. If a word is too weak to change behaviour ("be careful"), use a stronger one rather than adding a sentence.
+- **One source of truth:** say each thing once.
+- **Don't copy the environment:** tool descriptions, schemas, \`--help\` output and Scient's own instructions are already visible. Write only what the agent can't look up: the unwritten convention, the reason for a choice, the trap no tool reports.
+- **Remove stale lines:** text written to patch one failure in one test, provenance notes and dated remarks don't belong in the instructions.
+`,
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.skill-authoring",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Skill creation",
   "categoryDescription": "Create and improve reusable guidance for Scient agents.",
   "displayOrder": 30,
@@ -316,239 +828,108 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
     }),
   }),
   Object.freeze({
-    directoryName: "pdf-authoring",
-    defaultActive: true,
-    files: Object.freeze({
-      "SKILL.md": pdfAuthoring,
-      "scient.skill.json": `{
-  "apiVersion": "scient.skills/v1alpha1",
-  "id": "scient.pdf-authoring",
-  "version": "0.3.1",
-  "category": "Document creation",
-  "categoryDescription": "Create polished documents and reliable final outputs.",
-  "displayOrder": 40,
-  "supportedScopes": ["user"],
-  "defaultInvocationPolicy": "automatic",
-  "origin": {
-    "kind": "scient"
-  }
-}
-`,
-    }),
-  }),
-  Object.freeze({
-    directoryName: "html-pdf-authoring",
-    defaultActive: true,
-    files: Object.freeze({
-      "SKILL.md": htmlPdfAuthoring,
-      "scient.skill.json": `{
-  "apiVersion": "scient.skills/v1alpha1",
-  "id": "scient.html-pdf-authoring",
-  "version": "0.3.1",
-  "category": "Document creation",
-  "categoryDescription": "Create polished documents and reliable final outputs.",
-  "displayOrder": 50,
-  "supportedScopes": ["user"],
-  "defaultInvocationPolicy": "automatic",
-  "origin": {
-    "kind": "scient"
-  }
-}
-`,
-    }),
-  }),
-  Object.freeze({
-    directoryName: "latex-authoring",
-    defaultActive: true,
-    files: Object.freeze({
-      "SKILL.md": latexAuthoring,
-      "scient.skill.json": `{
-  "apiVersion": "scient.skills/v1alpha1",
-  "id": "scient.latex-authoring",
-  "version": "0.3.1",
-  "category": "Document creation",
-  "categoryDescription": "Create polished documents and reliable final outputs.",
-  "displayOrder": 60,
-  "supportedScopes": ["user"],
-  "defaultInvocationPolicy": "automatic",
-  "origin": {
-    "kind": "scient"
-  }
-}
-`,
-    }),
-  }),
-  Object.freeze({
-    directoryName: "overleaf-sync",
-    defaultActive: true,
-    files: Object.freeze({
-      "SKILL.md": overleafSync,
-      "scient.skill.json": `{
-  "apiVersion": "scient.skills/v1alpha1",
-  "id": "scient.overleaf-sync",
-  "version": "0.1.0",
-  "category": "Document creation",
-  "categoryDescription": "Create polished documents and reliable final outputs.",
-  "displayOrder": 70,
-  "supportedScopes": ["user"],
-  "defaultInvocationPolicy": "automatic",
-  "origin": {
-    "kind": "scient"
-  }
-}
-`,
-    }),
-  }),
-  Object.freeze({
     directoryName: "connector-authoring",
     defaultActive: true,
     files: Object.freeze({
-      "SKILL.md": `---
-name: connector-authoring
-description: Find, add, build, test, fix or improve a connector (an MCP server) in Scient. Use when the user asks for a connector or to connect a service, asks to make, fix, repair or improve a connector or MCP server, when a connector stopped, needs sign-in or returns errors, or when the user needs to reach a service, website, database, file collection or command-line tool that no installed connector or Scient tool covers, including sites with no public API that the user signs in to.
----
+      "SKILL.md": connectorAuthoring,
+      "references/auth-and-sessions.md": `# Credentials and sessions
 
-# Connector Authoring
+For API keys and tokens, declare a sensitive string in the manifest's \`user_config\` and map it into \`server.mcp_config.env\`; that is the only home for a secret (never args, code or project files). The connector starts and lists tools without credentials, and protected handlers return \`needsSetup\`. Set \`required: true\` only when the connector is useless without the key. The user enters keys through \`scient_connector_setup\`, not chat or \`request_secret\`.
 
-A connector gives agents tools for one service. In Scient it is a folder with a
-\`manifest.json\` (MCP Bundle format) and a small Node program. Scient starts it, hands it keys
-and sign-ins from Accounts, and checks it before it goes in. The goal: a connector that does
-the user's real tasks, returns correct data, stays signed in, and holds no secret in its files.
+For a new API that needs a key: check startup and the setup-message path in the folder, save the connector, complete setup, then inspect a real read on the installed connector. A folder check can't accept a new key. Use \`replaceKeys\` only with evidence the key was rejected; an ordinary 403 can mean access denied or policy rather than a bad key.
 
-This skill grants no tools or permissions.
+For a website session, declare \`_meta["com.scientfactory.scient"].signIn.site\` as its origin; setup links an Accounts sign-in. \`scient_connector_check {folder, signIn, calls}\` tests an unsaved folder with that account; after saving, use \`connector\`. With no account yet, add one with \`scient_account_add\` (website or university sign-in). A declined or timed-out card ends setup for this turn; report it once.
 
-## Make a connector
+The session helper receives \`SCIENT_SIGN_IN_SITE\`, private cookie-file paths and a browser user agent. Hold cookies, CSRF and session tokens in memory only, and trace where each token comes from; never copy them into the connector, logs, fixtures or results. Sign-in happens through Scient's Accounts flow, including any human-only challenge; the connector itself never posts password forms.
 
-1. **Add one that exists before building.** \`scient_connector_list {query}\` (for example
-   \`{"query":"gmail"}\`) shows the user's connectors and ones Scient can add from Discover and
-   the MCP Registry. If one fits, \`scient_connector_add {from}\` with its \`name\` adds it, on for
-   every project; a key or the user's own sign-in app it needs is asked in a private card.
-   Add one connector for the need: not alternatives, or aggregators that bundle many services,
-   unless the user asks. For mail, files, calendars or other private data, prefer the service's
-   own connector or one that runs on this computer with the user's own sign-in. A hosted
-   connector's \`host\` sees everything it handles (its tools name it too): if that isn't the
-   service itself, name it and ask before adding, using or signing in to it.
-   Then follow its message (\`scient_connector_setup\` for \`needs-setup\`,
-   \`scient_connector_control {action: "sign-in"}\` for \`needs-sign-in\`). New chats get its
-   tools; in this chat, call them through \`scient_connector_check {connector, calls}\`.
-   \`ready\` means it started; make one real read-only call before telling the user it works.
-   \`scient_connector_add\` also takes an https MCP address or a \`.mcpb\` file. Build one only when none fits; an
-   entry's \`reason\` says why it can't be added, a good place to start. Also check Scient's own
-   tools (papers, sources, accounts, compute). If the work is one-off, a script fits better; if
-   it is know-how rather than access, a skill does (\`scient-skill-authoring\`).
-2. **Ask briefly**, in one message and only what you don't know: which service (a link), the
-   two or three things they want to do with it (with an example), and how they sign in (an API
-   key, a university or site login, nothing).
-3. **Choose the kind:**
-   - a web API with a key or none: \`auth-and-sessions.md\` for keys, \`science-apis.md\` for
-     science services;
-   - an API that only offers OAuth: the template can't sign in with OAuth yet; read
-     \`auth-and-sessions.md\`, "OAuth APIs", for what to do instead;
-   - a website the user signs in to, with no documented API: \`study-a-website.md\` first, then
-     \`auth-and-sessions.md\`;
-   - files, a database or a command-line tool on this computer: \`local-tools.md\`.
-4. **Plan a few tools** shaped like the user's tasks, not one per endpoint. Read
-   \`tool-design.md\`. Tell the user the plan in a few lines and go on.
-5. **Build from the template.** \`scient_connector_copy {name}\`, with a name no connector has,
-   writes a working connector to \`connectors/<slug>/\` (an OpenAlex example with no
-   dependencies). To read an installed connector's code, copy it with \`{connector}\` instead. Read its \`README.md\`,
-   replace the example tools in \`server.mjs\`, and update \`manifest.json\`. Keep \`mcp.mjs\`,
-   \`http.mjs\` and \`session.mjs\` unless you have a reason. Scient runs Node connectors on its own
-   Node, and npm may be missing: add libraries only when truly needed, installed inside the
-   folder.
-6. **Test with real calls.** \`scient_connector_check {folder, calls}\` with real inputs from the
-   user's tasks. For a site the user signs in to, add \`signIn\` with the name of their Accounts
-   sign-in, so the check runs signed in. Read the data: it must match the source, not just
-   arrive. See \`testing.md\`. Fix and check again until it passes. If the service keeps
-   answering 429 or 403, to plain requests too, stop after a couple of tries: tell the user,
-   and don't save a connector you couldn't check.
-7. **Save and set up.** \`scient_connector_save {folder}\`. When it says \`needs-setup\`, call
-   \`scient_connector_setup {connector}\`: keys open a private card, a sign-in links the user's
-   Accounts sign-in. Wait for the card's result: if it was declined, timed out or closed, the
-   card is gone; don't open it again this turn unless the user asks. Then check once more with \`connector\` set, so it uses them. (\`signIn\` is
-   only for a folder that isn't saved yet.) New chats get its tools; in this chat, call them
-   through \`scient_connector_check {connector, calls}\`.
-   Do steps 4 to 7 in the same turn, without stopping to ask: a copied template is not a
-   connector, and the work is done only when the connector is saved and a real call works (or you
-   know what blocks it).
+Detect expiry from the site's observed signed-out response; a generic 403 isn't enough. The \`SCIENT_SIGN_IN_EXPIRED\` marker makes the host sign in and replay the call, so emit it only for a read that is known safe to repeat. A write with an uncertain outcome needs a readback, not a replay. Test expiry with synthetic responses.
 
-8. **Report** in a few lines: what it does, its tools, what you tested with one real result,
-   what you didn't test, and how to take it back: a new connector has nothing earlier to go
-   back to, so the user removes it on its page (Remove can be undone); after a fix, its page
-   has **Undo last change**.
+Bind credential-bearing requests to the intended origin. The inherited session helper strips standard authorization headers on redirects, but not custom secret headers: with custom credentials, either follow no cross-origin redirects or implement and test an explicit origin allowlist, and stop unexpected redirects before sending. The browser user agent is for compatibility, never for passing a bot check.
 
-## Fix or improve a connector
+For OAuth-only APIs the template has no OAuth lifecycle. Use a vendor-hosted MCP connector, a supported package's OAuth flow or a service-issued personal token, and report the limitation if none fits. Password grants and stored client secrets are out of bounds.
+`,
+      "references/fixing.md": `# Repair an installed connector
 
-1. **Find what is wrong.** \`scient_connector_list\` gives each connector's status (\`ready\`,
-   \`needs-setup\`, \`needs-sign-in\`, \`error\`, \`off\`) and last error. \`scient_connector_check
-   {connector}\` (no folder) tests an installed one, hosted or local, and lists its tools;
-   with \`calls\` it makes them too.
-2. **A hosted connector** (it runs online) has no code to fix. \`needs-sign-in\`:
-   \`scient_connector_control {connector, action: "sign-in"}\` opens its sign-in in this chat's
-   browser as the user's own tab, for them to finish (your preview tools don't see it; tell
-   them it is open); then check again. \`off\`: \`action: "on"\`. Other errors are
-   the service's: tell the user what it said.
-3. **A local connector**: \`needs-setup\` is \`scient_connector_setup\`. A one-off failure may need
-   only \`scient_connector_control {connector, action: "restart"}\`. Otherwise copy and fix it:
-   1. \`scient_connector_copy {connector}\` copies it into this chat's folder and returns its
-      status, last error and log. For an npm or PyPI package connector, the package's code
-      comes too, in \`package/\`, with its dependencies; \`source\` says where to edit. A command
-      that runs a script outside its folder is named in \`source\`: copy the script in to change
-      it.
-   2. Read the error, the log and the code. Read \`fixing.md\`.
-   3. Reproduce with \`scient_connector_check {folder, connector, calls}\`, using the call that
-      failed.
-   4. Make the smallest fix. Keep tool names, inputs and result fields.
-   5. Check again: the failing call and the calls that worked before.
-   6. \`scient_connector_save {folder, connector}\`, always with \`connector\`: without it Scient
-      refuses, since it would install a second copy. Scient keeps the old version (Undo on the
-      connector's page). A vendor's connector or a package becomes the user's own copy; say
-      so.
+Read the status and reproduce the failed read before editing. For local code, \`scient_connector_copy {connector}\` returns the working \`folder\` and may include \`status\`, \`lastError\`, \`problem\`, \`log\` and \`source\`; use \`source\` to find copied package code when it is present. Work in that folder, not in the app's private store.
 
-Turning on, restarting, or turning off the connector you are fixing needs no question first;
-don't turn other connectors off to work around a problem. Removing one is the user's: tell
-them where (its page in Settings → Extensions). When the user asks you not to
-change anything, that includes connectors: don't add, save, set up or switch any.
+\`scient_connector_check {folder, connector, calls}\` tests with the connector's existing credentials. If the failure doesn't reproduce, say so and keep a suspected fix apart from a demonstrated one. Read the source before replaying any call that could write.
 
-Go from the diagnosis to the saved fix in one go; don't stop to ask whether to go ahead.
-Ask only when the fix needs something from the user (a key, a sign-in, a choice of behaviour).
+Let the evidence choose the remedy: real entry paths for module errors; the declared .mjs or module format for import errors; folder-local dependencies; setup for missing keys; sign-in for genuine expiry; schema or parser updates for changed data. A 403 or an HTML login-like page alone doesn't prove a key expired. A bot check ends the attempt; report it.
 
-## Hard rules
+Keep tool names, inputs, outputs and the behaviour that already worked. Done when the failing case and representative reads that already worked both pass. Save with \`{folder, connector}\` to replace that exact installed connector. A copied vendor package becomes the user's maintained copy; say so, and mention **Undo last change**.
 
-- **Secrets only through Scient.** Keys, passwords, tokens and cookies never go in chat, code,
-  \`manifest.json\`, files, logs or results. Keys reach the program through setup and Accounts,
-  as environment variables; sign-ins as Scient's cookie files. Never ask for a key in chat.
-- **The user's own account, used fairly.** Only their account, for their own use. Respect the
-  site's own terms; if they forbid automated access, say so and stop. A general policy that
-  doesn't cover the site isn't its terms: when unsure, tell the user what you found and let
-  them decide. Be polite: pace requests, back off when limited, identify honestly. Send the
-  browser's user agent only with the user's own sign-in session
-  (\`SCIENT_SIGN_IN_USER_AGENT\`), never to get past a bot check.
-- **Never get past a captcha or 2FA yourself.** Hand it to the user.
-- **Read first.** Explore by reading. Ask the user before any request that changes data
-  (submit, post, delete, enroll, pay), while studying and when testing.
-- **No captures with secrets.** Never save request captures, HAR files, cookies or page dumps
-  in the connector or the project. Use masked or made-up values in notes and tests.
+Hosted connectors have no source to repair: use their sign-in or setup remedy, or report the service failure. Restarting or enabling the connector under repair can be part of an authorized fix, not of a check-only review. Leave other connectors as they are, and report a persistent failure rather than cycling sign-ins.
+`,
+      "references/local-tools.md": `# Local files, databases and programs
 
-## References
+Take user-selected files and directories from manifest settings and paths from environment variables, so the connector works on any machine. Set \`_meta["com.scientfactory.scient"].workingDirectory: "project"\` only when the task should run in the chat's project.
 
-- \`references/tool-design.md\`: when planning or changing tools (names, schemas, results,
-  paging, errors, annotations).
-- \`references/auth-and-sessions.md\`: when the connector needs a key, OAuth, or the user's
-  sign-in to a website, and how it stays signed in.
-- \`references/study-a-website.md\`: before building for a site with no documented API.
-- \`references/science-apis.md\`: when using OpenAlex, NCBI, arXiv, Crossref, Semantic Scholar,
-  ClinicalTrials.gov, Zotero, Moodle or a similar service.
-- \`references/local-tools.md\`: for local files, databases and command-line tools.
-- \`references/testing.md\`: before calling a connector done.
-- \`references/fixing.md\`: when a connector fails or the user asks to improve one.
-- \`references/sources.md\`: where these methods come from.
-- \`templates/\`: the connector \`scient_connector_copy\` writes; read its \`README.md\`.
+Resolve requested paths under the allowed root and check containment after canonicalizing symlinks; a string-prefix check is insufficient. Read by default; writes get separate tools and destinations. Return bounded text or output paths rather than whole binary files.
+
+Open databases read-only and bind query parameters. For a live database, go through the application's supported API; copying a locked database needs its WAL or backup semantics. Database passwords are sensitive environment settings. Check the actual Node runtime before choosing \`node:sqlite\` (absent on Node 20) or a packaged driver.
+
+Spawn command-line programs with an executable and an argument array, not agent-built shell strings. Set a timeout, an output cap and cancellation, and check the exit code. On Windows, call a real .exe or run a Node script through \`process.execPath\`; untrusted arguments stay out of .cmd and .bat command lines. Report a missing executable and how to install it.
+
+Use \`node:path\`, exact path case, and test paths with spaces and non-Latin names. Keep dependencies inside the connector folder. Record the runtime and OS you actually exercised; a declaration for another platform is not a passing test there.
+`,
+      "references/science-apis.md": `# Scholarly API coverage
+
+Before implementing, read the service's current official documentation for endpoints, authentication, rate limits and paging, and record the URL, date and tested endpoint in the connector README. Use the response's rate-limit headers, timeouts and bounded backoff; the budget is shared across the user's programs. Treat quotas in old examples as history, not guarantees.
+
+- [OpenAlex](https://docs.openalex.org/): offset paging stops at 10,000 results, so \`has_more: false\` there doesn't mean the search is complete; the template reports \`truncated\` with a reason. Check the current authentication and paging rules (cursor paging may need an API key). For a complete search, implement documented cursor paging or disjoint partitions and reconcile totals, and disclose unfinished work. Author lists and abstracts can also be cut.
+- [NCBI E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/): PubMed ESearch exposes only the first 10,000 IDs, and \`retstart\` or history alone doesn't get past that. Use NCBI's supported large-search or bulk route, or validated non-overlapping queries; keep raw counts and deduplicate overlaps. Verify the cap for each database.
+- [Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/): DOI metadata is not full text; follow its cursor and rate-limit rules.
+- [arXiv](https://info.arxiv.org/help/api/user-manual.html): keep the identifier version, parse Atom, and pace calls to its shared limits.
+- [Semantic Scholar](https://api.semanticscholar.org/api-docs/): ranked search and bulk search differ in coverage and pagination; choose for the task.
+- [ClinicalTrials.gov](https://clinicaltrials.gov/data-api/api): trial records are not publications; keep the registry ID, update date and page token.
+- [Zotero](https://www.zotero.org/support/dev/web_api/v3/basics): keep library and item IDs, versions and next-page links, and back off when asked; the local and web APIs differ in capabilities.
+
+Every result states its source, stable IDs, coverage, pages completed and any cap or omitted fields. An HTTP 200 or a search total doesn't prove all records came back. Resolve conflicting identifiers before merging works.
+`,
+      "references/study-a-website.md": `# Study a website without a documented API
+
+Work within the user's requested service and account. Look for official APIs, vendor connectors, exports and feeds before reproducing browser requests. Respect the site's terms, and report a prohibition or an unclear access boundary. Bot protection or a human-only challenge ends the attempt.
+
+Watch the real task with two different inputs. Use \`preview_network\` request IDs to inspect the responses that carry data, and \`preview_evaluate\` only to read configuration or replay requests that clearly only read. A POST search can read and a GET can change state, so replay only what you know is safe.
+
+Trace every non-input value to a page, response or cookie, and hold CSRF and session values in memory. Notes and code get endpoints and field names only; HARs, raw page dumps, cookie exports, request captures and private payloads stay out of the project. A masking tool doesn't make private values copyable.
+
+Compare the reading requests with what the page shows: counts, dates and time zones, identifiers, non-Latin names and an empty case. Open a next page and work out its cursor or offset. Implement only fields you have observed or seen documented. Learn the signed-out response shape without deliberately ending the user's session.
+
+Test outside the browser with a folder check and an Accounts sign-in (see \`references/auth-and-sessions.md\`); the connector itself never posts login forms. Write a small endpoint map in its README: inputs, response shape, token origins without values, expiry signals, the date, and which behaviour is confirmed versus inferred. If only in-browser execution works, report the standalone connector as blocked.
+`,
+      "references/testing.md": `# Prove a connector works
+
+Before saving, check startup, the listed schemas and their agreement with the manifest. Startup must survive a missing key; for a newly required key this is the pre-save check, and setup and real authenticated calls follow the save.
+
+Give \`scient_connector_check\` calls as \`{tool, arguments}\`, at most ten per check. \`ok: true\` proves only transport and startup. Read each \`isError\`, result text, \`missing\`, error and log; a clean setup error for absent credentials is not a data read.
+
+Test the real task, a next page with different records, an empty result and invalid input. Include the largest realistic result and a cap boundary, and verify counts, dates and time zones, non-Latin names, optional fields, stable IDs and explicit truncation. Spot-check returned fields against their source. Keep calls few and read-only, unless the user authorized a specific write on chosen data.
+
+For sessions, test linked and unlinked reads and the observed signed-out or forbidden shapes. Use synthetic credentials and responses for expiry replay, timeouts, custom-header redirects and secret-disclosure checks. Test idempotency on synthetic responses, never by repeating a live write; a write's unknown outcome stays unknown until independently read back.
+
+After save and setup, make one installed read with \`connector\`; the folder alone doesn't prove installed paths and credentials. Keep two or three task questions and their checked answers in the connector README. A fresh-agent evaluation is optional and happens only on request; claim it only after running it.
+
+Done when the report gives saved, configured and working status separately, one inspected real result, the calls tested, remaining caps, write paths left untested, and the runtime and host actually exercised. Node portability alone doesn't qualify Windows, Linux, or Intel and Apple Silicon Macs. State any account or service blockers. Tell the user to open the connector's page in Extensions and choose **Remove** to remove it; after a repair, mention **Undo last change**.
+`,
+      "references/tool-design.md": `# Design tools around tasks
+
+Build a few tools that return the user's answers, not a catalogue of endpoints. During repairs keep established names, arguments and result fields. Put the task, useful distinctions and limits in the tool descriptions.
+
+Use strict object schemas, bounded strings and arrays, sensible defaults and enums, and keep manifest tools in step with the runtime listing. Return readable names alongside stable IDs, with enough provenance to check identity and version. Dates are ISO-formatted with the source time zone. Results match \`outputSchema\`, and a missing field is distinct from zero.
+
+For lists, return the total when known, the items returned, the next page or cursor, and truncation or cap information. The last accessible page isn't necessarily the end of the dataset. Pass the service's cursor through unchanged and keep the query parameters. Any cut to authors, abstracts or searches is reported, never hidden behind a claim of completeness.
+
+Return actionable \`ToolError\` messages built from allowlisted status and error codes, keeping arbitrary service bodies, exceptions and request values out of errors and logs. \`safeUrl\` masks only recognised query names; it is not a general secret scrubber. The template helpers omit response bodies; keep it that way.
+
+Separate read tools from write tools and set their annotations honestly. The HTTP method alone doesn't show a call is read-only: a search POST can read and a GET can mutate. For consequential writes, offer a preview where the service supports one. Existing authorization for the exact action is enough; ask only about an unapproved change.
+
+After an expiry, timeout or uncertain response to a write, read back its effect instead of retrying; if the outcome can't be established, report it as unknown. The host may replay a request after the sign-in-expired marker whatever the tool's annotations, so emit that marker only where no write could have committed; the template MCP helper emits it only for tools marked read-only. Helpers can't add idempotency the service doesn't guarantee.
 `,
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.connector-authoring",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Connector creation",
   "categoryDescription": "Make and fix connectors that give agents tools for a service.",
   "displayOrder": 35,
@@ -559,777 +940,11 @@ Ask only when the fix needs something from the user (a key, a sign-in, a choice 
   }
 }
 `,
-      "references/auth-and-sessions.md": `# Keys, sign-ins and staying signed in
-
-Read this when a connector needs a key, a token, an OAuth app, or the user's sign-in to a
-website. The rule behind all of it: secrets live in Scient's Accounts. The connector gets
-them at start, through its environment, and never stores, prints or asks for them.
-
-## Pick the way in
-
-| The service has                                                                                                     | Use                                    | The program gets        |
-| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------- |
-| A public API, no key                                                                                                | Nothing                                | None                    |
-| An API key or a personal token (OpenAlex, NCBI, Semantic Scholar, Zotero, GitHub)                                   | A \`user_config\` key                    | An environment variable |
-| A token the user makes in the site's settings (Moodle "security keys", a library's API token)                       | A \`user_config\` key, same as above     | An environment variable |
-| Only OAuth                                                                                                          | See "OAuth APIs" below                 | None                    |
-| No API, or an API that works only with the browser's session (most university portals, library sites, course sites) | A website sign-in (\`signIn\`)           | Cookie files            |
-| Files or a database on this computer                                                                                | Settings of type \`directory\` or \`file\` | Paths                   |
-
-## API keys
-
-Declare the key in \`manifest.json\` and map it to an environment variable. Keys go in \`env\`
-only; Scient refuses a key in \`args\`, where other programs could read it.
-
-\`\`\`json
-"user_config": {
-  "api_key": {
-    "type": "string",
-    "title": "NCBI API key",
-    "description": "Optional. Make one in your NCBI account settings; it raises the limit to 10 requests a second.",
-    "sensitive": true,
-    "required": false
-  }
-},
-"server": {
-  "type": "node",
-  "entry_point": "server.mjs",
-  "mcp_config": {
-    "command": "node",
-    "args": ["\${__dirname}/server.mjs"],
-    "env": { "NCBI_API_KEY": "\${user_config.api_key}" }
-  }
-}
-\`\`\`
-
-- \`sensitive: true\` with \`type: "string"\` makes it a key: Scient keeps it in Accounts (an
-  API-key account linked to the connector), not in the connector's settings.
-- \`required: true\` when nothing works without it. A connector with a missing required key is
-  still added; it shows Needs setup, and its tools tell the agent to run setup.
-- In code: \`const key = process.env.NCBI_API_KEY?.trim() ?? "";\`. An unanswered optional key
-  arrives as an empty string.
-- Start and list tools without the key. The tools that need it throw
-  \`needsSetup("The NCBI API key")\` (from \`mcp.mjs\`).
-- Send it in a header when the API allows (\`Authorization: Bearer …\`, \`x-api-key\`), not in the
-  URL. If it must go in the URL, use \`safeUrl()\` for anything you log or return.
-- When the API refuses the key (401, or 403 with an "invalid key" body), say so: "The key
-  was refused. Call scient_connector_setup with replaceKeys."
-- After \`scient_connector_save\` returns \`needs-setup\`, call
-  \`scient_connector_setup {connector}\`. Each key opens a private card where the user pastes it,
-  or links a key they already saved. Never ask for a key in chat and never use
-  \`request_secret\` for a connector key.
-
-Plain settings (a site address, a default folder) are \`user_config\` fields without
-\`sensitive\`. Ask the user in chat, then pass them as \`settings\` to \`scient_connector_setup\`.
-
-## Website sign-ins
-
-For a site the user signs in to with a username and password (often with an authenticator
-code or a university single sign-on).
-
-### Declare it
-
-\`\`\`json
-"_meta": {
-  "com.scientfactory.scient": {
-    "signIn": { "site": "https://moodle.example.edu" }
-  }
-}
-\`\`\`
-
-\`site\` is the origin only (\`https://\` and the host, no path). Setup lists the sign-in as missing until the user
-links it to an Accounts website or university sign-in for that site. \`scient_connector_setup\`
-offers that.
-
-### What the program gets
-
-| Variable                     | Holds                                                                                                                                                                                                      |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| \`SCIENT_SIGN_IN_SITE\`        | The site's origin.                                                                                                                                                                                         |
-| \`SCIENT_SIGN_IN_COOKIES\`     | Path to a JSON file: \`[{name, value, domain, path, expires, secure, httpOnly, sameSite}]\`.                                                                                                                 |
-| \`SCIENT_SIGN_IN_COOKIES_TXT\` | The same cookies in Netscape format, for curl (\`-b\`) or Python (\`http.cookiejar.MozillaCookieJar\`).                                                                                                        |
-| \`SCIENT_SIGN_IN_USER_AGENT\`  | The user agent of the browser the cookies came from. \`session.mjs\` sends it with the session, because some sites end a session that arrives from another browser. Use it only with the user's own session. |
-
-The files are private, rewritten at each start and after each new sign-in, and removed with the
-connector. The program never gets the password: Scient signs in, not the connector.
-
-### Use it
-
-\`\`\`js
-import { createHttp } from "./http.mjs";
-import { createSession } from "./session.mjs";
-
-const http = createHttp({ userAgent: "moodle-connector/0.1 (Scient connector)", minGapMs: 500 });
-const session = createSession({ http });
-
-// In a handler:
-const data = await session.json("/webservice/…", {}, { signal });
-const page = await (await session.fetch("/my/courses.php", {}, { signal })).text();
-\`\`\`
-
-\`session.fetch\` reads the cookie file (again when Scient rewrites it), sends only the cookies
-that belong to each host, keeps cookies the site sets while it runs (sessions that refresh on
-each request), follows redirects itself, and throws the expired error when the session is gone.
-Pass headers as a plain object.
-
-### Know when the session has ended
-
-\`session.fetch\` treats these as ended:
-
-- a redirect to a sign-in page (paths like \`/login\`, \`/signin\`, \`/sso\`, \`/saml\`,
-  \`/cas/login\`, \`/idp/\`, or hosts like \`login.microsoftonline.com\`);
-- status 401 (and 419 or 440, used by some frameworks);
-- an HTML page with a password field where data was expected.
-
-Tune it for the site, after you have seen what the site sends a signed-out visitor (open the
-same URL in a tab without the sign-in, or look at the response right after the session ends):
-
-- \`loginPath\`: a regular expression for the site's own sign-in path, when it differs.
-- \`isSignedOut(response, body)\`: a site-specific check, e.g. a JSON body with
-  \`"errorcode":"requireloginerror"\`.
-- \`forbiddenMeansExpired: true\` only for a site known to send 403 when the session ends. By
-  default a 403 means "no access to this", which a new sign-in would not fix.
-
-Throw \`signInExpired(site, why)\` yourself for any other sign. The tool error then starts with
-\`SCIENT_SIGN_IN_EXPIRED\`. Only use it for a real end of session: each one makes Scient sign in
-again, and a false one ends with the user being asked to sign in for nothing.
-
-### What happens then
-
-Scient sees the marker, signs the account in again in its own browser profile with the saved
-username, password and authenticator code, rewrites the cookie files, restarts the program,
-and retries the call once. The agent sees the retried result.
-
-If the site needs the person (a captcha, a text-message code, a new device check), the agent
-sees "<site> needs you to sign in: open Settings → Accounts, or the connector's page", and the
-connector shows Needs sign-in with a Sign in button. Tell the user exactly that, once. Don't
-retry in a loop.
-
-### Tokens inside pages
-
-Many sites also need a value from a page: a CSRF token, Moodle's \`sesskey\`, a request id.
-
-- Get it from the page or API that hands it out (\`session.fetch\` the page, read it from the
-  HTML or embedded JSON), keep it in memory for this run, and get it again when the site says
-  it is invalid.
-- Never write it to a file and never return it in a result.
-
-### Never
-
-- Read, ask for, type or store the user's password, authenticator secret or one-time codes in
-  the connector. Scient does the signing in.
-- Sign in from the connector (posting the login form). It skips the user's saved
-  authenticator, trips bot checks, and can lock the account.
-- Copy cookies into the connector's folder, a test file, a log or a result.
-- Send cookies to any host but the site's own (\`session.fetch\` doesn't).
-- Keep sessions alive with pings or background loops. Scient signs in again when needed.
-
-### While building
-
-A folder you haven't saved can still be checked signed in. The order that works:
-
-1. Study the site in Scient's browser, signed in with \`scient_account_sign_in\` or by
-   \`preview_open\` with a saved sign-in (\`study-a-website.md\`).
-2. Check without a sign-in first: the program must start and list its tools, and a tool call
-   must return the "no sign-in yet" message, not crash.
-3. Check signed in: \`scient_connector_check {folder, signIn, calls}\`, where \`signIn\` is the name
-   of the user's Accounts sign-in for the site (\`scient_accounts_list\` shows it). If they have
-   none, \`scient_account_add\` with kind \`website\` asks them to add one. Fix until real calls
-   return real data.
-4. Save. If the result is \`needs-setup\` with the sign-in missing, call
-   \`scient_connector_setup {connector}\`, which links the sign-in. After that,
-   \`scient_connector_check {folder, connector, calls}\` uses the connector's own sign-in.
-
-\`scient_account_browser_session\` exports a site's cookies to private session files for curl
-while you study. Use it for reading requests only, and never copy those files anywhere.
-
-## OAuth APIs
-
-The template doesn't support OAuth yet: a connector made from it gets its credentials from
-the environment and can't run an OAuth sign-in or keep one fresh. A package connector (npm or
-PyPI) that runs its own OAuth sign-in can be added and used as it is.
-
-1. Prefer a personal access token or API key if the service offers one (GitHub, GitLab,
-   Zotero, Zenodo, Figshare and many others do). Treat it as a key.
-2. If the vendor runs its own remote MCP server, suggest adding that in Extensions instead: it
-   signs in with OAuth through Scient.
-3. If the site works in the browser, a website sign-in may reach the same data.
-4. If none of these fit, tell the user plainly that a connector made with the template
-   can't sign in to this service yet, because it offers only OAuth. Don't embed a client
-   secret, and never use the user's password to get a token (the "password grant").
-
-## Local files, databases and programs
-
-They need settings, not secrets: see \`local-tools.md\`. A database password is still a key
-(\`sensitive: true\`, in \`env\`).
-`,
-      "references/fixing.md": `# Fixing a connector
-
-Read this when a connector stopped, fails a tool call, returns wrong data, or the user asks to
-improve one. The aim is the smallest change that makes it work again, checked the same way it
-failed.
-
-## 1. Get a copy and the facts
-
-\`scient_connector_copy {connector}\` copies it to \`connectors/<slug>/\` in this chat's folder and
-returns its status, the last error and the recent log (keys removed). Work only on that copy.
-Read \`manifest.json\`, the README (its request map and test questions, if any) and the code.
-
-A package connector (\`npx\` or \`uvx\` in its manifest) arrives with the package's code in
-\`package/\`: an npm package with its dependencies in \`node_modules/\`, a PyPI package with
-\`server.py\` starting it and its dependencies listed in \`pyproject.toml\` (uv installs them into
-\`.venv/\` when it starts). The copy's \`source\` says where to edit. Change the package's own
-files; to change a dependency's version, edit \`pyproject.toml\` or reinstall it in the folder
-with npm. If \`source\` says npm or uv is missing, fix only what the manifest runs, or ask the
-user to install it.
-
-## 2. Reproduce it
-
-Run \`scient_connector_check {folder, connector, calls}\` with \`connector\` set, so the check uses
-the user's settings, keys and sign-in, and with the call that failed. A fix you can't reproduce
-is a guess: if it doesn't fail now, say so, and look in the log for when and how it failed.
-
-## 3. Find the cause
-
-| What you see                                                                                 | Likely cause                                                                                           | Fix                                                                                              |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| \`Cannot find module …\`                                                                       | \`entry_point\` or \`args\` name a file that isn't there                                                   | Point them at the real file; keep \`\${__dirname}/…\`.                                              |
-| \`SyntaxError: Cannot use import statement\` or \`Unexpected token 'export'\`                    | ES module code in a \`.js\` file without \`"type": "module"\`                                              | Use \`.mjs\`, or add a \`package.json\` with \`"type": "module"\`.                                     |
-| \`fetch is not defined\`, or other missing built-ins                                           | An old Node on PATH runs it                                                                            | Use \`server.type: "node"\` with \`command: "node"\`, so Scient runs it on its own Node.             |
-| A missing package                                                                            | Its \`node_modules\` isn't in the folder                                                                 | Install inside the folder, or remove the dependency.                                             |
-| It exits at once with no error                                                               | It writes to stdout, exits when a key is missing, or crashes on start                                  | Logs to stderr only; start without keys; read the log.                                           |
-| Every call gets 401                                                                          | The key changed or was revoked                                                                         | \`scient_connector_setup {connector, replaceKeys: […]}\`.                                          |
-| \`SCIENT_SIGN_IN_EXPIRED\` on every call, or "needs you to sign in" when the user is signed in | False alarm: a 403 for "no access", a page that has a password field, a changed sign-in path           | Tighten the check: \`loginPath\`, \`isSignedOut\`, \`forbiddenMeansExpired\` (\`auth-and-sessions.md\`). |
-| "needs you to sign in"                                                                       | The site wants the person (captcha, text code)                                                         | Tell the user to sign in from Accounts or the connector's page. Nothing to fix in code.          |
-| 404, a changed JSON shape, empty results that used to be full                                | The site changed                                                                                       | See "When the site changed".                                                                     |
-| 429 or blocked                                                                               | Too many requests                                                                                      | Slow down (\`minGapMs\`), fetch less, cache.                                                       |
-| Time-outs                                                                                    | Pages too big or a slow endpoint                                                                       | Smaller pages, a longer \`timeoutMs\` for that call only.                                          |
-| Fails only on Windows                                                                        | Paths joined by hand, CRLF line endings in parsing, a \`.cmd\` or \`.bat\` program started without a shell | Use \`node:path\`, split lines on \`/\\r?\\n/\`, and see \`local-tools.md\` for starting programs.       |
-| JSON parse errors                                                                            | The site sent HTML: an error page, maintenance, or the sign-in page                                    | Check the content type first (\`readJson\` and \`session.json\` do).                                 |
-
-## 4. When the site changed
-
-1. Do the task by hand in Scient's browser and list the requests (\`study-a-website.md\`).
-2. Compare with the request map in the README: renamed paths, new required parameters, a new
-   token, a new GraphQL hash, renamed fields.
-3. Change only what moved. Update the map and its date.
-
-## 5. Keep the fix small
-
-- Change what broke, nothing else. No rewrites, no new style, no renamed tools.
-- Keep tool names, parameters and result fields: agents and skills depend on them. If a
-  result must change, add a field rather than rename one.
-- Bump \`version\` in \`manifest.json\` (the last number for a fix).
-
-## 6. Check, then save
-
-- Check again with the call that failed and the calls that worked before.
-- \`scient_connector_save {folder, connector}\`, always with \`connector\` (without it Scient
-  refuses, since it would install a second copy). Scient checks it, swaps it in, restarts it
-  and keeps the old version; the connector's page has **Undo last change**.
-- A connector someone else published (a vendor's bundle) is never changed in place: your fix
-  becomes the user's own copy, shown as "Your copy of …". Tell the user that updates from the
-  publisher won't reach this copy, and suggest reporting the problem to them if it is public.
-
-## 7. Tell the user
-
-What broke, what you changed (a line or two), how you checked it, and that Undo is on the
-connector's page.
-`,
-      "references/local-tools.md": `# Local files, databases and command-line tools
-
-Read this when a connector works with things on the user's computer: a folder of data, a
-database file, or a program the user already has (a lab instrument's command-line tool, an
-analysis script, \`pandoc\`, \`samtools\`).
-
-## Settings, not hard-coded paths
-
-- Ask for folders and files with \`user_config\` fields of type \`directory\` or \`file\`. Pass
-  them in \`env\` (or \`args\`; they are not secrets). Give a \`default\` with \`\${HOME}\`,
-  \`\${DOCUMENTS}\` or \`\${DOWNLOADS}\` when there is an obvious one.
-- A program the user has: a \`file\` setting for its path, or look it up on PATH (Scient gives the
-  connector the user's login environment). If it isn't there, start anyway and have the tools
-  say what to install or set.
-- To work in the chat's project folder instead of the connector's own folder, set
-  \`_meta["com.scientfactory.scient"].workingDirectory\` to \`"project"\`.
-
-## Files
-
-- Use \`node:path\` to build paths (\`path.join\`), never string joins. Windows uses \`\\\` and
-  drive letters.
-- Resolve every path the agent passes against the allowed folder and refuse anything outside
-  it (\`path.relative(root, target)\` must not start with \`..\` or be absolute).
-- Read by default. A tool that writes or deletes files is a separate tool that says so.
-- Return text, not whole files: the first lines, a summary, or a page with paging. Return
-  paths the agent can open, not file contents, for large or binary files.
-
-## Databases
-
-- Open them read-only. With Node's built-in SQLite:
-  \`new DatabaseSync(file, { readOnly: true })\` (from \`node:sqlite\`).
-- When an app keeps the file open and locked (Zotero's \`zotero.sqlite\` while Zotero runs),
-  read a fresh copy in a temporary folder and say the data is as of that copy. Prefer the
-  app's own local API when there is one (Zotero: \`http://localhost:23119/api/\`).
-- Always use bound parameters (\`prepare("… where id = ?").all(id)\`), never SQL built from
-  the agent's text.
-- \`node:sqlite\` works without flags from Node 22.13; Scient's own Node has it. A connector
-  that must also run on older Node checks for it and says what is needed.
-- Other databases (Postgres, MySQL) need a driver library; see "Libraries" in the template
-  README. Their password is a key (\`sensitive: true\`).
-
-## Command-line tools
-
-- Start programs with \`execFile\` or \`spawn\` and an array of arguments, never a shell command
-  string built from the agent's input.
-- On Windows, \`.cmd\` and \`.bat\` programs (most npm tools) need a shell: call
-  \`cmd.exe /d /s /c\` with the program and arguments, quoting each argument, or call the
-  program's real \`.exe\`.
-- Set a timeout and a cap on output (\`maxBuffer\`). Kill the process when the call is cancelled
-  (pass the handler's \`signal\` to \`spawn\`).
-- Read the program's exit code and stderr. A failure becomes a tool error with the last useful
-  line of stderr and what to try.
-- Prefer the program's machine-readable output (\`--json\`, \`--format tsv\`) to parsing text
-  meant for people.
-- Don't wrap a program that only needs one run; a script or Scient Compute fits that better.
-`,
-      "references/science-apis.md": `# Science APIs: limits and manners
-
-Read this when a connector uses one of these services, or one like them. Facts were read on
-2026-11-10 from each service's own pages, except where marked "(not re-read)". Limits change:
-open the linked page before building, and read the rate-limit headers the API sends at run time.
-
-## Manners for every API
-
-- Ask only for what the task needs: choose fields (\`select=\`, \`fields=\`), small pages.
-- One request at a time per host, with a gap under the limit (\`createHttp({minGapMs})\`; per
-  host with \`hostGapMs\`). The limit is per user, per key or per address, across all their
-  programs, so stay well under it.
-- On 429 or 503, wait (\`Retry-After\` when given) and retry a few times, then tell the agent to
-  slow down. \`http.mjs\` does this for GET and HEAD.
-- Say honestly who is calling in \`User-Agent\`. Where an API asks for a contact email, make it
-  a plain setting the user fills in; don't send the user's email without their OK.
-- Use batch requests for lists of ids (a filter with \`|\`, NCBI \`id=1,2,3\`) instead of one
-  request per id.
-- For whole-corpus work (every paper in a field), use the service's bulk downloads, not the API.
-- A key is usually optional but raises limits. Offer it as an optional \`user_config\` key.
-
-## The services
-
-| Service                                                                                                                                                                                                                                                                          | Key                                                                                                                                                                     | Limits                                                                                                                                                                               | Paging                                                                                                                                                            | Watch out for                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **OpenAlex**: scholarly works, authors, institutions. \`https://api.openalex.org\` ([docs](https://help.openalex.org/api/))                                                                                                                                                        | Optional, free. Send as \`Authorization: Bearer\` or \`api_key=\`. A key gives 10× the daily budget.                                                                        | 10 requests/s without a key, 30 with a free key. Budget in \`X-RateLimit-Remaining\`, \`X-RateLimit-Reset\`; also \`GET /rate-limit\`.                                                     | \`per_page\` ≤ 100; \`page\` × \`per_page\` ≤ 10,000. \`cursor=*\` then \`meta.next_cursor\` for more, but following a cursor needs a key (401 without).                    | \`select=\` takes top-level fields only. Filters: \`,\` is AND, \`\\|\` is OR. URLs over ~8 KB fail with 400. Abstracts come as an inverted index.                                                                                                                                                                                                                    |
-| **NCBI E-utilities**: PubMed, PMC, Gene and more. \`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/\` ([key and limits](https://support.nlm.nih.gov/knowledgebase/article/KA-05317/en-us))                                                                                          | Optional \`api_key=\` (from the user's NCBI account).                                                                                                                     | 3 requests/s per address without a key, 10/s per key, for all E-utilities together.                                                                                                  | ESearch \`retstart\`/\`retmax\` (retmax up to 10,000); for big sets, \`usehistory=y\` and page with \`WebEnv\` + \`query_key\` (not re-read).                               | Send \`tool=\` (the connector's name) and, if the user agrees, \`email=\` (not re-read). Many results are XML; EFetch formats differ by database. Large jobs belong off-peak or on the FTP baseline.                                                                                                                                                               |
-| **arXiv**: preprints. \`https://export.arxiv.org/api/query\` ([terms](https://info.arxiv.org/help/api/tou.html), [manual](https://info.arxiv.org/help/api/user-manual.html))                                                                                                       | None.                                                                                                                                                                   | One request every 3 s, one connection at a time, across all the user's machines. Set \`hostGapMs: {"export.arxiv.org": 3000}\`.                                                        | \`start\` (from 0) and \`max_results\` (≤ 2,000 per call, 30,000 per query).                                                                                          | Answers are Atom XML, errors too (an entry with the error). Results change only when new papers arrive: cache.                                                                                                                                                                                                                                                 |
-| **Crossref**: DOI metadata. \`https://api.crossref.org\` ([access](https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/), [tips](https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-crossref-rest-api/)) | None for public and polite use; a paid Plus token for more.                                                                                                             | Public: 5 requests/s, 1 at a time. Polite (a \`mailto=\` or contact in \`User-Agent\`): 10/s, 3 at a time. Headers \`x-rate-limit-limit\`, \`x-rate-limit-interval\`, \`x-concurrency-limit\`. | \`rows\` ≤ 1,000. \`cursor=*\` then \`next-cursor\`; stop when a page has fewer than \`rows\`.                                                                            | 429 means slow down; 403 means you were blocked. Always \`select=\` the fields.                                                                                                                                                                                                                                                                                  |
-| **Semantic Scholar**: papers, citations. \`https://api.semanticscholar.org/graph/v1\` ([API](https://www.semanticscholar.org/product/api), [tutorial](https://www.semanticscholar.org/product/api/tutorial))                                                                       | Optional, by request. Header \`x-api-key\`.                                                                                                                               | Without a key, one pool shared by everyone, throttled when busy: expect 429s. A new key: 1 request/s on all endpoints.                                                               | \`/paper/search\`: \`offset\`, \`limit\` ≤ 100, at most 1,000 results. \`/paper/search/bulk\`: a \`token\` from the previous answer, up to 1,000 per call.                  | Ask for fields with \`fields=\`; the defaults are thin. Use batch endpoints for lists of ids.                                                                                                                                                                                                                                                                    |
-| **ClinicalTrials.gov**: trial registry, API v2. \`https://clinicaltrials.gov/api/v2/studies\` ([OpenAPI](https://clinicaltrials.gov/api/oas/v2))                                                                                                                                   | None.                                                                                                                                                                   | Not stated in the spec read; stay near 1 request/s.                                                                                                                                  | \`pageSize\` (default 10, max 1,000), \`pageToken\` from \`nextPageToken\`; repeat the other parameters on each page. \`countTotal=true\` gives \`totalCount\` on page one. | Records are large: choose \`fields=\`. The last page has no \`nextPageToken\`.                                                                                                                                                                                                                                                                                     |
-| **Zotero**: the user's library. Web: \`https://api.zotero.org\` ([basics](https://www.zotero.org/support/dev/web_api/v3/basics)). Local: \`http://localhost:23119/api/\`                                                                                                             | Web: \`Zotero-API-Key\` header, made by the user at zotero.org/settings/keys; send \`Zotero-API-Version: 3\`. Local: none.                                                  | Web: obey \`Backoff\` (seconds) on any answer and \`Retry-After\` on 429; ≤ 4 requests at once. Local: no limit.                                                                         | \`limit\` ≤ 100 (default 25), \`start\`; \`Total-Results\` and \`Link: rel="next"\`.                                                                                      | Paths use the numeric user id from the keys page, not the username. The local API is read-only and needs the Zotero app running; local writes need a key granted in the app.                                                                                                                                                                                   |
-| **Moodle**: course sites. \`https://<site>/webservice/rest/server.php\` ([web services](https://moodledev.io/docs/apis/subsystems/external))                                                                                                                                       | A web-service token (\`wstoken=\`), when the site allows it: the user may find it under Preferences → Security keys. Never get it with the password (\`/login/token.php\`). | Set by each site; go gently (≥ 0.5 s apart).                                                                                                                                         | Per function; most return everything at once.                                                                                                                     | \`moodlewsrestformat=json\`, or it answers XML. Errors usually arrive as HTTP 200 with \`exception\`, \`errorcode\` and \`message\` (not re-read): check the body. File URLs (\`/webservice/pluginfile.php/…\`) carry the token: never print or return them, fetch inside the tool. If the site turned web services off, use a website sign-in (\`auth-and-sessions.md\`). |
-
-## When a service is not here
-
-Find its API page and its terms first. Look for: the limit and what it is counted by, whether
-a key helps, how to identify yourself, the largest page and how to get the next one, the error
-format, and whether there is a bulk download for big jobs. Write what you found in the
-connector's README with the date.
-`,
-      "references/sources.md": `# Sources
-
-This skill is written in our own words. Its methods draw on these public works, read in
-November 2026. No text was copied.
-
-- Anthropic, \`mcp-builder\` skill (Apache-2.0), github.com/anthropics/skills: phases from plan to
-  evaluation, tool naming, pagination fields, annotations, evaluation questions.
-- Anthropic, "Writing effective tools for agents", anthropic.com/engineering: few
-  workflow-shaped tools, short results with names, actionable errors, improving tools from
-  evaluations.
-- Model Context Protocol specification 2025-11-25 and 2026-07-28, modelcontextprotocol.io:
-  lifecycle, \`server/discover\`, tools, stdio transport, authorization, elicitation rules.
-- MCP Bundle manifest (\`.mcpb\`), github.com/modelcontextprotocol/mcpb: \`user_config\`,
-  sensitive fields, \`\${user_config.…}\` and \`\${__dirname}\`.
-- kalil0321/reverse-api-engineer (MIT): describe the data wanted, check real data rather than a
-  200, hand captchas and 2FA to the user, no hard-coded credentials.
-- Elenics/har-api-trace (MIT): start capture before sign-in, repeat the action with different
-  inputs, replay reading requests only, remove headers one at a time, known hard cases, diff
-  endpoint lists when a site changes.
-- syall/api-reverse-engineering-toolkit (MIT): look for OpenAPI and GraphQL first, search
-  script bundles, mark endpoints confirmed or unverified, never write a field you haven't seen.
-- unbrowse-ai/unbrowse (MIT client): drop noise, compare two captures, trace each token to its
-  source, success means a verified result, one new sign-in on 401.
-- alufers/mitmproxy2swagger (MIT) and jonluca/har-to-openapi (MIT): path templates from
-  captures; captures leak secrets.
-- Integuru-AI/Integuru (AGPL-3.0, idea only): trace a request's dynamic values back to the
-  requests that produce them until only the sign-in cookies remain.
-- ChromeDevTools/chrome-devtools-mcp (Apache-2.0): reading request details in the user's own
-  signed-in browser.
-- Playwright authentication docs and Checkly's TOTP guide: saved browser state holds secrets;
-  on expiry, sign in again with stored credentials, then ask the person.
-- Service pages for the limits in \`science-apis.md\`: OpenAlex, NCBI, arXiv, Crossref, Semantic
-  Scholar, ClinicalTrials.gov, Zotero, Moodle; and the open-source servers
-  cyanheads/pubmed-mcp-server and cyanheads/clinicaltrialsgov-mcp-server (Apache-2.0),
-  54yyyu/zotero-mcp and Faixiang/Moodle-MCP (MIT) for field experience.
-`,
-      "references/study-a-website.md": `# Study a website that has no documented API
-
-Read this before building a connector for a site whose data the user sees in the browser
-but no public API offers. The goal is the smallest set of the site's own requests that
-returns the data the user wants, understood well enough to make it reliable, without changing
-anything on the site.
-
-## Rules for the whole study
-
-- Only the user's own account, for their own use. Read the site's terms of use; if they forbid
-  automated access, tell the user and stop. A general policy that doesn't cover the site isn't
-  its terms: when unsure, tell the user what you found and let them decide.
-- Read, don't change. Open pages, list and replay reading requests only. Before anything that
-  could change data (submit, post, enroll, delete, mark read, pay), ask the user.
-- Never get past a captcha, a 2FA prompt or a "verify you are human" page yourself. Hand it to
-  the user: \`scient_account_sign_in\` waits while they do it.
-- Go slowly: a pause between replays (half a second or more), no loops over many pages while
-  studying.
-- Keep secrets out of everything you write. \`preview_network\` hides cookies, tokens and
-  \`Authorization\` values; don't copy any value you do see into notes, code, tests or chat
-  summaries. Never save request captures or HAR files in the project or the connector.
-
-## The tools
-
-| Tool                               | Use it to                                                                                                                                                                                                   |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| \`preview_open\`, \`preview_navigate\` | Open the site in Scient's browser. \`preview_open\` signs in by itself with a saved sign-in; read its \`accountsNote\`.                                                                                         |
-| \`scient_account_sign_in\`           | Sign in on your tab with the user's saved account, including authenticator codes. Returns \`needs-user\` when the person must act.                                                                            |
-| \`scient_account_find_profile\`      | Find a browser profile already signed in to the site.                                                                                                                                                       |
-| \`preview_snapshot\`, \`preview_act\`  | Read the page and click, type or choose, like the user would.                                                                                                                                               |
-| \`preview_network\`                  | List the tab's recent requests (method, URL, status, type, time); with a request id, see its headers, request body and response body. Secrets are masked. Large bodies go to a file whose path is returned. |
-| \`preview_evaluate\`                 | Run a small script in the page: read in-page config, list script URLs, or \`fetch()\` a reading request with the page's own cookies.                                                                          |
-| \`scient_account_browser_session\`   | Export the site's cookies to private files for curl, for reading requests only.                                                                                                                             |
-
-## The method
-
-### 1. Say what data you need
-
-Write the goal as data, not clicks: "my assignments due in the next 14 days: course, title,
-due time with time zone, submitted or not". This tells you when you are done.
-
-### 2. Look for a front door first
-
-A documented way in is more stable than anything you find in the page. Check, in order:
-
-- The site's or vendor's API docs and developer pages (search "<site or product> API"). Many
-  campus systems are known products with APIs: Moodle web services, Canvas REST, Blackboard
-  REST, Alma, Primo, DSpace, Pure, Figshare, Dataverse.
-- A vendor MCP server or an existing connector (Extensions → Discover).
-- Machine-readable descriptions on the site: \`/openapi.json\`, \`/swagger.json\`,
-  \`/v3/api-docs\`, \`/.well-known/openapi.yaml\`, \`/api/docs\`.
-- GraphQL: a \`/graphql\` endpoint that answers an introspection query (a reading POST).
-- Feeds and exports: iCal calendar links (deadlines often have one), RSS, CSV or BibTeX
-  exports, OAI-PMH for repositories.
-- \`robots.txt\` and the sitemap, for the site's layout and what it asks of automated visitors.
-
-If one of these gives the data, use it and skip the rest.
-
-### 3. Watch the sign-in once
-
-Open the sign-in page with nothing signed in, then sign in (\`scient_account_sign_in\`) and list
-the requests. Note which responses set cookies, where the browser lands, and whether a token
-goes into page storage. Then note what a signed-out visitor gets from a data URL: a redirect,
-a 401, a login form, or a JSON error. That is the shape your connector must recognise as
-"session ended".
-
-### 4. Do the task by hand, twice
-
-With the user's goal in mind, do it in the browser with \`preview_act\`: open the course,
-filter the dates, page to the next set. Then do it again with different inputs (another
-course, other dates). After each run, list the requests with \`preview_network\`.
-
-Skip the noise: analytics and tracking, ads, fonts, images, style sheets, heartbeats and
-polling, error reporting.
-
-### 5. Find the request that carries the data
-
-Open the likely requests by id and read their response bodies. The data is usually JSON from an
-\`/api/\`, \`/ajax/\` or \`service.php\` URL, sometimes an HTML fragment, sometimes JSON embedded in
-the page (\`__NEXT_DATA__\`, \`application/ld+json\`, a \`window.__STATE__\` object).
-
-Compare the two runs: what changed in the URL, query or body are the inputs; what stayed the
-same are constants or session values.
-
-### 6. Trace every value back to where it came from
-
-For each value in that request that isn't an input (an id, a CSRF token, a \`sesskey\`, a
-signature, a version hash), find what produced it: an earlier response body, the page HTML,
-in-page config (read it with \`preview_evaluate\`, e.g. \`window.M?.cfg?.sesskey\` on Moodle), or a
-cookie. Repeat for those requests until only the cookies are left. Write the chain down:
-
-\`\`\`
-GET /my/                      → sesskey (in page config)
-POST /lib/ajax/service.php?sesskey=…&info=core_calendar_get_action_events_by_timesort
-     body: [{"methodname":"core_calendar_get_action_events_by_timesort","args":{…}}]
-                              → events
-\`\`\`
-
-A value you can't trace may live in local storage, IndexedDB or a service worker, or be
-computed by the page's script. Look before guessing.
-
-### 7. Replay reading requests
-
-- GET only, unless the request clearly only reads: a GraphQL \`query\` (not a \`mutation\`), a
-  search POST, a Moodle \`get_…\` function. Ask the user when unsure.
-- Fastest first test: \`preview_evaluate\` with \`fetch(url, {credentials: "include"})\` in the
-  page, which uses the page's own cookies and origin.
-- Then outside the browser, the way the connector will run: through \`scient_connector_check\`
-  once the sign-in is linked (\`auth-and-sessions.md\`, "While building"), or with curl and the
-  files from \`scient_account_browser_session\`.
-
-### 8. Strip it down
-
-Remove headers one at a time (\`Referer\`, \`Origin\`, \`X-Requested-With\`, custom \`X-…\`, \`Accept\`)
-and replay. Mark each one required (the answer breaks), affects (the answer changes) or not
-needed. Keep the required ones and an honest \`User-Agent\`. Don't try to imitate a browser's
-fingerprint.
-
-### 9. Check against what the page shows
-
-The data must match the page: the same number of rows, and spot-check three items, including a
-date (time zones), a name with non-English letters, and an empty case (a course with nothing
-due must come back as empty, not as an error). Read field types from real answers (ids are
-often strings). Don't write a field into the connector that you haven't seen in a real answer.
-
-### 10. Write down the map
-
-In the connector's \`README.md\`, under "How it talks to <site>": each request it uses, its
-inputs, where each token comes from, what "signed out" looks like, the date you looked, and
-which requests you saw work (confirmed) or only read about in the page's code (unverified).
-No values. This makes the next fix fast (\`fixing.md\`).
-
-## Hard cases
-
-| You see                                            | Do                                                                                                                                                                                                                                                    |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A signature header or timestamp computed by script | List the page's scripts (\`preview_evaluate\`: \`[...document.scripts].map(s => s.src)\`), fetch the bundle, search it for the header name, and re-create it only if it is a plain hash of the request. If it hides a secret key, stop and tell the user. |
-| GraphQL                                            | One URL for everything: tell requests apart by \`operationName\`. Persisted queries send a hash instead of the query; the hash changes when the site updates, so record it and expect fixes.                                                            |
-| WebSockets or server-sent events                   | \`preview_network\` doesn't show their messages. Look for a plain request that gives the same data (often there is one for the first load).                                                                                                             |
-| Binary bodies (protobuf, gRPC-web)                 | Look for a JSON variant or another page. Don't build on bytes you can't read.                                                                                                                                                                         |
-| Infinite scroll                                    | Find the request that loads the next part and its cursor or offset; that becomes the tool's paging.                                                                                                                                                   |
-| Only HTML, no data requests                        | Parse the HTML narrowly: stable ids, \`data-\` attributes, table headers. Check it on two pages. Prefer an export or feed if the site has one.                                                                                                          |
-| A bot check, a block page, or many 429s            | Stop. Don't work around it. Tell the user; the site doesn't want automated access this way.                                                                                                                                                           |
-| A sign-in that only the person can pass every time | Tell the user the connector will often need them to sign in; ask if that is still useful.                                                                                                                                                             |
-
-## Done when
-
-- [ ] Each of the user's tasks maps to one or a few traced, confirmed reading requests.
-- [ ] You know what "signed out" looks like for each.
-- [ ] Inputs, constants and session values are told apart; every token's origin is known.
-- [ ] Results were checked against the page.
-- [ ] The map is in the README, with no secrets.
-`,
-      "references/testing.md": `# Testing a connector
-
-Read this before calling a connector done. "It started" and "it answered 200" are not
-"it works". It works when an agent, given only its tools, gets the user's real answers from it.
-
-## 1. It starts and lists its tools
-
-\`scient_connector_check {folder}\` with no calls. It must:
-
-- start without keys or a sign-in, and list every tool (\`missing\` names what setup still
-  needs);
-- list the same tools as \`manifest.json\`, with clear descriptions and strict schemas;
-- leave nothing alarming in the log (stderr). Warnings at start are worth reading.
-
-If it fails, the error and log say why; \`fixing.md\` lists the usual causes.
-
-## 2. Real sample calls
-
-Run calls through \`scient_connector_check {folder, connector?, calls}\`. Give \`connector\` once
-the connector is saved and set up, so the check uses the user's keys and sign-in.
-
-For each tool, cover:
-
-- **A typical call** from the user's own tasks, with real inputs ("papers on CRISPR base
-  editing since 2020", "my deadlines in the next 14 days").
-- **The second page**, when it pages: \`next_page\` or \`next_cursor\` from the first call works
-  and gives different items.
-- **An empty answer**: an input with no results comes back as an empty list, not an error.
-- **A wrong input**: a bad id or an out-of-range value gives a clear tool error that says what
-  to do.
-- **The largest realistic answer**: still short enough (a few thousand words at most).
-
-Keep test calls few and read-only. Never call a tool that changes data unless the user asked
-for it, on data they chose.
-
-## 3. The data is right
-
-Look at the results, not just the status:
-
-- Compare with the source: the same items the website shows, or a second source (the DOI page,
-  the course page). Spot-check three items field by field.
-- Counts add up (\`total\`, page sizes).
-- Dates and times are right, with the time zone. Names with accents or non-Latin letters come
-  through.
-- Nothing is silently dropped: optional fields missing on some items don't break others.
-- No secrets in any result or log line (keys, cookies, tokens, file URLs with tokens).
-
-## 4. Sign-ins
-
-For a connector with a website sign-in:
-
-- Without a sign-in, a tool call returns the "no sign-in yet" message, not a crash.
-- With the linked sign-in, real calls return the user's data.
-- The signed-out shape is recognised: run the tool's request logic against what the site sends
-  a signed-out visitor (from your study), and check that it produces the
-  \`SCIENT_SIGN_IN_EXPIRED\` error. Check also that a "no access to this" answer does not.
-
-## 5. A short evaluation
-
-Write three to five questions a researcher would really ask, that:
-
-- need only reading;
-- need two or more calls (search, then read; list, then filter);
-- have one answer that won't change (a 2019 paper's first author and their institution, not
-  "the most cited paper this year").
-
-Solve each one yourself first with the tools, and note the answer. Then, when you can, have a
-fresh agent (a subagent with only the connector's tools and the question) try them. Where it
-fails or wastes calls, improve the descriptions, the defaults or the results, not the question.
-Keep the questions in the connector's \`README.md\` for the next fix.
-
-## What to tell the user
-
-- What the connector does and its tools, in a line each.
-- What you tested: the calls, and one real result in short.
-- What you did not test: tools that change data, other computers (say which systems you ran it
-  on), anything that needs the person (a captcha).
-- What setup is still needed, if any, and how to take it back: Remove on the page of a new
-  connector (Remove can be undone), **Undo last change** after a fix.
-`,
-      "references/tool-design.md": `# Tool design
-
-Read this when you plan a connector's tools or change them. Agents choose tools by name and
-description, call them with what the schema allows, and read every word they return. Good
-tools make that easy and cheap.
-
-## Start from the tasks
-
-- Write down the user's two to five real tasks first ("what's due this week in all my
-  courses", "find papers citing this one since 2020"). Each tool should finish a task or a
-  clear step of one.
-- Fewer, fuller tools beat one tool per endpoint. If agents would always call A then B, make
-  one tool that does both. Example for a course site: not \`list_courses\`, \`get_course\`,
-  \`list_assignments\`, \`get_assignment\`, but \`upcoming_deadlines {days}\`,
-  \`course_materials {course}\`, \`read_file {file}\`.
-- Don't make two tools that do nearly the same thing; the agent will pick wrong.
-- Reading tools first. Add a tool that changes data only when the user asked for it.
-
-## Names
-
-- \`verb_noun\` in lowercase with underscores: \`search_works\`, \`get_work\`,
-  \`upcoming_deadlines\`. Up to 64 characters, letters, digits and \`_\` only (the protocol allows
-  \`-\` and \`.\` too, but some clients don't).
-- Agents see each tool under the connector's name, so the service name need not be in the
-  tool name.
-- Keep names stable once saved. Skills and habits come to depend on them.
-
-## Descriptions
-
-- One to three sentences, written for a new colleague: what it does, what it returns, when to
-  use it instead of its sibling, and any limit ("max 50 per page", "dates in the site's time
-  zone, UTC").
-- Each parameter gets a description with an example value. Name parameters so they can't be
-  misread: \`course_id\`, not \`course\`; \`from_year\`, not \`from\`.
-- Say in the description when a tool changes data: "Submits the assignment on Moodle. This
-  changes the user's data: confirm with the user first."
-- The server's \`instructions\` (in \`serve(...)\`) can hold one or two sentences on how the tools
-  fit together.
-
-## Inputs
-
-- Strict schemas: \`type: "object"\`, \`required\`, \`additionalProperties: false\`, \`enum\` for
-  fixed choices, \`minimum\`/\`maximum\`, \`minLength\`/\`maxLength\`, \`default\`. \`mcp.mjs\` checks
-  these and tells the agent exactly what was wrong, so it can fix the call.
-- Accept the forms people have: a DOI or a doi.org link, a course name or its id. Normalize
-  inside the tool.
-- One meaning per parameter. No free-form "options" objects.
-
-## Results
-
-- Short and readable. Return the fields that answer the task, with names, not bare ids, but
-  keep the id the next tool needs (\`id: "W2741809807"\` next to the title).
-- Ask the API for less where it can (\`select=\`, \`fields=\`), drop empty fields, cut long text
-  (abstracts, pages) with a note saying it was cut.
-- Dates as ISO 8601 (\`2026-11-10\` or \`2026-11-10T14:00:00+02:00\`); say the time zone.
-- When agents need both a quick view and full detail, add \`detail: "short" | "full"\` with
-  \`short\` as the default rather than two tools.
-- Return plain objects from handlers. \`mcp.mjs\` sends them as JSON text, and also as
-  \`structuredContent\` when the tool declares an \`outputSchema\`. The result must match the
-  schema: leave a field out rather than send \`null\` unless the schema allows \`null\`.
-- Size: aim for under ~5,000 words per result. \`mcp.mjs\` cuts text over 60,000 characters and
-  says so, but that is a safety net, not a design.
-
-## Paging
-
-- Take \`limit\` (a small default such as 10 or 25, a firm maximum such as 50 or 100) and \`page\`
-  or \`cursor\`.
-- Return \`total\` when the API knows it, \`has_more\`, and \`next_page\` or \`next_cursor\`. Pass the
-  API's own cursor back unchanged.
-- Never fetch every page in one call unless the total is small and bounded. Say how to narrow
-  the search when there are too many results.
-
-## Errors
-
-- Tool errors (\`throw new ToolError("…")\`, sent with \`isError: true\`) are for anything the agent
-  can act on: bad input, nothing found, rate limited, key rejected, session ended. Each message
-  says what happened and what to do next:
-  - "No work found for 10.1234/xyz. Check the DOI, or find it with search_works."
-  - "OpenAlex is limiting requests; wait 30 s and try again with fewer calls."
-  - "The key was refused (401). Call scient_connector_setup with replaceKeys."
-- No stack traces, no raw HTML pages, no secrets. Use \`safeUrl()\` from \`http.mjs\` for URLs in
-  messages, and \`snippet()\` for a short piece of a body.
-- An ended website session is special: its error starts with \`SCIENT_SIGN_IN_EXPIRED\`
-  (\`auth-and-sessions.md\`). Use it only for a real end of session.
-- Protocol errors (unknown tool or method) are handled by \`mcp.mjs\`.
-
-## Annotations
-
-Hints for the host and the agent, not protection. Set them honestly on every tool:
-
-| Annotation        | Set to \`true\` when                                               |
-| ----------------- | ---------------------------------------------------------------- |
-| \`readOnlyHint\`    | It only reads.                                                   |
-| \`destructiveHint\` | It can delete or overwrite (only meaningful when not read-only). |
-| \`idempotentHint\`  | Calling it twice with the same input has no extra effect.        |
-| \`openWorldHint\`   | It talks to an outside service (almost every connector).         |
-
-Also give each tool a \`title\` people can read ("Search scholarly works").
-
-## Tools that change data
-
-- Separate tools with plain names (\`submit_assignment\`, \`add_to_collection\`), never a \`mode\`
-  switch on a reading tool.
-- For risky changes (submit, delete, send, pay), make the default a preview: \`confirm: false\`
-  returns what would happen; \`confirm: true\` does it. The agent shows the user the preview.
-- Never retry a write automatically (\`http.mjs\` retries only GET and HEAD). After a timeout,
-  check whether it happened before trying again.
-
-## State between calls
-
-Avoid it. If a task needs a handle (an upload id, a search session), return it explicitly and
-say when it expires; when it has, the error says so and how to start again.
-
-## Before saving
-
-- [ ] Each tool maps to a real task; no near-duplicates.
-- [ ] Names, titles, descriptions and parameter descriptions are plain and exact.
-- [ ] Schemas are strict; defaults are sensible; limits are stated.
-- [ ] Results are short, named, paged, and match their \`outputSchema\`.
-- [ ] Errors say what to do next and hold no secrets.
-- [ ] Annotations are honest; writes are separate and say so.
-- [ ] \`manifest.json\` lists the same tools as \`server.mjs\`.
-`,
       "templates/README.md": `# {{DISPLAY_NAME}}
 
 A connector for Scient: a small program that gives agents tools for one service. As it
-comes, it is a working example that searches OpenAlex, a free index of scholarly works. Change
-it into the connector you need.
+comes, it contains an OpenAlex example. Verify current API access with a real read before
+calling it working. Change it into the connector you need.
 
 It needs nothing installed. Scient runs it on its own copy of Node, on macOS, Windows and
 Linux. It also runs on Node 20 or newer, and in Claude Desktop when exported as \`.mcpb\`.
@@ -1341,7 +956,7 @@ Linux. It also runs on Node 20 or newer, and in Claude Desktop when exported as 
 | \`manifest.json\` | Name, how to start it, settings and keys it asks for, its tools. MCP Bundle format.     |
 | \`server.mjs\`    | The tools. This is the file you change.                                                 |
 | \`mcp.mjs\`       | The MCP side: messages over stdin and stdout, input checks, errors. Usually left as is. |
-| \`http.mjs\`      | Polite web requests: pacing, timeouts, retries, hidden keys in messages.                |
+| \`http.mjs\`      | Polite web requests: pacing, timeouts, read retries, omitted response bodies.           |
 | \`session.mjs\`   | The user's sign-in to a website, from Scient's Accounts. Delete it if unused.           |
 
 ## Placeholders
@@ -1397,8 +1012,9 @@ const events = await session.json("/lib/ajax/service.php?…", {}, { signal });
 \`\`\`
 
 \`session.fetch\` and \`session.json\` send the user's cookies, follow redirects, and throw the
-\`SCIENT_SIGN_IN_EXPIRED\` error when the site sends them to its sign-in page. Scient then signs in
-again and retries. The program never sees the password.
+\`SCIENT_SIGN_IN_EXPIRED\` error when the site sends them to its sign-in page. For explicitly read-only tools, Scient then signs in
+again and retries. The included MCP helper (\`mcp.mjs\`) suppresses this replay marker for other tools;
+check an uncertain write outcome before retrying. The program never sees the password.
 
 ### Libraries
 
@@ -1411,6 +1027,24 @@ connector. The official MCP SDK (\`@modelcontextprotocol/sdk\`) may replace \`mc
 
 \`node server.mjs\` waits for MCP messages on stdin and logs to stderr. Scient's check
 (\`scient_connector_check\`) is the real test.
+
+## Helper limits
+
+These helpers omit arbitrary response bodies and unexpected exception details from errors.
+ToolError strings and deliberate logs must still be written without secrets. \`safeUrl\` masks
+only recognized parameter names. Do not treat it as a general redactor.
+
+\`search_works\` is offset browsing, not a complete-export tool. At its boundary it returns
+\`truncated: true\` and a reason even when \`has_more\` is false. \`get_work\` still caps authors
+at 25 and abstracts at 4,000 characters; inspect the omission fields/markers.
+
+Do not use custom secret headers across redirects with the inherited session helper. It only
+strips standard authorization headers; an explicit permitted-origin rule needs separate work.
+The app's host can replay expiry markers. Only tools honestly marked read-only may emit one;
+the included MCP helper blocks it for the other tools. This is not an idempotency guarantee.
+
+Check OpenAlex's current authentication and quota documentation before relying on the
+example in a production connector.
 `,
       "templates/http.mjs": `// Polite HTTP for connectors, with no dependencies (Node 20+ fetch).
 //
@@ -1554,7 +1188,7 @@ export function createHttp({
         }
         const why = timedOut
           ? \`no answer within \${Math.round(timeoutMs / 1000)} s\`
-          : (error?.cause?.code ?? error?.message ?? "network error");
+          : "network error";
         throw new ToolError(
           \`Could not reach \${host} (\${why}) for \${safeUrl(url)}. Try again later.\`,
         );
@@ -1581,11 +1215,13 @@ export async function readJson(response, what) {
     const hint =
       response.status === 429
         ? \`\${what} is limiting requests\${wait ? \`; wait \${Math.ceil(wait / 1000)} s\` : ""} and try again with fewer calls.\`
-        : response.status === 401 || response.status === 403
-          ? \`\${what} refused the request (\${response.status}). The key may be wrong or missing: call scient_connector_setup with replaceKeys.\`
-          : response.status === 404
-            ? \`\${what} has nothing at that address (404). Check the id.\`
-            : \`\${what} answered \${response.status}.\`;
+        : response.status === 401
+          ? \`\${what} refused authentication (401). Check setup; replace a key only if it was rejected.\`
+          : response.status === 403
+            ? \`\${what} denied access (403). Check account permissions or service policy.\`
+            : response.status === 404
+              ? \`\${what} has nothing at that address (404). Check the id.\`
+              : \`\${what} answered \${response.status}.\`;
     throw new ToolError(\`\${hint} \${snippet(body)}\`.trim());
   }
   if (!/json/i.test(type) && !/^\\s*[[{]/.test(body)) {
@@ -1598,20 +1234,14 @@ export async function readJson(response, what) {
   }
 }
 
-/** The start of a body, on one line, for error messages. */
-export const snippet = (text, max = 300) => {
-  const line = String(text ?? "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\\s+/g, " ")
-    .trim();
-  return line.length > max ? \`\${line.slice(0, max)}…\` : line;
-};
+/** Response bodies may contain credentials or private data; never put them in errors. */
+export const snippet = () => "[response body omitted]";
 `,
       "templates/manifest.json": `{
   "manifest_version": "0.3",
   "name": "{{NAME}}",
   "display_name": "{{DISPLAY_NAME}}",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Search scholarly works in OpenAlex and read their details. Replace with what this connector does.",
   "author": {
     "name": "Made with Scient"
@@ -1886,11 +1516,22 @@ export function serve({ name, version, title, instructions, tools }) {
       return toResult(tool, await tool.handler(args, { signal }));
     } catch (error) {
       if (signal.aborted) return errorResult("The call was cancelled.");
-      if (error instanceof ToolError) return errorResult(error.message);
-      log(\`\${tool.name} failed:\`, error);
+      if (error instanceof ToolError) {
+        if (
+          error.message.trimStart().startsWith(SIGN_IN_EXPIRED) &&
+          tool.annotations?.readOnlyHint !== true
+        ) {
+          return errorResult(
+            "The session ended during a call that may change data. Its outcome is unknown. " +
+              "Check whether it took effect before retrying; sign in separately.",
+          );
+        }
+        return errorResult(error.message);
+      }
+      log(\`\${tool.name} failed unexpectedly; exception details omitted.\`);
       return errorResult(
-        \`\${tool.name} failed unexpectedly: \${error?.message ?? String(error)}. \` +
-          "The connector's log has details.",
+        \`\${tool.name} failed unexpectedly. Private exception details were omitted. \` +
+          "Check the request and connector implementation.",
       );
     }
   }
@@ -1951,7 +1592,7 @@ export function serve({ name, version, title, instructions, tools }) {
     } catch (error) {
       if (controller.signal.aborted) return undefined;
       if (error instanceof ProtocolError) return failure(id, error.code, error.message, error.data);
-      log(\`\${method} failed:\`, error);
+      log(\`\${method} failed; exception details omitted.\`);
       return failure(id, -32603, "Internal error");
     } finally {
       inFlight.delete(id);
@@ -1998,8 +1639,8 @@ export function serve({ name, version, title, instructions, tools }) {
     process.exit(0);
   });
   process.stdout.on("error", () => process.exit(0)); // The client went away.
-  process.on("unhandledRejection", (error) => log("Unhandled rejection:", error));
-  process.on("uncaughtException", (error) => log("Uncaught exception:", error));
+  process.on("unhandledRejection", () => log("Unhandled rejection; details omitted."));
+  process.on("uncaughtException", () => log("Uncaught exception; details omitted."));
   log(\`\${name} \${version} ready (\${tools.length} tools).\`);
 }
 `,
@@ -2018,7 +1659,7 @@ const manifest = JSON.parse(fs.readFileSync(new URL("./manifest.json", import.me
 const API = "https://api.openalex.org";
 const API_KEY = process.env.OPENALEX_API_KEY?.trim() ?? ""; // Optional: a free key raises the budget.
 
-// OpenAlex allows 10 requests a second without a key; stay well under it.
+// Conservative pacing; check current OpenAlex quota and authentication requirements.
 const http = createHttp({
   userAgent: \`\${manifest.name}/\${manifest.version} (Scient connector)\`,
   minGapMs: 150,
@@ -2068,7 +1709,7 @@ const searchWorks = {
   description:
     "Search OpenAlex for papers, books and datasets by words in the title, abstract or full " +
     "text. Returns short records (title, authors, year, venue, DOI, citations, free full-text " +
-    "link). Use get_work for the abstract and all authors. Results come in pages: pass " +
+    "link). Use get_work for the abstract and up to 25 authors. Check more_authors for omissions. Results come in pages: pass " +
     "next_page back as page for more.",
   inputSchema: {
     type: "object",
@@ -2100,6 +1741,11 @@ const searchWorks = {
       page: { type: "integer" },
       has_more: { type: "boolean" },
       next_page: { type: "integer" },
+      truncated: {
+        type: "boolean",
+        description: "More matches exist beyond this tool's paging cap.",
+      },
+      truncation_reason: { type: "string" },
       results: {
         type: "array",
         items: {
@@ -2155,11 +1801,16 @@ const searchWorks = {
       signal,
     );
     const total = data.meta?.count ?? 0;
-    const hasMore = page * limit < Math.min(total, 10_000);
+    const hasMore = page * limit < total && (page + 1) * limit <= 10_000;
+    const truncated = page * limit < total && !hasMore;
     return compact({
       total,
       page,
       has_more: hasMore,
+      truncated,
+      truncation_reason: truncated
+        ? "Offset paging stops at 10,000; narrow the query or implement cursor paging for complete coverage."
+        : undefined,
       next_page: hasMore ? page + 1 : undefined,
       results: (data.results ?? []).map((work) =>
         compact({
@@ -2194,8 +1845,8 @@ const getWork = {
   name: "get_work",
   title: "Read one work",
   description:
-    "Get one work from OpenAlex by OpenAlex id (W…) or DOI: title, all authors with their " +
-    "institutions, year, venue, abstract, topic, citation counts and free full-text link.",
+    "Get one work from OpenAlex by OpenAlex id (W…) or DOI: title, authors with their " +
+    "institutions (up to 25 authors; more_authors counts omitted names), year, venue, abstract, topic, citation counts and free full-text link.",
   inputSchema: {
     type: "object",
     properties: {
@@ -2542,7 +2193,7 @@ export function createSession({
         const next = new URL(location, url);
         await response.body?.cancel().catch(() => {});
         if (looksLikeLogin(next)) {
-          throw signInExpired(site, \`sent to the sign-in page \${next.origin}\${next.pathname}\`);
+          throw signInExpired(site, "sent to the sign-in page");
         }
         const toGet =
           response.status === 303 ||
@@ -2628,6 +2279,507 @@ export function createSession({
     /** The Cookie header for a URL, for libraries that need it. Never log or return it. */
     cookieHeader: (url) => cookieHeader(new URL(url, site)),
   };
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "pdf-authoring",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": pdfAuthoring,
+      "references/html-print.md": `# HTML for print
+
+Use HTML for a PDF only when it is the requested or established source. Keep layout in local CSS and assets at project-relative paths with exact case: the controlled renderer blocks remote resources, so fonts, scripts, styles and images must be local.
+
+Set the paper size and margins with \`@page\` and use print CSS rather than a fixed browser viewport. Let long tables break and repeat their headers. Keep captions with figures, and reserve \`break-inside: avoid\` for small blocks, not whole long sections or tables. Remove fixed heights and overflow clipping that hide print content.
+
+Have equations and graphics finished in the saved source before building: rendered math rather than a remote MathJax script, and content that is present without animation frames, scrolling or lazy loading. Prefer local SVG for diagrams and vector plots; use image resolution suited to the final print size and venue.
+
+Check page breaks, dynamic content and missing assets on the returned PDF; a browser screenshot can't show print pagination. If the connected desktop renderer fails, keep the source and report the exact render or publication failure; opening the HTML and choosing Export PDF is a fallback for the user, not a completed export.
+`,
+      "references/visual-check.md": `# Render and inspect the PDF
+
+Look at the final saved PDF, not a stale build or an HTML screenshot. Put page images in a new temporary folder outside the project.
+
+If \`pdftoppm\` (Poppler) is installed: \`pdftoppm -r 150 -png final.pdf <new-folder>/page\`.
+
+Otherwise use PyMuPDF, from an existing environment that has it or a disposable one; Scient's default Python has only \`pypdf\`, which cannot render pages. Install into the disposable environment, never into the user's or Scient's own Python:
+
+\`\`\`sh
+# macOS or Linux
+python3 -m venv "\${TMPDIR:-/tmp}/pdf-review-env"
+"\${TMPDIR:-/tmp}/pdf-review-env/bin/python" -m pip install pymupdf
+"\${TMPDIR:-/tmp}/pdf-review-env/bin/python" render_pdf.py final.pdf <new-folder> --pages 1,2,5
+\`\`\`
+
+\`\`\`powershell
+# Windows
+py -3 -m venv "$env:TEMP\\pdf-review-env"
+& "$env:TEMP\\pdf-review-env\\Scripts\\python.exe" -m pip install pymupdf
+& "$env:TEMP\\pdf-review-env\\Scripts\\python.exe" render_pdf.py final.pdf <new-folder> --pages 1,2,5
+\`\`\`
+
+\`render_pdf.py\` is this skill's \`scripts/render_pdf.py\` (read it with \`scient_skill_read_resource\` and save it in the temporary folder). Omit \`--pages\` for every page; the output folder must not exist yet, so use a new one after each rebuild. It prints the page count and the image paths.
+
+Open the images with your image-view tool and actually look at them. If you can't render or view them, say that visual inspection was not performed and why. Page images don't show live links, font embedding or tags; check those in the PDF structure when they are required.
+`,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.pdf-authoring",
+  "version": "0.4.0",
+  "category": "Document creation",
+  "categoryDescription": "Create polished documents and reliable final outputs.",
+  "displayOrder": 40,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+      "scripts/render_pdf.py": `"""Render selected PDF pages without changing the PDF; output directory must be new."""
+import argparse
+import json
+from pathlib import Path
+
+import pymupdf
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("pdf", type=Path)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--pages", help="Comma-separated 1-based PDF page numbers; default all")
+    args = parser.parse_args()
+    with pymupdf.open(args.pdf) as document:
+        if not document.is_pdf or document.needs_pass:
+            parser.error("Use an unlocked PDF.")
+        try:
+            pages = sorted(set(int(item) for item in args.pages.split(","))) if args.pages else list(range(1, document.page_count + 1))
+        except ValueError:
+            parser.error("--pages needs comma-separated integers.")
+        if not pages or any(page < 1 or page > document.page_count for page in pages):
+            parser.error(f"Pages must lie between 1 and {document.page_count}.")
+        args.output.mkdir(parents=True, exist_ok=False)
+        paths = []
+        for number in pages:
+            output = args.output / f"page-{number:04d}.png"
+            document[number - 1].get_pixmap(dpi=150, alpha=False).save(output)
+            paths.append(str(output.resolve()))
+        print(json.dumps({"pageCount": document.page_count, "renderedPages": pages, "images": paths}))
+
+
+if __name__ == "__main__":
+    main()
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "latex-authoring",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": latexAuthoring,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.latex-authoring",
+  "version": "0.4.0",
+  "category": "Document creation",
+  "categoryDescription": "Create polished documents and reliable final outputs.",
+  "displayOrder": 60,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "overleaf-sync",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": overleafSync,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.overleaf-sync",
+  "version": "0.2.0",
+  "category": "Document creation",
+  "categoryDescription": "Create polished documents and reliable final outputs.",
+  "displayOrder": 70,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "references",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": references,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.references",
+  "version": "0.2.0",
+  "category": "Research",
+  "categoryDescription": "Check, find and cite the literature.",
+  "displayOrder": 80,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "systematic-review",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": systematicReview,
+      "references/methods.md": `# Beyond screening
+
+Do only the phases the user requested, and record protocol amendments before implementing choices. The review tools store searches and selection; extraction, bias and certainty assessments live in project files.
+
+- **Extraction:** keep a project table with report ID, study ID, population, design, comparator, outcomes, time points, estimates, uncertainty, adjustment, analysis sample and missing data, with a full-text locator per value. Pilot the form and independently check critical numbers. Mark each value reported, derived or missing.
+- **Bias:** choose the framework and version that fit the design and question, such as RoB 2 for randomized trials, ROBINS-I for nonrandomized interventions and QUADAS for diagnostic accuracy. These are revised from time to time, so confirm the current edition and the protocol's choice on the official site. Link restricted checklists rather than copying them, and base each domain judgement on the full text, with the evidence and the reviewer's adjudication recorded.
+- **Synthesis:** use Scient Compute for calculations and figures. Before pooling, check outcome and estimand, units, time point, adjustment and study independence; count shared controls and multiple reports of one study once. Choose the model and the handling of dependence with the researcher, and report heterogeneity and sensitivity analyses. When pooling isn't justified, write a structured narrative synthesis; for scoping reviews, chart the evidence against the question.
+- **Certainty:** when requested, assess the body of evidence per outcome with GRADE or the protocol's framework, documenting reasons and reviewer decisions. Certainty rests on all its domains: risk of bias is only one, and significance or study count is none.
+
+Report which phases are complete, independently checked or still agent drafts. A complete review also reports its methods, automation and deviations; a PRISMA diagram alone doesn't supply them.
+
+## Library duplicates shown from a review snapshot
+
+A record with \`libraryMatch\` disagrees with a Library copy. Link it (\`scient_sources_organize\`, \`link-pin\`) only when the user confirms it is the same work; otherwise record \`keep-pin-separate\`, which holds even if the copies later stop matching, until \`clear-pin-separate\`.
+
+## Sources
+
+[PRISMA 2020](https://www.prisma-statement.org/prisma-2020), [PRISMA-S](https://www.prisma-statement.org/prisma-search), [PRISMA-ScR](https://www.prisma-statement.org/scoping), [Cochrane Handbook](https://www.cochrane.org/authors/handbooks-and-manuals/handbook/current), [Cochrane rapid reviews](https://methods.cochrane.org/rapidreviews/cochrane-rr-methods), [risk-of-bias tools](https://www.riskofbias.info/), [QUADAS](https://www.quadas.info/) and [GRADE](https://www.gradeworkinggroup.org/). Some instruments have restricted licences; check before reproducing items.
+`,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.systematic-review",
+  "version": "0.2.0",
+  "category": "Research",
+  "categoryDescription": "Check, find and cite the literature.",
+  "displayOrder": 90,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "compare-sources",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": compareSources,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.compare-sources",
+  "version": "0.2.0",
+  "category": "Research",
+  "categoryDescription": "Check, find and cite the literature.",
+  "displayOrder": 100,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "statistics-review",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": statisticsReview,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.statistics-review",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 110,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "check-reported-numbers",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": checkReportedNumbers,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.check-reported-numbers",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 120,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "reviewer-response",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": reviewerResponse,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.reviewer-response",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 130,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "ml-evaluation-audit",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": mlEvaluationAudit,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.ml-evaluation-audit",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 140,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "reporting-guideline-check",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": reportingGuidelineCheck,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.reporting-guideline-check",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 150,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "diagnose-analysis",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "diagnosing-bugs" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": diagnoseAnalysis,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.diagnose-analysis",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 160,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "grill-me",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "grilling" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": grillMe,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.grill-me",
+  "version": "0.1.0",
+  "category": "Planning and learning",
+  "categoryDescription": "Think a plan through, get expert input and learn new methods.",
+  "displayOrder": 170,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "to-questionnaire",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "to-questionnaire" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": toQuestionnaire,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.to-questionnaire",
+  "version": "0.1.0",
+  "category": "Planning and learning",
+  "categoryDescription": "Think a plan through, get expert input and learn new methods.",
+  "displayOrder": 180,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "teach",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "teach" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": teach,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.teach",
+  "version": "0.1.0",
+  "category": "Planning and learning",
+  "categoryDescription": "Think a plan through, get expert input and learn new methods.",
+  "displayOrder": 190,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "explicit",
+  "origin": {
+    "kind": "scient"
+  }
 }
 `,
     }),

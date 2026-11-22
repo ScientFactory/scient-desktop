@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import {
   chainCommands,
   exitCode,
@@ -28,6 +29,8 @@ import {
   isInTable,
   selectedRect,
 } from "prosemirror-tables";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
@@ -83,6 +86,7 @@ export type ScientMarkdownCommand =
   | "ordered-list"
   | "paragraph"
   | "redo"
+  | "result"
   | "select-table"
   | "split-cell"
   | "strike"
@@ -95,6 +99,7 @@ export type ScientMarkdownCommand =
 export interface ScientSlashCommandItem {
   readonly command: ScientMarkdownCommand;
   readonly keywords: string;
+  /** A `msg()` string: resolve it where it shows. */
   readonly label: string;
 }
 
@@ -112,9 +117,9 @@ export const MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION = 15;
 
 const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandItem> = [
   { command: "paragraph", label: WRITING_COMMAND_LABELS.text, keywords: "paragraph body" },
-  { command: "heading-1", label: "Heading 1", keywords: "title h1" },
-  { command: "heading-2", label: "Heading 2", keywords: "section h2" },
-  { command: "heading-3", label: "Heading 3", keywords: "subsection h3" },
+  { command: "heading-1", label: msg("Heading 1"), keywords: "title h1" },
+  { command: "heading-2", label: msg("Heading 2"), keywords: "section h2" },
+  { command: "heading-3", label: msg("Heading 3"), keywords: "subsection h3" },
   {
     command: "bullet-list",
     label: WRITING_COMMAND_LABELS.bulletList,
@@ -125,15 +130,20 @@ const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandItem> = [
     label: WRITING_COMMAND_LABELS.numberedList,
     keywords: "ordered numbers",
   },
-  { command: "task-list", label: "Task list", keywords: "todo checkbox check" },
+  { command: "task-list", label: msg("Task list"), keywords: "todo checkbox check" },
   { command: "blockquote", label: WRITING_COMMAND_LABELS.quote, keywords: "blockquote citation" },
-  { command: "code-block", label: "Code block", keywords: "fence programming" },
-  { command: "display-math", label: "Equation", keywords: "math tex latex formula" },
-  { command: "footnote", label: "Footnote", keywords: "note reference source" },
-  { command: "table", label: "Table", keywords: "grid cells data" },
-  { command: "image", label: "Image", keywords: "figure photo asset media" },
-  { command: "wiki-link", label: "Wiki link", keywords: "note internal link" },
-  { command: "horizontal-rule", label: "Divider", keywords: "rule separator" },
+  { command: "code-block", label: msg("Code block"), keywords: "fence programming" },
+  { command: "display-math", label: msg("Equation"), keywords: "math tex latex formula" },
+  { command: "footnote", label: msg("Footnote"), keywords: "note reference source" },
+  { command: "table", label: msg("Table"), keywords: "grid cells data" },
+  { command: "image", label: msg("Image"), keywords: "figure photo asset media" },
+  {
+    command: "result",
+    label: msg("Result"),
+    keywords: "linked value number figure analysis compute run",
+  },
+  { command: "wiki-link", label: msg("Wiki link"), keywords: "note internal link" },
+  { command: "horizontal-rule", label: msg("Divider"), keywords: "rule separator" },
 ];
 
 function requiredNodeType(name: string): NodeType {
@@ -770,6 +780,9 @@ function commandFor(command: ScientMarkdownCommand): Command {
       return insertNode(requiredNodeType("horizontal_rule").create());
     case "image":
       return insertNode(requiredNodeType("image").create({ alt: "", src: "", title: null }));
+    // The host's result picker inserts it; with no host there is nothing to pick from.
+    case "result":
+      return () => false;
     case "display-math":
       return insertNode(requiredNodeType("display_math").create({ tex: "", delimiter: "$$" }));
     case "footnote":
@@ -864,12 +877,21 @@ export function runScientMarkdownTableInsert(
   return runExplicitScientMarkdownCommand(insertTable(dimensions), state, dispatch);
 }
 
+/**
+ * `results` is false where the editor has no project whose results it could insert. A query
+ * matches the label in the UI language, its English, or the English keywords.
+ */
 export function filterScientMarkdownSlashCommands(
   query: string,
+  results = false,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ScientSlashCommandItem> {
   const normalized = query.trim().toLocaleLowerCase();
-  if (normalized.length === 0) return SCIENT_MARKDOWN_SLASH_COMMANDS;
-  return SCIENT_MARKDOWN_SLASH_COMMANDS.filter((item) =>
-    `${item.label} ${item.keywords}`.toLocaleLowerCase().includes(normalized),
+  return SCIENT_MARKDOWN_SLASH_COMMANDS.filter(
+    (item) =>
+      (results || item.command !== "result") &&
+      `${resolve(item.label)} ${item.label} ${item.keywords}`
+        .toLocaleLowerCase()
+        .includes(normalized),
   );
 }

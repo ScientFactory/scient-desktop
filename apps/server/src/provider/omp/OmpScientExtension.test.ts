@@ -227,6 +227,44 @@ describe("Scient's Oh My Pi extension", () => {
     expect(requests).toHaveLength(0);
   });
 
+  it("adds the thread's folder list at each agent start, as Scient last wrote it", async () => {
+    stubMcp();
+    const folders = NodePath.join(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-folders-")),
+      "folders.txt",
+    );
+    roots.push(NodePath.dirname(folders));
+    NodeFS.writeFileSync(folders, "<workspace_folders>\n- api\n</workspace_folders>");
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath, folders),
+      { endpoint: null, authorization: null, awareness: SESSION.awareness },
+    );
+    const host = makeApi();
+    await (
+      await extension.importFresh()
+    )(host.api);
+    const hook = host.handlers.get("before_agent_start") as Handler | undefined;
+
+    expect(hook?.({ systemPrompt: ["base"] } as never)).toEqual({
+      systemPrompt: [
+        "base",
+        `${SESSION.awareness}\n\n<workspace_folders>\n- api\n</workspace_folders>`,
+      ],
+    });
+    NodeFS.writeFileSync(folders, "<workspace_folders>\n- api\n- web\n</workspace_folders>");
+    expect(hook?.({ systemPrompt: ["base"] } as never)).toEqual({
+      systemPrompt: [
+        "base",
+        `${SESSION.awareness}\n\n<workspace_folders>\n- api\n- web\n</workspace_folders>`,
+      ],
+    });
+    // A single-folder thread's empty list adds nothing.
+    NodeFS.writeFileSync(folders, "");
+    expect(hook?.({ systemPrompt: ["base"] } as never)).toEqual({
+      systemPrompt: ["base", SESSION.awareness],
+    });
+  });
+
   it("leaves the system prompt untouched without awareness", async () => {
     stubMcp();
     const extension = await loadExtension(

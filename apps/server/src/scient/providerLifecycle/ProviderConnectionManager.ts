@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   publishedProviderConnectionOperation,
   type ProviderConnectionCancelInput,
+  type ProviderConnectionFailureReason,
   type ProviderConnectionDisconnectInput,
   type ProviderConnectionOperation,
   type ProviderConnectionStartInput,
@@ -21,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
@@ -34,6 +36,7 @@ import type {
 } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
 import { observeAnalyticsEffect } from "../../telemetry/OperationAnalytics.ts";
+import { EXTERNAL_PROVIDER_AUTH_TYPES } from "./ClaudeApiEndpoint.ts";
 
 export interface ProviderConnectionManagerShape {
   readonly start: (
@@ -115,6 +118,7 @@ function operation(input: {
   readonly failedAfterSignIn?: boolean | undefined;
   readonly signInRequestId?: string | undefined;
   readonly questionId?: string | undefined;
+  readonly failureReason?: ProviderConnectionFailureReason | undefined;
 }): ProviderConnectionOperation {
   return {
     operationId: input.operationId,
@@ -137,8 +141,18 @@ function operation(input: {
     ...(input.failedAfterSignIn === true ? { failedAfterSignIn: true } : {}),
     ...(input.signInRequestId ? { signInRequestId: input.signInRequestId } : {}),
     ...(input.questionId ? { questionId: input.questionId } : {}),
+    ...(input.status === "failed" ? { failureReason: input.failureReason ?? "unknown" } : {}),
   };
 }
+
+/** Why an action failure failed: its own reason, else what its flags say. */
+const failureReasonOf = (
+  failure: ProviderConnectionActionFailure,
+): ProviderConnectionFailureReason | undefined =>
+  failure.failureReason ?? (failure.afterSignIn === true ? "post_signin_setup" : undefined);
+
+/** How often a waiting sign-in re-checks a provider whose account check finishes it. */
+const ACCOUNT_CONNECTED_POLL = "15 seconds";
 
 /** The id the `count`th question of an operation is published and answered under. */
 const questionIdFor = (count: number) => `question-${count}`;
@@ -365,6 +379,10 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       return { providers: target.providers };
     }
 
+    // Only a provider with no account yet can be finished by seeing one: an
+    // account switch starts authenticated, so the old account proves nothing.
+    const finishableByAccount =
+      input.account === undefined && target.snapshot.auth.status !== "authenticated";
     const operationId = `connect-${yield* random.uuidV4()}`;
     const startedAt = yield* nowIso;
     const scope = yield* Scope.make();
@@ -458,6 +476,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           Effect.succeed(
             Result.fail<ProviderConnectionActionFailure>({
               message: "The provider sign-in flow stopped unexpectedly.",
+              failureReason: "flow_stopped",
             }),
           ),
         ),
@@ -486,6 +505,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               finishedAt,
               message: attemptResult.failure.message,
               failedAfterSignIn: attemptResult.failure.afterSignIn,
+              failureReason: failureReasonOf(attemptResult.failure),
             }),
           }),
         );
@@ -602,7 +622,38 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         );
       }
 
-      const supervise = attempt.waitForCompletion.pipe(
+      // A provider whose own account check is authoritative can be done while
+      // its process still waits: a fresh check that finds the account connected
+      // finishes the flow, and the final verification below still decides.
+      const finishWhenAccountConnected = attempt.finishWhenAccountConnected;
+      const accountConnected = Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep(ACCOUNT_CONNECTED_POLL);
+          // Canonical evidence: a proven authentication failure from before this sign-in
+          // still overlays published snapshots, and only the final verification clears it.
+          const fresh = yield* providerRegistry
+            .readFreshInstance(input.instanceId)
+            .pipe(Effect.option);
+          // A custom endpoint or API key reads as authenticated without any sign-in.
+          const auth = Option.getOrUndefined(fresh)?.auth;
+          if (
+            auth?.status === "authenticated" &&
+            (auth.type === undefined || !EXTERNAL_PROVIDER_AUTH_TYPES.has(auth.type))
+          ) {
+            return;
+          }
+        }
+      });
+      const completion =
+        finishWhenAccountConnected === undefined || !finishableByAccount
+          ? attempt.waitForCompletion
+          : Effect.raceFirst(
+              attempt.waitForCompletion.pipe(Effect.as(false)),
+              accountConnected.pipe(Effect.as(true)),
+            ).pipe(
+              Effect.flatMap((byAccount) => (byAccount ? finishWhenAccountConnected : Effect.void)),
+            );
+      const supervise = completion.pipe(
         Effect.result,
         Effect.flatMap((result) =>
           transitionLock.withPermits(1)(
@@ -651,6 +702,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     message:
                       "The provider finished sign in, but Scient could not verify the connected account.",
                     afterSignIn: true,
+                    failureReason: "verification",
                   });
                 }
               }
@@ -671,6 +723,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                       : completion.failure.message,
                   failedAfterSignIn:
                     completion._tag === "Failure" ? completion.failure.afterSignIn : undefined,
+                  failureReason:
+                    completion._tag === "Failure" ? failureReasonOf(completion.failure) : undefined,
                 }),
               });
               yield* cleanupIfCurrent(input.instanceId, operationId, "complete");
@@ -695,6 +749,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     startedAt,
                     finishedAt,
                     message: "The provider sign-in flow stopped unexpectedly.",
+                    failureReason: "flow_stopped",
                   }),
                 })
                 .pipe(

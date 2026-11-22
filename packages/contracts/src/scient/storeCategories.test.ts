@@ -12,4 +12,10 @@ describe("store category placement", () => {
     expect(storeCategories("unknown", "database")).toEqual(["data"]);
     expect(storeCategories("unknown", "new category")).toEqual([]);
   });
+  it("keeps productivity plugins out of Files unless they are file services", () => {
+    expect(storeCategories("semrush", "Productivity")).toEqual(["projects"]);
+    expect(storeCategories("box", "productivity")).toEqual(["files"]);
+    expect(storeCategories("commit-commands", "productivity")).toEqual(["code"]);
+    expect(storeCategories("railway", "deployment")).toEqual(["code"]);
+  });
 });

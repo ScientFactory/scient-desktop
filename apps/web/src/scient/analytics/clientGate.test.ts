@@ -398,6 +398,33 @@ describe("UI operation outcomes", () => {
     ]);
   });
 
+  it("says which step a failed export failed at, and whose step that was", async () => {
+    const status = vi.fn(async () => ({
+      available: true,
+      consent: "product" as const,
+      collectionContext: "context-1",
+    }));
+    const record = vi.fn<(connection: object, event: ScientAnalyticsUiEvent) => Promise<void>>(
+      async () => undefined,
+    );
+    const gate = createAnalyticsClientGate({ status, record, now: () => 0 });
+    const connection = {};
+    await gate.readStatus(connection);
+    gate.beginOperation(connection, "pdf-export")("failed", "renderer-unavailable");
+    gate.beginOperation(connection, "pdf-export")("failed");
+    await tick();
+    const failures = record.mock.calls
+      .map((call) => call[1])
+      .filter((event) => event.name === "scient.operation.failed");
+    expect(failures.map((event) => event.properties)).toEqual([
+      expect.objectContaining({
+        failureOwner: "scient",
+        failureCategory: "renderer-unavailable",
+      }),
+      expect.objectContaining({ failureOwner: "unknown", failureCategory: "unknown" }),
+    ]);
+  });
+
   it("never reconstructs operations begun before consent discovery or on an old server", async () => {
     const record = vi.fn(async () => undefined);
     let current: ScientAnalyticsStatus = { available: true, consent: "product" };

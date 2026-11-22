@@ -53,6 +53,7 @@ require a cosmetic folder migration.
 - [Export a conversation](./user/export-conversations.md)
 - [Project settings](./user/project-settings.md)
 - [Voice dictation](./user/voice-dictation.md)
+- [Projects with several repositories](./user/multi-repo-projects.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Text generation models](./user/text-generation.md)
 - [Environment themes](./user/environment-theme.md)
@@ -66,6 +67,7 @@ require a cosmetic folder migration.
 - [Usage and limits](./user/usage.md)
 - [Secrets](./user/secrets.md)
 - [Product usage data](./user/telemetry.md)
+- [Send feedback](./user/feedback.md)
 - [Remote access](./user/remote-access.md)
 - [Invite people to a thread](./user/thread-rooms.md)
 - [Scient Connect troubleshooting](./user/scient-connect-troubleshooting.md)
@@ -83,7 +85,7 @@ require a cosmetic folder migration.
 - [Interactive charts in chat](./user/charts-in-chat.md)
 - [Scientific computing](./user/scientific-computing.md)
 - [Run a MATLAB file](./user/matlab-run-file.md)
-- [Sources and Zotero import](./user/sources.md)
+- [Library and Zotero import](./user/sources.md)
 - [Run a server without the desktop app](./user/background-service.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 
@@ -96,6 +98,8 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 
 - [Architecture overview — live orchestration V2](./internals/overview.md)
 - [Effect services and transport boundaries](./internals/effect-services.md)
+- [Test-writing and browser harness conventions](./internals/testing.md)
+- [Web UI conventions](./internals/web-ui.md)
 - [Legacy orchestration import and recovery](./internals/legacy-orchestration-migration.md)
 - [Composer context references](./internals/composer-context-references.md)
 - [Assistant citations](./internals/assistant-citations.md)
@@ -196,6 +200,9 @@ Follow their linked successors for current behavior.
 ### Runbooks
 
 - [Scient local dev app](./operations/local-dev-app.md)
+- [Development commands and prerequisites](./operations/development.md)
+- [Stable dev-app review](./operations/dev-app-review.md)
+- [CI flake register and delivery limits](./operations/ci-flakes.md)
 - [Compute backend qualification](./operations/compute-backend-qualification.md)
 - [Windows dev app](./operations/local-dev-app-windows.md)
 - [Scenarios: real-app proof for a fix](./operations/scenarios.md)

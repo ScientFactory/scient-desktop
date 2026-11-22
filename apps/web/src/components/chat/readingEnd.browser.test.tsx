@@ -900,7 +900,6 @@ function _createFixture(context: TestContext) {
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: COMPOSER_INSET,
     onIsAtEndChange: vi.fn(),
-    onManualNavigation: () => {},
   };
   return {
     listRef,

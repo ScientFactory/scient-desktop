@@ -6,6 +6,8 @@ import {
 } from "./latexSourceSyntax";
 import { latexLiteralBlock } from "./latexLiteral";
 import type { LatexSourceEdit } from "./latexSourceEditPlan";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 let inventoryCache: { source: string; inventory: ReturnType<typeof readLabelInventory> } | null =
   null;
@@ -81,16 +83,19 @@ export function renameLatexLabel(
 ): { source: string; edit: LatexSourceEdit } | { error: string } {
   const inventory = latexLabelInventory(source);
   if (!/^[^{}\\%\s#$&~^,]+$/u.test(after))
-    return { error: "Use a label without spaces or LaTeX control characters." };
+    return { error: m(msg("Use a label without spaces or LaTeX control characters.")) };
   if (before === after) return { source, edit: { source, patches: [] } };
   if (inventory.incomplete)
     return {
-      error:
-        "This document includes other files or dynamic labels. A rename needs coordinated edits in those source files.",
+      error: m(
+        msg(
+          "This document includes other files or dynamic labels. A rename needs coordinated edits in those source files.",
+        ),
+      ),
     };
   const target = inventory.targets.find((target) => target.key === before);
   if (!target || target.duplicate || inventory.targets.some((target) => target.key === after))
-    return { error: "The old label must be unique and the new label must be unused." };
+    return { error: m(msg("The old label must be unique and the new label must be unused.")) };
   const patches = [
     { from: target.from, to: target.to, value: after },
     ...inventory.references
@@ -107,6 +112,6 @@ export function renameLatexLabel(
   ];
   const next = patchLatexSource(source, patches);
   return next === null
-    ? { error: "The reference ranges overlap." }
+    ? { error: m(msg("The reference ranges overlap.")) }
     : { source: next, edit: { source, patches: latexSourcePatches(source, patches) } };
 }

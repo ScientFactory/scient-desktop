@@ -115,19 +115,6 @@ it("retargets without snapping and honors downward corrections", async () => {
   expect(_fixture.result).toBe(0.1);
   expect(frames.size).toBe(0);
 });
-it("cancels animation immediately once the download leaves the downloading state", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  await update(_fixture, { percent: 60 });
-  await step(_fixture);
-  await update(_fixture, { status: "downloaded", percent: 100 });
-  expect(_fixture.result).toBe(_fixture.props.percent);
-  expect(frames.size).toBe(0);
-  await update(_fixture, { status: "downloading", percent: 0 });
-  expect(_fixture.result).toBe(0);
-});
 it("resets for a different version and for missing readings", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

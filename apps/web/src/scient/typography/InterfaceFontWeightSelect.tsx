@@ -1,6 +1,7 @@
 // SCIENT-OWNED: the interface text weight picker beside the interface font size.
 import { InterfaceFontWeight } from "@t3tools/contracts/settings";
 import * as Schema from "effect/Schema";
+import { msg, useGT, useMessages } from "gt-react";
 
 import {
   Select,
@@ -12,9 +13,9 @@ import {
 
 const isInterfaceFontWeight = Schema.is(InterfaceFontWeight);
 const INTERFACE_FONT_WEIGHT_LABELS: Record<InterfaceFontWeight, string> = {
-  300: "Light",
-  400: "Regular",
-  500: "Medium",
+  300: msg("Light", { $context: "font weight" }),
+  400: msg("Regular", { $context: "font weight" }),
+  500: msg("Medium", { $context: "font weight" }),
 };
 
 export function InterfaceFontWeightSelect({
@@ -25,6 +26,8 @@ export function InterfaceFontWeightSelect({
     onChange: (value: InterfaceFontWeight) => void;
   };
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <Select
       value={String(weight.value)}
@@ -33,13 +36,17 @@ export function InterfaceFontWeightSelect({
         if (isInterfaceFontWeight(parsed)) weight.onChange(parsed);
       }}
     >
-      <SelectTrigger size="sm" className="w-24 min-w-0 shrink-0" aria-label="Interface text weight">
-        <SelectValue>{INTERFACE_FONT_WEIGHT_LABELS[weight.value]}</SelectValue>
+      <SelectTrigger
+        size="sm"
+        className="w-24 min-w-0 shrink-0"
+        aria-label={gt("Interface text weight")}
+      >
+        <SelectValue>{m(INTERFACE_FONT_WEIGHT_LABELS[weight.value])}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
         {InterfaceFontWeight.literals.map((value) => (
           <SelectItem hideIndicator key={value} value={String(value)}>
-            {INTERFACE_FONT_WEIGHT_LABELS[value]}: {value}
+            {m(INTERFACE_FONT_WEIGHT_LABELS[value])}: {value}
           </SelectItem>
         ))}
       </SelectPopup>

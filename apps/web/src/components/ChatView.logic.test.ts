@@ -17,18 +17,19 @@ import {
   deriveAvailableRevertTurnCounts,
   presentThreadShellFromProjection,
   deriveThreadPendingBackgroundTasks,
+  resolveProactiveTurnDiffAction,
 } from "./ChatView.logic";
 import {
   isThreadEnvironmentLocked,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
+  resolveThreadErrorBanner,
 } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider, type ModelSelection } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type RightPanelSurface,
-  pullRequestSurface,
   selectActiveRightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -39,6 +40,7 @@ import {
   terminalContextReference,
 } from "../lib/composerContextRecords";
 import {
+  CheckpointScopeId,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -80,9 +82,7 @@ import {
   timelineHasEphemeralPreviewUrls,
   codexArtifactTemplatePromptToAppend,
   shouldRefocusComposerOnWindowFocus,
-  shouldOpenProactivePullRequest,
   shouldRetargetThreadPullRequestPanel,
-  shouldOpenProactiveTurnDiff,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
@@ -680,60 +680,6 @@ describe("deriveCommittedServerUserMessageIds", () => {
   });
 });
 describe("proactive panels", () => {
-  it("keeps a manual PR selection made after following a replacement while loading", () => {
-    useRightPanelStore.setState({
-      byThreadKey: {},
-      userActionRevisionByThreadKey: {},
-    });
-    const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1"));
-    const panels = useRightPanelStore.getState();
-    const oldPr = pullRequestSurface({
-      projectId: "project-1",
-      repository: "owner/repo",
-      number: 1,
-    });
-    const replacement = pullRequestSurface({
-      ...oldPr,
-      number: 2,
-    });
-    const runId = RunId.make("turn-1");
-    panels.openPullRequest(ref, oldPr);
-    const loading = observeProactivePanelUserChoice(null, {
-      threadKey: "env-1:thread-1",
-      runningTurnId: runId,
-      userActionRevision: panels.getUserActionRevision(ref),
-    });
-    expect(panels.openProactive(ref, replacement, loading.userActionRevision)).toBe(true);
-    panels.activateSurface(ref, oldPr.id);
-    const loaded = observeProactivePanelUserChoice(loading, {
-      threadKey: loading.threadKey,
-      runningTurnId: runId,
-      userActionRevision: panels.getUserActionRevision(ref),
-    });
-    expect(panels.openProactive(ref, replacement, loaded.userActionRevision)).toBe(false);
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref)).toEqual(
-      oldPr,
-    );
-    expect(shouldOpenProactivePullRequest(loaded.targetKey, "owner/repo:2")).toBe(true);
-    expect(
-      shouldOpenProactiveTurnDiff({
-        previousRunningTurnId: loaded.runningTurnId,
-        runningTurnId: null,
-        settledTurnId: runId,
-        turnCompleted: true,
-      }),
-    ).toBe(true);
-    expect(
-      panels.openProactive(
-        ref,
-        {
-          kind: "diff",
-          turnId: runId,
-        },
-        loaded.userActionRevision,
-      ),
-    ).toBe(false);
-  });
   it.each(["idle", "loading", "observed"] as const)(
     "captures a new run's choice once with initial state %s",
     (initialState) => {
@@ -913,42 +859,6 @@ describe("draft promotion during worktree setup", () => {
     environmentId,
     threadId,
   };
-  it.each([null, "preparing", "starting"] as const)(
-    "keeps the draft mounted until the server owns the send, with setup run %s",
-    (status) => {
-      const serverThread = makeThread({
-        latestRun: status
-          ? {
-              ...completedTurn,
-              status,
-              startedAt: null,
-              completedAt: null,
-            }
-          : null,
-        latestUserMessageAt: null,
-      });
-      expect(
-        resolveDraftPromotionNavigationTarget({
-          serverThreadRef,
-          serverThread,
-          backgroundSubmissionPending: false,
-        }),
-      ).toBeNull();
-    },
-  );
-  it("promotes once the bootstrap persisted the user message, before any run", () => {
-    const serverThread = makeThread({
-      latestRun: null,
-      latestUserMessageAt: now,
-    });
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef,
-        serverThread,
-        backgroundSubmissionPending: false,
-      }),
-    ).toEqual(serverThreadRef);
-  });
   it("promotes when the provider starts the first run", () => {
     expect(
       resolveDraftPromotionNavigationTarget({
@@ -1358,6 +1268,7 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
           element(tagName, {
             within: '[contenteditable="true"]',
           }),
+          null,
         ),
       ).toBe(false);
     },
@@ -2003,6 +1914,7 @@ describe("planComposerTurn", () => {
     sendEnvMode: "worktree" as const,
     worktreePath: null,
     activeThreadBranch: "main",
+    projectIsGitRepo: true,
     isScratchProject: false,
     resumeCompactionTokens: null,
     keepFullHistory: false,
@@ -2027,6 +1939,10 @@ describe("planComposerTurn", () => {
       missingWorktreeBaseBranch: true,
       baseBranchForWorktree: null,
     });
+    // A plain folder that tracks repositories has no branch of its own to start from.
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, projectIsGitRepo: false }),
+    ).toMatchObject({ missingWorktreeBaseBranch: false, baseBranchForWorktree: "HEAD" });
     expect(
       planComposerTurn({ ...base, activeThreadBranch: null, isScratchProject: true }),
     ).toMatchObject({
@@ -2197,6 +2113,54 @@ describe("presentThreadShellFromProjection", () => {
         live,
       ).goal,
     ).toBeNull();
+  });
+});
+
+describe("resolveProactiveTurnDiffAction", () => {
+  const file = { path: "src/a.ts", kind: "modified", additions: 60, deletions: 0 };
+  const repository = (files: ReadonlyArray<typeof file>) => ({
+    scopeId: CheckpointScopeId.make("scope-api"),
+    name: "api",
+    repositoryPath: "/work/api",
+    cwd: "/work/api",
+    files,
+    baselineMissing: files.length === 0,
+  });
+
+  it("opens for repository changes in a folder that is not a Git repository", () => {
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [], repositories: [repository([file])] },
+        isGitRepo: false,
+      }),
+    ).toBe("open");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [], repositories: [repository([])] },
+        isGitRepo: false,
+      }),
+    ).toBe("ignore");
+  });
+
+  it("keeps waiting on a missing checkpoint and ignores a folder without Git", () => {
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [] },
+        isGitRepo: true,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "ready", files: [file] },
+        isGitRepo: false,
+      }),
+    ).toBe("ignore");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "ready", files: [file] },
+        isGitRepo: true,
+      }),
+    ).toBe("open");
   });
 });
 
@@ -2412,5 +2376,61 @@ describe("prepareRevertedMessageAttachments", () => {
     ]);
     expect(store.addImages(target, repeat)).toEqual([]);
     expect(store.getComposerDraft(target)?.images.map(({ id }) => id)).toEqual(["restored"]);
+  });
+});
+
+describe("resolveThreadErrorBanner", () => {
+  const base = {
+    isServerThread: true,
+    localServerError: null,
+    localDraftError: null,
+    runtimeError: null,
+    runtimeErrorSource: null,
+  };
+
+  it.each([
+    {
+      name: "server runtime error",
+      input: { ...base, runtimeError: "Turn failed", runtimeErrorSource: "item-1" },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local copy of the runtime error",
+      input: {
+        ...base,
+        localServerError: "Turn failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local server error over a different runtime error",
+      input: {
+        ...base,
+        localServerError: "Upload failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: { threadError: "Upload failed", sessionDismissal: null },
+    },
+    {
+      name: "draft error",
+      input: {
+        ...base,
+        isServerThread: false,
+        localDraftError: "Worktree failed",
+        runtimeError: "Turn failed",
+      },
+      expected: { threadError: "Worktree failed", sessionDismissal: null },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(resolveThreadErrorBanner(input)).toEqual(expected);
   });
 });

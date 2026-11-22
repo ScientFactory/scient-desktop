@@ -1219,6 +1219,7 @@ import {
   WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
 } from "./scient/conversationAssociation.ts";
 export { renderWindowsConversationAssociationInclude, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE };
+import { renderWindowsInstallFolderMacros } from "./scient/installFolderProtection.ts";
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/file-exchange",
@@ -1249,6 +1250,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!apps/desktop/prod-resources/apple-speech",
+  "!apps/desktop/prod-resources/apple-speech/**/*",
 
   "!apps/desktop/prod-resources/windows-server",
   "!apps/desktop/prod-resources/windows-server/**/*",
@@ -1386,7 +1389,22 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/@napi-rs/canvas-win32-",
   "node_modules/@napi-rs/keyring-win32-",
   "node_modules/@cursor/sdk-win32-",
+  "node_modules/@koromix/koffi-win32-",
+  "node_modules/@transcribe-cpp/win32-",
 ] as const;
+// SCIENT-FORK:START — Scient builds its own WSL archive; Windows packages never load there.
+// A package built for Windows names its target (`koffi-win32-x64`, `win32-x64-cpu-vulkan`); none
+// can load in WSL, so a new one that the list above misses fails the build instead of shipping.
+const WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE = /^node_modules\/(?:@[^/]+\/)?[^/]*win32-/;
+
+export const findForbiddenWslRuntimeArchiveMember = (members: ReadonlyArray<string>) =>
+  members.find(
+    (member) =>
+      member.endsWith(".map") ||
+      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)) ||
+      WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE.test(member),
+  );
+// SCIENT-FORK:END
 // Build and ship the WSL archive only with Linux pty.node; otherwise every launch extracts an unusable cache.
 export const bundlesWslRuntime = (input: {
   readonly arch: typeof BuildArch.Type;
@@ -1436,6 +1454,9 @@ export const LINUX_CAPTURE_EXTRA_RESOURCES = [
 ] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
+] as const;
+export const MAC_APPLE_SPEECH_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/apple-speech", to: "apple-speech" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -2867,6 +2888,31 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   );
 });
 
+export const stageAppleSpeech = Effect.fn("stageAppleSpeech")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "mac") return;
+  const path = yield* Path.Path;
+  yield* runCommand(
+    ChildProcess.make(
+      "node",
+      [
+        path.join(input.repoRoot, "apps/desktop/scripts/build-apple-speech.mjs"),
+        "--arch",
+        input.arch,
+        "--output",
+        path.join(input.stageResourcesDir, "apple-speech", "t3-apple-speech"),
+      ],
+      { cwd: input.repoRoot },
+    ),
+    { label: "build macOS Apple Speech helper", verbose: input.verbose },
+  );
+});
+
 const generateMacIconSet = Effect.fn("build-desktop-artifact.generateMacIconSet")(function* (
   sourcePng: string,
   targetIcns: string,
@@ -3304,6 +3350,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
+      ...(platform === "mac" ? MAC_APPLE_SPEECH_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -3342,6 +3389,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "Commands you run in Scient may need to add events to your calendars.",
         NSCameraUsageDescription:
           "Scient lets commands run by terminals and coding agents use the camera.",
+        NSSpeechRecognitionUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} transcribes your dictation on this Mac when you choose Apple Speech.`,
       },
       // SCIENT-FORK:START — do not register http(s) or HTML associations while activation is held.
       protocols: [
@@ -4241,11 +4289,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const members = parseWslRuntimeArchiveMembers(listing.stdout);
-    const forbiddenMember = members.find(
-      (member) =>
-        member.endsWith(".map") ||
-        WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
-    );
+    const forbiddenMember = findForbiddenWslRuntimeArchiveMember(members);
     if (forbiddenMember !== undefined) {
       return yield* invalidWslRuntime(
         new Error(`WSL runtime archive contains forbidden member ${forbiddenMember}`),
@@ -4672,6 +4716,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
+  yield* stageAppleSpeech({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
 
   yield* assertPlatformBuildResources(
     options.platform,
@@ -4750,7 +4801,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     // SCIENT-FORK:START
     yield* fs.writeFileString(
       path.join(stageResourcesDir, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE),
-      renderWindowsConversationAssociationInclude(previewChannel, nativePreviewPath !== undefined),
+      renderWindowsInstallFolderMacros() +
+        renderWindowsConversationAssociationInclude(
+          previewChannel,
+          nativePreviewPath !== undefined,
+        ),
     );
     // SCIENT-FORK:END
   }

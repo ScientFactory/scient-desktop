@@ -40,7 +40,8 @@ import {
   THREAD_FORK_NATIVE_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { liveCodexThreadSetup } from "../testkit/CodexReplayThreadSetup.ts";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFrame = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -182,7 +183,13 @@ it.live(
           materializeReplayTranscriptWorkspace(recorded, cwd),
         );
         const entries = [...transcript.entries];
-        const replayTranscript = { ...transcript, entries };
+        // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+        const replayTranscript = {
+          ...transcript,
+          entries: liveCodexThreadSetup(transcript, entries, (native) =>
+            native === "native-source-thread" ? "Source" : "Source (2)",
+          ),
+        };
         const driver = yield* CodexReplay.makeReplayDriver(replayTranscript);
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
@@ -191,7 +198,6 @@ it.live(
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* OrchestratorV2;
-          const forks = yield* ConversationForkService;
           const source = yield* createSource(cwd);
           const answer = source.turnItems.find(
             (item) => item.type === "assistant_message" && item.text === "source fork seed ok",
@@ -213,7 +219,7 @@ it.live(
             sourceAssistantMessageId: answer.messageId,
             workspaceMode: "local" as const,
           };
-          const receipt = yield* forks.dispatch(forkCommand);
+          const receipt = yield* forkConversation(forkCommand);
           const frozen = yield* orchestrator.getThreadProjection(targetId);
           assert.lengthOf(frozen.runs, 0);
           assert.lengthOf(frozen.providerThreads, 0, "Fork admission must not execute a provider");
@@ -364,7 +370,7 @@ it.live(
           assert.deepEqual(after.runs, source.runs);
           assert.deepEqual(after.attempts, source.attempts);
           assert.deepEqual(after.messages, source.messages);
-          const repeated = yield* forks.dispatch(forkCommand);
+          const repeated = yield* forkConversation(forkCommand);
           assert.equal(repeated.sequence, receipt.sequence);
           const stored = yield* (yield* ProjectionStoreV2).getThreadProjection(targetId);
           assert.lengthOf(stored.contextTransfers, 1);
@@ -378,7 +384,7 @@ it.live(
           );
           assert.equal(
             replayState.cursor,
-            entries.length,
+            replayTranscript.entries.length,
             "The portable terminal must consume the complete strict transcript",
           );
         }).pipe(Effect.provide(layer));

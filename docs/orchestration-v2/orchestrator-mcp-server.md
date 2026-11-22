@@ -362,8 +362,13 @@ its own under the environment's Scratch project. A new worktree with `startFromO
 `startFromOrigin: false`. The new thread may not run with broader runtime or
 interaction modes than the caller. As for `delegate_task`, a runtime mode the
 provider does not offer is refused, and an inherited or default one steps down
-to the broadest mode it offers. Launch has no retry key, so inspect existing threads after a failed or lost response before
-launching again. `create_threads` remains the batch option for a shared checkout.
+to the broadest mode it offers. `create_threads` remains the batch option for a
+shared checkout.
+
+Set `clientRequestId` on the initial launch to make it retryable. After an error
+or a lost reply, resend the same request with the same key from the same
+provider session. This reuses any thread already created by that request. If the
+initial request had no key, check for the thread before launching again.
 
 ### `scient_thread_list`
 
@@ -468,12 +473,30 @@ The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
 
+`outputSchema` (also on `scient_thread_launch`) asks the run for a result as data.
+The run stores the schema, the turn's prompt ends with how to hand the result
+back, and the agent calls `scient_submit_output`. The server checks the value
+against the schema before storing it, so the caller never parses a reply. A send
+that asks for a result is queued instead of steered: the result belongs to one
+whole turn. A turn can end without submitting; the caller sees a finished run
+with no `output`.
+
+### `scient_submit_output`
+
+Stores the calling thread's result on its running turn, once it fits the schema
+that turn was sent with. A turn that was asked for nothing answers for the
+newest turn that was asked and has not answered yet, which is how an agent that
+ended its turn to wait gives its result after it is woken. A rejection names what did not fit, so the agent can
+correct it and call again; a later accepted submission replaces an earlier one.
+
 ### `scient_thread_wait`
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time; an idle thread returns immediately. A timeout reports the latest durable
-status and does not cancel work.
+status and does not cancel work. `output` carries what the run submitted
+against its `outputSchema`; with `untilOutput`, a completed run that has not
+submitted yet is waited on until it has.
 
 ### `scient_thread_interrupt`
 

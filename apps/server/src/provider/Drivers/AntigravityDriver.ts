@@ -15,12 +15,17 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK: one catalog read at a time per instance.
+import * as Semaphore from "effect/Semaphore";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 import * as AcpErrors from "effect-acp/errors";
@@ -35,6 +40,7 @@ import { makeAntigravityAcpVoiceTranscriptCorrection } from "../../scient/voice/
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { brokenRuntimeError } from "../providerCompatibility.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
@@ -47,8 +53,8 @@ import {
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
-  antigravityCliSessionMode,
   antigravityModelOptions,
+  antigravitySessionMode,
   antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
@@ -61,7 +67,10 @@ import {
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
+import {
+  makeAntigravityAdapterV2,
+  type AntigravityAdapterV2RuntimeInput,
+} from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
@@ -79,6 +88,9 @@ import {
 } from "./ScientAntigravityDriver.ts";
 export { usesLegacyAntigravityBackend } from "./ScientAntigravityDriver.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity Marketplace plugins through the instance's agy CLI.
+import { makeAntigravityInstancePlugins } from "../../scient/extensions/AntigravityProviderStore.ts";
+// SCIENT-FORK:END
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 import {
   LegacyAntigravityDriver,
@@ -94,6 +106,7 @@ export const antigravityCatalogMatching: ModelCatalog.CatalogMatching = {
 };
 // SCIENT-FORK:END
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const isProviderSetupError = Schema.is(ProviderSetupError);
 const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
@@ -239,10 +252,14 @@ export const AntigravityDriver: ScientProviderDriver<
         ),
       );
 
-    const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+    const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
+      cwd: string,
+      baseEnv: NodeJS.ProcessEnv,
     ): Effect.fn.Return<
-      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      {
+        readonly executable: AntigravityInstallation.AntigravityExecutable;
+        readonly spawn: AcpSessionRuntime.AcpSpawnInput;
+      },
       AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
     > {
@@ -270,6 +287,7 @@ export const AntigravityDriver: ScientProviderDriver<
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
+        nativePlugins: executable.harnessPath === null, // SCIENT-FORK: the agy CLI loads plugins.
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -309,35 +327,86 @@ export const AntigravityDriver: ScientProviderDriver<
               ),
             ),
       );
-      const runtime = yield* makeAntigravityAcpRuntime({
-        ...input,
-        runtimeVersion: executable.version,
-        authMethod: auth.authMethod,
-        childProcessSpawner: spawner,
+      return {
+        executable,
         spawn: buildAntigravityAcpSpawnInput({
           installation: executable,
           profile,
-          cwd: input.cwd,
-          baseEnv: processEnvironment,
+          cwd,
+          baseEnv,
           auth,
           runtimeTempDirectory,
         }),
+      };
+    });
+
+    const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
+      input: AntigravityAdapterV2RuntimeInput,
+    ): Effect.fn.Return<
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      AcpErrors.AcpError | ProviderSetupError,
+      Scope.Scope
+    > {
+      // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
+      // agent's shell through `baseEnv`.
+      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { executable, spawn } = yield* prepareSpawn(
+        runtimeInput.cwd,
+        threadEnvironment === undefined
+          ? processEnvironment
+          : { ...processEnvironment, ...threadEnvironment },
+      );
+      const runtime = yield* makeAntigravityAcpRuntime({
+        ...runtimeInput,
+        runtimeVersion: executable.version,
+        authMethod: auth.authMethod,
+        childProcessSpawner: spawner,
+        spawn,
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
+      // A custom or PATH executable has no version until it answers initialize.
+      const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
+        const version = (yield* runtime.initialize()).agentInfo?.version;
+        const advisory = version ? yield* installation.compatibility(version) : undefined;
+        const refused =
+          version &&
+          brokenRuntimeError({
+            instanceId,
+            name: "Antigravity",
+            version,
+            advisory,
+            action:
+              executable.source === "managed"
+                ? "Update it in Antigravity setup"
+                : `Update the Antigravity executable at ${executable.executablePath}`,
+          });
+        if (refused) {
+          return yield* new AcpErrors.AcpTransportError({ detail: refused.detail, cause: refused });
+        }
+        return yield* runtime.start();
+      });
       return {
         ...runtime,
-        ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
-          : {}),
-        start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tapError((cause): Effect.Effect<void> =>
-                input.onAuthorizationUrl === undefined && isAntigravitySignInRequiredError(cause)
-                  ? provider.onAuthRequired
-                  : Effect.void,
+        setMode: (modeId: string) =>
+          runtime.getModeState.pipe(
+            Effect.flatMap((modeState) =>
+              runtime.setMode(
+                // SCIENT-FORK: Scient's managed 1.4.5 harness accepts `yolo` and `auto_edit`;
+                // only the agy CLI needs them mapped. Native Auto still needs the session's offer.
+                executable.harnessPath === null || modeId === "auto"
+                  ? antigravitySessionMode(modeId, modeState)
+                  : modeId,
               ),
             ),
+          ),
+        start: () =>
+          startCompatible().pipe(
+            Effect.tapError((cause): Effect.Effect<void> =>
+              runtimeInput.onAuthorizationUrl === undefined &&
+              isAntigravitySignInRequiredError(cause)
+                ? provider.onAuthRequired
+                : Effect.void,
+            ),
+          ),
       };
     });
 
@@ -385,6 +454,87 @@ export const AntigravityDriver: ScientProviderDriver<
       };
     });
 
+    // The agy CLI ignores T3's browser helper during ACP `authenticate`, so Google sign-in runs its
+    // remote-friendly `--login`, which stores the sign-in where the ACP process reads it.
+    const codeLogin = Effect.fn("AntigravityDriver.codeLogin")(function* (input: {
+      readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
+    }) {
+      if (auth.authMethod !== "oauth-personal") return undefined;
+      // SCIENT-FORK:START — Scient's managed 1.4.5 harness signs in through ACP `authenticate`.
+      const resolved = yield* installation
+        .resolve(settings.binaryPath, processEnvironment)
+        .pipe(Effect.option);
+      if (Option.isSome(resolved) && resolved.value.harnessPath !== null) return undefined;
+      // SCIENT-FORK:END
+      const cwd = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3-antigravity-login-" })
+        .pipe(
+          Effect.mapError(
+            () =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "start",
+                detail: "Could not create an Antigravity setup workspace.",
+              }),
+          ),
+        );
+      const { executable, spawn } = yield* prepareSpawn(cwd, processEnvironment);
+      if (executable.harnessPath !== null) return undefined; // SCIENT-FORK: see above.
+      const failed = (detail: string, cause?: unknown) =>
+        new ProviderSetupError({ instanceId, operation: "start", detail, cause });
+      // Without a display it prints the link only, instead of opening a browser on this machine.
+      const { DISPLAY: _display, WAYLAND_DISPLAY: _wayland, ...env } = spawn.env ?? {};
+      const child = yield* spawner
+        .spawn(
+          ChildProcess.make(spawn.command, [...spawn.args, "--login"], {
+            cwd,
+            env,
+            extendEnv: false,
+            shell: false,
+          }),
+        )
+        .pipe(Effect.mapError((cause) => failed("Could not start Antigravity sign-in.", cause)));
+      const code = yield* Deferred.make<string>();
+      yield* Stream.fromEffect(Deferred.await(code)).pipe(
+        Stream.map((response) => `${response}\n`),
+        Stream.encodeText,
+        Stream.run(child.stdin),
+        Effect.ignore,
+        Effect.forkScoped,
+      );
+      const output = yield* child.stdout.pipe(
+        Stream.decodeText(),
+        Stream.splitLines,
+        Stream.map((line) => line.trim()),
+        Stream.runForEach((line) =>
+          line.startsWith("https://accounts.google.com/")
+            ? input.onAuthorizationUrl(line)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Stream.runDrain(child.stderr).pipe(Effect.ignore, Effect.forkScoped);
+      return {
+        submit: (response: string) => Deferred.succeed(code, response).pipe(Effect.asVoid),
+        completed: Effect.gen(function* () {
+          // Stdout closes when the process exits, or this fails first on an unusable link.
+          yield* Fiber.join(output).pipe(
+            Effect.mapError((cause) =>
+              failed("Antigravity returned an invalid Google sign-in link.", cause),
+            ),
+          );
+          const exitCode = yield* child.exitCode.pipe(
+            Effect.mapError((cause) => failed("Antigravity sign-in stopped unexpectedly.", cause)),
+          );
+          if (Number(exitCode) !== 0) {
+            return yield* failed(
+              "Antigravity could not finish Google sign-in. Start sign-in again.",
+            );
+          }
+        }),
+      };
+    });
+
     const publishCatalog = Effect.fn("AntigravityDriver.publishCatalog")(function* (
       started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
       runtime: Pick<
@@ -393,6 +543,7 @@ export const AntigravityDriver: ScientProviderDriver<
       >,
     ) {
       yield* provider.onSessionStarted(started);
+      yield* authFlow.onSignedInElsewhere;
       yield* Stream.runForEach(runtime.getEvents(), (event) => {
         if (event._tag === "EventStreamBarrier") {
           return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
@@ -425,6 +576,7 @@ export const AntigravityDriver: ScientProviderDriver<
         ),
       onSignedOut: Effect.suspend(() => provider.onSignedOut),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
+      codeLogin,
     });
 
     // The probe must not spawn. The agent is a PyInstaller one-file bundle
@@ -482,7 +634,7 @@ export const AntigravityDriver: ScientProviderDriver<
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
-      discoverGlobalSkills: discoverAntigravitySkills({ userHome }).pipe(
+      discoverGlobalSkills: discoverAntigravitySkills({ userHome, profileDirectory }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.mapError((cause) => cause.message),
@@ -517,13 +669,14 @@ export const AntigravityDriver: ScientProviderDriver<
         ),
       ),
       profileDirectory,
-      onSessionStarted: provider.onSessionStarted,
-      onSessionEvent: (event) => {
+      onSessionStarted: (started, cwd) =>
+        provider.onSessionStarted(started, cwd).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
+      onSessionEvent: (event, cwd) => {
         if (event._tag === "ConfigOptionsUpdated") {
           return provider.onConfigOptionsUpdated(event.configOptions);
         }
         return event._tag === "AvailableCommandsUpdated"
-          ? provider.onAvailableCommands(event.availableCommands)
+          ? provider.onAvailableCommands(event.availableCommands, cwd)
           : Effect.void;
       },
       continuationRequests,
@@ -558,6 +711,24 @@ export const AntigravityDriver: ScientProviderDriver<
     });
     // SCIENT-FORK:END
 
+    // SCIENT-FORK:START — Antigravity Marketplace plugins through the instance's agy CLI.
+    const plugins = yield* makeAntigravityInstancePlugins({
+      installation,
+      binaryPath: settings.binaryPath,
+      environment: processEnvironment,
+      stateDir: host.paths.stateDir,
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    // SCIENT-FORK:END
+
+    // SCIENT-FORK:START — a read started before a runtime install must not publish its older
+    // list after the post-install read, so catalog reads take turns.
+    const refreshGate = yield* Semaphore.make(1);
+    // SCIENT-FORK:END
     const refreshModels = Effect.fn("AntigravityDriver.refreshModels")(
       function* () {
         const processScope = yield* Scope.make();
@@ -601,7 +772,11 @@ export const AntigravityDriver: ScientProviderDriver<
                 : cause._tag === "ProviderSetupError" &&
                     (cause.operation === "configure" || cause.operation === "start")
                   ? cause.detail
-                  : refreshFailureDetail(cause),
+                  : cause._tag === "AcpTransportError" &&
+                      isProviderSetupError(cause.cause) &&
+                      cause.cause.operation === "runtime"
+                    ? cause.cause.detail
+                    : refreshFailureDetail(cause),
               cause,
             }),
       ),
@@ -618,7 +793,7 @@ export const AntigravityDriver: ScientProviderDriver<
       snapshotForCwd: (cwd) =>
         !enabled
           ? provider.snapshot.getSnapshot
-          : discoverAntigravitySkills({ cwd, userHome }).pipe(
+          : discoverAntigravitySkills({ cwd, userHome, profileDirectory }).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
               Effect.flatMap((skills) => provider.snapshotForCwd(cwd, skills)),
@@ -638,7 +813,12 @@ export const AntigravityDriver: ScientProviderDriver<
       auth: authFlow.controller,
       connectionActions,
       managedRuntimeActions,
-      refreshModels,
+      // SCIENT-FORK:START — Antigravity Marketplace plugins through the instance's agy CLI.
+      pluginActions: plugins.actions,
+      nativeInventoryChanges: plugins.reports,
+      // SCIENT-FORK:END
+      // SCIENT-FORK: catalog reads take turns (see refreshGate).
+      refreshModels: () => refreshGate.withPermits(1)(refreshModels()),
     } satisfies ScientProviderInstance;
   }),
 };

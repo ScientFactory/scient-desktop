@@ -77,6 +77,60 @@ runs:
         if-no-files-found: error
         retention-days: 14
         overwrite: true
+    - name: Preserve vitest-web-7.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-7-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-7.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-web-8.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-8-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-8.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-web-9.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-9-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-9.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-web-10.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-10-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-10.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-web-11.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-11-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-11.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-web-12.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-12-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-12.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
     - name: Preserve vitest-server-1.json
       if: inputs.server_reports == 'true'
       uses: actions/upload-artifact@v7
@@ -182,6 +236,42 @@ runs:
       with:
         name: vitest-server-12-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-12.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-13.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-13-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-13.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-14.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-14-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-14.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-15.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-15-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-15.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-16.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-16-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-16.json
         if-no-files-found: error
         retention-days: 14
         overwrite: true

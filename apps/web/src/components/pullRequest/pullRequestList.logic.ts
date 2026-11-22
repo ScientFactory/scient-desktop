@@ -1,4 +1,6 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
 import type {
@@ -62,9 +64,9 @@ const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
-  reviewRequested: "Review requested",
-  authored: "Authored",
-  others: "Others",
+  reviewRequested: msg("Review requested"),
+  authored: msg("Authored"),
+  others: msg("Others"),
 };
 
 function normalize(value: string | null | undefined): string | null {
@@ -203,21 +205,38 @@ export function pullRequestLabelChoices(
   return [...loaded, ...added];
 }
 
-export function pullRequestFilterOptionNotice(input: {
-  readonly kind: "authors" | "labels";
-  readonly visibleCount: number;
-  readonly isPending: boolean;
-  readonly error: string | null;
-  readonly truncated: boolean;
-}): string | null {
+export function pullRequestFilterOptionNotice(
+  input: {
+    readonly kind: "authors" | "labels";
+    readonly visibleCount: number;
+    readonly isPending: boolean;
+    readonly error: string | null;
+    readonly truncated: boolean;
+  },
+  resolve: MessageResolver = m,
+): string | null {
   if (input.isPending) return null;
   if (input.error !== null) {
-    const failure =
-      input.visibleCount === 0 ? input.error : `Results are incomplete: ${input.error}`;
-    return input.truncated ? `${failure}. More matches are available; refine your search` : failure;
+    const error = input.error;
+    if (input.visibleCount === 0) {
+      return input.truncated
+        ? resolve(msg("{error}. More matches are available; refine your search", { error }))
+        : error;
+    }
+    return input.truncated
+      ? resolve(
+          msg("Results are incomplete: {error}. More matches are available; refine your search", {
+            error,
+          }),
+        )
+      : resolve(msg("Results are incomplete: {error}", { error }));
   }
-  if (input.truncated) return "More matches are available; refine your search";
-  if (input.visibleCount === 0) return `No ${input.kind} found`;
+  if (input.truncated) return resolve(msg("More matches are available; refine your search"));
+  if (input.visibleCount === 0) {
+    return input.kind === "authors"
+      ? resolve(msg("No authors found"))
+      : resolve(msg("No labels found"));
+  }
   return null;
 }
 
@@ -471,16 +490,16 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
   authored: ReadonlyArray<Entry>,
   reviewRequested: ReadonlyArray<Entry>,
 ): ReadonlyArray<PullRequestGroup<Entry>> {
-  const authoredByKey = new Map(authored.map((entry) => [pullRequestEntryKey(entry), entry]));
+  // Matched by URL: each list may hold the pull request under a different environment.
+  const authoredByKey = new Map(authored.map((entry) => [entry.url, entry]));
   const reviewByKey = new Map(
-    reviewRequested.flatMap((entry) => {
-      const key = pullRequestEntryKey(entry);
-      return authoredByKey.has(key) ? [] : [[key, entry] as const];
-    }),
+    reviewRequested.flatMap((entry) =>
+      authoredByKey.has(entry.url) ? [] : [[entry.url, entry] as const],
+    ),
   );
   const others: Entry[] = [];
   for (const entry of entries) {
-    const key = pullRequestEntryKey(entry);
+    const key = entry.url;
     if (authoredByKey.has(key)) {
       authoredByKey.set(key, entry);
     } else if (reviewByKey.has(key)) {
@@ -579,10 +598,13 @@ export function mergePullRequestLists(
       );
     }
     for (const entry of answer.entries) {
-      const key = JSON.stringify([environmentId, entry.url]);
-      const held = entries.get(key);
-      if (held === undefined || entry.updatedAt > held.updatedAt) {
-        entries.set(key, { ...entry, environmentId });
+      const held = entries.get(entry.url);
+      // The first environment to answer keeps a pull request that several of them read.
+      if (
+        held === undefined ||
+        (held.environmentId === environmentId && entry.updatedAt > held.updatedAt)
+      ) {
+        entries.set(entry.url, { ...entry, environmentId });
       }
     }
     errors.push(...answer.errors.map((error) => ({ ...error, environmentId })));

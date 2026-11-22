@@ -11,6 +11,7 @@ import {
   CustomModelTestGuidance,
   type CustomModelTestNotice,
 } from "./CustomModelRowActions";
+import type { ModelConnectionStatusKind } from "./customModels";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
   await _fixture.root0?.unmount();
@@ -26,7 +27,7 @@ async function render(
   _fixture: _Fixture,
   props: {
     testAgents?: ReadonlyArray<typeof pi>;
-    statuses?: ReadonlyArray<string | undefined>;
+    statuses?: ReadonlyArray<ModelConnectionStatusKind | undefined>;
     keyMissing?: boolean;
     notice?: CustomModelTestNotice | null;
   } = {},
@@ -74,7 +75,7 @@ it("offers Re-enter key when the key is missing and the agent reporting it is si
 
   // The row's only label is the agent's own problem; the key is still missing.
   const { onReenterKey, onCheckAgain } = await render(_fixture, {
-    statuses: ["Check agent"],
+    statuses: ["check-agent"],
     keyMissing: true,
   });
   await userEvent.click(page.getByRole("button", { name: "Re-enter key" }));

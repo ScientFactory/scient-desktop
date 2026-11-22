@@ -71,7 +71,18 @@ const representativeProperties = {
   failureClass: "permission",
   attempt: 2,
   downloadSource: "fallback",
-  compressed: true,
+  sourceKind: "github",
+  downloadVariant: "raw",
+  downloadAttempts: 5,
+  networkKind: "stalled",
+  compressedFailure: "checksum",
+  failedCheck: "rpc_start",
+  failureReason: "no_signin_page",
+  signInPage: "manual_fallback",
+  toolServerOwner: "connector",
+  customEndpoint: true,
+  progressPercent: 37,
+  bytesPerSecond: 410_000,
   resumedBytes: 41_000_000,
   percent: 64,
   component: "server",
@@ -330,6 +341,72 @@ export function buildAnalyticsConformanceFixture() {
       failedCount: "2",
     }),
   );
+  // Desktop app updates: closed steps and outcomes, validated release versions, buckets only.
+  cases.push(
+    fixtureCase("download-failed", "app.update.outcome", {
+      step: "download",
+      outcome: "failed",
+      failureClass: "signature",
+      trigger: "background",
+      targetVersion: "0.6.30",
+      sourceKind: "github",
+      packageKind: "nsis",
+      attemptRef: "3f9a0c1d2e4b5a67",
+      durationMs: 95_000,
+      ...privateProperties,
+    }),
+    fixtureCase("apply-not-applied", "app.update.outcome", {
+      step: "apply",
+      outcome: "not-applied",
+      trigger: "user",
+      targetVersion: "0.6.30",
+      packageKind: "zip",
+      attemptRef: "3f9a0c1d2e4b5a67",
+      durationMs: 2 * 86_400_000,
+    }),
+    fixtureCase("outcome-hostile", "app.update.outcome", {
+      step: "install",
+      outcome: "completed",
+      failureClass: "PRIVATE-CONTENT",
+      trigger: "agent",
+      targetVersion: "0.6.30-private.build",
+      sourceKind: "https://example.invalid/feed",
+      packageKind: "dmg",
+      attemptRef: "PRIVATE",
+      message: "PRIVATE-CONTENT",
+    }),
+    fixtureCase("summary-downloading", "app.update.summary", {
+      reason: "change",
+      status: "downloading",
+      channel: "latest",
+      behind: "yes",
+      stageAgeMs: 25 * 60_000,
+      downloadPercent: 40,
+      sinceProgressMs: 12 * 60_000,
+      lastCheckAgeMs: 26 * 60_000,
+      droppedFactCount: 0,
+      ...privateProperties,
+    }),
+    fixtureCase("summary-ready", "app.update.summary", {
+      reason: "daily",
+      status: "downloaded",
+      channel: "beta",
+      behind: "yes",
+      stageAgeMs: 4 * 86_400_000,
+      readyAgeMs: 4 * 86_400_000,
+      lastCheckAgeMs: 3 * 3_600_000,
+      droppedFactCount: 12,
+    }),
+    fixtureCase("summary-disabled", "app.update.summary", {
+      reason: "launch",
+      status: "disabled",
+      channel: "latest",
+      behind: "unknown",
+      stageAgeMs: 0,
+      disabledClass: "policy",
+      message: "Updates are turned off by PRIVATE-CONTENT.",
+    }),
+  );
   for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {
     const rejected = captureOutcome === "partial" || captureOutcome === "failed";
     const retained = captureOutcome === "partial" || captureOutcome === "retained";
@@ -395,6 +472,14 @@ export function buildAnalyticsConformanceFixture() {
           trigger: "user",
         }),
       ),
+    );
+  }
+  for (const fileType of ["csv", "none", "PRIVATE"]) {
+    cases.push(
+      fixtureCase(`file-${fileType.toLowerCase()}`, "panel.viewed", {
+        category: "file-preview",
+        fileType,
+      }),
     );
   }
   for (const provider of ["scient", "omp", "muse", "acpRegistry"]) {

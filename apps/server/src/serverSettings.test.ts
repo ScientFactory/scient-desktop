@@ -1,4 +1,3 @@
-import * as TestClock from "effect/testing/TestClock";
 import { deriveProviderInstanceConfigMap } from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,6 +22,7 @@ import {
   ServerSettingsPatch,
   UsageAccountingSourceId,
   UsageLimitSourceId,
+  type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
@@ -47,6 +47,7 @@ import { customModelSecretName } from "./customModels.ts";
 import * as Stream from "effect/Stream";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as ServerConfig from "./config.ts";
@@ -3949,6 +3950,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+        // A saved token goes only to the gateway it was saved for, however it is echoed.
+        const moved = (agentToken: SimlockDeviceHostConfig["agentToken"]) =>
+          serverSettings.updateSettings({
+            simlockDeviceHosts: [
+              {
+                ...echoed.simlockDeviceHosts[0]!,
+                gatewayUrl: "https://elsewhere.test",
+                agentToken,
+              },
+            ],
+          });
+        assert.equal((yield* moved(SECRET_REDACTED)).simlockDeviceHosts[0]?.agentToken, "");
+        yield* serverSettings.updateSettings({ simlockDeviceHosts: echoed.simlockDeviceHosts });
+        assert.equal((yield* moved(simlockReference)).simlockDeviceHosts[0]?.agentToken, "");
+        assert.equal(
+          (yield* moved("typed-token")).simlockDeviceHosts[0]?.agentToken,
+          "typed-token",
+        );
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
@@ -5008,7 +5027,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
+  it.effect.each([
+    { label: "malformed JSON", broken: '{"defaultAutoPull": tru' },
+    { label: "invalid retention", broken: '{"usageHistoryRetentionDays": 0}' },
+  ])("leaves settings.json with $label untouched and disables destructive defaults", ({ broken }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -5023,12 +5045,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
         )
       `;
-      const broken = '{"defaultAutoPull": tru';
       yield* fileSystem.writeFileString(serverConfig.settingsPath, broken);
 
       const settings = yield* serverSettings.getSettings;
       assert.isFalse(settings.projectSettingsFolded);
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.equal(settings.usageHistoryRetentionDays, "unlimited");
       assert.deepEqual(settings.projectSettingsOverrides, {});
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
@@ -5801,3 +5823,101 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     );
   },
 );
+
+it.live("reloads a symlinked settings file after its target directory is replaced", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const service = yield* ServerSettingsModule.ServerSettingsService;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const active = path.join(dotfiles, "active");
+    const restored = path.join(dotfiles, "restored");
+    yield* fs.makeDirectory(active);
+    yield* fs.makeDirectory(restored);
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+    yield* fs.remove(config.settingsPath, { force: true });
+    yield* fs.symlink(path.join(active, "settings.json"), config.settingsPath);
+    yield* service.start;
+    const changes = yield* service.subscribeChanges;
+
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn", "defaultAutoPull": true }`,
+    );
+    yield* fs.rename(active, path.join(dotfiles, "previous"));
+    yield* fs.rename(restored, active);
+
+    const restoredSettings = yield* changes.pipe(
+      Stream.filter((settings) => settings.defaultAutoPull),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(restoredSettings));
+
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "paragraph" }`,
+    );
+
+    const reloaded = yield* changes.pipe(
+      Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(reloaded));
+  }).pipe(
+    Effect.scoped,
+    // @effect-diagnostics-next-line multipleEffectProvide:off -- the settings layer reads the Node services provided below.
+    Effect.provide(layerServerSettings()),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
+);
+
+it.effect("starts with symlinked settings when the settings directory watch fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    let settingsDirectory: string | undefined;
+    const watchFailure = PlatformError.systemError({
+      _tag: "Unknown",
+      module: "FileSystem",
+      method: "watch",
+      description: "No file watches available.",
+    });
+    const failingFileSystem = FileSystem.FileSystem.of({
+      ...fs,
+      watch: (directory, options) =>
+        directory === settingsDirectory ? Stream.fail(watchFailure) : fs.watch(directory, options),
+    });
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      settingsDirectory = path.dirname(config.settingsPath);
+      const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+      const target = path.join(dotfiles, "settings.json");
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+      yield* fs.remove(config.settingsPath, { force: true });
+      yield* fs.symlink(target, config.settingsPath);
+
+      yield* service.start;
+
+      const settings = yield* service.getSettings;
+      assert.equal(settings.responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+// SCIENT-FORK: T3's "publishes edits made before the restored settings watch is registered"
+// gates on its own watcher re-registering the replaced target directory. Scient's watcher
+// reads metadata instead, covered by "reloads a symlinked settings file after its target
+// directory is replaced" above.

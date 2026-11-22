@@ -619,7 +619,6 @@ function receiptFixture(t, event) {
     };
   }
   f.needs = Object.fromEntries(JOBS.map((job) => [job, { result: "success" }]));
-  f.needs.release_notes.outputs = {};
   for (const reporter of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
     f.needs[reporter].result = "skipped";
   f.needs.queue_ci = { result: event === "merge_group" ? "success" : "skipped", outputs: {} };
@@ -673,7 +672,6 @@ test("queue receipt requires every lane, including non-required layout and mobil
 test("a queue run that reused PR qualification records its source", async (t) => {
   const f = receiptFixture(t, "merge_group");
   for (const job of JOBS) f.needs[job].result = "skipped";
-  f.needs.release_notes.result = "success";
   f.needs.queue_ci.result = "success";
   for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
     f.needs[job].result = "success";
@@ -734,11 +732,20 @@ test("a PR receipt is never written for a fork, another base branch, or a claime
   await assert.rejects(writeReceipt(f), /Only queue runs/);
 });
 
-test("a PR whose tested merge does not join its base and head records nothing", async (t) => {
+test("a PR receipt records the main its tested merge was made on, even when the event's lags", async (t) => {
   const f = receiptFixture(t, "pull_request");
   f.commit(MERGE, TREE, [OTHER, PR_HEAD]);
-  assert.equal(await writeReceipt(f), false);
-  assert.equal(fs.existsSync(path.join(f.temp, "ci-queue-reuse")), false);
+  assert.equal(await writeReceipt(f), true);
+  assert.equal(written(f).baseSha, OTHER);
+});
+
+test("a PR whose tested commit is not a merge of its head records nothing", async (t) => {
+  for (const parents of [[BASE, OTHER], [BASE], [BASE, PR_HEAD, OTHER]]) {
+    const f = receiptFixture(t, "pull_request");
+    f.commit(MERGE, TREE, parents);
+    assert.equal(await writeReceipt(f), false);
+    assert.equal(fs.existsSync(path.join(f.temp, "ci-queue-reuse")), false);
+  }
 });
 
 test("archive reader accepts only the listed JSON members and refuses paths, duplicates and oversized output", (t) => {
@@ -904,14 +911,14 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
   const root = path.resolve(__dirname, "../..");
   const scripts = path.join(temp, ".github/scripts");
   fs.mkdirSync(scripts, { recursive: true });
-  fs.copyFileSync(
-    path.join(root, ".github/scripts/ci-changes.cjs"),
-    path.join(scripts, "ci-changes.cjs"),
-  );
+  for (const name of ["ci-changes.cjs", "ci-comparison-base.cjs"])
+    fs.copyFileSync(path.join(root, ".github/scripts", name), path.join(scripts, name));
   fs.writeFileSync(path.join(temp, "pnpm-workspace.yaml"), "packages:\n");
   const gate = (base, head) => {
     const output = path.join(temp, "output");
+    const event = path.join(temp, "event.json");
     fs.writeFileSync(output, "");
+    fs.writeFileSync(event, JSON.stringify({ merge_group: { base_sha: base } }));
     // Hosted runners use a UTF-8 locale; the gate must still match raw bytes.
     execFileSync("bash", ["-c", script], {
       cwd: temp,
@@ -920,7 +927,7 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
         LC_ALL: "C.UTF-8",
         EVENT_NAME: "merge_group",
         RUNNER_TEMP: temp,
-        BASE_SHA: base,
+        GITHUB_EVENT_PATH: event,
         GITHUB_SHA: head,
         GITHUB_OUTPUT: output,
       },

@@ -410,17 +410,6 @@
       }
     },
     {
-      "name": "@react-native-ai/apple",
-      "sourceUrl": "https://github.com/callstackincubator/ai",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": [
-          "Copyright (c) 2024-2025 Szymon Rybczak",
-          "Copyright (c) 2025-present Callstack"
-        ]
-      }
-    },
-    {
       "name": "react-remove-scroll-bar",
       "generatedNotice": {
         "licenseId": "MIT",
@@ -890,6 +879,30 @@
   ],
   "customNotices": [
     {
+      "bundles": ["desktop", "mobile"],
+      "license": "MIT",
+      "name": "Apple Speech engine (adapted from @react-native-ai/apple)",
+      "sourceUrl": "https://github.com/callstackincubator/ai",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": [
+            "Copyright (c) 2024-2025 Szymon Rybczak",
+            "Copyright (c) 2025-present Callstack"
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop", "mobile", "web"],
+      "license": "MIT",
+      "name": "GitHub gemoji alias data",
+      "sourceUrl": "https://github.com/github/gemoji/blob/fadaeaf1f1a9be82b321316a6c5502e43138b2f6/db/emoji.json",
+      "generatedNotices": [
+        { "licenseId": "MIT", "copyrights": ["Copyright (c) 2019 GitHub, Inc."] }
+      ]
+    },
+    {
       "bundles": ["assets", "desktop", "web"],
       "license": "MIT",
       "name": "Devicon scientific computing icons",
@@ -1081,6 +1094,13 @@
       "version": "3.11"
     },
     {
+      "bundles": ["server", "web"],
+      "license": "CC-BY-SA-3.0",
+      "name": "Citation Style Language styles and locales",
+      "sourceUrl": "https://github.com/citation-style-language/styles/tree/7a37c5a736c10fbd468bc31f92cbc6eafaa2173d",
+      "noticeFile": "packages/scient-citations/CSL-NOTICE"
+    },
+    {
       "bundles": ["server"],
       "includeInBundles": ["server", "desktop", "web"],
       "license": "Unicode-3.0",
@@ -1151,6 +1171,13 @@
       "license": "MIT",
       "sourceUrl": "https://github.com/anomalyco/opencode",
       "noticeFile": "apps/web/src/components/files/office/LICENSE.opencode"
+    },
+    {
+      "name": "Publisher icons",
+      "bundles": ["assets", "desktop", "web"],
+      "license": "LicenseRef-Publisher-Trademarks",
+      "sourceUrl": "https://github.com/ScientFactory/scient-desktop/blob/main/apps/web/src/assets/publishers/NOTICE",
+      "noticeFile": "apps/web/src/assets/publishers/NOTICE"
     }
   ]
 }

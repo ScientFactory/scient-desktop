@@ -8,6 +8,7 @@ import {
   type CatalogueFont,
   type FontCategory,
 } from "@scientfactory/scient-markdown/fonts";
+import { msg } from "gt-react";
 
 export { FONT_SIZE_MAX, FONT_SIZE_MIN, catalogueFont, normalizeFontSize };
 
@@ -17,12 +18,13 @@ export const FONT_SIZE_PRESETS: ReadonlyArray<number> = [
 ];
 
 const CATEGORY_LABELS: Readonly<Record<FontCategory, string>> = {
-  serif: "Serif",
-  "sans-serif": "Sans serif",
-  monospace: "Monospace",
+  serif: msg("Serif", { $context: "font family" }),
+  "sans-serif": msg("Sans serif", { $context: "font family" }),
+  monospace: msg("Monospace", { $context: "font family" }),
 };
 
 export interface FontGroup {
+  /** Resolve with `useMessages()` where it shows. */
   readonly label: string;
   readonly fonts: ReadonlyArray<CatalogueFont>;
 }

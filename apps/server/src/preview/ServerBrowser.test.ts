@@ -250,7 +250,6 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       title: "test page",
       loading: false,
       visibleText: "delete",
-      interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
     locator: vi.fn((): unknown => {
@@ -437,7 +436,13 @@ const desktopRenders = (tabId: string) => {
 /** When set, a desktop that has not attached a tab waits for it the way the real channel does. */
 let desktopAttachesLate = false;
 let desktopAttachWaiting = Promise.withResolvers<void>();
-const shownDesktopTabs = new Set<string>();
+const shownDesktopTabs = new (class extends Set<string> {
+  override add(tabId: string) {
+    super.add(tabId);
+    desktopDetaches.emit("shown", tabId);
+    return this;
+  }
+})();
 const releasedDesktopTabs: Array<string> = [];
 const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
@@ -471,27 +476,43 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   providerSessionId,
 });
-let onManagerEventHandled: (event: PreviewEvent) => Effect.Effect<void> = () => Effect.void;
+const noManagerEventHook = (_event: PreviewEvent): Effect.Effect<void> => Effect.void;
+let onManagerEventHandled: (event: PreviewEvent) => Effect.Effect<void> = noManagerEventHook;
 const observedManager = Layer.effect(
   Manager.PreviewManager,
   Effect.gen(function* () {
     const manager = yield* Manager.PreviewManager;
+    // The browser subscribes while it starts. An event counts as handled once the browser's
+    // subscription is drained and waiting again, so its runForEach handler has returned.
+    const handlerWatch = yield* manager.subscribeEvents;
+    let browserSubscription: PubSub.Subscription<PreviewEvent> | undefined;
+    const browserIdle = Effect.promise(() =>
+      expect
+        .poll(
+          () =>
+            browserSubscription !== undefined &&
+            Option.getOrElse(PubSub.remainingUnsafe(browserSubscription), () => 0) === 0 &&
+            browserSubscription.pollers.length > 0,
+          { interval: 5 },
+        )
+        .toBe(true),
+    );
+    yield* Stream.fromSubscription(handlerWatch).pipe(
+      Stream.runForEach((event) => {
+        const handled = onManagerEventHandled;
+        return handled === noManagerEventHook
+          ? Effect.void
+          : browserIdle.pipe(Effect.andThen(Effect.suspend(() => handled(event))));
+      }),
+      Effect.forkScoped,
+    );
     return {
       ...manager,
-      // The next pull follows runForEach's awaited handler, not just publication.
-      events: Stream.unwrap(
-        Effect.map(manager.subscribeEvents, (subscription) => {
-          managerEventsSubscribed.resolve();
-          return Stream.fromSubscription(subscription);
-        }),
-      ).pipe(
-        Stream.flatMap((event) =>
-          Stream.concat(
-            Stream.succeed(event),
-            Stream.fromEffectDrain(Effect.suspend(() => onManagerEventHandled(event))),
-          ),
-        ),
-      ),
+      subscribeEvents: Effect.map(manager.subscribeEvents, (subscription) => {
+        browserSubscription = subscription;
+        managerEventsSubscribed.resolve();
+        return subscription;
+      }),
     };
   }),
 ).pipe(Layer.provide(Manager.layer));
@@ -594,6 +615,16 @@ const dependencies = Layer.mergeAll(
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     isShown: (key) => shownDesktopTabs.has(key.tabId),
+    awaitShown: (key, timeout) =>
+      shownDesktopTabs.has(key.tabId)
+        ? Effect.succeed(true)
+        : Effect.callback<boolean>((resume) => {
+            const onShown = (tabId: string) => {
+              if (tabId === key.tabId) resume(Effect.succeed(true));
+            };
+            desktopDetaches.on("shown", onShown);
+            return Effect.sync(() => desktopDetaches.off("shown", onShown));
+          }).pipe(Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.succeed(false) })),
     loadFailure: (key) => desktopLoadFailures.get(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
@@ -671,7 +702,7 @@ beforeEach(() => {
   contextGate = null;
   contextEntered = null;
   heldStill = null;
-  onManagerEventHandled = () => Effect.void;
+  onManagerEventHandled = noManagerEventHook;
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
@@ -2700,6 +2731,40 @@ it.live("closing a tab while a viewer is still opening it does not leave its pag
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a request whose frame is not available yet is not a main navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const frameless = {
+        url: () => "https://example.com/early",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => {
+          throw new Error("Frame for this navigation request is not available");
+        },
+        failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+      };
+      expect(() => page.emit("request", frameless)).not.toThrow();
+      const statusAfterRequest = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(statusAfterRequest.loading).toBe(false);
+      expect(() => page.emit("requestfailed", frameless)).not.toThrow();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each(["before", "during"] as const)(
   "a navigation that fails while a load reads its title keeps its failure (request %s read)",
   (requestTiming) =>
@@ -3959,6 +4024,11 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       expect(
         yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
       ).toBeUndefined();
+      // A hidden guest takes the new size only while the desktop paints it, which a capture asks for.
+      expect(cdp.send).toHaveBeenCalledWith(
+        "Page.captureScreenshot",
+        expect.objectContaining({ clip: expect.anything() }),
+      );
       desktopSizeAnswer = null;
       expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
         width: 1280,
@@ -3976,6 +4046,55 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
         height: 760,
       });
       expect(yield* status).toEqual({ width: 560, height: 760 });
+      const unpainted = Promise.withResolvers<void>();
+      heldStill = () => unpainted.promise;
+      // Fill asks for no size, so a page that keeps its size without a resize is not undrawn.
+      const kept = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(Effect.forkScoped);
+      let keptEvent = yield* PubSub.take(events);
+      while (keptEvent.type !== "resized" || keptEvent.tabId !== tabId) {
+        keptEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect((yield* Fiber.join(kept)).viewport).toEqual({ width: 560, height: 760 });
+      // A desktop that never draws the new size, such as a minimized window, fails the resize.
+      const undrawn = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let undrawnEvent = yield* PubSub.take(events);
+      while (undrawnEvent.type !== "resized" || undrawnEvent.tabId !== tabId) {
+        undrawnEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(undrawn))).toBe(true);
+      // The same size again still waits for a draw rather than reporting the old size.
+      const retried = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let retriedEvent = yield* PubSub.take(events);
+      while (retriedEvent.type !== "resized" || retriedEvent.tabId !== tabId) {
+        retriedEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(retried))).toBe(true);
+      heldStill = null;
+      unpainted.resolve();
       expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
       // No page resize or load since that read, so status answers without reading again.
       let reads = 0;
@@ -4366,6 +4485,45 @@ it.effect("preview_open reports a tab it shows as visible once the client attach
       });
 
       expect(opened.visible).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("preview_open reports a hidden desktop tab it reveals as visible", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const created = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: false },
+      });
+      const tabId = PreviewTabId.make(created.tabId!);
+      expect(created.visible).toBe(false);
+      // Like the desktop renderer, the docked panel reports the tab shown after the reveal arrives.
+      yield* Effect.gen(function* () {
+        let event;
+        do event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || !event.snapshot.revealRequest);
+        // The report crosses the client, the desktop main process and its pipe, so it lands a task later.
+        yield* Effect.yieldNow;
+        yield* Effect.sync(() => shownDesktopTabs.add(tabId));
+      }).pipe(Effect.forkScoped);
+
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "open",
+        input: { open: true },
+      });
+
+      expect(opened.visible).toBe(true);
+      expect(opened.tabs).toEqual([expect.objectContaining({ tabId, visible: true })]);
     }),
   ).pipe(Effect.provide(layer)),
 );

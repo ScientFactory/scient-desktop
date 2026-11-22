@@ -1,5 +1,6 @@
 // No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import { piContextExtension } from "./contextExtension.ts";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
@@ -42,6 +43,7 @@ const ORCHESTRATION_INSTRUCTIONS = ${
     JSON.stringify(orchestrationInstructions.trim())
     // SCIENT-FORK:END
   };
+const PULL_REQUEST_LINKING_INSTRUCTIONS = ${JSON.stringify(PULL_REQUEST_LINKING_INSTRUCTIONS)};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -563,8 +565,23 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   }
   delete process.env[TOOL_NAME_MAP_ENV];
   const modelToolName = (canonicalName: string) => toolNameMap[canonicalName] ?? canonicalName;
+  // SCIENT-FORK:START: Pi's search covers only tools not loaded yet; say so wherever it is offered.
+  const toolSearchNote = () =>
+    hasBuiltinToolSearch()
+      ? "tool_search finds only tools that are not loaded yet. Tools already in your tool list, such as bash, read, edit and write, are callable directly; an empty search does not mean a capability is missing."
+      : "";
+  // The pull request linking rules name bridge tools, so they ride with the orchestration copy.
   const runtimeSystemPrompt = (systemPrompt: string) =>
-    [systemPrompt, awareness, endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""].filter(Boolean).join("\\n\\n");
+    [
+      systemPrompt,
+      awareness,
+      toolSearchNote(),
+      endpoint && token ? ORCHESTRATION_INSTRUCTIONS : "",
+      endpoint && token ? PULL_REQUEST_LINKING_INSTRUCTIONS : "",
+    ]
+      .filter(Boolean)
+      .join("\\n\\n");
+  // SCIENT-FORK:END
   if (endpoint === undefined || token === undefined) {
     // SCIENT-FORK:START: runtime guidance without MCP; this path's single before_agent_start hook.
     pi.on("before_agent_start", (event, ctx) => {

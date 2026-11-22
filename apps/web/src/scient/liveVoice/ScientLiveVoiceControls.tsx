@@ -1,4 +1,5 @@
 import type { LiveVoicePhase } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { AudioLinesIcon, CircleAlertIcon, MicIcon, MicOffIcon, PhoneOffIcon } from "lucide-react";
 
 import { ComposerBanner } from "../../components/chat/ComposerBanner.tsx";
@@ -15,12 +16,12 @@ import type { VoiceDraftOrigin } from "../voice/voiceDraftDelivery.ts";
 import type { ScientLiveVoiceCall } from "./useScientLiveVoiceCall.ts";
 
 const PHASE_LABELS: Record<LiveVoicePhase, string> = {
-  connecting: "Connecting…",
-  listening: "Listening",
-  working: "Working on it",
-  speaking: "Speaking",
-  muted: "Muted",
-  error: "Connection problem",
+  connecting: msg("Connecting…"),
+  listening: msg("Listening", { $context: "voice call status" }),
+  working: msg("Working on it"),
+  speaking: msg("Speaking", { $context: "voice call status" }),
+  muted: msg("Muted", { $context: "voice call status" }),
+  error: msg("Connection problem"),
 };
 
 /** Starts a voice call; `unavailableReason` says why it can't, in its tooltip. */
@@ -34,8 +35,9 @@ export function ScientLiveVoiceButton({
   /** Where the first spoken request goes while the conversation does not exist yet. */
   readonly draftOrigin?: VoiceDraftOrigin | null;
 }) {
+  const gt = useGT();
   if (call.state.status !== "idle" && call.state.status !== "failed") return null;
-  const label = unavailableReason ?? "Talk with Scient Agent";
+  const label = unavailableReason ?? gt("Talk with Scient Agent");
   return (
     <TooltipProvider delay={40} closeDelay={0} timeout={300}>
       <Tooltip>
@@ -97,13 +99,14 @@ function callView(call: ScientLiveVoiceCall) {
 }
 
 function MuteButton({ call }: { readonly call: ScientLiveVoiceCall }) {
+  const gt = useGT();
   const { muted, active } = callView(call);
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            aria-label={muted ? "Unmute" : "Mute"}
+            aria-label={muted ? gt("Unmute") : gt("Mute")}
             aria-pressed={muted}
             disabled={!active}
             onClick={() => call.setMuted(!muted)}
@@ -114,12 +117,13 @@ function MuteButton({ call }: { readonly call: ScientLiveVoiceCall }) {
       >
         {muted ? <MicOffIcon /> : <MicIcon />}
       </TooltipTrigger>
-      <TooltipPopup>{muted ? "Unmute" : "Mute"}</TooltipPopup>
+      <TooltipPopup>{muted ? gt("Unmute") : gt("Mute")}</TooltipPopup>
     </Tooltip>
   );
 }
 
 function FailureBanner({ call }: { readonly call: ScientLiveVoiceCall }) {
+  const gt = useGT();
   if (call.state.status !== "failed") return null;
   return (
     <ComposerBanner.Root variant="error" detached role="alert">
@@ -131,7 +135,7 @@ function FailureBanner({ call }: { readonly call: ScientLiveVoiceCall }) {
           {call.state.message}
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
-          <ComposerBanner.Dismiss aria-label="Dismiss" onClick={call.dismiss} />
+          <ComposerBanner.Dismiss aria-label={gt("Dismiss")} onClick={call.dismiss} />
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
     </ComposerBanner.Root>
@@ -140,6 +144,8 @@ function FailureBanner({ call }: { readonly call: ScientLiveVoiceCall }) {
 
 /** The call in progress, as a small card over the composer's top-right corner. */
 export function ScientLiveVoiceCard({ call }: { readonly call: ScientLiveVoiceCall }) {
+  const gt = useGT();
+  const m = useMessages();
   if (call.state.status === "idle") return null;
   if (call.state.status === "failed") {
     return (
@@ -151,7 +157,7 @@ export function ScientLiveVoiceCard({ call }: { readonly call: ScientLiveVoiceCa
   const { phase, level, caption } = callView(call);
   return (
     <div
-      aria-label="Voice call"
+      aria-label={gt("Voice call")}
       className="absolute end-0 bottom-full z-10 mb-2 w-[min(20rem,100%)]"
     >
       <ComposerBanner.Root detached density="spacious">
@@ -167,9 +173,11 @@ export function ScientLiveVoiceCard({ call }: { readonly call: ScientLiveVoiceCa
             <LevelBars level={level} className="relative" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-muted-foreground text-xs">Voice call</span>
+            <span className="block text-muted-foreground text-xs">
+              <T>Voice call</T>
+            </span>
             <span role="status" className="block font-medium text-foreground text-sm">
-              {PHASE_LABELS[phase]}
+              {m(PHASE_LABELS[phase])}
             </span>
           </span>
           <TooltipProvider delay={40} closeDelay={0} timeout={300}>
@@ -178,7 +186,7 @@ export function ScientLiveVoiceCard({ call }: { readonly call: ScientLiveVoiceCa
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="End call"
+                    aria-label={gt("End call")}
                     onClick={call.hangUp}
                     size="icon-sm"
                     variant="round-destructive"
@@ -187,7 +195,9 @@ export function ScientLiveVoiceCard({ call }: { readonly call: ScientLiveVoiceCa
               >
                 <PhoneOffIcon />
               </TooltipTrigger>
-              <TooltipPopup>End call</TooltipPopup>
+              <TooltipPopup>
+                <T>End call</T>
+              </TooltipPopup>
             </Tooltip>
           </TooltipProvider>
         </div>

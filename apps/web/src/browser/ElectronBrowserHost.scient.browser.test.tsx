@@ -45,6 +45,7 @@ vi.mock(import("~/components/preview/previewBridge"), async (original) => ({
     closeTab: mocks.closeTab,
     registerWebview: mocks.registerWebview,
     getPreviewConfig: mocks.getPreviewConfig,
+    onStateChange: () => () => {},
   } as never,
 }));
 
@@ -128,6 +129,7 @@ function listenToDesktopPreview(stack: DisposableStack) {
     onPointerEvent: () => () => undefined,
     onSignInBlocked: () => () => undefined,
     onStateChange: () => () => undefined,
+    onTunnelAccessRequest: () => () => undefined,
     onOpenLink: (listener) => {
       openLink = listener;
       return () => {

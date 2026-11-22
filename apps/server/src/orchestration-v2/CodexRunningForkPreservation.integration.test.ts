@@ -47,7 +47,6 @@ import { DEFAULT_CODEX_SETTINGS } from "./Adapters/CodexAdapterV2.replay.testkit
 import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
@@ -55,6 +54,8 @@ import {
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as PortScanner from "../preview/PortScanner.ts";
+import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 
 const encodeEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -381,7 +382,9 @@ it.live(
         yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
         const receipts: Array<{ method: string; payload: unknown }> = [];
         const requests: Array<{ method: string; params: unknown }> = [];
-        const driver = yield* CodexReplay.makeReplayDriver(transcript, {
+        // SCIENT-FORK: upstream's per-thread config read and thread name precede the first turn.
+        const replayed = materializeCodexThreadSetup(transcript, () => "Native running fork");
+        const driver = yield* CodexReplay.makeReplayDriver(replayed, {
           beforeEmitInbound: (entry) =>
             Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
         });
@@ -584,7 +587,7 @@ it.live(
 
             yield* capture("receivedRunning", source);
             const forkCommandId = CommandId.make(`${mode}-running-fork`);
-            yield* (yield* ConversationForkService).dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: forkCommandId,
               originThreadId: threadId,
@@ -599,7 +602,7 @@ it.live(
               ),
             );
             const frozen = yield* orchestrator.getThreadProjection(forkId);
-            assert.equal(frozen.thread.conversationFork?.status, "ready");
+            assert.equal((yield* conversationForkOf(frozen.thread.id))?.status, "ready");
             assert.isEmpty(frozen.runs);
             assert.isEmpty(frozen.providerTurns);
             assert.isEmpty(frozen.providerThreads);
@@ -728,7 +731,7 @@ it.live(
             yield* capture("replayDriver", yield* Ref.get(driver.state));
             const replayState = yield* Ref.get(driver.state);
             assert.isNull(replayState.failure);
-            assert.equal(replayState.cursor, transcript.entries.length);
+            assert.equal(replayState.cursor, replayed.entries.length);
             const stored = yield* (yield* EventStoreV2).read({}).pipe(Stream.runCollect);
             yield* capture("storedEvents", stored);
             const rebuilt = yield* Effect.gen(function* () {

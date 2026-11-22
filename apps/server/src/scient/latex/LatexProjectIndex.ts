@@ -57,6 +57,8 @@ interface IndexedLatexSource {
   readonly explicitRootRelativePath: string | null;
   readonly directives: ReadonlyArray<LatexDependencyDirective>;
   readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
+  readonly visibleSource: string;
+  readonly sha256: string;
 }
 
 interface ProjectIndex {
@@ -85,27 +87,36 @@ function workspaceRelative(workspaceRoot: string, absolutePath: string): string 
   return escapesWorkspace(relative) ? null : relative;
 }
 
+/** A regular file reached without links, nothing at that path, or something Scient will not read. */
+async function workspaceFileState(
+  workspaceRoot: string,
+  relativePath: string,
+): Promise<"file" | "absent" | "unreadable"> {
+  const inspect = (path: string) =>
+    NodeFSP.lstat(path).catch((cause: NodeJS.ErrnoException) =>
+      cause.code === "ENOENT" || cause.code === "ENOTDIR" ? ("absent" as const) : null,
+    );
+  let current = workspaceRoot;
+  for (const segment of toPosix(relativePath).split("/").slice(0, -1)) {
+    current = NodePath.join(current, segment);
+    const info = await inspect(current);
+    if (info === "absent") return "absent";
+    if (info === null || info.isSymbolicLink()) return "unreadable";
+    if (!info.isDirectory()) return "absent";
+  }
+  const info = await inspect(NodePath.join(workspaceRoot, relativePath));
+  if (info === "absent") return "absent";
+  return info !== null && info.isFile() && !info.isSymbolicLink() ? "file" : "unreadable";
+}
+
 async function isSafeWorkspaceSourceFile(
   workspaceRoot: string,
   relativePath: string,
 ): Promise<boolean> {
-  if (!isLatexSourcePath(relativePath)) return false;
-  let current = workspaceRoot;
-  for (const segment of toPosix(relativePath).split("/").slice(0, -1)) {
-    current = NodePath.join(current, segment);
-    try {
-      const info = await NodeFSP.lstat(current);
-      if (info.isSymbolicLink() || !info.isDirectory()) return false;
-    } catch {
-      return false;
-    }
-  }
-  try {
-    const info = await NodeFSP.lstat(NodePath.join(workspaceRoot, relativePath));
-    return info.isFile() && !info.isSymbolicLink();
-  } catch {
-    return false;
-  }
+  return (
+    isLatexSourcePath(relativePath) &&
+    (await workspaceFileState(workspaceRoot, relativePath)) === "file"
+  );
 }
 
 /** Removes syntax regions where dependency-looking text is literal rather than executable TeX. */
@@ -221,20 +232,31 @@ function candidatePath(baseDirectory: string, target: string): string | null {
   return NodePath.resolve(baseDirectory, withExtension);
 }
 
-async function buildProjectIndex(
-  workspaceRoot: string,
-  sourceRelativePath: string,
-): Promise<ProjectIndex> {
-  const sources = new Map<string, IndexedLatexSource>();
-  const sourceHashes = new Map<string, string>();
-  const skippedSymlinkPaths = new Set<string>();
-  const incompleteReasons = new Set<ScientLatexResolutionIncompleteReason>();
-  let fileCount = 0;
-  let entryCount = 0;
-  let totalBytes = 0;
-  let scanStopped = false;
+function indexedSource(relativePath: string, contents: string): IndexedLatexSource {
+  const parsed = parseLatexDependencyDirectives(contents);
+  const rootResolution = resolveLatexRoot({ relativePath, contents });
+  return {
+    relativePath,
+    documentRoot:
+      rootResolution.reason === "documentclass" ||
+      /\\begin\s*\{document\}/u.test(parsed.visibleSource),
+    explicitRootRelativePath:
+      rootResolution.reason === "magic-comment" ? rootResolution.rootRelativePath : null,
+    directives: parsed.directives,
+    incompleteReasons: parsed.incompleteReasons,
+    visibleSource: parsed.visibleSource,
+    sha256: NodeCrypto.createHash("sha256").update(contents).digest("hex"),
+  };
+}
 
-  const addSource = async (absolutePath: string, relativePath: string): Promise<void> => {
+/** Reads sources under the index's per-file and aggregate byte limits, never through a link. */
+function createLatexSourceReader() {
+  const sources = new Map<string, IndexedLatexSource>();
+  const incompleteReasons = new Set<ScientLatexResolutionIncompleteReason>();
+  const state = { stopped: false };
+  let totalBytes = 0;
+
+  const add = async (absolutePath: string, relativePath: string): Promise<void> => {
     if (sources.has(relativePath)) return;
     let info: Awaited<ReturnType<typeof NodeFSP.lstat>>;
     try {
@@ -254,7 +276,7 @@ async function buildProjectIndex(
     }
     if (info.size > MAX_TOTAL_SOURCE_BYTES - totalBytes) {
       incompleteReasons.add("scan-limit");
-      scanStopped = true;
+      state.stopped = true;
       return;
     }
     let contents: string;
@@ -297,24 +319,25 @@ async function buildProjectIndex(
     totalBytes += sourceByteLength;
     if (totalBytes > MAX_TOTAL_SOURCE_BYTES) {
       incompleteReasons.add("scan-limit");
-      scanStopped = true;
+      state.stopped = true;
       return;
     }
-    const parsed = parseLatexDependencyDirectives(contents);
-    sourceHashes.set(relativePath, NodeCrypto.createHash("sha256").update(contents).digest("hex"));
-    const rootResolution = resolveLatexRoot({ relativePath, contents });
-    const documentRoot =
-      rootResolution.reason === "documentclass" ||
-      /\\begin\s*\{document\}/u.test(parsed.visibleSource);
-    sources.set(relativePath, {
-      relativePath,
-      documentRoot,
-      explicitRootRelativePath:
-        rootResolution.reason === "magic-comment" ? rootResolution.rootRelativePath : null,
-      directives: parsed.directives,
-      incompleteReasons: parsed.incompleteReasons,
-    });
+    sources.set(relativePath, indexedSource(relativePath, contents));
   };
+
+  return { sources, incompleteReasons, state, add };
+}
+
+async function buildProjectIndex(
+  workspaceRoot: string,
+  sourceRelativePath: string,
+): Promise<ProjectIndex> {
+  const reader = createLatexSourceReader();
+  const { sources, incompleteReasons, state } = reader;
+  const addSource = reader.add;
+  const skippedSymlinkPaths = new Set<string>();
+  let fileCount = 0;
+  let entryCount = 0;
 
   const sourceAbsolutePath = NodePath.resolve(workspaceRoot, sourceRelativePath);
 
@@ -327,10 +350,10 @@ async function buildProjectIndex(
   }
 
   const visit = async (directory: string, depth: number): Promise<void> => {
-    if (scanStopped) return;
+    if (state.stopped) return;
     if (depth > MAX_DIRECTORY_DEPTH || fileCount >= MAX_INDEX_FILES) {
       incompleteReasons.add("scan-limit");
-      scanStopped = true;
+      state.stopped = true;
       return;
     }
     let entries: NodeFS.Dir;
@@ -345,12 +368,12 @@ async function buildProjectIndex(
         entryCount += 1;
         if (entryCount > MAX_INDEX_ENTRIES) {
           incompleteReasons.add("scan-limit");
-          scanStopped = true;
+          state.stopped = true;
           return;
         }
         if (fileCount >= MAX_INDEX_FILES) {
           incompleteReasons.add("scan-limit");
-          scanStopped = true;
+          state.stopped = true;
           return;
         }
         const absolutePath = NodePath.join(directory, entry.name);
@@ -361,7 +384,7 @@ async function buildProjectIndex(
         }
         if (entry.isDirectory()) {
           if (!IGNORED_DIRECTORIES.has(entry.name)) await visit(absolutePath, depth + 1);
-          if (scanStopped) return;
+          if (state.stopped) return;
           continue;
         }
         if (!entry.isFile()) continue;
@@ -369,7 +392,7 @@ async function buildProjectIndex(
         if (relativePath === null || !isLatexSourcePath(relativePath)) continue;
         fileCount += 1;
         await addSource(absolutePath, relativePath);
-        if (scanStopped) return;
+        if (state.stopped) return;
       }
     } catch {
       incompleteReasons.add("unreadable-file");
@@ -377,10 +400,10 @@ async function buildProjectIndex(
   };
   await visit(workspaceRoot, 0);
   const generation = NodeCrypto.createHash("sha256");
-  for (const [path, hash] of [...sourceHashes].sort(([left], [right]) =>
-    left.localeCompare(right),
+  for (const source of [...sources.values()].sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath),
   )) {
-    generation.update(path).update("\0").update(hash).update("\0");
+    generation.update(source.relativePath).update("\0").update(source.sha256).update("\0");
   }
   return {
     sources,
@@ -416,17 +439,21 @@ function dependencyTargets(
   return { absolutePath, importBase: input.importBase };
 }
 
-function rootContainsSource(
-  index: ProjectIndex,
-  workspaceRoot: string,
-  root: IndexedLatexSource,
-  sourceRelativePath: string,
-  budget: { steps: number },
-): {
-  readonly contains: boolean;
-  readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
-} {
-  const rootDirectory = NodePath.dirname(NodePath.resolve(workspaceRoot, root.relativePath));
+/**
+ * Walks what a root document reads, once per file and import base. `load` gives a reached file's
+ * source, or undefined when it adds nothing to the walk. Returns why the walk is incomplete.
+ */
+async function traverseLatexDocument(input: {
+  readonly workspaceRoot: string;
+  readonly rootRelativePath: string;
+  readonly skippedSymlinkPaths: ReadonlySet<string>;
+  readonly budget: { steps: number };
+  readonly load: (
+    relativePath: string,
+  ) => IndexedLatexSource | undefined | Promise<IndexedLatexSource | undefined>;
+}): Promise<ReadonlySet<ScientLatexResolutionIncompleteReason>> {
+  const { workspaceRoot, budget } = input;
+  const rootDirectory = NodePath.dirname(NodePath.resolve(workspaceRoot, input.rootRelativePath));
   const incompleteReasons = new Set<ScientLatexResolutionIncompleteReason>();
   const pending: Array<{ readonly relativePath: string; readonly importBase: string | null }> = [];
   const scheduled = new Set<string>();
@@ -436,8 +463,7 @@ function rootContainsSource(
     scheduled.add(identity);
     pending.push({ relativePath, importBase });
   };
-  enqueue(root.relativePath, null);
-  let contains = false;
+  enqueue(input.rootRelativePath, null);
   const takeStep = (): boolean => {
     budget.steps += 1;
     if (budget.steps <= MAX_GRAPH_STEPS) return true;
@@ -447,15 +473,11 @@ function rootContainsSource(
   while (pending.length > 0) {
     if (!takeStep()) break;
     const { relativePath, importBase } = pending.pop()!;
-    if (relativePath === sourceRelativePath) {
-      contains = true;
-      continue;
-    }
-    const source = index.sources.get(relativePath);
+    const source = await input.load(relativePath);
     if (source === undefined) continue;
     for (const reason of source.incompleteReasons) incompleteReasons.add(reason);
     for (const directive of source.directives) {
-      if (!takeStep()) return { contains, incompleteReasons };
+      if (!takeStep()) return incompleteReasons;
       const target = dependencyTargets({ workspaceRoot, rootDirectory, importBase }, directive);
       if (target === null) {
         incompleteReasons.add("unsupported-command");
@@ -469,7 +491,7 @@ function rootContainsSource(
       let ancestor = targetRelative;
       let usesSkippedSymlink = false;
       while (ancestor !== ".") {
-        if (index.skippedSymlinkPaths.has(ancestor)) {
+        if (input.skippedSymlinkPaths.has(ancestor)) {
           incompleteReasons.add("unreadable-file");
           usesSkippedSymlink = true;
           break;
@@ -482,7 +504,87 @@ function rootContainsSource(
       enqueue(targetRelative, target.importBase);
     }
   }
+  return incompleteReasons;
+}
+
+async function rootContainsSource(
+  index: ProjectIndex,
+  workspaceRoot: string,
+  root: IndexedLatexSource,
+  sourceRelativePath: string,
+  budget: { steps: number },
+): Promise<{
+  readonly contains: boolean;
+  readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
+}> {
+  let contains = false;
+  const incompleteReasons = await traverseLatexDocument({
+    workspaceRoot,
+    rootRelativePath: root.relativePath,
+    skippedSymlinkPaths: index.skippedSymlinkPaths,
+    budget,
+    load: (relativePath) => {
+      if (relativePath !== sourceRelativePath) return index.sources.get(relativePath);
+      contains = true;
+      return undefined;
+    },
+  });
   return { contains, incompleteReasons };
+}
+
+/**
+ * The files a root document reads, found by the traversal the root index uses, each with its TeX
+ * outside comments and verbatim. The root's text is the caller's; the others are read under the
+ * index's byte limits, never through a link. Any reason means some input went unread.
+ */
+export async function readLatexDocumentSources(input: {
+  readonly workspaceRoot: string;
+  readonly rootRelativePath: string;
+  readonly rootContents: string;
+}): Promise<{
+  readonly sources: ReadonlyArray<{
+    readonly relativePath: string;
+    readonly visibleSource: string;
+    readonly sha256: string;
+  }>;
+  readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
+}> {
+  const workspaceRoot = NodePath.resolve(input.workspaceRoot);
+  const rootRelativePath = NodePath.isAbsolute(input.rootRelativePath)
+    ? null
+    : workspaceRelative(workspaceRoot, NodePath.resolve(workspaceRoot, input.rootRelativePath));
+  if (rootRelativePath === null)
+    throw new Error("LaTeX source path must stay inside the workspace.");
+  const reader = createLatexSourceReader();
+  reader.sources.set(rootRelativePath, indexedSource(rootRelativePath, input.rootContents));
+  const reached = new Map<string, IndexedLatexSource>();
+  const traversed = await traverseLatexDocument({
+    workspaceRoot,
+    rootRelativePath,
+    skippedSymlinkPaths: new Set(),
+    budget: { steps: 0 },
+    load: async (relativePath) => {
+      if (!reader.sources.has(relativePath)) {
+        // A missing include may be generated later and use anything, so it is unread too.
+        if ((await workspaceFileState(workspaceRoot, relativePath)) !== "file") {
+          reader.incompleteReasons.add("unreadable-file");
+          return undefined;
+        }
+        await reader.add(NodePath.resolve(workspaceRoot, relativePath), relativePath);
+      }
+      const source = reader.sources.get(relativePath);
+      if (source !== undefined) reached.set(relativePath, source);
+      return source;
+    },
+  });
+  return {
+    sources: [...reached.values()].map(({ relativePath, visibleSource, sha256 }) => ({
+      relativePath,
+      visibleSource,
+      sha256,
+    })),
+    incompleteReasons: new Set([...reader.incompleteReasons, ...traversed]),
+  };
 }
 
 function addCandidate(
@@ -545,7 +647,7 @@ export async function resolveLatexDocument(
 
   for (const root of index.sources.values()) {
     if (!root.documentRoot || root.relativePath === sourceRelativePath) continue;
-    const relation = rootContainsSource(
+    const relation = await rootContainsSource(
       index,
       workspaceRoot,
       root,

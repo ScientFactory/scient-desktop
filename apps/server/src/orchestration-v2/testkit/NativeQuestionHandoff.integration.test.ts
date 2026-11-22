@@ -40,6 +40,7 @@ import { ServerConfig } from "../../config.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { CLAUDE_MODEL_SELECTION } from "./fixtures/shared.ts";
+import { forkConversation } from "./ConversationForkCommand.ts";
 
 const settings = Schema.decodeSync(ClaudeSettings)({});
 const encodeSdkOffer = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -87,6 +88,9 @@ it.live(
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
@@ -404,7 +408,7 @@ it.live(
           assert.deepEqual(yield* forks.getOptions(forkCommand), available);
           yield* assertNoForkAdviceMutation;
           yield* fileSystem.writeFile(stored, evidenceBytes);
-          yield* forks.dispatch(forkCommand);
+          yield* forkConversation(forkCommand);
           const child = yield* orchestrator.getThreadProjection(childId);
           assert.deepEqual(child.runtimeRequests, []);
           assert.deepEqual(child.providerSessions, []);

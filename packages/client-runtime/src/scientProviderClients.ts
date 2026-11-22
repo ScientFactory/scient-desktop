@@ -19,11 +19,13 @@ import { providerClients as upstreamProviderClients } from "./providerClients.ts
 const scientProviderClientDefinitions: ReadonlyArray<ProviderClientDefinition> = [
   {
     driverKind: ProviderDriverKind.make("droid"),
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- provider name
     label: "Droid",
     settingsSchema: DroidSettings,
   },
   {
     driverKind: ProviderDriverKind.make("omp"),
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- provider name
     label: "Oh My Pi",
     settingsSchema: OmpSettings,
   },

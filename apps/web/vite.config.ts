@@ -6,7 +6,6 @@ import * as NodeZlib from "node:zlib";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
-import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
@@ -29,6 +28,9 @@ import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 import { formatAppDisplayName, resolveWebAppStageLabel } from "./src/branding.logic";
 // SCIENT-FORK:START — balance CI's fixed three web shards using recorded file durations.
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — opt-in CI attribution of browser page and socket loss.
+import { browserProvider } from "./src/testUtils/browserLifecycleDiagnostics";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — opt-in CI-like CPU throttle for local browser runs.
 import { applyCpuThrottle } from "./test/scientCpuThrottle";
@@ -73,7 +75,6 @@ const configuredDesktopUpdateRepository =
   process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
   process.env.GITHUB_REPOSITORY?.trim() ||
   "";
-const configuredFeatureSecrets = process.env.T3CODE_FEATURE_SECRETS?.trim() || "";
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -125,6 +126,7 @@ const unitTestProject = {
     setupFiles: [
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",
+      "../../packages/shared/src/testing/gitEnv.ts",
     ],
   },
 } satisfies TestProjectInlineConfiguration;
@@ -152,7 +154,7 @@ const browserTestProject = {
       "fast-xml-parser",
       "entities",
       "dompurify",
-      "heic-to/next",
+      "heic-to/csp",
       "jszip",
       "pdfjs-dist",
       "sql.js",
@@ -184,7 +186,9 @@ const browserTestProject = {
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright(),
+      // SCIENT-FORK:START — Playwright, plus lifecycle records when CI opts in.
+      provider: browserProvider(),
+      // SCIENT-FORK:END
       instances: [{ browser: "chromium" }],
       screenshotFailures: false,
       commands: {
@@ -482,7 +486,6 @@ export default defineConfig(({ command, mode }) => {
       "import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY": JSON.stringify(
         configuredDesktopUpdateRepository,
       ),
-      "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
     },

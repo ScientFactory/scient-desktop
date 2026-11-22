@@ -33,8 +33,7 @@ export interface VcsProcessInput {
   readonly spawnCwd?: string;
   readonly stdin?: string;
   readonly onStdoutChunk?: (chunk: Uint8Array) => void;
-  // SCIENT-FORK:START — binary stdin and an awaited stdout consumer for checkpoint capture.
-  readonly stdinBytes?: Uint8Array;
+  // SCIENT-FORK:START — an awaited stdout consumer for checkpoint capture.
   readonly onStdoutChunkEffect?: ProcessRunner.ProcessRunInput["onStdoutChunkEffect"];
   // SCIENT-FORK:END
   readonly onSpawn?: () => void;
@@ -72,6 +71,11 @@ const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
 // Forge CLIs can take seconds per call; cap them together so git, checkpoints included, keeps slots.
 const NON_GIT_PROCESS_CONCURRENCY = VCS_PROCESS_CONCURRENCY / 2;
+
+/** Background non-git calls, such as the pull request sync sweep's, leave one slot for the rest. */
+export const Background = Context.Reference<boolean>("t3/vcs/VcsProcess/Background", {
+  defaultValue: () => false,
+});
 
 /** Shown to users when a Git command fails because another process holds the index lock. */
 export const GIT_INDEX_LOCKED_DETAIL =
@@ -214,6 +218,7 @@ export const make = Effect.gen(function* () {
   const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
+  const backgroundProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY - 1);
   const keyedProcesses = new Map<string, Semaphore.Semaphore>();
   const keyedPermit = (concurrency: NonNullable<VcsProcessInput["concurrency"]>) => {
     let semaphore = keyedProcesses.get(concurrency.key);
@@ -237,8 +242,7 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        // SCIENT-FORK:START — binary stdin and an awaited stdout consumer.
-        ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
+        // SCIENT-FORK:START — an awaited stdout consumer.
         ...(input.onStdoutChunkEffect !== undefined
           ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
           : {}),
@@ -413,7 +417,11 @@ export const make = Effect.gen(function* () {
       );
     }
     const shared = input.command === "git" ? bounded : nonGitProcesses.withPermits(1)(bounded);
-    return yield* input.concurrency === undefined ? shared : keyedPermit(input.concurrency)(shared);
+    const keyed = input.concurrency === undefined ? shared : keyedPermit(input.concurrency)(shared);
+    // Taken first, so a background call still waiting holds no permit another call needs.
+    return yield* input.command !== "git" && (yield* Background)
+      ? backgroundProcesses.withPermits(1)(keyed)
+      : keyed;
   });
 
   return VcsProcess.of({ run });

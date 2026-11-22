@@ -140,7 +140,7 @@ export function createHttp({
         }
         const why = timedOut
           ? `no answer within ${Math.round(timeoutMs / 1000)} s`
-          : (error?.cause?.code ?? error?.message ?? "network error");
+          : "network error";
         throw new ToolError(
           `Could not reach ${host} (${why}) for ${safeUrl(url)}. Try again later.`,
         );
@@ -167,11 +167,13 @@ export async function readJson(response, what) {
     const hint =
       response.status === 429
         ? `${what} is limiting requests${wait ? `; wait ${Math.ceil(wait / 1000)} s` : ""} and try again with fewer calls.`
-        : response.status === 401 || response.status === 403
-          ? `${what} refused the request (${response.status}). The key may be wrong or missing: call scient_connector_setup with replaceKeys.`
-          : response.status === 404
-            ? `${what} has nothing at that address (404). Check the id.`
-            : `${what} answered ${response.status}.`;
+        : response.status === 401
+          ? `${what} refused authentication (401). Check setup; replace a key only if it was rejected.`
+          : response.status === 403
+            ? `${what} denied access (403). Check account permissions or service policy.`
+            : response.status === 404
+              ? `${what} has nothing at that address (404). Check the id.`
+              : `${what} answered ${response.status}.`;
     throw new ToolError(`${hint} ${snippet(body)}`.trim());
   }
   if (!/json/i.test(type) && !/^\s*[[{]/.test(body)) {
@@ -184,11 +186,5 @@ export async function readJson(response, what) {
   }
 }
 
-/** The start of a body, on one line, for error messages. */
-export const snippet = (text, max = 300) => {
-  const line = String(text ?? "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return line.length > max ? `${line.slice(0, max)}…` : line;
-};
+/** Response bodies may contain credentials or private data; never put them in errors. */
+export const snippet = () => "[response body omitted]";

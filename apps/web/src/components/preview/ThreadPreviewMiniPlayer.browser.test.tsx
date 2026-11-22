@@ -10,13 +10,29 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import "../../index.css";
 import { page } from "vitest/browser";
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
-import { EnvironmentId, ThreadId, PreviewTabId, FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
+import {
+  type DeviceServiceState,
+  EnvironmentId,
+  ThreadId,
+  PreviewTabId,
+  FILL_PREVIEW_VIEWPORT,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { useState } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import {
+  type PreviewMiniPlayerSource,
+  selectThreadPreviewMiniPlayer,
+  usePreviewMiniPlayerStore,
+} from "~/previewMiniPlayerStore";
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
-import { ThreadPreviewMiniPlayer } from "./ThreadPreviewMiniPlayer";
+import { deviceEnvironment } from "../../state/device";
+import { ChatCanvas } from "../chat/ChatCanvas";
+import { createChatCanvasStore } from "../chat/canvasStore";
+import { ThreadPreviewMiniPlayer, useThreadPreviewCanvasSource } from "./ThreadPreviewMiniPlayer";
 
 const mocks = vi.hoisted(() => ({
   openArtifact: vi.fn(),
@@ -34,6 +50,11 @@ vi.mock("./StaticImageActionButtons", () => ({
 }));
 vi.mock("~/assets/assetUrls", () => ({ useAssetUrlState: () => ({ _tag: "Pending" }) }));
 vi.mock("./previewBridge", () => ({ previewBridge: null }));
+vi.mock(import("../device/DeviceStreamView"), () => ({
+  DeviceStreamView: (({ viewId }: { viewId: string }) => (
+    <div data-testid="stream" data-view-id={viewId} />
+  )) as never,
+}));
 
 const threadRef = scopeThreadRef(EnvironmentId.make("fixture"), ThreadId.make("thread"));
 const artifact: PreviewStaticImageSurfaceDescriptor = {
@@ -44,6 +65,30 @@ const artifact: PreviewStaticImageSurfaceDescriptor = {
   sourcePath: "figure.png",
   resource: { _tag: "workspace-file", cwd: "/fixture", relativePath: "figure.png" },
 };
+
+const defaultThreadRef = threadRef;
+const phone: PreviewMiniPlayerSource = {
+  kind: "device",
+  hostId: "local",
+  deviceId: "phone",
+  platform: "ios",
+  name: "Phone",
+};
+
+function Harness({ threadRef = defaultThreadRef }: { readonly threadRef?: ScopedThreadRef }) {
+  const [store] = useState(createChatCanvasStore);
+  const miniPlayer = usePreviewMiniPlayerStore((state) =>
+    selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
+  );
+  const preview = useThreadPreviewCanvasSource(threadRef, miniPlayer);
+  return (
+    <ChatCanvas store={store} threadRef={threadRef} preview={preview} composerOverlayElement={null}>
+      {miniPlayer ? (
+        <ThreadPreviewMiniPlayer threadRef={threadRef} miniPlayer={miniPlayer} />
+      ) : null}
+    </ChatCanvas>
+  );
+}
 
 async function _setupFixture0(_fixture: _Fixture) {
   const previousViewport = { width: innerWidth, height: innerHeight };
@@ -244,3 +289,32 @@ function _createFixture() {
   };
 }
 type _Fixture = ReturnType<typeof _createFixture>;
+
+it("keeps one stream when switching between threads floating the same device", async () => {
+  using _state = vi
+    .spyOn(deviceEnvironment, "state")
+    .mockReturnValue(Atom.make<AsyncResult.AsyncResult<DeviceServiceState>>(AsyncResult.initial()));
+  const otherThreadRef = scopeThreadRef(threadRef.environmentId, ThreadId.make("thread-2"));
+  using _store = {
+    [Symbol.dispose]: () => {
+      usePreviewMiniPlayerStore.getState().removeThread(threadRef);
+      usePreviewMiniPlayerStore.getState().removeThread(otherThreadRef);
+    },
+  };
+  usePreviewMiniPlayerStore.getState().open(threadRef, phone);
+  usePreviewMiniPlayerStore.getState().open(otherThreadRef, phone);
+  const harness = (ref: ScopedThreadRef) => (
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <Harness threadRef={ref} />
+    </RegistryContext.Provider>
+  );
+  const container = document.createElement("div");
+  container.style.cssText = "display:flex;position:fixed;inset:0;width:1200px;height:800px";
+  await using screen = await _fixtureRender(harness(threadRef), { container });
+  const viewId = () => screen.getByTestId("stream").element().getAttribute("data-view-id");
+  const first = viewId();
+
+  // The stream session is keyed by view, so a new view id reconnects the device.
+  await screen.rerender(harness(otherThreadRef));
+  expect(viewId()).toBe(first);
+});

@@ -47,6 +47,16 @@ describe("compute environment policy", () => {
       expect(removedKeys).toContain("T3_PAIRING_KEY");
     });
 
+    it("passes the results folder only when Scient set it for the run", () => {
+      const environment = { SCIENT_RESULTS_DIR: "/state/results/run", PATH: "/bin" };
+      expect(sanitizeComputeEnvironment(environment).environment).not.toHaveProperty(
+        "SCIENT_RESULTS_DIR",
+      );
+      expect(
+        sanitizeComputeEnvironment(environment, { keepRunKeys: true }).environment,
+      ).toHaveProperty("SCIENT_RESULTS_DIR", "/state/results/run");
+    });
+
     it("preserves ordinary runtime variables", () => {
       const { environment } = sanitizeComputeEnvironment({
         HOME: "/user",

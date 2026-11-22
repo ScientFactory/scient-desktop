@@ -72,6 +72,8 @@ try {
         "/link",
         `/OUT:${executable}`,
         `/MACHINE:${arch === "arm64" ? "ARM64" : "X64"}`,
+        // Its imports' own dependencies load only from System32, never from beside the helper.
+        "/DEPENDENTLOADFLAG:0x800",
         "Advapi32.lib",
       ],
       { stdio: "inherit", cwd: scratch },

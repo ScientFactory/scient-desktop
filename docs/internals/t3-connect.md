@@ -151,6 +151,20 @@ devices working and lists them for review, including any that got in before.
 See `issueConnectCredential` in the
 [environment auth service](../../apps/server/src/auth/EnvironmentAuth.ts).
 
+Managed tunnels expose only this server's own loopback HTTP origin. The link
+proof signs that origin from the server's listening address and ignores the
+caller's, so any client holding `relay:configure`, local or remote, can link
+without being able to point the tunnel at another service on the host. The
+relay refuses to relink an active environment id under a different key: an
+account bearer alone would otherwise take over that environment's tunnel and
+trusted key with an origin it signed itself. Unlinking first releases the
+tunnel. The
+relay resolves endpoints from its own managed allocations rather than a
+caller-supplied URL. Health and mint
+requests must not follow redirects. These restrictions keep endpoint discovery
+from turning into arbitrary relay egress or exposing another service on the
+environment host.
+
 ## Idle tunnels are reclaimed and recovered
 
 Cloudflare bills a tunnel whether or not a connector is attached, so a laptop
@@ -229,8 +243,10 @@ The version comes from running `cloudflared version`, not from the folder name.
 Connectors from before `--no-autoupdate` replaced themselves in place, so a
 managed folder can hold another release. Such a binary still runs as a fallback
 while the pin installs. Every binary needs `CLOUDFLARED_MIN_VERSION`, the oldest
-release that accepts every flag the connector is started with. Raise it whenever
-a new flag is added.
+release that accepts every flag the connector is started with and rejects the
+compromised eMudhra intermediates. No binary below it runs, even as a fallback,
+so a host without an eligible one stays off the relay until it has one. Raise it
+whenever a new flag or security fix needs it.
 
 ## Headless CLI OAuth Application
 

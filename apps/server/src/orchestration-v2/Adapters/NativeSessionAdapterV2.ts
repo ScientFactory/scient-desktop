@@ -125,6 +125,9 @@ const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2Pro
 export type NativeSessionUpdate =
   | {
       readonly type: "usage";
+      // SCIENT-FORK:START — the five-minute cache entry warming stopped on, or null for none.
+      readonly promptCacheWarmingStopped?: OrchestrationV2ProviderThread["promptCacheWarmingStopped"];
+      // SCIENT-FORK:END
       readonly tokenUsage?: Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
       readonly contextUsage?: ThreadTokenUsageSnapshot;
       // SCIENT-FORK: one model request's counts, added up into the turn's usage.
@@ -283,6 +286,8 @@ export interface NativeSession {
     input: ProviderAdapter.ProviderAdapterV2TurnInput,
     nativeTurnId: string,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /** Sent as the prompt of a manual continuation by a protocol that cannot continue without one. */
+  readonly continuationPrompt?: string;
   readonly steer?: (
     input: ProviderAdapter.ProviderAdapterV2SteerInput,
     validateOwner?: () => Effect.Effect<void, NativeSessionOperationError>,
@@ -1184,6 +1189,22 @@ export function makeNativeSessionAdapterV2(
                       providerTurn: active.turn,
                     });
                   }
+                  // SCIENT-FORK:START — warming stopped, often long after the run's subscribers left:
+                  // session-scoped, so the thread keeps the entry that times its idle compaction.
+                  if (thread && update.promptCacheWarmingStopped !== undefined) {
+                    thread = {
+                      ...thread,
+                      promptCacheWarmingStopped: update.promptCacheWarmingStopped,
+                      updatedAt: now,
+                    };
+                    yield* emit({
+                      type: "provider_thread.updated",
+                      driver,
+                      providerThread: thread,
+                      sessionScoped: true,
+                    });
+                  }
+                  // SCIENT-FORK:END
                   return;
                 }
                 let running = active;
@@ -1962,6 +1983,7 @@ export function makeNativeSessionAdapterV2(
         // SCIENT-FORK:END
         const steer = native.steer;
         const compact = native.compact;
+        const continuationPrompt = native.continuationPrompt;
         const startTurn = Effect.fn("NativeSessionAdapterV2.startTurn")(
           function* (
             request: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -2210,6 +2232,17 @@ export function makeNativeSessionAdapterV2(
               ),
           ),
           startTurn: (request) => startTurn(request, native.send),
+          ...(continuationPrompt === undefined
+            ? {}
+            : {
+                resumeTurn: (request: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) => {
+                  const turn = ProviderAdapter.resumeTurnInput(request);
+                  return startTurn(
+                    { ...turn, message: { ...turn.message, text: continuationPrompt } },
+                    native.send,
+                  );
+                },
+              }),
           ...(compact === undefined
             ? {}
             : {

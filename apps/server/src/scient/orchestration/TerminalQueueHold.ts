@@ -18,6 +18,7 @@ import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import type { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { isAutomaticCompletionRun } from "../../orchestration-v2/QueuedRunOrder.ts";
+import { isBufferedProviderNotification } from "../../orchestration-v2/NotificationMailbox.ts";
 
 /** A run stopped to start a queued command lets that command and the queue behind it proceed. */
 const QUEUED_COMMAND_STOP_REASONS: ReadonlySet<string> = new Set([
@@ -83,12 +84,18 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
           item.message !== undefined &&
           QUEUED_COMMAND_STOP_REASONS.has(item.message),
       );
+    // A buffered provider wake prompts nothing: it replays output the CLI already produced.
+    const bufferedWake = (candidate: (typeof projection.runs)[number]) => {
+      const message = projection.messages.find((entry) => entry.id === candidate.userMessageId);
+      return message !== undefined && isBufferedProviderNotification(message);
+    };
     const queued = projection.runs.filter(
       (candidate) =>
         !stoppedForQueuedCommand &&
         candidate.status === "queued" &&
         candidate.queueHeld !== true &&
-        !isAutomaticCompletionRun(projection, candidate),
+        !isAutomaticCompletionRun(projection, candidate) &&
+        !(run.status === "failed" && bufferedWake(candidate)),
     );
     const queueBoundaries = new Map<RunId, number>();
     const releasedAfterStop = new Set<RunId>();

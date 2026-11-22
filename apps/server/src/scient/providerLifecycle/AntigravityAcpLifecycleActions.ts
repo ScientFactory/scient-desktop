@@ -3,6 +3,7 @@ import {
   type AntigravitySettings,
   ProviderInstanceId,
   type ProviderAuthState,
+  type ProviderConnectionFailureReason,
   type ProviderInstallState,
   type ProviderManagedRuntimeAction,
   type ProviderRuntimeSummary,
@@ -11,7 +12,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 
 import {
   isProviderConnectionActionError,
@@ -23,11 +23,18 @@ import type {
   ProviderManagedRuntimeProgress,
 } from "../../provider/ScientProviderInstanceSeams.ts";
 import type { AntigravityInstallation } from "../../provider/AntigravityInstallation.ts";
-import type { AntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
 import {
   ANTIGRAVITY_ACP_REGISTRY_VERSION,
   resolveAntigravityReleaseAsset,
 } from "./antigravityAcpCatalog.ts";
+import {
+  antigravityReleaseDownloadBytes,
+  antigravityReleaseIdentity,
+  antigravityReleaseRevision,
+  supersedesAntigravityRelease,
+  type AntigravityManagedRelease,
+  type AntigravityReleaseIdentity,
+} from "./antigravityRuntimeRelease.ts";
 import { ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import { antigravityAuthUsesBrowser } from "../../provider/antigravityAuthSupport.ts";
 import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
@@ -45,13 +52,17 @@ function isTerminalInstallPhase(
   return phase === "succeeded" || phase === "failed" || phase === "cancelled";
 }
 
-const failure = (message: string, cause?: unknown) =>
+const failure = (message: string, cause?: unknown, reason?: ProviderConnectionFailureReason) =>
   new ProviderConnectionActionError({
     message,
     ...(cause === undefined ? {} : { cause }),
+    ...(reason === undefined ? {} : { failureReason: reason }),
   });
 
 export const ANTIGRAVITY_STARTING_MESSAGE = "Antigravity can take up to a minute to start.";
+
+const CLI_SWITCH_MESSAGE =
+  "An update moves Antigravity to Google's agy CLI, which runs your Antigravity plugins in Scient chats.";
 
 export function antigravityConnectionMethod(method: AntigravityAuthMethod) {
   return antigravityAuthUsesBrowser(method)
@@ -59,15 +70,24 @@ export function antigravityConnectionMethod(method: AntigravityAuthMethod) {
     : ("antigravity_credentials" as const);
 }
 
-function authFailure(state: { readonly phase: string; readonly message: string | null }) {
+function authFailure(state: {
+  readonly phase: string;
+  readonly message: string | null;
+  readonly failureReason?: ProviderConnectionFailureReason | undefined;
+}) {
   const message =
     state.message?.trim() ||
     (state.phase === "cancelled"
       ? "Antigravity sign-in was cancelled."
       : "Antigravity sign-in did not finish.");
+  const afterSignIn = message === ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE;
+  const reason =
+    (state.phase === "failed" ? state.failureReason : undefined) ??
+    (afterSignIn ? "post_signin_setup" : state.phase === "cancelled" ? "flow_stopped" : undefined);
   return new ProviderConnectionActionError({
     message,
-    ...(message === ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE ? { afterSignIn: true } : {}),
+    ...(afterSignIn ? { afterSignIn: true } : {}),
+    ...(reason === undefined ? {} : { failureReason: reason }),
   });
 }
 
@@ -93,13 +113,23 @@ export function makeAntigravityConnectionActionsFromController(input: {
       if (method !== antigravityConnectionMethod(input.authMethod)) {
         return yield* failure(
           "The selected connection method does not match this Antigravity account.",
+          undefined,
+          "start_failed",
         );
       }
       const owner = `scient-provider-lifecycle-${yield* input.randomOwnerId.pipe(
-        Effect.mapError((cause) => failure("Could not start Antigravity sign-in.", cause)),
+        Effect.mapError((cause) =>
+          failure("Could not start Antigravity sign-in.", cause, "start_failed"),
+        ),
       )}`;
       const started = yield* Effect.acquireRelease(
-        input.controller.start(owner, input.stopSessions).pipe(Effect.mapError(mapSetupError)),
+        input.controller
+          .start(owner, input.stopSessions)
+          .pipe(
+            Effect.mapError((cause) =>
+              failure(mapSetupError(cause).message, cause, "start_failed"),
+            ),
+          ),
         (state) =>
           state.flowId
             ? input.controller.cancel(owner, state.flowId).pipe(Effect.ignore)
@@ -112,7 +142,14 @@ export function makeAntigravityConnectionActionsFromController(input: {
               Stream.runHead,
               Effect.flatMap(
                 Option.match({
-                  onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
+                  onNone: () =>
+                    Effect.fail(
+                      failure(
+                        "Antigravity sign-in stopped unexpectedly.",
+                        undefined,
+                        "flow_stopped",
+                      ),
+                    ),
                   onSome: Effect.succeed,
                 }),
               ),
@@ -123,14 +160,41 @@ export function makeAntigravityConnectionActionsFromController(input: {
       }
       const flowId = initial.flowId ?? started.flowId;
       if (!flowId) {
-        return yield* failure("Antigravity did not provide a sign-in operation identifier.");
+        return yield* failure(
+          "Antigravity did not provide a sign-in operation identifier.",
+          undefined,
+          "invalid_response",
+        );
       }
+      // The managed 1.4.5 harness finishes on a loopback callback URL; the agy CLI asks for the
+      // code its Antigravity page shows, through a credentials interaction.
+      const interaction =
+        initial.phase !== "waiting"
+          ? null
+          : initial.interaction !== undefined
+            ? initial.interaction
+            : yield* input.controller.subscribe(owner).pipe(
+                Stream.runHead,
+                Effect.map((state) =>
+                  Option.isSome(state) && state.value.flowId === flowId
+                    ? (state.value.interaction ?? null)
+                    : null,
+                ),
+              );
+      const codeField =
+        interaction?.type === "credentials" && interaction.fields.length === 1
+          ? interaction.fields[0]?.name
+          : undefined;
+      const respond = input.controller.respond;
       const waitForCompletion = input.controller.subscribe(owner).pipe(
         Stream.filter((state) => state.flowId === flowId && isTerminalAuthPhase(state.phase)),
         Stream.runHead,
         Effect.flatMap(
           Option.match({
-            onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
+            onNone: () =>
+              Effect.fail(
+                failure("Antigravity sign-in stopped unexpectedly.", undefined, "flow_stopped"),
+              ),
             onSome: (state) =>
               state.phase === "succeeded" ? Effect.void : Effect.fail(authFailure(state)),
           }),
@@ -145,15 +209,26 @@ export function makeAntigravityConnectionActionsFromController(input: {
           : {}),
         initialStatus:
           initial.phase === "waiting" ? ("waiting_for_browser" as const) : ("verifying" as const),
-        ...(initial.phase === "waiting" && antigravityAuthUsesBrowser(input.authMethod)
-          ? {
-              authorizationResponseKind: "callback_url" as const,
-              submitAuthorizationCode: (callbackUrl: string) =>
-                input.controller
-                  .complete(owner, { flowId, callbackUrl })
-                  .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
-            }
-          : {}),
+        ...(initial.phase !== "waiting" || !antigravityAuthUsesBrowser(input.authMethod)
+          ? {}
+          : interaction?.type === "credentials" && codeField !== undefined && respond
+            ? {
+                authorizationResponseKind: "code" as const,
+                submitAuthorizationCode: (code: string) =>
+                  respond(owner, {
+                    instanceId: input.instanceId,
+                    flowId,
+                    interactionId: interaction.id,
+                    response: { type: "credentials", values: { [codeField]: code } },
+                  }).pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
+              }
+            : {
+                authorizationResponseKind: "callback_url" as const,
+                submitAuthorizationCode: (callbackUrl: string) =>
+                  input.controller
+                    .complete(owner, { flowId, callbackUrl })
+                    .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
+              }),
         waitForCompletion,
         cancel: input.controller
           .cancel(owner, flowId)
@@ -189,10 +264,6 @@ function installProgress(state: ProviderInstallState): ProviderManagedRuntimePro
   };
 }
 
-function runtimeRevision(version: string, sha256: string): string {
-  return `antigravity-acp:${version}:${sha256}`;
-}
-
 /** Expose T3's verified ACP installer through Scient's reviewed runtime actions. */
 export function makeAntigravityManagedRuntimeActions(input: {
   readonly installation: AntigravityInstallation["Service"];
@@ -205,6 +276,10 @@ export function makeAntigravityManagedRuntimeActions(input: {
   const bundledAsset = resolveAntigravityReleaseAsset(input.platform, input.arch);
   const target = `${input.platform}-${input.arch}`;
   const configuredPath = input.settings.binaryPath.trim();
+  // The CLI keeps its own sign-in; a paired runtime's Google sign-in does not carry over.
+  const signInAgain = antigravityAuthUsesBrowser(input.settings.authMethod)
+    ? " You'll sign in to Google again after it."
+    : "";
 
   const readResolution = input.installation
     .resolve(configuredPath || undefined, input.environment)
@@ -228,23 +303,33 @@ export function makeAntigravityManagedRuntimeActions(input: {
           ? "scient_managed"
           : "missing";
     const fullyAssisted = asset !== null && !configuredPath;
-    const installedRegistryVersion =
-      executable?.registryVersion ??
-      (executable?.version === bundledAsset?.version ? ANTIGRAVITY_ACP_REGISTRY_VERSION : null);
+    const installed: AntigravityReleaseIdentity | undefined = executable && {
+      cli: executable.harnessPath === null,
+      version: executable.version,
+      registryVersion:
+        executable.registryVersion ??
+        (executable.harnessPath !== null && executable.version === bundledAsset?.version
+          ? ANTIGRAVITY_ACP_REGISTRY_VERSION
+          : undefined),
+    };
+    const candidate = asset ? antigravityReleaseIdentity(asset) : undefined;
     const updateAvailable =
       source === "scient_managed" &&
+      installed !== undefined &&
+      candidate !== undefined &&
+      supersedesAntigravityRelease(installed, candidate);
+    // Repair reinstalls the catalog's release, so it never replaces a newer install with an older one.
+    const repairAvailable =
       asset !== null &&
-      asset.registryVersion !== undefined &&
-      isManagedRuntimeUpdate({
-        provider: "antigravityAcp",
-        current: installedRegistryVersion,
-        candidate: asset.registryVersion,
-      });
+      (installed === undefined ||
+        candidate === undefined ||
+        !supersedesAntigravityRelease(candidate, installed));
+    const switchesToCli = updateAvailable && candidate?.cli === true && installed?.cli === false;
     const actions: ReadonlyArray<ProviderManagedRuntimeAction> =
       source === "scient_managed" && !configuredPath
         ? [
             ...(updateAvailable ? (["update"] as const) : []),
-            ...(asset ? (["repair"] as const) : []),
+            ...(repairAvailable ? (["repair"] as const) : []),
             "remove",
           ]
         : !fullyAssisted
@@ -259,7 +344,9 @@ export function makeAntigravityManagedRuntimeActions(input: {
           ? "Scient is using the official Antigravity ACP runtime already installed on this computer."
           : source === "scient_managed"
             ? executable
-              ? "Scient is using an app-private, verified Antigravity ACP runtime."
+              ? switchesToCli
+                ? `${CLI_SWITCH_MESSAGE}${signInAgain}`
+                : "Scient is using an app-private, verified Antigravity ACP runtime."
               : "The private Antigravity ACP runtime needs repair."
             : configuredPath
               ? "Scient could not launch the custom Antigravity ACP runtime. Update or clear its path."
@@ -276,7 +363,11 @@ export function makeAntigravityManagedRuntimeActions(input: {
       target,
       actions: [...actions],
       managedVersion: state.installedVersion,
-      availableManagedVersion: updateAvailable ? (asset?.registryVersion ?? null) : null,
+      availableManagedVersion: updateAvailable
+        ? candidate?.cli
+          ? (candidate.version ?? null)
+          : (candidate?.registryVersion ?? null)
+        : null,
       previousManagedVersion: null,
       // No `qualifiedVersion`: the installed executable and its registry
       // release are numbered differently, so "Up to date" is never claimed.
@@ -306,28 +397,47 @@ export function makeAntigravityManagedRuntimeActions(input: {
       ? input.installation.latestRelease
       : input.installation.refreshLatestRelease;
     const summary = yield* getSummary;
-    if (!summary.actions.includes(action) || (action !== "remove" && !asset)) {
+    if (action === "remove") {
+      if (!summary.actions.includes(action)) {
+        return yield* failure(
+          `The ${action} action is not available for this Antigravity runtime.`,
+        );
+      }
+      return {
+        action,
+        target,
+        version: null,
+        downloadBytes: null,
+        sourceLabel: "Official Google Antigravity ACP release",
+        catalogRevision: `antigravity-acp:remove:${summary.managedVersion ?? "none"}`,
+        message:
+          "Remove Scient's private Antigravity ACP runtime. System and custom installations are untouched.",
+      };
+    }
+    if (!summary.actions.includes(action) || !asset) {
       return yield* failure(`The ${action} action is not available for this Antigravity runtime.`);
     }
+    const cli = antigravityReleaseIdentity(asset).cli;
+    const replacesPaired =
+      cli && Option.exists(yield* readResolution, (current) => current.harnessPath !== null);
+    const verb = action === "repair" ? "Repair" : action === "update" ? "Update" : "Install";
     return {
       action,
       target,
-      version: action === "remove" ? null : (asset?.version ?? null),
-      downloadBytes: action === "remove" ? null : (asset?.archiveBytes ?? null),
-      sourceLabel: "Official Google Antigravity ACP release",
-      catalogRevision:
-        action === "remove"
-          ? `antigravity-acp:remove:${summary.managedVersion ?? "none"}`
-          : runtimeRevision(asset!.version, asset!.sha256),
-      message:
-        action === "remove"
-          ? "Remove Scient's private Antigravity ACP runtime. System and custom installations are untouched."
-          : `${action === "repair" ? "Repair" : action === "update" ? "Update" : "Install"} Google's verified Antigravity ACP runtime privately for Scient.`,
+      version: asset.version,
+      downloadBytes: antigravityReleaseDownloadBytes(asset),
+      sourceLabel: cli
+        ? "Official Google Antigravity CLI release"
+        : "Official Google Antigravity ACP release",
+      catalogRevision: antigravityReleaseRevision(asset),
+      message: cli
+        ? `${verb} Google's verified Antigravity CLI privately for Scient. It runs your Antigravity plugins in Scient chats.${replacesPaired ? signInAgain : ""}`
+        : `${verb} Google's verified Antigravity ACP runtime privately for Scient.`,
     };
   });
 
   const runInstall = Effect.fn("AntigravityLifecycleBridge.runInstall")(function* (
-    asset: AntigravityReleaseAsset,
+    asset: AntigravityManagedRelease,
     report: (progress: ProviderManagedRuntimeProgress) => Effect.Effect<void>,
   ) {
     const started = yield* input.installation.startRelease(asset);
@@ -377,7 +487,7 @@ export function makeAntigravityManagedRuntimeActions(input: {
         return;
       }
       const asset = yield* input.installation.latestRelease;
-      if (!asset || revision !== runtimeRevision(asset.version, asset.sha256)) {
+      if (!asset || revision !== antigravityReleaseRevision(asset)) {
         return yield* failure("The Antigravity installation plan changed. Review it again.");
       }
       yield* awaitActivationWindow;

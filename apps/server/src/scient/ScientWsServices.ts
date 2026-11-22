@@ -12,12 +12,14 @@ import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as ComputeSessionService from "./compute/ComputeSessionService.ts";
 import * as DataTables from "./data/DataTables.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
+import * as ComputeResults from "./results/ComputeResults.ts";
 import { ScientificRuntimePreferences } from "./compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./conversationExport/ConversationExportService.ts";
 import { EditorFlush } from "./editorFlush/EditorFlush.ts";
 import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
+import { ProviderModelFreshness } from "./providerLifecycle/ProviderModelFreshness.ts";
 import { ScientAgentBackgroundRuntime } from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 
 // SCIENT-FORK:START — Scient Accounts: capture the shared owner for each client connection.
@@ -42,6 +44,7 @@ export const captureScientWsServices = Effect.gen(function* () {
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const dataTables = yield* DataTables.DataTables;
   const notebooks = yield* NotebookStore.NotebookStore;
+  const computeResults = yield* ComputeResults.ComputeResults;
   const runtimePreferences = yield* ScientificRuntimePreferences;
   const conversationExports = yield* ConversationExportService;
   const editorFlush = yield* EditorFlush;
@@ -50,6 +53,7 @@ export const captureScientWsServices = Effect.gen(function* () {
     yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
   const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
   const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
+  const providerModelFreshness = yield* ProviderModelFreshness;
   return Layer.mergeAll(
     // SCIENT-FORK:START — Scient Accounts: reuse the captured owner.
     Layer.succeed(AccountsService, accounts),
@@ -62,11 +66,13 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(ProviderConnectionManager.ProviderConnectionManager, providerConnectionManager),
     Layer.succeed(ProviderRuntimeManager.ProviderRuntimeManager, providerRuntimeManager),
     Layer.succeed(ScientAgentBackgroundRuntime, scientAgentBackground),
+    Layer.succeed(ProviderModelFreshness, providerModelFreshness),
     Layer.succeed(AnalysisService.AnalysisService, analysis),
     Layer.succeed(BrowserHistory, browserHistory),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
     Layer.succeed(DataTables.DataTables, dataTables),
     Layer.succeed(NotebookStore.NotebookStore, notebooks),
+    Layer.succeed(ComputeResults.ComputeResults, computeResults),
     Layer.succeed(ScientificRuntimePreferences, runtimePreferences),
     Layer.succeed(ConversationExportService, conversationExports),
     Layer.succeed(EditorFlush, editorFlush),

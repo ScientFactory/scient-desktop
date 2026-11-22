@@ -9,7 +9,7 @@ import {
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
-import { isValidElement, StrictMode } from "react";
+import { Children, isValidElement, StrictMode, type ReactNode } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -51,7 +51,8 @@ vi.mock("~/hooks/useLocalStorage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/hooks/useLocalStorage")>()),
   useLocalStorage: () => [[], mocks.setRecentWikiLinks],
 }));
-vi.mock("~/hooks/useCopyToClipboard", () => ({
+vi.mock("~/hooks/useCopyToClipboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useCopyToClipboard")>()),
   writeTextToClipboard: mocks.copyText,
 }));
 vi.mock("~/localApi", { spy: true });
@@ -281,9 +282,13 @@ describe("ScientMarkdownFileSurface", () => {
     await _setupFixture0(_fixture);
 
     await mount(_fixture);
-    const actions = mocks.workspaceProps?.documentActions;
-    expect(isValidElement(actions)).toBe(true);
-    if (!isValidElement(actions)) return;
+    const menu = mocks.workspaceProps?.documentActions;
+    expect(isValidElement(menu)).toBe(true);
+    if (!isValidElement(menu)) return;
+    const actions = Children.toArray((menu.props as { children: ReactNode }).children).find(
+      (child) => isValidElement(child) && "onWordExport" in (child.props as object),
+    );
+    if (!isValidElement(actions)) throw new Error("The menu has no Export item.");
     const { onWordExport } = actions.props as { onWordExport: () => void };
 
     await act(async () => onWordExport());
@@ -810,7 +815,10 @@ describe("ScientMarkdownFileSurface", () => {
 
     copyLink({ format: "link", value: "Methods/Protocol#setup" }, anchor);
     await vi.waitFor(() =>
-      expect(mocks.copyText).toHaveBeenCalledExactlyOnceWith("Methods/Protocol#setup", "link"),
+      expect(mocks.copyText).toHaveBeenCalledExactlyOnceWith(
+        "Methods/Protocol#setup",
+        expect.objectContaining({ target: "link" }),
+      ),
     );
     expect(mocks.anchoredAdd).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -829,7 +837,7 @@ describe("ScientMarkdownFileSurface", () => {
     await vi.waitFor(() => expect(mocks.copyText).toHaveBeenCalledTimes(2));
     expect(mocks.copyText).toHaveBeenLastCalledWith(
       "/workspace/notes/Methods/Protocol.md",
-      "full path",
+      expect.objectContaining({ target: "full path" }),
     );
     expect(mocks.anchoredAdd).toHaveBeenLastCalledWith(
       expect.objectContaining({ title: "Full path copied." }),

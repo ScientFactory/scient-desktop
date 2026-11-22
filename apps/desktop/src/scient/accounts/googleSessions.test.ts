@@ -36,3 +36,26 @@ it("doesn't contact Google for a profile that has never been there", async () =>
   expect(await read([{ name: "synthetic" }])).toEqual([{ email: "a@example.com", valid: true }]);
   expect(requests).toHaveLength(1);
 });
+
+it("asks for leave only right before contacting Google, and asks nothing when refused", async () => {
+  const requests: string[] = [];
+  const session = (cookies: ReadonlyArray<object>) =>
+    ({
+      cookies: { get: async () => cookies },
+      fetch: async (url: string) => {
+        requests.push(url);
+        return new Response(JSON.stringify(["gaia.l.a.r", []]));
+      },
+    }) as unknown as Parameters<typeof readGoogleSessions>[0];
+  let asked = 0;
+  const refuse = () => {
+    asked += 1;
+    return false;
+  };
+  // A profile that has never seen Google: nothing to ask, so leave isn't needed.
+  expect(await readGoogleSessions(session([]), refuse)).toEqual([]);
+  expect(asked).toBe(0);
+  expect(await readGoogleSessions(session([{ name: "synthetic" }]), refuse)).toBeNull();
+  expect(asked).toBe(1);
+  expect(requests).toEqual([]);
+});

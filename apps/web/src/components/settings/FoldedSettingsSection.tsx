@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { SettingsGroup } from "./SettingsGroup";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
@@ -25,6 +26,7 @@ export function FoldedSettingsSection({
   readonly collapsedContent?: ReactNode;
   readonly children: ReactNode;
 }) {
+  const gt = useGT();
   const titleId = useId();
   const [open, setOpen] = useState(false);
   const searchTargetId = useSettingsSearchTargetId();
@@ -82,7 +84,7 @@ export function FoldedSettingsSection({
                   render={<Button size="sm" variant="outline" />}
                   aria-labelledby={titleId}
                 >
-                  {open ? "Hide" : "Show"}
+                  {open ? gt("Hide") : gt("Show")}
                   <ChevronRightIcon
                     aria-hidden
                     className={cn(

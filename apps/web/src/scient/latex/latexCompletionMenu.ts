@@ -1,5 +1,7 @@
 import type { LatexCommandChoice } from "./latexCommandCompletion";
 import "./mathCommandCompletion.css";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 /** One anchored list for source, prose and math; clicking never discards the edit range. */
 export function latexCompletionMenu(
@@ -14,7 +16,7 @@ export function latexCompletionMenu(
   menu.className = "scient-latex-command-completion";
   menu.dataset.latexSelectOwner = owner.id;
   menu.setAttribute("role", "listbox");
-  menu.setAttribute("aria-label", "LaTeX completions");
+  menu.setAttribute("aria-label", m(msg("LaTeX completions")));
   menu.hidden = true;
   let active = 0;
   let count = 0;
@@ -38,11 +40,12 @@ export function latexCompletionMenu(
     document.defaultView?.removeEventListener("resize", position);
   };
   const highlight = () => {
-    [...menu.children].forEach((child, index) =>
+    const options = [...menu.querySelectorAll<HTMLElement>('[role="option"]')];
+    options.forEach((child, index) =>
       child.setAttribute("aria-selected", String(index === active)),
     );
     owner.setAttribute("aria-activedescendant", `${menu.id}-${active}`);
-    const option = menu.children[active] as HTMLElement | undefined;
+    const option = options[active];
     if (!option) return;
     if (option.offsetTop < menu.scrollTop) menu.scrollTop = option.offsetTop;
     else if (option.offsetTop + option.offsetHeight > menu.scrollTop + menu.clientHeight)
@@ -69,6 +72,14 @@ export function latexCompletionMenu(
           return option;
         }),
       );
+      const note = choices.find((choice) => choice.note)?.note;
+      if (note) {
+        const footer = document.createElement("div");
+        footer.className = "scient-latex-command-completion-note";
+        footer.setAttribute("role", "note");
+        footer.textContent = note;
+        menu.append(footer);
+      }
       if (!menu.isConnected) document.body.append(menu);
       menu.hidden = false;
       owner.setAttribute("aria-controls", menu.id);

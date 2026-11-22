@@ -1,12 +1,3 @@
-// SCIENT-FORK:START — extracted queue image membership and recovery stay in their owner.
-import * as ExtractedImages from "./scient/threadQueue/extractedImageSelection";
-import {
-  ExtractedDraftIntent,
-  normalizeExtractedDraftIntent,
-  transferredExtractedDraftIntent,
-} from "./scient/threadQueue/extractedDraftIntent";
-export { ExtractedDraftIntent } from "./scient/threadQueue/extractedDraftIntent";
-// SCIENT-FORK:END
 import {
   composerFileAttachmentMimeType,
   composerImageDedupKey,
@@ -270,10 +261,8 @@ export const PersistedTerminalContextDraft = Schema.Struct({
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
 const PersistedComposerThreadDraftState = Schema.Struct({
-  extractedIntent: Schema.optionalKey(ExtractedDraftIntent),
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
-  ...ExtractedImages.extractedImagePersistenceFields,
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
   previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
@@ -355,6 +344,7 @@ const PersistedDraftThreadState = Schema.Struct({
   checkoutPullRequest: Schema.optionalKey(
     Schema.Struct({ url: Schema.String, branch: Schema.String }),
   ),
+  worktreeRepositories: Schema.optionalKey(Schema.Array(Schema.String)),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -397,11 +387,7 @@ export type ComposerContextInsertionHandler = (
 ) => boolean;
 const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler>();
 
-export interface ComposerThreadDraftState extends ExtractedImages.ExtractedImageRecoveryState {
-  extractedIntent?: ExtractedDraftIntent;
-  /** Context editing for a queue-owned hidden draft; not project/server authority.
-   * Its queue journal owns persistence, not the new-project draft registry. */
-  contextThreadId?: ThreadId;
+export interface ComposerThreadDraftState {
   prompt: string;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
@@ -457,6 +443,11 @@ export interface DraftSessionState {
   startFromOrigin: boolean;
   /** Linked to the thread when the draft is sent on this branch. */
   checkoutPullRequest?: DraftCheckoutPullRequest;
+  /**
+   * Tracked repositories a new worktree thread gets a worktree for, by tracked path. Absent
+   * until the user chooses, which leaves the choice to the server's default.
+   */
+  worktreeRepositories?: ReadonlyArray<string>;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -566,6 +557,7 @@ interface ComposerDraftStoreState {
       environmentSelection?: "auto" | "manual";
       loadBalancedEnvironmentId?: EnvironmentId | null;
       checkoutPullRequest?: DraftCheckoutPullRequest | null;
+      worktreeRepositories?: ReadonlyArray<string> | null;
     },
   ) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
@@ -620,7 +612,10 @@ interface ComposerDraftStoreState {
   addImages: (
     threadRef: ComposerThreadTarget,
     images: ComposerImageAttachment[],
-    options?: { allowDuplicates?: boolean },
+    options?: {
+      allowDuplicates?: boolean;
+      onCapacityExceeded?: (image: ComposerImageAttachment) => void;
+    },
   ) => string[];
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
@@ -703,6 +698,12 @@ interface ComposerDraftStoreState {
   syncPersistedAttachments: (
     threadRef: ComposerThreadTarget,
     attachments: PersistedComposerImageAttachment[],
+  ) => Promise<void>;
+  /** Saves records for the supplied images that the draft still owns after serialization. */
+  appendPersistedAttachments: (
+    threadRef: ComposerThreadTarget,
+    images: ReadonlyArray<ComposerImageAttachment>,
+    attachments: ReadonlyArray<PersistedComposerImageAttachment>,
   ) => Promise<void>;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
   /** Clears text and attachments, preserving terminal/element contexts, preview annotations, and review comments. */
@@ -873,9 +874,6 @@ function composerDraftContent({
   modelSelectionExplicit: _modelSelectionExplicit,
   runtimeMode: _runtimeMode,
   interactionMode: _interactionMode,
-  // SCIENT-FORK:START — hidden draft ownership stays at its original target.
-  contextThreadId: _contextThreadId,
-  // SCIENT-FORK:END
   ...content
 }: ComposerThreadDraftState) {
   return content;
@@ -966,7 +964,6 @@ function normalizeTerminalContextsForThread(
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
-    draft.extractedIntent === undefined &&
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
@@ -1589,6 +1586,11 @@ export function queuedRunEditDraftId(threadRef: ScopedThreadRef, runId: string):
   );
 }
 
+// SCIENT-FORK: voice dictation delivers into a queued-message edit that is still open.
+export function isQueuedRunEditDraftId(draftId: string): boolean {
+  return draftId.startsWith(QUEUED_RUN_EDIT_DRAFT_PREFIX);
+}
+
 function queuedRunEditThreadId(draftId: string): ThreadId | null {
   if (!draftId.startsWith(QUEUED_RUN_EDIT_DRAFT_PREFIX)) return null;
   const rest = draftId.slice(QUEUED_RUN_EDIT_DRAFT_PREFIX.length);
@@ -1608,8 +1610,6 @@ function resolveComposerThreadId(
   }
   return (
     state.draftThreadsByThreadKey[normalizedTarget]?.threadId ??
-    // SCIENT-FORK: a Scient queue edit session's hidden draft names its thread.
-    state.draftsByThreadKey[normalizedTarget]?.contextThreadId ??
     queuedRunEditThreadId(normalizedTarget)
   );
 }
@@ -1623,6 +1623,27 @@ function getComposerDraftState(
     return null;
   }
   return state.draftsByThreadKey[threadKey] ?? null;
+}
+
+/** Where a draft lives now: its thread once promoted, or null once it was discarded. */
+export function resolveLiveComposerDraftTarget(
+  target: ComposerThreadTarget,
+): ComposerThreadTarget | null {
+  if (typeof target !== "string") return target;
+  const state = composerDraftStore.getState();
+  const promoted = state.promotedDraftRedirects[target];
+  if (promoted) return promoted;
+  return state.draftThreadsByThreadKey[target] || state.draftsByThreadKey[target] ? target : null;
+}
+
+/** The stored prompt for a target, empty when it has no draft, or null when the target is gone. */
+export function readComposerDraftPrompt(target: ComposerThreadTarget): string | null {
+  const live = resolveLiveComposerDraftTarget(target);
+  if (live === null) return null;
+  const state = composerDraftStore.getState();
+  const threadKey = resolveComposerDraftKey(state, live);
+  if (!threadKey) return null;
+  return state.draftsByThreadKey[threadKey]?.prompt ?? "";
 }
 
 function draftThreadHasOpenPreview(draftThread: DraftThreadState | undefined): boolean {
@@ -1716,8 +1737,20 @@ function createDraftThreadState(
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
     ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+    ...(!projectChanged && existingThread?.worktreeRepositories !== undefined
+      ? { worktreeRepositories: existingThread.worktreeRepositories }
+      : {}),
     promotedTo: null,
   };
+}
+
+function worktreeRepositoriesEqual(
+  left: ReadonlyArray<string> | undefined,
+  right: ReadonlyArray<string> | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined || left.length !== right.length) return false;
+  return left.every((path, index) => path === right[index]);
 }
 
 /** An explicit value wins; otherwise a checkout's pull request stays with its project. */
@@ -1768,6 +1801,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
     checkoutPullRequestsEqual(left.checkoutPullRequest, right.checkoutPullRequest) &&
+    worktreeRepositoriesEqual(left.worktreeRepositories, right.worktreeRepositories) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1941,6 +1975,13 @@ function normalizePersistedDraftThreads(
             ? { loadBalancedEnvironmentId: null }
             : {}),
         ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+        ...(Array.isArray(candidateDraftThread.worktreeRepositories)
+          ? {
+              worktreeRepositories: candidateDraftThread.worktreeRepositories.filter(
+                (path): path is string => typeof path === "string",
+              ),
+            }
+          : {}),
         promotedTo,
       };
     }
@@ -2059,11 +2100,6 @@ function normalizePersistedDraftsByThreadId(
       continue;
     }
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
-    const extractedIntent =
-      "extractedIntent" in draftValue
-        ? normalizeExtractedDraftIntent(draftCandidate.extractedIntent)
-        : undefined;
-    const imageSelection = ExtractedImages.normalizeExtractedImageSelection(draftValue);
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
       ? draftCandidate.attachments.flatMap((entry) => {
@@ -2199,7 +2235,6 @@ function normalizePersistedDraftsByThreadId(
     const hasModelData =
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
-      extractedIntent === undefined &&
       promptCandidate.length === 0 &&
       attachments.length === 0 &&
       files.length === 0 &&
@@ -2228,10 +2263,8 @@ function normalizePersistedDraftsByThreadId(
                 : threadKeyOrId;
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
-      ...(extractedIntent ? { extractedIntent } : {}),
       prompt,
       attachments,
-      ...(imageSelection !== undefined ? { imageSelection } : {}),
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
       ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
@@ -2276,7 +2309,6 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
     Object.entries(draftsByThreadKey).flatMap(([threadKey, draft]) => {
       if (
         draftThreadsByThreadKey[threadKey] === undefined ||
-        draft.extractedIntent !== undefined ||
         draft.modelSelectionExplicit === true ||
         persistedComposerDraftHasUserContent(draft)
       ) {
@@ -2319,7 +2351,6 @@ export function partializeComposerDraftStoreState(
         ([threadKey, draftThread]) =>
           mappedDraftKeys.has(threadKey) ||
           isDraftThreadPromoting(draftThread) ||
-          state.draftsByThreadKey[threadKey]?.extractedIntent !== undefined ||
           composerDraftHasUserContent(state.draftsByThreadKey[threadKey]) ||
           draftThreadHasOpenPreview(draftThread),
       )
@@ -2332,13 +2363,15 @@ export function partializeComposerDraftStoreState(
     if (typeof threadKey !== "string" || threadKey.length === 0) {
       continue;
     }
+    // SCIENT-FORK: a queued-message edit lives only in its window, as its edit session does;
+    // windows share stored drafts, so storing it would let one window overwrite another's edit.
+    if (threadKey.startsWith(QUEUED_RUN_EDIT_DRAFT_PREFIX)) continue;
     if (state.draftThreadsByThreadKey[threadKey] !== undefined && !keptSessionKeys.has(threadKey)) {
       continue;
     }
     const hasModelData =
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
-      draft.extractedIntent === undefined &&
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
@@ -2355,10 +2388,8 @@ export function partializeComposerDraftStoreState(
       continue;
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
-      ...(draft.extractedIntent ? { extractedIntent: draft.extractedIntent } : {}),
       prompt: draft.prompt,
       attachments: draft.persistedAttachments,
-      ...ExtractedImages.persistedExtractedImageSelection(draft),
       ...(draft.files.length > 0
         ? {
             files: draft.files.map((file) => ({
@@ -2432,7 +2463,11 @@ export function partializeComposerDraftStoreState(
     if (!keptSessionKeys.has(threadKey)) {
       continue;
     }
-    persistedDraftThreadsByThreadKey[threadKey] = draftThread;
+    const { worktreeRepositories, ...persistedDraftThread } = draftThread;
+    persistedDraftThreadsByThreadKey[threadKey] = {
+      ...persistedDraftThread,
+      ...(worktreeRepositories ? { worktreeRepositories: [...worktreeRepositories] } : {}),
+    };
   }
   return {
     draftsByThreadKey: persistedDraftsByThreadKey,
@@ -2542,7 +2577,6 @@ function readPersistedAttachmentIdsFromStorage(threadKey: string): string[] {
 
 function verifyPersistedAttachments(
   threadKey: string,
-  attachments: PersistedComposerImageAttachment[],
   set: (
     partial:
       | ComposerDraftStoreState
@@ -2566,7 +2600,7 @@ function verifyPersistedAttachments(
       return state;
     }
     const imageIdSet = new Set(current.images.map((image) => image.id));
-    const persistedAttachments = attachments.filter(
+    const persistedAttachments = current.persistedAttachments.filter(
       (attachment) => imageIdSet.has(attachment.id) && persistedIdSet.has(attachment.id),
     );
     const nonPersistedImageIds: string[] = [];
@@ -2670,7 +2704,6 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
-    ...(persistedDraft.extractedIntent ? { extractedIntent: persistedDraft.extractedIntent } : {}),
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
@@ -2678,17 +2711,7 @@ function toHydratedThreadDraft(
       ...(persistedDraft.environmentContexts ?? []).map(environmentContextReference),
       ...files.map(fileContextReference),
     ]),
-    images: hydrateImagesFromPersisted(
-      ExtractedImages.selectedExtractedImageAttachments(
-        persistedDraft.attachments,
-        persistedDraft.extractedIntent,
-        persistedDraft.imageSelection,
-      ),
-    ),
-    ...ExtractedImages.hydratedExtractedImageSelection(
-      persistedDraft.extractedIntent,
-      persistedDraft.imageSelection,
-    ),
+    images: hydrateImagesFromPersisted(persistedDraft.attachments),
     files,
     nonPersistedImageIds: [],
     persistedAttachments: [...persistedDraft.attachments],
@@ -2744,6 +2767,9 @@ function toHydratedDraftThreadState(
       : {}),
     ...(persistedDraftThread.checkoutPullRequest
       ? { checkoutPullRequest: persistedDraftThread.checkoutPullRequest }
+      : {}),
+    ...(persistedDraftThread.worktreeRepositories
+      ? { worktreeRepositories: persistedDraftThread.worktreeRepositories }
       : {}),
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
@@ -3009,6 +3035,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.checkoutPullRequest,
               projectChanged,
             );
+            const worktreeRepositories =
+              options.worktreeRepositories === undefined
+                ? projectChanged
+                  ? undefined
+                  : existing.worktreeRepositories
+                : (options.worktreeRepositories ?? undefined);
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
@@ -3033,6 +3065,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
               ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+              ...(worktreeRepositories ? { worktreeRepositories } : {}),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -3051,6 +3084,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               checkoutPullRequestsEqual(
                 nextDraftThread.checkoutPullRequest,
                 existing.checkoutPullRequest,
+              ) &&
+              worktreeRepositoriesEqual(
+                nextDraftThread.worktreeRepositories,
+                existing.worktreeRepositories,
               ) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
@@ -3572,6 +3609,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return [];
           }
           let acceptedIds: string[] = [];
+          const capacityRejections: ComposerImageAttachment[] = [];
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
             const existingIds = new Set(existing.images.map((image) => image.id));
@@ -3596,6 +3634,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 existing.images.length + existing.files.length + dedupedIncoming.length >=
                 PROVIDER_SEND_TURN_MAX_ATTACHMENTS
               ) {
+                capacityRejections.push(image);
                 if (!acceptedPreviewUrls.has(image.previewUrl)) {
                   revokeObjectPreviewUrl(image.previewUrl);
                 }
@@ -3620,6 +3659,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               },
             };
           });
+          capacityRejections.forEach((image) => options?.onCapacityExceeded?.(image));
           return acceptedIds;
         },
         removeImage: (threadRef, imageId) => {
@@ -3647,10 +3687,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 toKindScopedComposerContextId("image", imageId),
               ).prompt,
               images: current.images.filter((image) => image.id !== imageId),
-              ...ExtractedImages.removedExtractedImageSelection(
-                current.pendingImageSelection,
-                imageId,
-              ),
               nonPersistedImageIds: current.nonPersistedImageIds.filter((id) => id !== imageId),
               persistedAttachments: current.persistedAttachments.filter(
                 (attachment) => attachment.id !== imageId,
@@ -4083,10 +4119,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ).prompt,
               previewAnnotations,
               images: current.images.filter((image) => image.id !== annotationId),
-              ...ExtractedImages.removedExtractedImageSelection(
-                current.pendingImageSelection,
-                annotationId,
-              ),
               persistedAttachments: current.persistedAttachments.filter(
                 (image) => image.id !== annotationId,
               ),
@@ -4381,7 +4413,24 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
           await Promise.resolve();
-          verifyPersistedAttachments(threadKey, attachments, set);
+          verifyPersistedAttachments(threadKey, set);
+        },
+        appendPersistedAttachments: async (threadRef, images, attachments) => {
+          const current = get().getComposerDraft(threadRef);
+          if (!current || attachments.length === 0) return;
+          const ownedImages = new Set(current.images);
+          const ownedIds = new Set(
+            images.filter((image) => ownedImages.has(image)).map(({ id }) => id),
+          );
+          const ownedRecords = attachments.filter(({ id }) => ownedIds.has(id));
+          if (ownedRecords.length === 0) return;
+          const persistedById = new Map(
+            current.persistedAttachments.map((record) => [record.id, record]),
+          );
+          for (const record of ownedRecords) {
+            if (!persistedById.has(record.id)) persistedById.set(record.id, record);
+          }
+          await get().syncPersistedAttachments(threadRef, [...persistedById.values()]);
         },
         clearComposerContent: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
@@ -4393,15 +4442,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
-            // SCIENT-FORK:START — clearing content retires its extracted intent.
-            const { extractedIntent: _extractedIntent, ...ordinary } = current;
-            // SCIENT-FORK:END
             const nextDraft: ComposerThreadDraftState = {
-              ...ordinary,
+              ...current,
               ...composerDraftContent(createEmptyThreadDraft()),
-              // SCIENT-FORK:START — clearing retires pending extracted image membership.
-              pendingImageSelection: undefined,
-              // SCIENT-FORK:END
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -4435,7 +4478,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...current.previewAnnotations.map(previewAnnotationContextReference),
               ]),
               images: [],
-              pendingImageSelection: undefined,
               files: [],
               nonPersistedImageIds: [],
               persistedAttachments: [],
@@ -4464,13 +4506,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!source || composerDraftHasUserContent(destination)) {
               return state;
             }
-            // SCIENT-FORK:START — move only recovered images and compatible extracted intents.
-            ExtractedImages.assertExtractedImagesRecovered([source, destination]);
-            const transferredIntent = transferredExtractedDraftIntent(
-              source.extractedIntent,
-              destination.extractedIntent,
-            );
-            // SCIENT-FORK:END
             const destinationEnvironmentId =
               typeof to === "string"
                 ? (state.draftThreadsByThreadKey[toKey]?.environmentId ??
@@ -4478,24 +4513,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   null)
                 : to.environmentId;
             const nextDestination = clearStaleFileUploadMetadata(
-              {
-                ...destination,
-                ...composerDraftContent(source),
-                // SCIENT-FORK:START — retain the extracted intent at its destination.
-                ...transferredIntent,
-                // SCIENT-FORK:END
-              },
+              { ...destination, ...composerDraftContent(source) },
               destinationEnvironmentId,
             );
-            // SCIENT-FORK:START — a complete move retires the source intent without changing its context owner.
-            const { extractedIntent: _extractedIntent, ...ordinarySource } = source;
-            // SCIENT-FORK:END
             // Moved images still use these blob URLs at the destination; do not revoke them.
             const nextSource: ComposerThreadDraftState = {
-              // SCIENT-FORK:START — the moved intent belongs only to the destination.
-              ...ordinarySource,
-              pendingImageSelection: undefined,
-              // SCIENT-FORK:END
+              ...source,
               ...composerDraftContent(createEmptyThreadDraft()),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };

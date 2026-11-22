@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AccountId,
   ProjectId,
@@ -258,6 +259,8 @@ const signInWith = (
     Effect.provideService(AccountsService, fake.service),
     Effect.provideService(AgentInvocationContext, {} as never),
     Effect.provideService(PreviewAutomationBroker, {} as never),
+    // A sign-in that works releases waiting papers, which reads the project's queue files.
+    Effect.provide(NodeServices.layer),
   );
 };
 

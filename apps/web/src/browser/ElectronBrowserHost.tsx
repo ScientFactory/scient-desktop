@@ -22,6 +22,7 @@ import {
 } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
+import { readPreviewTunnelUrl } from "~/state/previewTunnel";
 import { useEnvironmentScope } from "~/state/session";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
@@ -144,6 +145,11 @@ export function startElectronBrowserHost(): () => void {
     preview.onSignInBlocked(signInBlockedInPreview),
     preview.onStateChange(noteTabState),
     // SCIENT-FORK:END
+    preview.onTunnelAccessRequest(({ requestId, environmentId }) => {
+      void readPreviewTunnelUrl(environmentId).then((url) =>
+        preview.resolveTunnelAccess(requestId, url),
+      );
+    }),
   ];
   return () => {
     for (const dispose of disposers) dispose();

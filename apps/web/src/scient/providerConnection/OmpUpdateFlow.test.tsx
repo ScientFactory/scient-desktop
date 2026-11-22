@@ -6,9 +6,13 @@ import {
 } from "@t3tools/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ProviderSettingsLifecycleAction } from "./ProviderSettingsLifecycleAction";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("omp"),

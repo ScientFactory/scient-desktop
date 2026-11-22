@@ -7,6 +7,7 @@ import {
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
+import { msg } from "gt-react";
 import { createContext, use, useId, useSyncExternalStore, type ReactElement } from "react";
 
 import { SelectionCitationToolbar } from "~/components/chat/AssistantSelectionToolbar";
@@ -14,6 +15,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { captureAssistantTextSelection } from "~/lib/assistantTextSelection";
 import { randomUUID } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -194,8 +196,8 @@ export function OfficeQuoteActions(props: {
         if (!accepted)
           toastManager.add({
             type: "warning",
-            title: "Could not add the citation",
-            description: "The chat input is not ready. Your selection is unchanged.",
+            title: m(msg("Could not add the citation")),
+            description: m(msg("The chat input is not ready. Your selection is unchanged.")),
           });
         return accepted;
       }}

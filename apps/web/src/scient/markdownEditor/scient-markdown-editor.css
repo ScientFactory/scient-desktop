@@ -120,9 +120,15 @@
 
 .scient-markdown-slash-menu {
   inset-block-start: 3rem;
-  inset-inline-start: max(1rem, calc((100% - 56rem) / 2 + 1.5rem));
+  --scient-markdown-menu-inset: max(1rem, calc((100% - 56rem) / 2 + 1.5rem));
+  inset-inline-start: var(--scient-markdown-menu-inset);
   max-height: min(22rem, 55vh);
   overflow-y: auto;
+}
+
+.scient-markdown-citation-menu {
+  min-width: 0;
+  max-width: max(0px, calc(100% - var(--scient-markdown-menu-inset) - 1rem));
 }
 
 .scient-markdown-document-host {
@@ -1330,4 +1336,55 @@ textarea.scient-markdown-math-source {
 ::highlight(scient-file-citation) {
   background: color-mix(in srgb, var(--primary) 30%, transparent);
   color: inherit;
+}
+
+/* A linked result: the value reads as text, with one small mark when it needs the reader. */
+.scient-markdown-document [data-scient-result-value] {
+  cursor: pointer;
+  border-radius: 3px;
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+.scient-markdown-document [data-scient-result-value].ProseMirror-selectednode {
+  outline: none;
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+}
+.scient-markdown-document [data-scient-result-value][data-result-state]::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-start: 3px;
+  border-radius: 999px;
+  vertical-align: super;
+  background: var(--warning);
+}
+.scient-markdown-document [data-scient-result-value][data-result-state="newer"]::after {
+  background: var(--info);
+}
+.scient-markdown-document [data-scient-result-value][data-result-state="unrecorded"]::after {
+  display: none;
+}
+/* Figures and tables show their state as an outline: a figure on its image, a table on the
+   wrapper that scrolls it, which would clip an outline drawn on the table. */
+.scient-markdown-document .scient-result[data-result-state]:not([data-scient-result-value]) img,
+.scient-markdown-document
+  .scient-result[data-result-state]:not([data-scient-result-value]):has(> table) {
+  outline: 1px dashed var(--warning);
+  outline-offset: 3px;
+}
+.scient-markdown-document
+  .scient-result[data-result-state="newer"]:not([data-scient-result-value])
+  img,
+.scient-markdown-document
+  .scient-result[data-result-state="newer"]:not([data-scient-result-value]):has(> table) {
+  outline-color: var(--info);
+}
+.scient-markdown-document
+  .scient-result[data-result-state="unrecorded"]:not([data-scient-result-value])
+  img,
+.scient-markdown-document
+  .scient-result[data-result-state="unrecorded"]:not([data-scient-result-value]):has(> table) {
+  outline: none;
 }

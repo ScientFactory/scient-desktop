@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-14T15:58:47Z",
+  "updatedAt": "2026-11-20T23:50:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -77,6 +77,7 @@
     {
       "driver": "cursor",
       "t3CodeRange": ">=0.0.42",
+      "versionPattern": "^(\\d{4}\\.\\d{2}\\.\\d{2})-[a-f0-9]+$",
       "recommendedRange": ">=2026.05.09",
       "ranges": [
         {
@@ -107,6 +108,7 @@
     {
       "driver": "opencode",
       "t3CodeRange": ">=0.0.42 <0.6.18",
+      "versionPattern": "^(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
       "recommendedRange": ">=1.14.19 <2.0.0",
       "recommendedVersion": "1.14.19",
       "ranges": [
@@ -127,6 +129,7 @@
     {
       "driver": "opencode",
       "t3CodeRange": ">=0.6.18",
+      "versionPattern": "^(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
       "recommendedRange": ">=2.0.18",
       "ranges": [
         {
@@ -150,6 +153,7 @@
     {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42 <0.6.18",
+      "versionPattern": "^(?:agy_acp_server_)?(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
       "recommendedRange": "=1.1.1",
       "ranges": [
         {
@@ -161,6 +165,7 @@
     {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42",
+      "versionPattern": "^(?:agy_acp_server_)?(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
       "recommendedRange": ">=1.5.1 <2",
       "ranges": [
         { "range": ">=1.5.1 <2", "status": "supported" },
@@ -178,7 +183,7 @@
     },
     {
       "driver": "pi",
-      "t3CodeRange": ">=0.0.42",
+      "t3CodeRange": ">=0.0.42 <0.6.32",
       "recommendedRange": ">=0.84.4",
       "ranges": [
         {
@@ -188,6 +193,25 @@
         {
           "range": "<0.84.4",
           "status": "unsupported"
+        }
+      ]
+    },
+    {
+      "driver": "pi",
+      "t3CodeRange": ">=0.6.32",
+      "recommendedRange": ">=0.84.4",
+      "ranges": [
+        {
+          "range": ">=0.84.4",
+          "status": "supported"
+        },
+        {
+          "range": ">=0.84.3 <0.84.4",
+          "status": "unsupported"
+        },
+        {
+          "range": "<0.84.3",
+          "status": "broken"
         }
       ]
     },
@@ -212,7 +236,7 @@
     },
     {
       "driver": "scient",
-      "t3CodeRange": ">=0.6.21",
+      "t3CodeRange": ">=0.6.21 <0.6.32",
       "recommendedRange": ">=0.1.0 <1.0.0",
       "ranges": [
         {
@@ -230,8 +254,28 @@
       ]
     },
     {
+      "driver": "scient",
+      "t3CodeRange": ">=0.6.32",
+      "recommendedRange": ">=0.1.0 <2.0.0",
+      "ranges": [
+        {
+          "range": ">=0.1.0 <2.0.0",
+          "status": "supported"
+        },
+        {
+          "range": ">=2.0.0",
+          "status": "unsupported"
+        },
+        {
+          "range": "<0.1.0",
+          "status": "unsupported"
+        }
+      ]
+    },
+    {
       "driver": "muse",
       "t3CodeRange": ">=0.0.46",
+      "versionPattern": "^(\\d+\\.\\d+\\.\\d+)-R\\d+(?:\\.\\d+)?$",
       "recommendedRange": ">=1.4.2",
       "ranges": [
         {
@@ -313,6 +357,64 @@
         "chat": "claude-opus-5-5"
       },
       "profiles": {
+        "fable-5-2": {
+          "capabilities": {
+            "optionDescriptors": [
+              {
+                "id": "effort",
+                "label": "Reasoning",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "high",
+                    "label": "High"
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultracode",
+                    "label": "Ultracode",
+                    "description": "xhigh effort plus multi-agent workflow orchestration"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
+                ],
+                "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              }
+            ]
+          },
+          "adapter": {
+            "claudeCode": {
+              "effortMap": {
+                "ultracode": "xhigh",
+                "ultrathink": null
+              },
+              "fixedContextWindowTokens": 1000000
+            }
+          }
+        },
         "fable-5": {
           "capabilities": {
             "optionDescriptors": [
@@ -970,7 +1072,7 @@
           "name": "Claude Fable 5.2",
           "aliases": ["fable", "fable-5.2", "claude-fable-5.2"],
           "status": "current",
-          "profile": "fable-5",
+          "profile": "fable-5-2",
           "adapter": { "claudeCode": { "minVersion": "2.1.321" } }
         },
         {

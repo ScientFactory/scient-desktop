@@ -128,12 +128,11 @@ function proseText(node: Node): string {
 
 /**
  * Source code stays left-to-right. A plain-text copy box keeps the direction
- * it was displayed in, which its wrapper records.
+ * it was displayed in, which the chat code block's `dir` (or a copy wrapper) records.
  */
 function codeBlockDirection(pre: Element): FixedContentDirection {
-  const declared = pre
-    .closest("[data-copy-text-direction]")
-    ?.getAttribute("data-copy-text-direction");
+  const box = pre.closest("[data-copy-text-direction], .chat-markdown-codeblock");
+  const declared = box?.getAttribute("data-copy-text-direction") ?? box?.getAttribute("dir");
   if (declared === "rtl") return "rtl";
   if (declared === "auto") return firstStrongDirection(pre.textContent ?? "") ?? "ltr";
   return "ltr";

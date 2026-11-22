@@ -1,5 +1,8 @@
 import type { ProviderConnectionOperation } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useSyncExternalStore } from "react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { openProviderSignInPageByHand } from "./providerSignInFlow";
 import { type ProviderSignInOpening, useProviderSignInOpening } from "./providerSignInOpenings";
@@ -76,6 +79,7 @@ export function providerSignInPageState(
 export function browserSignInWaitingView(
   browser: ReturnType<typeof useProviderSignInBrowser>,
   operation: ProviderConnectionOperation | null,
+  resolve: MessageResolver = m,
 ) {
   const page = providerSignInPageState(browser.opening, browser.startedHere);
   return {
@@ -86,12 +90,12 @@ export function browserSignInWaitingView(
         operation.status === "waiting_for_device_code") &&
       (page.notOpenedHere || page.failure !== null),
     body: page.blocked
-      ? "Open the sign-in page to continue."
+      ? resolve(msg("Open the sign-in page to continue."))
       : (page.failure ??
         (page.opened
-          ? "Complete sign-in in your browser."
+          ? resolve(msg("Complete sign-in in your browser."))
           : page.notOpenedHere
-            ? "Open the sign-in page to continue."
-            : "Opening the sign-in page in your browser…")),
+            ? resolve(msg("Open the sign-in page to continue."))
+            : resolve(msg("Opening the sign-in page in your browser…")))),
   };
 }

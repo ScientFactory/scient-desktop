@@ -42,12 +42,6 @@ const ROOM_WAITING_LIMIT = 50;
 export const RoomRole = Schema.Literals(["watch", "discuss", "agent"]);
 export type RoomRole = typeof RoomRole.Type;
 
-export const ROOM_ROLE_LABEL: Record<RoomRole, string> = {
-  watch: "Can view",
-  discuss: "Can chat",
-  agent: "Can use agent",
-};
-
 export const RoomAccessDuration = Schema.Literals(["day", "week", "month"]);
 export type RoomAccessDuration = typeof RoomAccessDuration.Type;
 export const ROOM_ACCESS_DURATION_MS: Record<RoomAccessDuration, number> = {

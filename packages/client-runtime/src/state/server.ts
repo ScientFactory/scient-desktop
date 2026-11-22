@@ -1,10 +1,21 @@
 import {
+  errorI18nMessage,
+  type MarkedText,
+  markedTextEnglish,
+  resolveMarkedText,
+  thrownErrorMessage,
+  withI18nMessage,
+} from "../errors/translatable.ts";
+import {
+  type DesktopUpdateChannel,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerFeatureFlags,
   type ServerLifecycleWelcomePayload,
   type ServerLifecycleStreamReadyEvent,
+  ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   shouldRecommendDatabaseCompaction,
@@ -34,7 +45,6 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
-  scheduleAtomCommandEffect,
 } from "./runtime.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -61,6 +71,8 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type { ServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -80,6 +92,8 @@ export type ServerUpdateState =
       readonly fromVersion: string;
       readonly targetVersion: string;
       readonly message: string;
+      /** `message` as marked text, so it follows the UI language; absent for plain error text. */
+      readonly i18nMessage?: MarkedText;
     };
 
 export interface ServerUpdateTarget {
@@ -105,7 +119,16 @@ export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpd
   },
 ) {
   override get message(): string {
-    return `Could not confirm that the server resumed on Scient server ${this.targetVersion}. Reconnect to check the update outcome.`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg(
+        "Could not confirm that the server resumed on Scient server {version}. Reconnect to check the update outcome.",
+        { version: this.targetVersion },
+      ),
+    ];
   }
 }
 
@@ -116,9 +139,21 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedError<Serv
   },
 ) {
   override get message(): string {
-    return `The Scient server ${this.targetVersion} update ended before the server accepted the restart.`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg("The Scient server {version} update ended before the server accepted the restart.", {
+        version: this.targetVersion,
+      }),
+    ];
   }
 }
+
+const DESKTOP_RESUMED_WITHOUT_UPDATE = msg(
+  "The desktop app resumed without installing the prepared update.",
+);
 
 export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTerminalError>()(
   "ServerUpdateTerminalError",
@@ -129,7 +164,27 @@ export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTe
   },
 ) {
   override get message(): string {
-    return this.reason ?? `The Scient server ${this.targetVersion} update ${this.status}.`;
+    return this.reason ?? markedTextEnglish(this.statusText);
+  }
+
+  get i18nMessage(): MarkedText | undefined {
+    return this.reason === undefined
+      ? this.statusText
+      : this.reason === DESKTOP_RESUMED_WITHOUT_UPDATE
+        ? [DESKTOP_RESUMED_WITHOUT_UPDATE]
+        : undefined;
+  }
+
+  private get statusText(): MarkedText {
+    const version = this.targetVersion;
+    switch (this.status) {
+      case "committed":
+        return [msg("The Scient server {version} update committed.", { version })];
+      case "rolled-back":
+        return [msg("The Scient server {version} update rolled-back.", { version })];
+      case "failed":
+        return [msg("The Scient server {version} update failed.", { version })];
+    }
   }
 }
 
@@ -283,7 +338,7 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   return yield* new ServerUpdateTerminalError({
     targetVersion,
     status: "failed",
-    reason: "The desktop app resumed without installing the prepared update.",
+    reason: DESKTOP_RESUMED_WITHOUT_UPDATE,
   });
 });
 
@@ -317,8 +372,54 @@ export function serverUpdateStateForServerVersion(
     : IDLE_SERVER_UPDATE_STATE;
 }
 
-export function serverUpdateFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Server update failed.";
+function serverUpdateFailureMessage(error: unknown, resolve: MFunctionType = mFallback): string {
+  return error instanceof Error
+    ? (thrownErrorMessage(error, resolve) ?? error.message)
+    : resolve(msg("Server update failed."));
+}
+
+/** The failed state's `message` and, when the text is ours, its marked text. */
+export function serverUpdateFailure(error: unknown): {
+  readonly message: string;
+  readonly i18nMessage?: MarkedText;
+} {
+  const i18nMessage =
+    error instanceof Error ? errorI18nMessage(error) : [msg("Server update failed.")];
+  return i18nMessage === undefined
+    ? { message: serverUpdateFailureMessage(error) }
+    : { message: serverUpdateFailureMessage(error), i18nMessage };
+}
+
+/** Marked text for a desktop app whose build track differs from its saved update track. */
+export function desktopTrackMismatchText(mismatch: {
+  readonly buildChannel: DesktopUpdateChannel;
+  readonly savedChannel: DesktopUpdateChannel;
+}): string {
+  return msg(
+    "This {build, select, nightly {Nightly} other {Stable}} build can't update from the {saved, select, nightly {Nightly} other {Stable}} track on its own. Switch the update track back to {build, select, nightly {Nightly} other {Stable}}, or use Review beside Update track to retry the switch to {saved, select, nightly {Nightly} other {Stable}}.",
+    { build: mismatch.buildChannel, saved: mismatch.savedChannel },
+  );
+}
+
+const isServerSelfUpdateError = Schema.is(ServerSelfUpdateError);
+
+/** Gives a host's track mismatch marked text; older hosts send only the English `reason`. */
+export function localizeServerSelfUpdateError<E>(error: E): E {
+  if (!isServerSelfUpdateError(error) || error.trackMismatch === undefined) return error;
+  return withI18nMessage(
+    error,
+    msg("Server update failed:"),
+    desktopTrackMismatchText(error.trackMismatch),
+  );
+}
+
+export function serverUpdateFailureText(
+  state: Extract<ServerUpdateState, { status: "failed" }>,
+  resolve: MFunctionType = mFallback,
+): string {
+  return state.i18nMessage === undefined
+    ? state.message
+    : resolveMarkedText(state.i18nMessage, resolve);
 }
 
 function isRpcSocketError(error: unknown): boolean {
@@ -730,6 +831,14 @@ function serverWelcomeStateChanges(environmentId: EnvironmentId) {
   );
 }
 
+/** Whether an environment's server turned on a feature flag; unset flags and unloaded configs are off. */
+export function hasFeatureFlag(
+  config: Pick<ServerConfig, "featureFlags"> | null | undefined,
+  flag: keyof ServerFeatureFlags,
+): boolean {
+  return config?.featureFlags?.[flag] === true;
+}
+
 export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
@@ -913,9 +1022,8 @@ export function createServerEnvironmentAtoms<R, E>(
           Effect.andThen(Deferred.succeed(desktopReconnected, undefined)),
           Effect.forkChild,
         );
-        const result = yield* scheduleAtomCommandEffect(
+        const result = yield* configScheduler.schedule(
           atomRegistry,
-          configScheduler,
           configConcurrency,
           target,
           Effect.gen(function* () {
@@ -1065,7 +1173,7 @@ export function createServerEnvironmentAtoms<R, E>(
               targetVersion,
             });
             return updateResult;
-          }),
+          }).pipe(Effect.mapError(localizeServerSelfUpdateError)),
         );
 
         // A track switch's desktop host already on its track's newest build only saved the
@@ -1151,7 +1259,7 @@ export function createServerEnvironmentAtoms<R, E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
-              message: serverUpdateFailureMessage(Cause.squash(exit.cause)),
+              ...serverUpdateFailure(Cause.squash(exit.cause)),
             });
           }),
         ),

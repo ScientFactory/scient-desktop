@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   ACCOUNTS_PROTOCOL,
   AccountSaveInput,
@@ -100,22 +101,22 @@ export function AccountField({
 }
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
-  password: "Password",
-  totp: "2FA key",
-  token: "Key",
-  clientCert: "Client certificate",
-  clientKey: "Client key",
-  caCert: "CA certificate",
+  password: msg("Password"),
+  totp: msg("2FA key"),
+  token: msg("Key", { $context: "an API key, the secret value" }),
+  clientCert: msg("Client certificate"),
+  clientKey: msg("Client key"),
+  caCert: msg("CA certificate"),
 };
 const OPTIONAL_FIELDS = new Set(["totp", "clientCert", "clientKey", "caCert"]);
 
 type ValueSource = AccountSecretSummary["source"]["type"];
 const LINK_LABELS: Readonly<Record<Exclude<ValueSource, "scient">, string>> = {
-  bitwarden: "Bitwarden item",
-  "proton-pass": "Proton Pass item",
-  keychain: "Keychain item",
-  "1password": "1Password item",
-  "custom-model": "Custom models key",
+  bitwarden: msg("Bitwarden item"),
+  "proton-pass": msg("Proton Pass item"),
+  keychain: msg("Keychain item"),
+  "1password": msg("1Password item"),
+  "custom-model": msg("Custom models key"),
 };
 
 function SecretField({
@@ -150,7 +151,10 @@ function SecretField({
   );
   const [candidates, setCandidates] = useState<KeychainCandidatesResult | null>(null);
   const load = useAccountCommand(accountsState.keychainCandidates, environmentId);
-  const label = FIELD_LABELS[field] ?? field;
+  const gt = useGT();
+  const messages = useMessages();
+  const fieldLabel = FIELD_LABELS[field];
+  const label = fieldLabel ? messages(fieldLabel) : field;
   const links: ReadonlyArray<Exclude<ValueSource, "scient">> = [
     ...(snapshot.stores.cli ? (["bitwarden", "proton-pass"] as const) : []),
     ...(snapshot.stores.keychain.available ? (["keychain"] as const) : []),
@@ -184,24 +188,29 @@ function SecretField({
         <Label render={<span />}>
           {label}
           {source !== "scient" ? (
-            <span className="font-normal text-muted-foreground"> · {LINK_LABELS[source]}</span>
+            <span className="font-normal text-muted-foreground">
+              {" "}
+              · {messages(LINK_LABELS[source])}
+            </span>
           ) : null}
         </Label>
         {links.length > 0 ? (
           <Menu>
             <MenuTrigger render={<Button size="xs" variant="ghost-muted" />}>
-              {source === "scient" ? "Use existing" : "Change"}
+              {source === "scient" ? gt("Use existing") : gt("Change")}
               <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
             </MenuTrigger>
             <MenuPopup align="end">
               {source !== "scient" ? (
-                <MenuItem onClick={() => changed("scient")}>Enter a value</MenuItem>
+                <MenuItem onClick={() => changed("scient")}>
+                  <T>Enter a value</T>
+                </MenuItem>
               ) : null}
               {links
                 .filter((link) => link !== source)
                 .map((link) => (
                   <MenuItem key={link} onClick={() => changed(link)}>
-                    {LINK_LABELS[link]}
+                    {messages(LINK_LABELS[link])}
                   </MenuItem>
                 ))}
             </MenuPopup>
@@ -217,7 +226,9 @@ function SecretField({
           aria-label={label}
           type="password"
           autoComplete="off"
-          placeholder={saved ? "Saved" : OPTIONAL_FIELDS.has(field) ? "Optional" : undefined}
+          placeholder={
+            saved ? gt("Saved") : OPTIONAL_FIELDS.has(field) ? gt("Optional") : undefined
+          }
           onChange={() => {
             onChange(undefined);
           }}
@@ -227,8 +238,8 @@ function SecretField({
           <div className="grid gap-2">
             <Input
               type="search"
-              aria-label="Search keychain"
-              placeholder="Search keychain"
+              aria-label={gt("Search keychain")}
+              placeholder={gt("Search keychain")}
               onChange={(event) => {
                 const query = event.target.value.trim();
                 void load(query ? { query } : {}).then((result) => {
@@ -237,7 +248,7 @@ function SecretField({
               }}
             />
             <NativeSelect
-              aria-label="Keychain item"
+              aria-label={gt("Keychain item")}
               value={String(
                 candidates.candidates.findIndex(
                   (item) => item.service === service && item.account === account,
@@ -253,7 +264,7 @@ function SecretField({
               }}
             >
               <option value="-1" disabled>
-                Choose an item
+                {gt("Choose an item")}
               </option>
               {candidates.candidates.map((item, index) => (
                 <option key={`${item.service}:${item.account}`} value={index}>
@@ -265,8 +276,8 @@ function SecretField({
         ) : (
           <div className="grid grid-cols-2 gap-2">
             <Input
-              aria-label="Keychain service"
-              placeholder="Service"
+              aria-label={gt("Keychain service")}
+              placeholder={gt("Service", { $context: "keychain item service name" })}
               value={service}
               onChange={(event) => {
                 setService(event.target.value);
@@ -274,8 +285,8 @@ function SecretField({
               }}
             />
             <Input
-              aria-label="Keychain account"
-              placeholder="Account"
+              aria-label={gt("Keychain account")}
+              placeholder={gt("Account", { $context: "keychain item account name" })}
               value={account}
               onChange={(event) => {
                 setAccount(event.target.value);
@@ -293,7 +304,7 @@ function SecretField({
         />
       ) : source === "1password" ? (
         <Input
-          aria-label="1Password reference"
+          aria-label={gt("1Password reference")}
           placeholder="op://vault/item/field"
           value={reference}
           onChange={(event) => {
@@ -303,7 +314,7 @@ function SecretField({
         />
       ) : (
         <NativeSelect
-          aria-label="Custom models key"
+          aria-label={gt("Custom models key")}
           value={connection}
           onChange={(event) => {
             setConnection(event.target.value);
@@ -311,7 +322,7 @@ function SecretField({
           }}
         >
           <option value="" disabled>
-            Choose a connection
+            {gt("Choose a connection")}
           </option>
           {snapshot.customModelKeys.map((key) => (
             <option key={key.connectionId} value={key.connectionId}>
@@ -332,8 +343,9 @@ function SitesField({
   onChange: (sites: ReadonlyArray<string>) => void;
 }) {
   const [draft, setDraft] = useState(sites.join(", "));
+  const gt = useGT();
   return (
-    <AccountField label="Site">
+    <AccountField label={gt("Site")}>
       <Input
         value={draft}
         onChange={(event) => {
@@ -358,13 +370,15 @@ function DetailsFields({
   details: AccountDetails;
   onChange: (details: AccountDetails) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <>
       {"sites" in details ? (
         <SitesField sites={details.sites} onChange={(sites) => onChange({ ...details, sites })} />
       ) : null}
       {details.kind === "website" ? (
-        <AccountField label="Username">
+        <AccountField label={gt("Username")}>
           <Input
             value={details.username ?? ""}
             autoComplete="off"
@@ -376,19 +390,19 @@ function DetailsFields({
         <>
           {(
             [
-              ["host", "Host"],
-              ["database", "Database"],
-              ["user", "User"],
+              ["host", msg("Host", { $context: "database server address" })],
+              ["database", msg("Database")],
+              ["user", msg("User", { $context: "database user name" })],
             ] as const
           ).map(([field, label]) => (
-            <AccountField key={field} label={label}>
+            <AccountField key={field} label={messages(label)}>
               <Input
                 value={details[field]}
                 onChange={(event) => onChange({ ...details, [field]: event.target.value })}
               />
             </AccountField>
           ))}
-          <AccountField label="Port">
+          <AccountField label={gt("Port")}>
             <Input
               type="number"
               value={details.port}
@@ -423,13 +437,16 @@ function MoreOptionsFields({
   const profiles = resolveBrowserProfiles(
     useClientSettings((settings) => settings.browserProfiles),
   );
+  const gt = useGT();
   return (
     <>
       {details.kind === "website" ? (
         <details className="grid gap-3">
-          <summary className="cursor-pointer text-sm text-muted-foreground">More options</summary>
+          <summary className="cursor-pointer text-sm text-muted-foreground">
+            <T>More options</T>
+          </summary>
           <div className="grid gap-4 pt-3">
-            <AccountField label="Sign-in address">
+            <AccountField label={gt("Sign-in address")}>
               <Input
                 value={details.loginUrl ?? ""}
                 onChange={(event) => {
@@ -438,10 +455,10 @@ function MoreOptionsFields({
                     event.target.value ? { ...details, loginUrl: event.target.value } : rest,
                   );
                 }}
-                placeholder="Optional"
+                placeholder={gt("Optional")}
               />
             </AccountField>
-            <AccountField label="Browser profile">
+            <AccountField label={gt("Browser profile")}>
               <NativeSelect
                 value={details.profileId ?? ""}
                 onChange={(event) => {
@@ -451,7 +468,7 @@ function MoreOptionsFields({
                   );
                 }}
               >
-                <option value="">New tabs profile</option>
+                <option value="">{gt("New tabs profile")}</option>
                 {profiles
                   .filter((profile) => profile.kind !== "incognito" && profile.id !== "default")
                   .map((profile) => (
@@ -462,14 +479,14 @@ function MoreOptionsFields({
               </NativeSelect>
             </AccountField>
             {universityDetails(details) ? (
-              <AccountField label="Library link">
+              <AccountField label={gt("Library link")}>
                 <Input
                   value={details.proxyUrl ?? ""}
                   onChange={(event) => onChange({ ...details, proxyUrl: event.target.value })}
                   onBlur={(event) =>
                     onChange({ ...details, proxyUrl: libraryLinkTemplate(event.target.value) })
                   }
-                  placeholder="Paste a link from your library"
+                  placeholder={gt("Paste a link from your library")}
                 />
               </AccountField>
             ) : null}
@@ -478,9 +495,11 @@ function MoreOptionsFields({
       ) : null}
       {details.kind === "api-key" ? (
         <details>
-          <summary className="cursor-pointer text-sm text-muted-foreground">More options</summary>
+          <summary className="cursor-pointer text-sm text-muted-foreground">
+            <T>More options</T>
+          </summary>
           <div className="grid gap-4 pt-3">
-            <AccountField label="Environment variable">
+            <AccountField label={gt("Environment variable")}>
               <Input
                 value={details.envName ?? ""}
                 onChange={(event) => {
@@ -489,7 +508,7 @@ function MoreOptionsFields({
                 }}
               />
             </AccountField>
-            <AccountField label="Authentication">
+            <AccountField label={gt("Authentication")}>
               <NativeSelect
                 value={details.auth.type}
                 onChange={(event) => {
@@ -505,14 +524,24 @@ function MoreOptionsFields({
                   });
                 }}
               >
-                <option value="bearer">Bearer</option>
-                <option value="header">Header</option>
-                <option value="basic">Basic</option>
-                <option value="query">Query</option>
+                <option value="bearer">
+                  {gt("Bearer", { $context: "HTTP authentication scheme" })}
+                </option>
+                <option value="header">
+                  {gt("Header", { $context: "API key sent in an HTTP header" })}
+                </option>
+                <option value="basic">
+                  {gt("Basic", { $context: "HTTP authentication scheme" })}
+                </option>
+                <option value="query">
+                  {gt("Query", { $context: "API key sent as a URL query parameter" })}
+                </option>
               </NativeSelect>
             </AccountField>
             {details.auth.type !== "bearer" ? (
-              <AccountField label={details.auth.type === "basic" ? "Username" : "Parameter name"}>
+              <AccountField
+                label={details.auth.type === "basic" ? gt("Username") : gt("Parameter name")}
+              >
                 <Input
                   value={"name" in details.auth ? details.auth.name : details.auth.username}
                   onChange={(event) =>
@@ -625,6 +654,8 @@ export function AccountDialog({
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const save = useAccountCommand(accountsState.save, environmentId);
+  const gt = useGT();
+  const messages = useMessages();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce local keychain metadata discovery and discard stale responses.
   useEffect(() => {
     if (details || !query.trim() || !snapshot.stores.keychain.available) return;
@@ -710,7 +741,9 @@ export function AccountDialog({
       >
         <DialogPopup data-accounts-dialog>
           <DialogHeader>
-            <DialogTitle>University library</DialogTitle>
+            <DialogTitle>
+              <T>University library</T>
+            </DialogTitle>
           </DialogHeader>
           <DialogPanel>
             <UniversityPicker environmentId={environmentId} autoFocus onChosen={onClose} />
@@ -727,7 +760,7 @@ export function AccountDialog({
     >
       <DialogPopup data-accounts-dialog>
         <DialogHeader>
-          <DialogTitle>{account ? "Edit account" : "Add an account"}</DialogTitle>
+          <DialogTitle>{account ? gt("Edit account") : gt("Add an account")}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-4">
@@ -736,8 +769,8 @@ export function AccountDialog({
                 <Input
                   autoFocus
                   type="search"
-                  aria-label="Find an account"
-                  placeholder="Search or enter a website address"
+                  aria-label={gt("Find an account")}
+                  placeholder={gt("Search or enter a website address")}
                   value={query}
                   onPaste={(event) => {
                     if (recognizePaste(event.clipboardData.getData("text"))) event.preventDefault();
@@ -759,7 +792,7 @@ export function AccountDialog({
                     return entries.length ? (
                       <div key={group.name}>
                         <div className="px-3 pb-1 pt-3 text-xs text-muted-foreground">
-                          {group.name}
+                          {messages(group.name)}
                         </div>
                         {entries.map((entry) => (
                           <DiscoveryListRow
@@ -772,7 +805,7 @@ export function AccountDialog({
                               />
                             }
                             title={entry.name}
-                            description={KIND_LABELS[entry.kind]}
+                            description={messages(KIND_LABELS[entry.kind])}
                             onClick={() => choose(entry)}
                           />
                         ))}
@@ -800,7 +833,9 @@ export function AccountDialog({
                               />
                             }
                             title={site.domain}
-                            description={`Signed in on ${site.profileName}`}
+                            description={gt("Signed in on {profile}", {
+                              profile: site.profileName,
+                            })}
                             onClick={() => {
                               setName(site.domain);
                               setDetails({
@@ -826,7 +861,7 @@ export function AccountDialog({
                               />
                             }
                             title={item.label ?? site}
-                            description="In your Keychain"
+                            description={gt("In your Keychain")}
                             onClick={() => {
                               setName(site);
                               setDetails({
@@ -855,8 +890,8 @@ export function AccountDialog({
                         environmentId={environmentId}
                       />
                     }
-                    title={query.trim() || "Any website"}
-                    description={KIND_LABELS.website}
+                    title={query.trim() || gt("Any website")}
+                    description={messages(KIND_LABELS.website)}
                     onClick={() => choose(null)}
                   />
                   <DiscoveryListRow
@@ -867,8 +902,8 @@ export function AccountDialog({
                         environmentId={environmentId}
                       />
                     }
-                    title={query.trim() || "Any API key"}
-                    description={KIND_LABELS["api-key"]}
+                    title={query.trim() || gt("Any API key")}
+                    description={messages(KIND_LABELS["api-key"])}
                     onClick={() => choose(null, "api-key")}
                   />
                   {query.trim() ? (
@@ -880,8 +915,8 @@ export function AccountDialog({
                           environmentId={environmentId}
                         />
                       }
-                      description="Open in Scient browser"
-                      title={`Search the web for '${query.trim()}'`}
+                      description={gt("Open in Scient browser")}
+                      title={gt("Search the web for ''{query}''", { query: query.trim() })}
                       onClick={() => {
                         // Searched like the browser's address bar, with its search engine.
                         let url: string;
@@ -912,12 +947,12 @@ export function AccountDialog({
                         void navigator.clipboard.writeText(CLI_LOGIN_COMMANDS[details.tool]!);
                       }}
                     >
-                      Copy
+                      <T>Copy</T>
                     </Button>
                   </div>
                 ) : null}
                 <AccountField
-                  label="Name"
+                  label={gt("Name")}
                   action={
                     !account &&
                     details.kind === "website" &&
@@ -950,7 +985,7 @@ export function AccountDialog({
                           if (opened) onClose();
                         }}
                       >
-                        Sign in with the browser
+                        <T>Sign in with the browser</T>
                         <ArrowUpRightIcon aria-hidden className="-me-1 size-3 opacity-60" />
                       </Button>
                     ) : !account &&
@@ -965,7 +1000,7 @@ export function AccountDialog({
                           );
                         }}
                       >
-                        Get a key
+                        <T>Get a key</T>
                         <ArrowUpRightIcon aria-hidden className="-me-1 size-3 opacity-60" />
                       </Button>
                     ) : null
@@ -1023,7 +1058,7 @@ export function AccountDialog({
             )}
             {error ? (
               <p role="alert" className="text-sm text-destructive-foreground">
-                Check the account fields.
+                <T>Check the account fields.</T>
               </p>
             ) : null}
           </div>
@@ -1041,15 +1076,15 @@ export function AccountDialog({
                     setError(false);
                   }}
                 >
-                  Back
+                  <T>Back</T>
                 </Button>
               </div>
             ) : null}
             <Button variant="outline" disabled={busy} onClick={onClose}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button disabled={!canWrite || busy} onClick={() => void submit()}>
-              Save
+              <T>Save</T>
             </Button>
           </DialogFooter>
         ) : null}

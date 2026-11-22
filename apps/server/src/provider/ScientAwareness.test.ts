@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import {
   buildScientAwareness,
   buildScientPromptAwareness,
-  SCIENT_BROWSER_AWARENESS,
+  scientAwarenessManifest,
   SCIENT_CORE_AWARENESS,
-  SCIENT_COMPUTE_AWARENESS,
-  SCIENT_DOCUMENT_BUILD_AWARENESS,
-  SCIENT_OVERLEAF_AWARENESS,
-  SCIENT_PAPERS_AWARENESS,
-  SCIENT_SKILLS_AWARENESS,
 } from "./ScientAwareness.ts";
 import {
   SCIENT_DEVICE_TOOL_INSTRUCTIONS,
   SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
 } from "./ScientProviderInstructions.ts";
-import { CLAUDE_SCIENT_TOOL_PROJECTION } from "./ScientToolProjection.ts";
+import {
+  CANONICAL_SCIENT_TOOL_PROJECTION,
+  CLAUDE_SCIENT_TOOL_PROJECTION,
+  type ScientToolProjection,
+} from "./ScientToolProjection.ts";
 
 /**
  * How each built-in provider receives Scient's awareness. Adding a provider
@@ -42,13 +42,57 @@ const SCIENT_AWARENESS_DELIVERY = {
 
 const wordCount = (value: string): number => value.trim().split(/\s+/u).length;
 
+/** The blocks a session with these grants is sent, core first, each starting with its heading. */
+const blocksFor = (
+  capabilities: Iterable<string>,
+  tools: ScientToolProjection = CANONICAL_SCIENT_TOOL_PROJECTION,
+): ReadonlyArray<string> => {
+  const granted = new Set(capabilities);
+  const known = toMcpCapabilities(granted);
+  expect(known.size, "every capability is a real grant").toBe(granted.size);
+  return buildScientAwareness(known, tools).split(/\n\n(?=## )/u);
+};
+
+const headingsFor = (capabilities: Iterable<string>) =>
+  blocksFor(capabilities).map((block) => block.slice(0, block.indexOf("\n")));
+
+/** The one block under `heading` for these grants. */
+const blockFor = (
+  capabilities: Iterable<string>,
+  heading: string,
+  tools: ScientToolProjection = CANONICAL_SCIENT_TOOL_PROJECTION,
+): string => {
+  const found = blocksFor(capabilities, tools).filter((block) => block.startsWith(`${heading}\n`));
+  expect(found, heading).toHaveLength(1);
+  return found[0]!;
+};
+
 describe("Scient awareness", () => {
-  it("composes device and read-only compute awareness without granting either implicitly", () => {
-    const combined = buildScientAwareness(new Set(["compute", "device"]));
-    expect(combined).toContain(SCIENT_COMPUTE_AWARENESS);
-    expect(combined).toContain("## Scient devices");
-    expect(buildScientAwareness(new Set(["device"]))).not.toContain(SCIENT_COMPUTE_AWARENESS);
-    expect(buildScientAwareness(new Set(["compute"]))).not.toContain("## Scient devices");
+  it.each([
+    [[], []],
+    [["threads:read"], []],
+    [["preview"], ["## Scient browser"]],
+    [["compute"], ["## Scient Compute"]],
+    [["device"], ["## Scient devices"]],
+    [
+      ["compute", "device"],
+      ["## Scient Compute", "## Scient devices"],
+    ],
+    [["documents:build"], ["## Scient PDF builds", "## Scient Overleaf"]],
+    [["skills:read"], ["## Scient skills"]],
+    [
+      ["preview", "skills:read"],
+      ["## Scient browser", "## Scient skills"],
+    ],
+    [["sources:read"], ["## Scient Library"]],
+    [["accounts"], ["## Scient papers", "## Scient connectors"]],
+  ])("with %j sends only the core and %j", (capabilities, headings) => {
+    expect(headingsFor(capabilities)).toEqual(["## Scient", ...headings]);
+    expect(blocksFor(capabilities)[0]).toBe(SCIENT_CORE_AWARENESS);
+  });
+
+  it("sends only the core without a capability set", () => {
+    expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
   });
 
   it("keeps the always-on identity compact and free of tool-specific guidance", () => {
@@ -58,67 +102,60 @@ describe("Scient awareness", () => {
     expect(SCIENT_CORE_AWARENESS).not.toContain("sources_");
   });
 
-  it("mentions Scient skills only when exact skill access is granted", () => {
-    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(80);
-    expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skills_list`");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skill_load`");
-    expect(buildScientAwareness(new Set(["skills:read"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
-    );
-    expect(buildScientAwareness(new Set(["preview", "skills:read"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_BROWSER_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
-    );
+  it("points skill work at the Scient skill tools", () => {
+    const skills = blockFor(["skills:read"], "## Scient skills");
+    expect(wordCount(skills)).toBeLessThanOrEqual(80);
+    expect(skills).toContain("`scient_skills_list`");
+    expect(skills).toContain("`scient_skill_load`");
   });
 
-  it("reuses upstream's browser rules only for an actually granted preview capability", () => {
-    expect(SCIENT_BROWSER_AWARENESS).toMatch(/^## Scient browser\n/u);
-    expect(SCIENT_BROWSER_AWARENESS).toContain("Prefer snapshot locators over coordinates.");
-    expect(SCIENT_BROWSER_AWARENESS).toContain("two preview calls fail on one step");
-    expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["preview"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_BROWSER_AWARENESS}`,
-    );
+  it("reuses upstream's browser rules under Scient's heading", () => {
+    const browser = blockFor(["preview"], "## Scient browser");
+    expect(browser).toContain("Prefer snapshot locators over coordinates.");
+    expect(browser).toContain("two preview calls fail on one step");
   });
 
   it("sends papers first to the paper tool, and the sign-in note only with the browser", () => {
-    expect(wordCount(SCIENT_PAPERS_AWARENESS)).toBeLessThanOrEqual(70);
-    expect(SCIENT_PAPERS_AWARENESS).toContain("`scient_paper_get` first");
-    expect(SCIENT_PAPERS_AWARENESS).toContain("`scient_papers_queue`");
-    expect(buildScientAwareness(new Set(["preview", "accounts"]))).toContain(
-      "`preview_open` signs in by itself",
-    );
-    const withoutBrowser = buildScientAwareness(new Set(["accounts"]));
+    const withBrowser = blockFor(["preview", "accounts"], "## Scient papers");
+    expect(wordCount(withBrowser)).toBeLessThanOrEqual(70);
+    expect(withBrowser).toContain("`scient_paper_get` first");
+    expect(withBrowser).toContain("`scient_papers_queue`");
+    expect(withBrowser).toContain("`preview_open` signs in by itself");
+    const withoutBrowser = blockFor(["accounts"], "## Scient papers");
     expect(withoutBrowser).toContain("`scient_paper_get` first");
     expect(withoutBrowser).not.toContain("preview_open");
-    expect(buildScientAwareness(new Set(["preview"]))).not.toContain("scient_paper_get");
   });
 
-  it("recommends Compute runs only with compute authority", () => {
-    expect(wordCount(SCIENT_COMPUTE_AWARENESS)).toBeLessThanOrEqual(50);
-    expect(SCIENT_COMPUTE_AWARENESS).toContain("`scient_compute_run`");
-    expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["compute"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_COMPUTE_AWARENESS}`,
+  it("points literature work at the Library only with Library access in a verified project", () => {
+    const library = blockFor(["sources:read"], "## Scient Library");
+    expect(wordCount(library)).toBeLessThanOrEqual(95);
+    expect(library).toContain("before web search");
+    expect(library).toContain("`identifierList`");
+    // Only a session that can load skills is sent to one.
+    expect(library).not.toContain("skill");
+    expect(blockFor(["skills:read", "sources:read"], "## Scient Library")).toContain(
+      "load the `references` skill first",
     );
-  });
-  it("projects the Compute tool names for Claude's MCP namespace", () => {
-    const awareness = buildScientAwareness(new Set(["compute"]), CLAUDE_SCIENT_TOOL_PROJECTION);
-
-    expect(awareness).toContain("`mcp__scient__scient_compute_run`");
-    expect(awareness).not.toContain("`scient_compute_run`");
+    const unverified = scientAwarenessManifest(new Set(["sources:read", "sources:write"]), false);
+    expect(headingsFor(unverified)).toEqual(["## Scient"]);
   });
 
-  it("adds compact, truthful PDF build guidance only with document authority", () => {
-    expect(wordCount(SCIENT_DOCUMENT_BUILD_AWARENESS)).toBeLessThanOrEqual(50);
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("`scient_pdf_build`");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("`scient_latex_build`");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("requested PDF deliverable");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project HTML source");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project LaTeX source");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("`scient_document_export`");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project Markdown document");
+  it("recommends Compute runs", () => {
+    const compute = blockFor(["compute"], "## Scient Compute");
+    expect(wordCount(compute)).toBeLessThanOrEqual(50);
+    expect(compute).toContain("`scient_compute_run`");
+  });
+
+  it("adds compact, truthful PDF build guidance", () => {
+    const documents = blockFor(["documents:build"], "## Scient PDF builds");
+    expect(wordCount(documents)).toBeLessThanOrEqual(50);
+    expect(documents).toContain("`scient_pdf_build`");
+    expect(documents).toContain("`scient_latex_build`");
+    expect(documents).toContain("requested PDF deliverable");
+    expect(documents).toContain("existing project HTML source");
+    expect(documents).toContain("existing project LaTeX source");
+    expect(documents).toContain("`scient_document_export`");
+    expect(documents).toContain("existing project Markdown document");
     for (const skillWorkflowDetail of [
       "retryAfterMs",
       "pageCount",
@@ -127,20 +164,34 @@ describe("Scient awareness", () => {
       "rootSourcePath",
       "visual review",
     ]) {
-      expect(SCIENT_DOCUMENT_BUILD_AWARENESS).not.toContain(skillWorkflowDetail);
+      expect(documents).not.toContain(skillWorkflowDetail);
     }
-    expect(buildScientAwareness(new Set(["documents:build"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_DOCUMENT_BUILD_AWARENESS}\n\n${SCIENT_OVERLEAF_AWARENESS}`,
-    );
   });
 
   it("points agents at the Overleaf tools and skill with document authority, adding no gate", () => {
-    expect(wordCount(SCIENT_OVERLEAF_AWARENESS)).toBeLessThanOrEqual(60);
+    const overleaf = blockFor(["documents:build"], "## Scient Overleaf");
+    expect(wordCount(overleaf)).toBeLessThanOrEqual(60);
+    expect(overleaf).toContain("`scient_overleaf_status`");
+    expect(overleaf).toContain("`overleaf-sync` skill");
     expect(buildScientAwareness(new Set(["sources:read"]))).not.toContain("Overleaf");
-    expect(
-      buildScientAwareness(new Set(["documents:build"]), CLAUDE_SCIENT_TOOL_PROJECTION),
-    ).toContain("`mcp__scient__scient_overleaf_status`");
   });
+
+  it.each([
+    [["compute"], "## Scient Compute", "`mcp__scient__scient_compute_run`"],
+    [["documents:build"], "## Scient PDF builds", "`mcp__scient__scient_pdf_build`"],
+    [["documents:build"], "## Scient Overleaf", "`mcp__scient__scient_overleaf_status`"],
+    [["skills:read"], "## Scient skills", "`mcp__scient__scient_skills_list`"],
+    [["sources:read"], "## Scient Library", "`mcp__scient__scient_sources_add`"],
+    [["accounts"], "## Scient papers", "`mcp__scient__scient_paper_get`"],
+  ])(
+    "with %j, Claude's %s block names %s and loads it through ToolSearch",
+    (capabilities, heading, tool) => {
+      const claude = blockFor(capabilities, heading, CLAUDE_SCIENT_TOOL_PROJECTION);
+      expect(claude).toContain(tool);
+      expect(claude).toContain("through `ToolSearch` first");
+      expect(blockFor(capabilities, heading)).not.toContain("ToolSearch");
+    },
+  );
 
   it("projects exact provider tool names without changing capability gating", () => {
     const awareness = buildScientAwareness(
@@ -164,14 +215,10 @@ describe("Scient awareness", () => {
     );
   });
 
-  it("tells Claude to load deferred tools, including the device tools, through ToolSearch", () => {
-    const claude = buildScientAwareness(
-      new Set(["compute", "device", "documents:build", "skills:read", "accounts"]),
-      CLAUDE_SCIENT_TOOL_PROJECTION,
-    );
+  it("tells Claude to load the deferred device tools through ToolSearch", () => {
+    const claude = buildScientAwareness(new Set(["device"]), CLAUDE_SCIENT_TOOL_PROJECTION);
     expect(claude).toContain(SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH);
     expect(claude).toContain("`select:mcp__scient__device_list,");
-    expect(claude.match(/through `ToolSearch` first/gu)).toHaveLength(5);
     const canonical = buildScientAwareness(new Set(["device"]));
     expect(canonical).toContain(SCIENT_DEVICE_TOOL_INSTRUCTIONS);
     expect(canonical).not.toContain("ToolSearch");

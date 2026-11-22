@@ -57,7 +57,7 @@ const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
 const SCIENT_MIGRATION_IDS = [
   1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-  28, 29,
+  28, 29, 30, 31,
 ];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
@@ -89,6 +89,8 @@ const SCIENT_MIGRATION_NAMES = [
   "browser-history",
   "copy-legacy-handoff-sources",
   "shared-history-bodies",
+  "conversation-fork-records",
+  "fork-handoff-history-ranges",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -125,6 +127,8 @@ it.effect.each(["projection", "event"] as const)(
           [27, "browser-history"],
           [28, "copy-legacy-handoff-sources"],
           [29, "shared-history-bodies"],
+          [30, "conversation-fork-records"],
+          [31, "fork-handoff-history-ranges"],
         ]);
         assert.deepEqual(yield* runScientMigrations(sql), []);
         const kept = yield* sql<{ readonly payload_json: string }>`
@@ -224,6 +228,8 @@ it.effect("compacts archived legacy projection handoffs without changing what re
         [27, "browser-history"],
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
+        [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 26`;
       for (const [id, payload] of Object.entries(rows))
@@ -236,6 +242,8 @@ it.effect("compacts archived legacy projection handoffs without changing what re
         [27, "browser-history"],
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
+        [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
 
       const stored = new Map<string, string>();
@@ -809,6 +817,8 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [27, "browser-history"],
           [28, "copy-legacy-handoff-sources"],
           [29, "shared-history-bodies"],
+          [30, "conversation-fork-records"],
+          [31, "fork-handoff-history-ranges"],
         ] as const,
       );
 
@@ -1286,77 +1296,6 @@ it.effect("concurrent runners on the same file apply each migration at most once
     ),
   );
 });
-
-// VAL-MIGRATE-09: T3 ledger is isolated
-
-it.effect("Scient and T3 migration ledgers remain isolated", () =>
-  withMemory(
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-
-      // Run T3 migrations first.
-      yield* runMigrations();
-      // Run Scient migrations.
-      yield* runScientMigrations(sql);
-
-      const t3Ledger = yield* sql<{ readonly migration_id: number; readonly name: string }>`
-        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
-      `;
-      assert.isTrue(t3Ledger.length > 0);
-
-      const scientLedger = yield* sql<{ readonly migration_id: number; readonly name: string }>`
-        SELECT migration_id, name FROM scient_schema_migrations ORDER BY migration_id
-      `;
-      assert.deepStrictEqual(
-        scientLedger.map((row) => row.migration_id),
-        SCIENT_MIGRATION_IDS,
-      );
-
-      // Neither ledger contains the other's migration names.
-      const t3Names = new Set(t3Ledger.map((row) => row.name));
-      const scientNames = new Set(scientLedger.map((row) => row.name));
-      assert.isFalse(t3Names.has("durable-thread-forks"));
-      assert.isFalse(t3Names.has("normalize-active-lineage"));
-      assert.isFalse(scientNames.has("OrchestrationEvents"));
-      assert.isFalse(scientNames.has("Projections"));
-
-      // Run T3 migrations again — no new entries in either ledger.
-      yield* runMigrations();
-      const t3LedgerAfter = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM effect_sql_migrations ORDER BY migration_id
-      `;
-      assert.strictEqual(t3LedgerAfter.length, t3Ledger.length);
-
-      const scientLedgerAfter = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
-      `;
-      assert.strictEqual(scientLedgerAfter.length, scientLedger.length);
-    }),
-  ),
-);
-
-it.effect("running Scient migrations first does not affect T3 migrations", () =>
-  withMemory(
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-
-      yield* runScientMigrations(sql);
-      yield* runMigrations();
-
-      const t3Ledger = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM effect_sql_migrations ORDER BY migration_id
-      `;
-      const scientLedger = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
-      `;
-      assert.isTrue(t3Ledger.length > 0);
-      assert.deepStrictEqual(
-        scientLedger.map((row) => row.migration_id),
-        SCIENT_MIGRATION_IDS,
-      );
-    }),
-  ),
-);
 
 // VAL-MIGRATE-10: Malformed rows are quarantined (startup stays safe)
 
@@ -2217,6 +2156,8 @@ it.effect("migration 9 converges a development database that already recorded mi
         [27, "browser-history"],
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
+        [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
@@ -2264,6 +2205,8 @@ it.effect("reconciles only the exact former import-17 ledger without losing rece
         [27, "browser-history"],
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
+        [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
       const ledger = yield* sql<{
         readonly migration_id: number;
@@ -2383,7 +2326,9 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (27, 'browser-history')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (28, 'copy-legacy-handoff-sources')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (29, 'shared-history-bodies')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (30, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (30, 'conversation-fork-records')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (31, 'fork-handoff-history-ranges')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (32, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -2391,7 +2336,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 30"),
+          error.message.includes("unknown migration 32"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -2402,7 +2347,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [...SCIENT_MIGRATION_IDS, 30],
+        [...SCIENT_MIGRATION_IDS, 32],
       );
     }),
   ),

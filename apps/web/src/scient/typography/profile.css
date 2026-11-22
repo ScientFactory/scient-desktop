@@ -5,6 +5,8 @@
   --scient-font-size-reading-micro: 0.675rem;
   --scient-font-size-reading-compact: 0.725rem;
   --scient-font-size-markdown-body: 0.905rem;
+  /* Chat reads at the Interface size; the rich editor keeps the markdown body size. */
+  --scient-font-size-chat-body: 1rem;
   --scient-font-size-markdown-secondary: 0.78rem;
   --scient-font-size-markdown-marker: 0.7175rem;
   --scient-font-size-markdown-h1: 1.28rem;

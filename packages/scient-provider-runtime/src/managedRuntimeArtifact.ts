@@ -6,6 +6,8 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
 
 export type ManagedRuntimeArchiveFormat = "raw" | "tar.gz" | "zip";
+/** Largest artifact the installer downloads unless a family's reviewed policy allows more. */
+export const MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 /** Distinct release families can belong to the same user-facing provider. */
 export const MANAGED_RUNTIME_CATALOG_PROVIDERS = [
   "codex",
@@ -71,6 +73,8 @@ export interface ManagedRuntimeArtifactPolicy {
   /** App-compiled identity for vendors whose downloads use version and artifact query parameters. */
   readonly releaseUrlTemplate?: string;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
+  /** Reviewed download limit above the shared default; raising it needs a new contract revision. */
+  readonly maxDownloadBytes?: number | undefined;
   /** Reviewed archive-specific limits; omitted for small single-binary releases. */
   readonly extractionLimits?: ManagedRuntimeExtractionLimits | undefined;
   readonly executablePath: string;
@@ -174,6 +178,15 @@ export function managedRuntimeArtifactReceipt(
 }
 
 /**
+ * Whether a download of `artifact` fits its family's limit: the zstd copy when one comes with it,
+ * else the raw binary. Only downloads are judged: an installed runtime's receipt names no copy, and
+ * still describes what is installed.
+ */
+export const fitsManagedRuntimeDownloadLimit = (artifact: ManagedRuntimeArtifact) =>
+  (artifact.compressed ?? artifact).size <=
+  (artifact.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES);
+
+/**
  * The zstd copy a catalog names, when this app's policy has one for the family. A copy the app
  * cannot read is left out, so the raw binary stays installable.
  */
@@ -191,7 +204,9 @@ function hydrateCompressedArtifact(
     release.checksum.algorithm !== "sha256" ||
     !/^[0-9a-f]{64}$/u.test(release.checksum.digest) ||
     !Number.isSafeInteger(release.size) ||
-    release.size <= 0
+    release.size <= 0 ||
+    // Too large to download: left out, so the raw binary is judged on its own.
+    release.size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)
   ) {
     return undefined;
   }

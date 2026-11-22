@@ -4,10 +4,12 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { setI18nLanguage, startI18n } from "~/i18n/runtime";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
 
 const preference = vi.hoisted(() => ({ wrapped: true, listeners: new Set<() => void>() }));
-vi.mock("~/hooks/useSettings", () => ({
+vi.mock("~/hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useSettings")>()),
   getClientSettings: () => ({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: preference.wrapped }),
   useClientSettings: () =>
     useSyncExternalStore(
@@ -29,8 +31,34 @@ describe("editor code actions", () => {
     vi.unstubAllGlobals();
   }
 
+  it("switches the language of code actions without remounting the editor", async () => {
+    await using fixture = _createFixture();
+    fixture.cleanup.defer(() => act(() => setI18nLanguage("en")));
+    fixture.cleanup.defer(() => _cleanupFixture0(fixture));
+    using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["de-DE"]);
+    startI18n();
+    await setI18nLanguage("en");
+
+    const host = document.createElement("div");
+    document.body.append(_ownDOM(fixture, host));
+    fixture.controller = new ScientMarkdownEditorView({
+      source: "```text\nexample\n```\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Code actions",
+      onUserSourceChange: vi.fn(),
+    });
+    await act(() => fixture.controller!.mount(host));
+    const copyButton = host.querySelector("[aria-label='Copy code']");
+    expect(copyButton).not.toBeNull();
+
+    await act(() => setI18nLanguage());
+    expect(host.querySelector("[aria-label='Code kopieren']")).toBe(copyButton);
+  });
+
   it.each([
-    ["```text\nbefore\n```\n", "before"],
+    // The editor text ends in a newline; the fence's closing newline is not copied.
+    ["```text\nbefore\n\n```\n", "before"],
     ["---\ntitle: Before\n---\n", "---\ntitle: Before\n---"],
   ])(
     "copies current source and follows wrapping preferences without remounting: %s",
@@ -56,10 +84,21 @@ describe("editor code actions", () => {
       const surface = host.querySelector<HTMLElement>(".cm-editor")!;
       const editor = EditorView.findFromDOM(surface)!;
       expect(editor.contentDOM.classList.contains("cm-lineWrapping")).toBe(true);
+      // regression: cff39eeba2 fix(chat): Stop shows what arrived; code blocks and thread-read rows match upstream
+      const wrapToggle = host.querySelector<HTMLButtonElement>("[aria-label='Disable line wrap']")!;
+      expect(wrapToggle.getAttribute("aria-pressed")).toBe("true");
+      expect(wrapToggle.dataset.variant).toBe("secondary");
+      // regression: 010d58e874 fix(chat): Stop reaches answers that left the screen; thoughts read quietly when expanded
+      const copyButton = host.querySelector<HTMLButtonElement>("[aria-label='Copy code']")!;
+      expect(copyButton.dataset.variant).toBe("ghost-muted");
+      expect(copyButton.querySelector("svg.lucide")).not.toBeNull();
       await act(() => {
-        host.querySelector<HTMLButtonElement>("[aria-label='Disable line wrap']")!.click();
+        wrapToggle.click();
       });
       expect(editor.contentDOM.classList.contains("cm-lineWrapping")).toBe(false);
+      const unwrapped = host.querySelector<HTMLButtonElement>("[aria-label='Wrap lines']")!;
+      expect(unwrapped.getAttribute("aria-pressed")).toBe("false");
+      expect(unwrapped.dataset.variant).toBe("ghost-muted");
       expect(onUserSourceChange).not.toHaveBeenCalled();
       expect(preference.wrapped).toBe(true);
 

@@ -257,13 +257,24 @@ describe("Scient skill session planning", () => {
         BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
       );
       expect(initial.skills.map((skill) => [skill.name, skill.invocationPolicy])).toEqual([
+        ["check-reported-numbers", "automatic"],
+        ["compare-sources", "automatic"],
         ["connector-authoring", "automatic"],
-        ["html-pdf-authoring", "automatic"],
-        ["improve-workspace-readiness", "explicit"],
+        ["diagnose-analysis", "automatic"],
+        ["grill-me", "automatic"],
+        ["improve-workspace-readiness", "automatic"],
         ["latex-authoring", "automatic"],
+        ["ml-evaluation-audit", "automatic"],
         ["overleaf-sync", "automatic"],
         ["pdf-authoring", "automatic"],
+        ["references", "automatic"],
+        ["reporting-guideline-check", "automatic"],
+        ["reviewer-response", "automatic"],
         ["scient-skill-authoring", "automatic"],
+        ["statistics-review", "automatic"],
+        ["systematic-review", "automatic"],
+        ["teach", "explicit"],
+        ["to-questionnaire", "automatic"],
         ["workspace-readiness-review", "automatic"],
       ]);
 
@@ -287,13 +298,24 @@ describe("Scient skill session planning", () => {
         BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
       );
       expect(disabled.skills.map((skill) => skill.name)).toEqual([
+        "check-reported-numbers",
+        "compare-sources",
         "connector-authoring",
-        "html-pdf-authoring",
+        "diagnose-analysis",
+        "grill-me",
         "improve-workspace-readiness",
         "latex-authoring",
+        "ml-evaluation-audit",
         "overleaf-sync",
         "pdf-authoring",
+        "references",
+        "reporting-guideline-check",
+        "reviewer-response",
         "scient-skill-authoring",
+        "statistics-review",
+        "systematic-review",
+        "teach",
+        "to-questionnaire",
       ]);
     }),
   );

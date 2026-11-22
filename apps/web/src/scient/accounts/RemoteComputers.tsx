@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   ACCOUNTS_PROTOCOL,
@@ -38,57 +39,100 @@ import {
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useSignIn } from "./useSignIn";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /** "10:14", "yesterday 18:40", or a date: times on these lines are labels only. */
-function when(iso: string, now = new Date()) {
+function when(iso: string, now = new Date(), resolve: MessageResolver = m) {
   const at = new Date(iso);
   const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const day = (date: Date) => date.toDateString();
   if (day(at) === day(now)) return time;
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (day(at) === day(yesterday)) return `yesterday ${time}`;
+  if (day(at) === day(yesterday)) return resolve(msg("yesterday {time}", { time }));
   return `${at.toLocaleDateString()} ${time}`;
 }
 
-function stateText(state: RemoteState, now: Date) {
+function stateText(state: RemoteState, now: Date, resolve: MessageResolver = m) {
   switch (state.kind) {
     case "sharing-off":
-      return "doesn't get your sign-ins: sending them is off";
+      return resolve(msg("doesn't get your sign-ins: sending them is off"));
     case "sending":
-      return "sending your sign-ins…";
+      return resolve(msg("sending your sign-ins…"));
     case "failed":
-      return `couldn't send your sign-ins at ${when(state.failure.at, now)}: ${state.failure.reason === "refused" ? "it refused this computer" : "the request failed"}`;
+      return state.failure.reason === "refused"
+        ? resolve(
+            msg("couldn't send your sign-ins at {time}: it refused this computer", {
+              time: when(state.failure.at, now, resolve),
+            }),
+          )
+        : resolve(
+            msg("couldn't send your sign-ins at {time}: the request failed", {
+              time: when(state.failure.at, now, resolve),
+            }),
+          );
     case "refused":
-      return `doesn't get sign-ins: ${state.route === "relay" ? "connected through a relay" : "connected without encryption"}`;
+      return state.route === "relay"
+        ? resolve(msg("doesn't get sign-ins: connected through a relay"))
+        : resolve(msg("doesn't get sign-ins: connected without encryption"));
     case "outdated":
-      return "can't receive sign-ins: update Scient there";
+      return resolve(msg("can't receive sign-ins: update Scient there"));
     case "delivered":
-      return `has your sign-ins from ${when(state.sentAt, now)}`;
+      return resolve(
+        msg("has your sign-ins from {time}", { time: when(state.sentAt, now, resolve) }),
+      );
     case "offline":
-      return `offline${state.seenAt ? ` since ${when(state.seenAt, now)}` : ""} · has your sign-ins from ${when(state.sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`;
+      return state.seenAt
+        ? resolve(
+            msg(
+              "offline since {seen} · has your sign-ins from {time}, kept {days} days without this computer",
+              {
+                seen: when(state.seenAt, now, resolve),
+                time: when(state.sentAt, now, resolve),
+                days: SENDER_KEEP_DAYS,
+              },
+            ),
+          )
+        : resolve(
+            msg("offline · has your sign-ins from {time}, kept {days} days without this computer", {
+              time: when(state.sentAt, now, resolve),
+              days: SENDER_KEEP_DAYS,
+            }),
+          );
     case "on-connect":
-      return "gets your sign-ins when it connects";
+      return resolve(msg("gets your sign-ins when it connects"));
   }
 }
 
-function remoteText(label: string, view: RemoteView, now = new Date()) {
+function remoteText(
+  label: string,
+  view: RemoteView,
+  now = new Date(),
+  resolve: MessageResolver = m,
+) {
   const { needsYou } = view;
   return [
-    `${label} · ${stateText(view.state, now)}`,
+    `${label} · ${stateText(view.state, now, resolve)}`,
     ...(needsYou.length
-      ? [`${needsYou.join(", ")} ${needsYou.length > 1 ? "need" : "needs"} you there`]
+      ? [
+          resolve(
+            msg("{count, plural, one {{sites} needs you there} other {{sites} need you there}}", {
+              count: needsYou.length,
+              sites: needsYou.join(", "),
+            }),
+          ),
+        ]
       : []),
-    ...(view.kept ? [`${view.kept} kept its own`] : []),
-    ...(view.waiting ? [`${view.waiting} waiting`] : []),
-    ...view.universities.map((name) => `${name} isn't connected there`),
+    ...(view.kept ? [resolve(msg("{count} kept its own", { count: view.kept }))] : []),
+    ...(view.waiting ? [resolve(msg("{count} waiting", { count: view.waiting }))] : []),
+    ...view.universities.map((name) => resolve(msg("{name} isn't connected there", { name }))),
   ].join(" · ");
 }
 
 const NOT_SENT_TEXT: Record<NotSentReason, string> = {
-  off: "off for agents",
-  projects: "limited to projects here",
-  scripts: "kept from scripts",
+  off: msg("off for agents"),
+  projects: msg("limited to projects here"),
+  scripts: msg("kept from scripts"),
 };
 
 const institutionsOf = (snapshot: Pick<AccountsSnapshot, "accounts"> | undefined) =>
@@ -110,6 +154,7 @@ function RemoteComputerRow({
   desktop: Pick<AccountsSnapshot, "accounts" | "profiles">;
 }) {
   const navigate = useNavigate();
+  const messages = useMessages();
   const sending = useAtomValue(sendingRemotesAtom).has(environmentId);
   const failure = useAtomValue(deliveryFailuresAtom).get(environmentId);
   const prepared = usePreparedConnection(environmentId);
@@ -166,17 +211,21 @@ function RemoteComputerRow({
       title={
         line.waiting ? (
           <Tooltip>
-            <TooltipTrigger render={<span />}>{remoteText(label, line)}</TooltipTrigger>
-            <TooltipPopup>Busy or failed; they go with the next delivery.</TooltipPopup>
+            <TooltipTrigger render={<span />}>
+              {remoteText(label, line, undefined, messages)}
+            </TooltipTrigger>
+            <TooltipPopup>
+              <T>Busy or failed; they go with the next delivery.</T>
+            </TooltipPopup>
           </Tooltip>
         ) : (
-          remoteText(label, line)
+          remoteText(label, line, undefined, messages)
         )
       }
       control={
         line.needsYou.length || universities.length ? (
           <Button size="xs" variant="outline" onClick={() => void signInThere()}>
-            Sign in there
+            <T>Sign in there</T>
           </Button>
         ) : undefined
       }
@@ -199,6 +248,8 @@ function SendersHere({
 }) {
   const forget = useAccountCommand(accountsState.sessionsForget, environmentId);
   const [forgetting, setForgetting] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   const senders = new Map<EnvironmentId, { label: string; sentAt: string }>();
   for (const entry of snapshot.profiles.flatMap((record) => record.received ?? [])) {
     const seen = senders.get(entry.source);
@@ -208,7 +259,10 @@ function SendersHere({
   return [...senders].map(([source, { label, sentAt }]) => (
     <SettingsRow
       key={source}
-      title={`Sign-ins from ${label}, ${when(sentAt)} · change them there`}
+      title={gt("Sign-ins from {label}, {time} · change them there", {
+        label,
+        time: when(sentAt, undefined, messages),
+      })}
       control={
         <Button
           size="xs"
@@ -220,7 +274,7 @@ function SendersHere({
             setForgetting(null);
           }}
         >
-          Forget this computer
+          <T>Forget this computer</T>
         </Button>
       }
     />
@@ -244,6 +298,8 @@ export function RemoteComputers({
   const { environments } = useEnvironments();
   const settings = useClientSettings();
   const [sendingAgain, setSendingAgain] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   if (environmentId !== primaryId)
     return <SendersHere environmentId={environmentId} snapshot={snapshot} canWrite={canWrite} />;
   if (!window.desktopBridge?.accounts?.readSessions) return null;
@@ -260,12 +316,16 @@ export function RemoteComputers({
     }));
   const held = notSent(profiles);
   const notSentText = held.length
-    ? `Not sent to other computers: ${held.map(({ name, reason }) => `${name} (${NOT_SENT_TEXT[reason]})`).join(", ")}.`
+    ? gt("Not sent to other computers: {profiles}.", {
+        profiles: held
+          .map(({ name, reason }) => `${name} (${messages(NOT_SENT_TEXT[reason])})`)
+          .join(", "),
+      })
     : undefined;
   return (
     <SettingsSection
       id="accounts-other-computers"
-      title="Other computers"
+      title={gt("Other computers")}
       headerAction={
         settings.signInSharingEnabled ? (
           <Button
@@ -278,17 +338,19 @@ export function RemoteComputers({
               setSendingAgain(false);
             }}
           >
-            Send again
+            <T>Send again</T>
           </Button>
         ) : undefined
       }
     >
       <SettingsRow
-        title="Send sign-ins to other computers"
-        description="Copies this computer's browser sign-ins for the sites in Accounts, never passwords, so agents there are signed in too."
+        title={gt("Send sign-ins to other computers")}
+        description={gt(
+          "Copies this computer's browser sign-ins for the sites in Accounts, never passwords, so agents there are signed in too.",
+        )}
         control={
           <Switch
-            aria-label="Send sign-ins to other computers"
+            aria-label={gt("Send sign-ins to other computers")}
             checked={settings.signInSharingEnabled}
             onCheckedChange={(checked) =>
               void updateClientSettings({ signInSharingEnabled: Boolean(checked) })

@@ -5,6 +5,8 @@ import {
   isDroidSteerUncertain,
 } from "./Adapters/DroidSteerSafety.ts";
 import { CommandId, type RunAttemptId, type RunId } from "@t3tools/contracts";
+// SCIENT-FORK: a replacement start names the refused owner it supersedes.
+import type { ProviderSessionId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,12 +46,18 @@ import {
   makeScientForkEffects,
   type ScientForkEffectsContext,
 } from "./scient-fork/ScientForkEffects.ts";
+// SCIENT-FORK:START — a steer over the input limit is refused once, on the steer.
+import { refuseUserSteerInput, steerInputRefusal } from "./scient-fork/SteerInputRefusal.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START checkpoint-capture-final-attempt
 import {
   CheckpointCaptureFinalAttempt,
   isCheckpointSettlementPending,
 } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
 // SCIENT-FORK:END checkpoint-capture-final-attempt
+// SCIENT-FORK:START task-folder-rewind
+import { isTaskFolderRebuildFailure } from "../scient/workspace/TaskFolderRewind.ts";
+// SCIENT-FORK:END task-folder-rewind
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlService.ProviderTurnControlError);
 
@@ -146,6 +154,8 @@ export const layerExecutor: Layer.Layer<
       willRetry: boolean,
       // SCIENT-FORK: a queued start can name the attempt it was admitted for.
       expectedAttemptId?: RunAttemptId,
+      // SCIENT-FORK: and the refused owner its new provider session replaces.
+      supersededProviderSessionId?: ProviderSessionId,
     ) =>
       providerTurnStart
         .start({
@@ -153,6 +163,7 @@ export const layerExecutor: Layer.Layer<
           runId,
           willRetry,
           ...(expectedAttemptId === undefined ? {} : { expectedAttemptId }),
+          ...(supersededProviderSessionId === undefined ? {} : { supersededProviderSessionId }),
         })
         .pipe(
           Effect.catchCauseIf(
@@ -212,6 +223,7 @@ export const layerExecutor: Layer.Layer<
               ...(effect.request.processLossCount === undefined
                 ? {}
                 : { processLossCount: effect.request.processLossCount }),
+              ...(effect.request.cause === undefined ? {} : { cause: effect.request.cause }),
             }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
@@ -287,6 +299,7 @@ export const layerExecutor: Layer.Layer<
               effect.request.runId,
               willRetry,
               effect.request.expectedAttemptId,
+              effect.request.supersededProviderSessionId,
             ).pipe(
               Effect.mapError(
                 (cause) =>
@@ -469,6 +482,20 @@ export const layerExecutor: Layer.Layer<
                 ),
                 Effect.catch((error) =>
                   Effect.gen(function* () {
+                    // SCIENT-FORK:START — the input limit's refusal is final; the steer shows why.
+                    const refusal =
+                      isProviderTurnControlError(error) &&
+                      effect.request.type === "provider-turn.steer"
+                        ? steerInputRefusal({
+                            effectId: effect.id,
+                            threadId: effect.threadId,
+                            messageId: effect.request.messageId,
+                            cause: error.cause,
+                          })
+                        : undefined;
+                    if (refusal !== undefined && (yield* refuseUserSteerInput(threads, refusal)))
+                      return;
+                    // SCIENT-FORK:END
                     if (
                       !isProviderTurnControlError(error) ||
                       (!error.turnCompleted && !error.steerDeclined) ||
@@ -783,6 +810,7 @@ export const layerExecutor: Layer.Layer<
                 checkpointId: effect.request.checkpointId,
                 commandId: effect.commandId,
                 scopeId: effect.request.scopeId,
+                requestId: effect.commandId,
                 ...(effect.request.restoreFiles === undefined
                   ? {}
                   : { restoreFiles: effect.request.restoreFiles }),
@@ -797,7 +825,13 @@ export const layerExecutor: Layer.Layer<
                   }),
                 ),
                 Effect.tapCause((cause) =>
-                  willRetry || Cause.hasInterruptsOnly(cause)
+                  // SCIENT-FORK:START task-folder-rewind — a failed rebuild is final: recorded now.
+                  (willRetry &&
+                    !Cause.findErrorOption(cause).pipe(
+                      Option.exists(isTaskFolderRebuildFailure),
+                    )) ||
+                  // SCIENT-FORK:END task-folder-rewind
+                  Cause.hasInterruptsOnly(cause)
                     ? Effect.void
                     : threads
                         .dispatch({
@@ -1232,6 +1266,10 @@ export const layerWithOptions = (
           const checkpointSettlementPending =
             Option.isSome(failure) && isCheckpointSettlementPending(failure.value);
           // SCIENT-FORK:END checkpoint-capture-final-attempt
+          // SCIENT-FORK:START task-folder-rewind
+          const taskFolderRebuildFailed =
+            Option.isSome(failure) && isTaskFolderRebuildFailure(failure.value);
+          // SCIENT-FORK:END task-folder-rewind
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* deferredDroidSteer
@@ -1248,6 +1286,9 @@ export const layerWithOptions = (
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : uncertainDroidSteer ||
+                // SCIENT-FORK:START task-folder-rewind
+                taskFolderRebuildFailed ||
+                // SCIENT-FORK:END task-folder-rewind
                 (effect.attemptCount >= maxAttempts &&
                   (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause)) &&
                   !awaitingNativeReceipt &&

@@ -22,9 +22,16 @@ export function parseGoogleSessions(text: string): ReadonlyArray<DesktopGoogleSe
   }
 }
 
-/** Asks Google, with no page opened. A profile that has never seen Google isn't asked. */
-export async function readGoogleSessions(session: Pick<Session, "cookies" | "fetch">) {
+/**
+ * Asks Google, with no page opened. A profile that has never seen Google isn't asked. Asking writes
+ * cookies into the profile, so `mayAsk` is consulted right before; refused, nothing is asked (null).
+ */
+export async function readGoogleSessions(
+  session: Pick<Session, "cookies" | "fetch">,
+  mayAsk: () => boolean = () => true,
+) {
   if ((await session.cookies.get({ domain: "accounts.google.com" })).length === 0) return [];
+  if (!mayAsk()) return null;
   const response = await session.fetch(LIST_ACCOUNTS_URL, {
     method: "POST",
     credentials: "include",

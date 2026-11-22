@@ -1,18 +1,23 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import type { ProviderRuntimeDiagnostics, ServerProvider } from "@t3tools/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { m, type MessageResolver } from "~/i18n/messages";
 
-function runtimeSourceTitle(source: ServerProvider["connection"]): string {
+function runtimeSourceTitle(
+  source: ServerProvider["connection"],
+  resolve: MessageResolver = m,
+): string {
   const value = source?.runtime?.source;
-  if (value === "scient_managed") return "Scient-managed";
-  if (value === "registry") return "Scient-owned ACP Registry";
-  if (value === "system") return "System";
-  if (value === "custom") return "Custom";
-  if (value === "missing") return "Missing";
-  return "Unknown";
+  if (value === "scient_managed") return resolve(msg("Scient-managed"));
+  if (value === "registry") return resolve(msg("Scient-owned ACP Registry"));
+  if (value === "system") return resolve(msg("System", { $context: "runtime source" }));
+  if (value === "custom") return resolve(msg("Custom", { $context: "runtime source" }));
+  if (value === "missing") return resolve(msg("Missing", { $context: "runtime source" }));
+  return resolve(msg("Unknown", { $context: "runtime source" }));
 }
 
 export function resolveProviderRuntimeDiagnostics(
@@ -36,43 +41,61 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
 }) {
   const diagnostics = resolveProviderRuntimeDiagnostics(props.provider);
   const installation = props.provider.connection?.runtime?.installation;
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "server executable path" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("server executable path"),
+  });
+  const gt = useGT();
+  const messages = useMessages();
   if (!diagnostics) return null;
 
   return (
     <details className="w-full text-left">
       <summary className="w-fit cursor-pointer text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-        Runtime diagnostics
+        <T>Runtime diagnostics</T>
       </summary>
       <div className="mt-2 space-y-2 rounded-md border border-border/60 bg-background/40 p-2">
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          These values describe the server running {props.displayName}. Remote clients may show
-          paths from a different computer.
+          <T>
+            These values describe the server running <Var>{props.displayName}</Var>. Remote clients
+            may show paths from a different computer.
+          </T>
         </p>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11px] leading-relaxed">
-          <dt className="text-muted-foreground">Runtime</dt>
+          <dt className="text-muted-foreground">
+            <T>Runtime</T>
+          </dt>
           <dd className="min-w-0 truncate text-right text-foreground">
-            {runtimeSourceTitle(props.provider.connection)}
+            {runtimeSourceTitle(props.provider.connection, messages)}
           </dd>
-          <dt className="text-muted-foreground">Version</dt>
+          <dt className="text-muted-foreground">
+            <T>Version</T>
+          </dt>
           <dd className="min-w-0 truncate text-right text-foreground">
-            {diagnostics.version ?? "Unknown"}
+            {diagnostics.version ?? gt("Unknown", { $context: "version is not known" })}
           </dd>
-          <dt className="text-muted-foreground">Server backend</dt>
+          <dt className="text-muted-foreground">
+            <T>Server backend</T>
+          </dt>
           <dd className="min-w-0 truncate text-right text-foreground">{diagnostics.backend}</dd>
           {installation ? (
             <>
-              <dt className="text-muted-foreground">Installation</dt>
+              <dt className="text-muted-foreground">
+                <T>Installation</T>
+              </dt>
               <dd className="min-w-0 truncate text-right text-foreground">
                 {installation.agentId} · {installation.distribution}
               </dd>
-              <dt className="text-muted-foreground">Installer</dt>
+              <dt className="text-muted-foreground">
+                <T>Installer</T>
+              </dt>
               <dd className="min-w-0 truncate text-right text-foreground">
-                <ScientTooltip content={installation.installer ?? "Not recorded"}>
-                  <code>{installation.installer ?? "Not recorded"}</code>
+                <ScientTooltip content={installation.installer ?? gt("Not recorded")}>
+                  <code>{installation.installer ?? gt("Not recorded")}</code>
                 </ScientTooltip>
               </dd>
-              <dt className="text-muted-foreground">Owned directory</dt>
+              <dt className="text-muted-foreground">
+                <T>Owned directory</T>
+              </dt>
               <dd className="min-w-0 truncate text-right text-foreground">
                 <ScientTooltip content={installation.installRoot}>
                   <code>{installation.installRoot}</code>
@@ -80,19 +103,27 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
               </dd>
             </>
           ) : null}
-          <dt className="text-muted-foreground">Server account home</dt>
+          <dt className="text-muted-foreground">
+            <T>Server account home</T>
+          </dt>
           <dd className="min-w-0 truncate text-right text-foreground">
-            <ScientTooltip content={diagnostics.homePath ?? "Default"}>
-              <span>{diagnostics.homePath ?? "Default"}</span>
+            <ScientTooltip
+              content={diagnostics.homePath ?? gt("Default", { $context: "default home folder" })}
+            >
+              <span>
+                {diagnostics.homePath ?? gt("Default", { $context: "default home folder" })}
+              </span>
             </ScientTooltip>
           </dd>
-          <dt className="self-center text-muted-foreground">Server executable</dt>
+          <dt className="self-center text-muted-foreground">
+            <T>Server executable</T>
+          </dt>
           <dd className="flex min-w-0 items-center justify-end gap-1 text-right text-foreground">
             <ScientTooltip content={diagnostics.executable}>
               <code className="min-w-0 truncate font-mono">{diagnostics.executable}</code>
             </ScientTooltip>
             <Button
-              aria-label={`Copy ${props.displayName} executable path`}
+              aria-label={gt("Copy {provider} executable path", { provider: props.displayName })}
               className="shrink-0"
               onClick={() => copyToClipboard(diagnostics.executable, undefined)}
               size="icon-micro"
@@ -116,11 +147,15 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
               type="button"
               variant="ghost-primary"
             >
-              Use Scient-managed {props.displayName}
+              <T>
+                Use Scient-managed <Var>{props.displayName}</Var>
+              </T>
             </Button>
             <p className="text-[10px] leading-relaxed text-muted-foreground">
-              Applies to {props.displayName} accounts in this environment that use the default
-              runtime. Custom executable paths remain unchanged.
+              <T>
+                Applies to <Var>{props.displayName}</Var> accounts in this environment that use the
+                default runtime. Custom executable paths remain unchanged.
+              </T>
             </p>
           </div>
         ) : null}

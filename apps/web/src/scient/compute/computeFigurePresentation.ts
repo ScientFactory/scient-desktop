@@ -3,7 +3,9 @@ import type {
   ComputeExecutionRecord,
   ComputeSessionRecord,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
 
 import {
@@ -49,13 +51,20 @@ const FIGURE_EXTENSIONS = {
   "image/gif": "gif",
 } as const satisfies Record<ComputeStaticImageOutput["mediaType"], string>;
 
-function figureNames(output: ComputeStaticImageOutput, runtimeDisplayOrdinal: number) {
+function figureNames(
+  output: ComputeStaticImageOutput,
+  runtimeDisplayOrdinal: number,
+  resolve: MessageResolver,
+) {
   const extension = FIGURE_EXTENSIONS[output.mediaType];
   const projectPath = output.origin?._tag === "project-file" ? output.origin.path : null;
   const fileName = projectPath?.split("/").at(-1) ?? `figure-${runtimeDisplayOrdinal}.${extension}`;
   return {
     fileName,
-    label: projectPath === null ? `Figure ${runtimeDisplayOrdinal}` : fileName,
+    label:
+      projectPath === null
+        ? resolve(msg("Figure {number}", { number: runtimeDisplayOrdinal }))
+        : fileName,
     sourcePath: projectPath,
   };
 }
@@ -105,19 +114,22 @@ function computeOutputResource(input: {
   };
 }
 
-export function computeFigureDescriptorForRevision(input: {
-  readonly cwd: string;
-  readonly reference: ComputeFigureReference;
-  readonly session: Pick<ComputeSessionRecord, "projectId" | "sessionId">;
-  readonly executionId: ComputeExecutionId | null;
-  readonly output: ComputeStaticImageOutput;
-  readonly displayOrdinal?: number;
-}): PreviewStaticImageSurfaceDescriptor {
+export function computeFigureDescriptorForRevision(
+  input: {
+    readonly cwd: string;
+    readonly reference: ComputeFigureReference;
+    readonly session: Pick<ComputeSessionRecord, "projectId" | "sessionId">;
+    readonly executionId: ComputeExecutionId | null;
+    readonly output: ComputeStaticImageOutput;
+    readonly displayOrdinal?: number;
+  },
+  resolve: MessageResolver = m,
+): PreviewStaticImageSurfaceDescriptor {
   const ordinal =
     input.reference._tag === "runtime-display"
       ? (input.reference.ordinal ?? input.displayOrdinal ?? 1)
       : 1;
-  const names = figureNames(input.output, ordinal);
+  const names = figureNames(input.output, ordinal, resolve);
   const projectPath = input.reference._tag === "project-file" ? input.reference.path : null;
   const sourcePath =
     input.reference._tag === "runtime-display"
@@ -146,20 +158,23 @@ export function computeFigureDescriptorForRevision(input: {
  * result never changes under the Results card; only an explicitly opened
  * current figure can resolve through a stable logical reference.
  */
-export function computeFigurePresentation(input: {
-  readonly allowFollowing: boolean;
-  readonly executionGeneration?: ComputeSessionRecord["generation"];
-  readonly cwd: string;
-  readonly session: Pick<
-    ComputeSessionRecord,
-    "projectId" | "sessionId" | "languageId" | "label" | "generation"
-  >;
-  readonly executionId: ComputeExecutionId | null;
-  readonly output: ComputeStaticImageOutput;
-  readonly displayOrdinal: number;
-  readonly runtimeDisplayOrdinal: number;
-  readonly source: ComputeExecutionSource | null;
-}): ComputeFigurePresentation {
+export function computeFigurePresentation(
+  input: {
+    readonly allowFollowing: boolean;
+    readonly executionGeneration?: ComputeSessionRecord["generation"];
+    readonly cwd: string;
+    readonly session: Pick<
+      ComputeSessionRecord,
+      "projectId" | "sessionId" | "languageId" | "label" | "generation"
+    >;
+    readonly executionId: ComputeExecutionId | null;
+    readonly output: ComputeStaticImageOutput;
+    readonly displayOrdinal: number;
+    readonly runtimeDisplayOrdinal: number;
+    readonly source: ComputeExecutionSource | null;
+  },
+  resolve: MessageResolver = m,
+): ComputeFigurePresentation {
   const reference = computeFigureReference({
     allowFollowing: input.allowFollowing,
     projectId: input.session.projectId,
@@ -176,6 +191,7 @@ export function computeFigurePresentation(input: {
     input.output.origin?._tag === "runtime-display"
       ? input.runtimeDisplayOrdinal
       : input.displayOrdinal,
+    resolve,
   );
   const inline: PreviewStaticImageSurfaceDescriptor = {
     surfaceId: computeFigureSurfaceId({
@@ -199,14 +215,17 @@ export function computeFigurePresentation(input: {
   const viewer =
     reference._tag === "snapshot"
       ? inline
-      : computeFigureDescriptorForRevision({
-          cwd: input.cwd,
-          reference,
-          session: input.session,
-          executionId: input.executionId,
-          output: input.output,
-          displayOrdinal: input.runtimeDisplayOrdinal,
-        });
+      : computeFigureDescriptorForRevision(
+          {
+            cwd: input.cwd,
+            reference,
+            session: input.session,
+            executionId: input.executionId,
+            output: input.output,
+            displayOrdinal: input.runtimeDisplayOrdinal,
+          },
+          resolve,
+        );
   const nativeDownload =
     input.output.nativeFigure === undefined
       ? null

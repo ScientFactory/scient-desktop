@@ -1,4 +1,5 @@
 /** Dimensions are kept in TeX points or inches until the presentation boundary. */
+import { msg } from "gt-react";
 import { latexDocumentLanguage, latexLanguageFont } from "./latexLanguage";
 import { latexPreambleEnd } from "./latexSourceSyntax";
 
@@ -33,13 +34,14 @@ export function latexVisualFontMetrics(base: 10 | 11 | 12) {
   } as const;
 }
 
+/** Labels are `msg()` strings: resolve them with `useMessages()` where they are shown. */
 export const LATEX_PAPER_SIZES = {
-  letter: { label: "Letter", width: 8.5, height: 11 },
+  letter: { label: msg("Letter", { $context: "paper size" }), width: 8.5, height: 11 },
   a4: { label: "A4", width: 210 / 25.4, height: 297 / 25.4 },
   a5: { label: "A5", width: 148 / 25.4, height: 210 / 25.4 },
   b5: { label: "B5", width: 176 / 25.4, height: 250 / 25.4 },
-  legal: { label: "Legal", width: 8.5, height: 14 },
-  executive: { label: "Executive", width: 7.25, height: 10.5 },
+  legal: { label: msg("Legal", { $context: "paper size" }), width: 8.5, height: 14 },
+  executive: { label: msg("Executive", { $context: "paper size" }), width: 7.25, height: 10.5 },
 } as const;
 
 export interface LatexVisualLayoutProfile {

@@ -2,6 +2,9 @@
 import type { AssistantCitationSourceAnchor } from "../../lib/assistantTextSelection";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { AssistantCitation, ResponseContextRecord } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "../../i18n/messages";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { toastManager } from "../ui/toast";
 
@@ -14,8 +17,10 @@ export function useComposerCitations(composerRef: ComposerHandleRef) {
     if (!inserted) {
       toastManager.add({
         type: "warning",
-        title: "The composer is not ready",
-        description: "Try citing the selection after the connection or pending input is resolved.",
+        title: m(msg("The composer is not ready")),
+        description: m(
+          msg("Try citing the selection after the connection or pending input is resolved."),
+        ),
       });
     }
     return inserted;
@@ -25,8 +30,8 @@ export function useComposerCitations(composerRef: ComposerHandleRef) {
     if (!accepted) {
       toastManager.add({
         type: "warning",
-        title: "The composer is not ready",
-        description: "Try replying after the connection or pending input is resolved.",
+        title: m(msg("The composer is not ready")),
+        description: m(msg("Try replying after the connection or pending input is resolved.")),
       });
     }
     return accepted;

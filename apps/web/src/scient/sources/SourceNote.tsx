@@ -1,5 +1,6 @@
+import { T, useGT } from "gt-react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import type { ScientSourceDetailResult, ScientSourceNoteUpdateResult } from "@t3tools/contracts";
+import type { ScientSourceDetailResult } from "@t3tools/contracts";
 import {
   $convertFromMarkdownString,
   $convertToMarkdownString,
@@ -33,13 +34,13 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import { cn, randomUUID } from "~/lib/utils";
 
-import { cn } from "~/lib/utils";
-
+import ChatMarkdown from "../../components/ChatMarkdown";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { ProjectNoteHistory } from "./ProjectNoteHistory";
 
 const NOTE_AUTOSAVE_DELAY_MS = 600;
 const NOTE_MAX_LENGTH = 100_000;
@@ -47,6 +48,19 @@ const NOTE_MAX_LENGTH = 100_000;
 type NoteStatus = "saved" | "pending" | "saving" | "conflict" | "error";
 const NOTE_EDITOR_SYNC_TAG = "scient-source-note-external-sync";
 const NOTE_MARKDOWN_TRANSFORMERS = [BOLD_ITALIC_STAR, BOLD_STAR, ITALIC_STAR];
+
+/**
+ * Lexical reads `\_`, `` \` ``, `\~` and `\\` as the bare character and writes each such
+ * character back escaped, so one edit would rewrite the Markdown of the whole note. Escaped
+ * on the way in and unescaped on the way out, a note is shown and saved as it was written.
+ */
+function noteMarkdownForEditor(note: string): string {
+  return note.replace(/[\\_`~]/gu, "\\$&");
+}
+
+function noteMarkdownFromEditor(markdown: string): string {
+  return markdown.replace(/\\([\\*_`~])/gu, "$1");
+}
 
 interface SourceNoteFormats {
   readonly bold: boolean;
@@ -58,27 +72,47 @@ const EMPTY_SOURCE_NOTE_FORMATS: SourceNoteFormats = {
   italic: false,
 };
 
-function noteText(record: ScientSourceDetailResult): string {
-  return record.note ?? "";
+/** `note` is the source's note (this project's, on a personal Library); `personalNote` is "My note". */
+type SourceNoteField = "note" | "personalNote";
+
+function noteText(record: ScientSourceDetailResult, field: SourceNoteField): string {
+  return record[field] ?? "";
 }
+
+/** `base` is the note this editor last saw saved; a project note only replaces that one. */
+export interface SourceNoteSaveContext {
+  readonly base: string | null;
+  readonly session: string;
+}
+
+type SourceNoteSave = (
+  note: string | null,
+  expectedRevision: number,
+  context: SourceNoteSaveContext,
+) => Promise<{ readonly outcome: string; readonly record: ScientSourceDetailResult }>;
 
 function useSourceNoteState(input: {
   readonly record: ScientSourceDetailResult;
-  readonly onSave: (
-    note: string | null,
-    expectedRevision: number,
-  ) => Promise<ScientSourceNoteUpdateResult>;
+  readonly field: SourceNoteField;
+  readonly storage?: "source" | "pin";
+  readonly onSave: SourceNoteSave;
 }) {
-  const [draft, setDraft] = useState(() => noteText(input.record));
-  const [confirmed, setConfirmed] = useState(() => noteText(input.record));
+  const gt = useGT();
+  const field = input.field;
+  const [draft, setDraft] = useState(() => noteText(input.record, field));
+  const [confirmed, setConfirmed] = useState(() => noteText(input.record, field));
   const [status, setStatus] = useState<NoteStatus>("saved");
   const [error, setError] = useState<string | null>(null);
+  /** The note saved elsewhere when a save found it changed; the draft stays this editor's text. */
+  const [savedElsewhere, setSavedElsewhere] = useState<string | null>(null);
+  const [firstSession] = useState(() => randomUUID());
+  /** A restore starts a new session, so it never replaces the checkpoint saved before it. */
+  const sessionRef = useRef(firstSession);
   const recordRef = useRef(input.record);
   const draftRef = useRef(draft);
   const confirmedRef = useRef(confirmed);
   const mountedRef = useRef(true);
   const savingRef = useRef(false);
-  const saveAgainRef = useRef(false);
   const conflictRef = useRef(false);
   const onSaveRef = useRef(input.onSave);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onSaveRef holding the latest save callback
@@ -89,15 +123,17 @@ function useSourceNoteState(input: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the remote note record into draft state when it changes
   useEffect(() => {
     recordRef.current = input.record;
-    const remote = noteText(input.record);
-    if (remote === draftRef.current) {
+    const remote = noteText(input.record, field);
+    if (!conflictRef.current && remote === draftRef.current) {
+      conflictRef.current = false;
+      setSavedElsewhere(null);
       confirmedRef.current = remote;
       setConfirmed(remote);
       setStatus("saved");
       setError(null);
       return;
     }
-    if (draftRef.current === confirmedRef.current) {
+    if (!conflictRef.current && draftRef.current === confirmedRef.current) {
       draftRef.current = remote;
       confirmedRef.current = remote;
       setDraft(remote);
@@ -105,13 +141,10 @@ function useSourceNoteState(input: {
       setStatus("saved");
       setError(null);
     }
-  }, [input.record]);
+  }, [input.record, field]);
 
   const persist = useStableCallback(async function persistNote() {
-    if (savingRef.current) {
-      saveAgainRef.current = true;
-      return;
-    }
+    if (savingRef.current || conflictRef.current) return;
     const submitted = draftRef.current;
     if (submitted === confirmedRef.current) return;
 
@@ -123,39 +156,50 @@ function useSourceNoteState(input: {
     }
     let continueSaving = false;
     return await (async () => {
-      const result = await onSaveRef.current(submitted.trim() ? submitted : null, base.revision);
+      const seen = confirmedRef.current;
+      const result = await onSaveRef.current(submitted.trim() ? submitted : null, base.revision, {
+        base: seen.trim() ? seen : null,
+        session: sessionRef.current,
+      });
       recordRef.current = result.record;
-      const remote = noteText(result.record);
-      if (result.outcome === "stale" && remote !== confirmedRef.current && remote !== submitted) {
+      const remote = noteText(result.record, field);
+      const normalize = (text: string) => {
+        if (input.storage === "pin") return text.trim();
+        const lines = text.replace(/\r\n?/gu, "\n");
+        return lines.trim() ? lines : "";
+      };
+      if (
+        (result.outcome !== "updated" && result.outcome !== "unchanged") ||
+        normalize(remote) !== normalize(submitted)
+      ) {
         conflictRef.current = true;
         if (mountedRef.current) {
           setStatus("conflict");
-          setError("This note changed elsewhere. Your text is preserved here.");
+          setSavedElsewhere(remote);
+          setError(gt("This note changed elsewhere. Your text is preserved here."));
         }
         return;
       }
 
       confirmedRef.current = remote;
+      const draftUnchanged = draftRef.current === submitted;
+      if (draftUnchanged) draftRef.current = remote;
       if (mountedRef.current) {
         setConfirmed(remote);
+        if (draftUnchanged) setDraft(remote);
         setStatus(draftRef.current === remote ? "saved" : "pending");
       }
-      continueSaving = true;
+      continueSaving = !draftUnchanged;
     })()
       .catch(async () => {
         if (mountedRef.current) {
           setStatus("error");
-          setError("Note could not be saved. Keep typing or leave and return to retry.");
+          setError(gt("Note could not be saved. Keep typing or leave and return to retry."));
         }
       })
       .finally(() => {
         savingRef.current = false;
-        if (
-          continueSaving &&
-          !conflictRef.current &&
-          (saveAgainRef.current || draftRef.current !== confirmedRef.current)
-        ) {
-          saveAgainRef.current = false;
+        if (continueSaving && !conflictRef.current && draftRef.current !== confirmedRef.current) {
           void persistNote();
         }
       });
@@ -178,29 +222,91 @@ function useSourceNoteState(input: {
   }, [persist]);
 
   const change = (value: string) => {
-    conflictRef.current = false;
     draftRef.current = value;
     setDraft(value);
-    setStatus(value === confirmedRef.current ? "saved" : "pending");
+    if (!conflictRef.current) {
+      setStatus(value === confirmedRef.current ? "saved" : "pending");
+      setError(null);
+    }
+  };
+
+  /** After a conflict: save this editor's text over the note saved elsewhere, now that it was seen. */
+  const keepMine = () => {
+    if (savedElsewhere === null) return;
+    confirmedRef.current = savedElsewhere;
+    setConfirmed(savedElsewhere);
+    setSavedElsewhere(null);
+    conflictRef.current = false;
+    change(draftRef.current);
+    void persist();
+  };
+
+  /** After a conflict: take the note saved elsewhere and drop this editor's text. */
+  const takeSaved = () => {
+    if (savedElsewhere === null) return;
+    conflictRef.current = false;
+    draftRef.current = savedElsewhere;
+    confirmedRef.current = savedElsewhere;
+    setDraft(savedElsewhere);
+    setConfirmed(savedElsewhere);
+    setSavedElsewhere(null);
+    setStatus("saved");
     setError(null);
   };
 
-  return { change, draft, error, flush: persist, status } as const;
+  /** An earlier version, saved as a new change over the note this editor last saw. */
+  const restore = (value: string) => {
+    sessionRef.current = randomUUID();
+    change(value);
+    void persist();
+  };
+
+  return {
+    change,
+    draft,
+    error,
+    flush: persist,
+    keepMine,
+    restore,
+    savedElsewhere,
+    status,
+    takeSaved,
+  } as const;
 }
 
-function NoteStatusLine(props: { readonly status: NoteStatus; readonly error: string | null }) {
-  if (props.error) {
-    return (
-      <p className="text-xs text-destructive" role="alert">
-        {props.error}
-      </p>
-    );
-  }
+function NoteConflict(props: { readonly note: ReturnType<typeof useSourceNoteState> }) {
+  if (props.note.status !== "conflict" || props.note.savedElsewhere === null) return null;
   return (
-    <p className="min-h-4 text-xs text-muted-foreground" role="status" aria-live="polite">
-      {props.status === "saving" ? "Saving…" : props.status === "pending" ? "Saving…" : "Saved"}
-    </p>
+    <div className="space-y-1.5 rounded-md border border-border p-2">
+      <p className="text-xs text-muted-foreground">
+        <T>Saved elsewhere</T>
+      </p>
+      {props.note.savedElsewhere.trim() ? (
+        <NotePreview value={props.note.savedElsewhere} />
+      ) : (
+        <p className="px-2 text-sm text-muted-foreground">
+          <T>No note</T>
+        </p>
+      )}
+      <div className="flex gap-1.5">
+        <Button size="xs" variant="outline" onClick={props.note.keepMine}>
+          <T>Keep mine</T>
+        </Button>
+        <Button size="xs" variant="ghost" onClick={props.note.takeSaved}>
+          <T>Use saved</T>
+        </Button>
+      </div>
+    </div>
   );
+}
+
+/** Notes save as you type, so only a failure earns a line. */
+function NoteError(props: { readonly error: string | null }) {
+  return props.error ? (
+    <p className="text-xs text-destructive" role="alert">
+      {props.error}
+    </p>
+  ) : null;
 }
 
 interface SourceNoteEditorHandle {
@@ -252,7 +358,12 @@ function SourceNoteEditorBridge(props: {
     acceptedValueRef.current = props.value;
     editor.update(
       () => {
-        $convertFromMarkdownString(props.value, NOTE_MARKDOWN_TRANSFORMERS, undefined, true);
+        $convertFromMarkdownString(
+          noteMarkdownForEditor(props.value),
+          NOTE_MARKDOWN_TRANSFORMERS,
+          undefined,
+          true,
+        );
       },
       { tag: NOTE_EDITOR_SYNC_TAG },
     );
@@ -287,14 +398,14 @@ function SourceNoteEditorBridge(props: {
 
   const handleChange = (editorState: EditorState, _editor: unknown, tags: Set<string>) => {
     if (tags.has(NOTE_EDITOR_SYNC_TAG)) return;
-    const next = editorState.read(() =>
-      $convertToMarkdownString(NOTE_MARKDOWN_TRANSFORMERS, undefined, true),
+    const next = noteMarkdownFromEditor(
+      editorState.read(() => $convertToMarkdownString(NOTE_MARKDOWN_TRANSFORMERS, undefined, true)),
     );
     if (next.length > NOTE_MAX_LENGTH) {
       editor.update(
         () => {
           $convertFromMarkdownString(
-            acceptedValueRef.current,
+            noteMarkdownForEditor(acceptedValueRef.current),
             NOTE_MARKDOWN_TRANSFORMERS,
             undefined,
             true,
@@ -313,6 +424,7 @@ function SourceNoteEditorBridge(props: {
 }
 
 function SourceNoteEditor(props: {
+  readonly label?: string;
   readonly autoFocus?: boolean;
   readonly className?: string;
   readonly fillAvailableSpace?: boolean;
@@ -322,10 +434,16 @@ function SourceNoteEditor(props: {
   readonly onFormatChange?: (formats: SourceNoteFormats) => void;
   readonly onBlur: () => void;
 }) {
+  const gt = useGT();
   const initialConfig: InitialConfigType = {
     namespace: "ScientSourceNote",
     editorState: () => {
-      $convertFromMarkdownString(props.value, NOTE_MARKDOWN_TRANSFORMERS, undefined, true);
+      $convertFromMarkdownString(
+        noteMarkdownForEditor(props.value),
+        NOTE_MARKDOWN_TRANSFORMERS,
+        undefined,
+        true,
+      );
     },
     onError: (error) => {
       throw error;
@@ -350,15 +468,15 @@ function SourceNoteEditor(props: {
           contentEditable={
             <ContentEditable
               className="h-full w-full overflow-y-auto whitespace-pre-wrap break-words outline-none"
-              aria-label="Source note"
-              aria-placeholder="Add a note…"
+              aria-label={props.label ?? gt("Source note")}
+              aria-placeholder={gt("Add a note…")}
               placeholder={<span />}
               onBlur={props.onBlur}
             />
           }
           placeholder={
             <div className="pointer-events-none absolute start-2 top-1.5 text-muted-foreground">
-              Add a note…
+              <T>Add a note…</T>
             </div>
           }
           ErrorBoundary={LexicalErrorBoundary}
@@ -376,25 +494,44 @@ function SourceNoteEditor(props: {
   );
 }
 
-function NotePreview(props: { readonly value: string; readonly onEdit: () => void }) {
+function NotePreview(props: {
+  readonly value: string;
+  readonly onEdit?: () => void;
+  readonly editLabel?: string;
+}) {
+  const gt = useGT();
+  const text = (
+    <ChatMarkdown
+      text={props.value}
+      cwd={undefined}
+      lineBreaks
+      parseRawHtml={false}
+      contentDirection="auto"
+    />
+  );
+  if (!props.onEdit) return <div className="px-2 py-1.5 text-start">{text}</div>;
+  // The button lies behind the note, not around it: a link in the note stays a link, and a
+  // click anywhere else starts editing.
   return (
-    <button
-      type="button"
-      className="w-full cursor-text rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      aria-label="Edit source note"
-      dir="auto"
-      onClick={props.onEdit}
-    >
-      <div className="text-foreground [&_em]:italic [&_p]:m-0 [&_p]:whitespace-pre-wrap [&_p+_p]:mt-2 [&_strong]:font-semibold">
-        <ReactMarkdown allowedElements={["p", "strong", "em"]} skipHtml>
-          {props.value}
-        </ReactMarkdown>
+    <div className="relative rounded-md transition-colors hover:bg-accent focus-within:bg-accent">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-text rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        aria-label={props.editLabel ?? gt("Edit source note")}
+        onClick={props.onEdit}
+      />
+      <div className="pointer-events-none relative px-2 py-1.5 text-start [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
+        {text}
       </div>
-    </button>
+    </div>
   );
 }
 
-function InlineNoteEditor(props: { readonly note: ReturnType<typeof useSourceNoteState> }) {
+function InlineNoteEditor(props: {
+  readonly note: ReturnType<typeof useSourceNoteState>;
+  readonly label?: string;
+}) {
+  const gt = useGT();
   const [editing, setEditing] = useState(() => props.note.draft.length === 0);
   const editorRef = useRef<SourceNoteEditorHandle>(null);
 
@@ -404,10 +541,23 @@ function InlineNoteEditor(props: { readonly note: ReturnType<typeof useSourceNot
   }, [editing]);
 
   if (!editing && props.note.draft.trim()) {
-    return <NotePreview value={props.note.draft} onEdit={() => setEditing(true)} />;
+    return (
+      <NotePreview
+        value={props.note.draft}
+        onEdit={() => setEditing(true)}
+        {...(props.label
+          ? {
+              editLabel: gt("Edit {toLocaleLowerCase}", {
+                toLocaleLowerCase: props.label.toLocaleLowerCase(),
+              }),
+            }
+          : {})}
+      />
+    );
   }
   return (
     <SourceNoteEditor
+      {...(props.label ? { label: props.label } : {})}
       editorRef={editorRef}
       value={props.note.draft}
       onChange={props.note.change}
@@ -481,6 +631,7 @@ function restoreQuickNoteResizeSession(session: QuickNoteResizeSession): void {
 }
 
 function QuickNoteResizeHandle() {
+  const gt = useGT();
   const sessionRef = useRef<QuickNoteResizeSession | null>(null);
 
   const popupFromTarget = (target: HTMLElement) =>
@@ -500,7 +651,7 @@ function QuickNoteResizeHandle() {
   return (
     <div
       role="button"
-      aria-label="Resize quick note"
+      aria-label={gt("Resize quick note")}
       tabIndex={0}
       className="absolute end-0 bottom-0 z-10 size-8 cursor-nwse-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       onPointerDown={(event) => {
@@ -561,12 +712,22 @@ function QuickNoteResizeHandle() {
 
 export function useSourceNoteControls(props: {
   readonly record: ScientSourceDetailResult;
-  readonly onSave: (
-    note: string | null,
-    expectedRevision: number,
-  ) => Promise<ScientSourceNoteUpdateResult>;
+  readonly readOnly?: boolean;
+  readonly field?: SourceNoteField;
+  readonly storage?: "source" | "pin";
+  /** A personal Library names each of a source's two notes; elsewhere the heading is "Notes". */
+  readonly heading?: string;
+  readonly help?: string;
+  readonly onSave: SourceNoteSave;
+  /** Earlier versions of a project note, restorable from the section. */
+  readonly history?: ScientSourceDetailResult["projectNoteHistory"];
 }) {
-  const note = useSourceNoteState(props);
+  const gt = useGT();
+  const note = useSourceNoteState({ ...props, field: props.field ?? "note" });
+  const headingId =
+    props.field === "personalNote" ? "source-my-note-heading" : "source-note-heading";
+  const heading = props.heading ?? "Notes";
+  const help = props.help ? <p className="text-xs text-muted-foreground">{props.help}</p> : null;
   const quickNoteEditorRef = useRef<SourceNoteEditorHandle>(null);
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
   const [activeFormats, setActiveFormats] = useState<SourceNoteFormats>(EMPTY_SOURCE_NOTE_FORMATS);
@@ -584,9 +745,9 @@ export function useSourceNoteControls(props: {
   return {
     button: (
       <Popover open={quickNoteOpen} onOpenChange={setQuickNoteOpen}>
-        <PopoverTrigger render={<Button size="xs" variant="ghost" />}>
+        <PopoverTrigger render={<Button size="xs" variant="ghost" disabled={props.readOnly} />}>
           <StickyNote />
-          Note
+          <T context="noun, a note on a source">Note</T>
         </PopoverTrigger>
         <PopoverPopup
           side="bottom"
@@ -598,13 +759,15 @@ export function useSourceNoteControls(props: {
         >
           <div className="flex h-full min-h-0 flex-col gap-2">
             <div className="grid grid-cols-[1fr_auto_1fr] items-center px-1">
-              <p className="text-sm font-medium">Quick note</p>
+              <p className="text-sm font-medium">
+                <T>Quick note</T>
+              </p>
               <div className="flex items-center gap-px">
                 <ScientTooltip content="Bold">
                   <Button
                     size="icon-micro"
                     variant={activeFormats.bold ? "selected" : "ghost"}
-                    aria-label="Bold"
+                    aria-label={gt("Bold", { $context: "text formatting" })}
                     aria-pressed={activeFormats.bold}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => applyFormat("bold")}
@@ -618,7 +781,7 @@ export function useSourceNoteControls(props: {
                   <Button
                     size="icon-micro"
                     variant={activeFormats.italic ? "selected" : "ghost"}
-                    aria-label="Italic"
+                    aria-label={gt("Italic", { $context: "text formatting" })}
                     aria-pressed={activeFormats.italic}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => applyFormat("italic")}
@@ -632,7 +795,9 @@ export function useSourceNoteControls(props: {
               <ScientTooltip content="Close quick note">
                 <PopoverClose
                   className="justify-self-end"
-                  render={<Button size="icon-xs" variant="ghost" aria-label="Close quick note" />}
+                  render={
+                    <Button size="icon-xs" variant="ghost" aria-label={gt("Close quick note")} />
+                  }
                 >
                   <X />
                 </PopoverClose>
@@ -647,21 +812,38 @@ export function useSourceNoteControls(props: {
               onFormatChange={handleFormatChange}
               onBlur={() => void note.flush()}
             />
-            <div className="pe-6">
-              <NoteStatusLine status={note.status} error={note.error} />
+            <div className="pe-6 empty:hidden">
+              <NoteError error={note.error} />
             </div>
             <QuickNoteResizeHandle />
           </div>
         </PopoverPopup>
       </Popover>
     ),
-    section: (
-      <section className="space-y-1.5" aria-labelledby="source-note-heading">
-        <h3 id="source-note-heading" className="text-sm font-medium text-foreground">
-          Notes
-        </h3>
-        <InlineNoteEditor note={note} />
-        <NoteStatusLine status={note.status} error={note.error} />
+    section: props.readOnly ? (
+      note.draft.trim() ? (
+        <section className="space-y-1.5" aria-labelledby={headingId}>
+          <h3 id={headingId} className="text-sm font-medium text-foreground">
+            {heading}
+          </h3>
+          <NotePreview value={note.draft} />
+          {help}
+        </section>
+      ) : null
+    ) : (
+      <section className="space-y-1.5" aria-labelledby={headingId}>
+        <div className="flex items-center justify-between gap-2">
+          <h3 id={headingId} className="text-sm font-medium text-foreground">
+            {heading}
+          </h3>
+          {props.history ? (
+            <ProjectNoteHistory versions={props.history} onRestore={note.restore} />
+          ) : null}
+        </div>
+        <InlineNoteEditor note={note} {...(props.heading ? { label: props.heading } : {})} />
+        {help}
+        <NoteError error={note.error} />
+        <NoteConflict note={note} />
       </section>
     ),
   } as const;

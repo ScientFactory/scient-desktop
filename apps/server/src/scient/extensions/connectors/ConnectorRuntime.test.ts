@@ -73,6 +73,8 @@ import { ConnectorRuntime, ExtensionsDiscover } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
 import * as ConnectorCredentialStore from "./ConnectorCredentialStore.ts";
+import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
+import { disabledAnalyticsService } from "../../../telemetry/ScientAnalytics.ts";
 import {
   ConnectorOAuthError,
   ConnectorOAuthFlows,
@@ -551,6 +553,7 @@ const existingProject = (projectId: ProjectId): ProjectRow => ({
   faviconPath: null,
   projectIcon: null,
   scripts: [],
+  trackedFolders: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
@@ -625,6 +628,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly runTool?: RunTool;
     /** Told when a change reaches a connector's lock. */
     readonly onConnectorLock?: (connectorId: string) => void;
+    /** Receives the runtime's analytics events. */
+    readonly analytics?: AnalyticsService["Service"];
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -656,6 +661,9 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     options.github === undefined
       ? (effect) => effect
       : Effect.provideService(GitHubSourceControlCredential, options.github),
+    options.analytics === undefined
+      ? (effect) => effect
+      : Effect.provideService(AnalyticsService, options.analytics),
   );
 
   const delivered = new Set<string>();
@@ -883,6 +891,79 @@ describe("connector probe", () => {
       const listed = yield* harness.runtime.list();
       expect(listed.connectors[0]).toMatchObject({
         description: "Search the vendor's documentation.",
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("connector analytics", () => {
+  it.live("reports the connector added, signed in to, used and removed, by its host", () =>
+    Effect.gen(function* () {
+      const events: Array<{ name: string; properties: Record<string, unknown> }> = [];
+      const harness = yield* makeHarness({
+        analytics: {
+          ...disabledAnalyticsService,
+          record: (name, properties) =>
+            Effect.sync(() => {
+              events.push({ name, properties: { ...properties } });
+            }),
+        },
+      });
+      const connectorId = yield* harness.connectSecure("/noprm/mcp");
+      yield* harness.proxy(connectorId, toolCall(1));
+      yield* harness.runtime.remove({ connectorId });
+      const host = new URL(vendor.base).hostname;
+      expect(
+        events.map(({ name, properties }) => [
+          name,
+          properties.change ?? properties.outcome,
+          properties.connector,
+        ]),
+      ).toEqual([
+        ["extension.changed", "added", host],
+        ["extension.sign_in.started", "ok", host],
+        ["extension.changed", "connected", host],
+        ["extension.sign_in.finished", "ok", host],
+        ["extension.tool.called", "ok", host],
+        ["extension.changed", "removed", host],
+      ]);
+      expect(
+        events.find((event) => event.name === "extension.tool.called")?.properties,
+      ).toMatchObject({
+        owner: "scient",
+        connectorSource: "url",
+        extensionName: "Vendor",
+        tool: "search",
+        outcome: "ok",
+        callerProviderInstance: "codex",
+      });
+      expect(JSON.stringify(events)).not.toContain("/noprm/mcp");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("reports why a sign-in did not finish", () =>
+    Effect.gen(function* () {
+      const events: Array<{ name: string; properties: Record<string, unknown> }> = [];
+      const harness = yield* makeHarness({
+        analytics: {
+          ...disabledAnalyticsService,
+          record: (name, properties) =>
+            Effect.sync(() => {
+              events.push({ name, properties: { ...properties } });
+            }),
+        },
+      });
+      const added = yield* harness.addSecure();
+      const { callback } = yield* harness.authorize(added.connector.connectorId);
+      callback.searchParams.delete("code");
+      callback.searchParams.set("error", "access_denied");
+      yield* harness.send(new Request(callback.href));
+      expect(
+        events.find((event) => event.name === "extension.sign_in.finished")?.properties,
+      ).toMatchObject({
+        outcome: "error",
+        reason: "denied",
+        extensionName: "Vendor",
       });
     }).pipe(Effect.provide(testLayer)),
   );
@@ -2719,34 +2800,6 @@ describe("connector state file", () => {
   );
 });
 
-describe("connector credential store", () => {
-  it.live("replaces material only at the expected version and reads only for its owner", () =>
-    Effect.gen(function* () {
-      const store = yield* ConnectorCredentialStore.ConnectorCredentialStore;
-      const encode = (text: string) => new TextEncoder().encode(text);
-      const owner = { type: "connector", connectorId: "con_abcdefgh" } as const;
-      const ref = yield* store.put(owner, "bearer", encode("one"), { label: "test" });
-      expect(yield* store.replace(ref, encode("two"), 1)).toBe(2);
-      const conflict = yield* store.replace(ref, encode("three"), 1).pipe(Effect.flip);
-      expect(conflict._tag).toBe("SecretVersionConflict");
-      const foreign = yield* store.readOwned(ref, {
-        type: "connector",
-        connectorId: "con_other123",
-      });
-      expect(Option.isNone(foreign)).toBe(true);
-      const read = yield* store.readOwned(ref, owner);
-      expect(
-        Option.map(read, ({ material, version }) => ({
-          text: new TextDecoder().decode(material),
-          version,
-        })),
-      ).toEqual(Option.some({ text: "two", version: 2 }));
-      yield* store.remove(ref);
-      expect(Option.isNone(yield* store.readOwned(ref, owner))).toBe(true);
-    }).pipe(Effect.provide(testLayer)),
-  );
-});
-
 describe("bound connector credentials", () => {
   it.live(
     "uses live account rotation after reload and loses access on removal without fallback",
@@ -3972,8 +4025,19 @@ describe("connectors agents run", () => {
       expect(yield* agent(listConnectors({ query: "echo" }))).toEqual({
         connectors: [row],
         found: [
-          { name: echo.name, title: "Echo", addable: false, added: added.connector },
-          { name: docker.name, addable: false, reason: docker.unsupportedReason },
+          {
+            name: echo.name,
+            title: "Echo",
+            hosting: "Not checked by Scient",
+            addable: false,
+            added: added.connector,
+          },
+          {
+            name: docker.name,
+            hosting: "Not checked by Scient",
+            addable: false,
+            reason: docker.unsupportedReason,
+          },
         ],
       });
 

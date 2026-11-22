@@ -1,5 +1,7 @@
 import { useEffectEvent } from "react";
 
+import { msg, T, useGT, useMessages } from "gt-react";
+
 import {
   AlignCenter,
   AlignLeft,
@@ -14,6 +16,7 @@ import {
   BetweenHorizontalEnd,
   BetweenVerticalEnd,
   Brackets,
+  ChartColumn,
   Columns3,
   Copy,
   CornerDownLeft,
@@ -77,6 +80,7 @@ import {
   PopoverTrigger,
 } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { WritingShortcutsDialog } from "../../keyboard/WritingShortcutsDialog";
 import { WritingCommandIcon } from "../../writing/commandIcons";
@@ -181,6 +185,8 @@ function commandIcon(command: ScientMarkdownCommand): ReactNode {
       );
     case "image":
       return <ImageIcon className={className} />;
+    case "result":
+      return <ChartColumn className={className} />;
     case "wiki-link":
       return <Brackets className={className} />;
     case "horizontal-rule":
@@ -226,13 +232,13 @@ const STYLE_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly shortcut?: ScientMarkdownShortcutId;
 }> = [
-  { command: "paragraph", label: "Paragraph", shortcut: "paragraph" },
-  { command: "heading-1", label: "Heading 1", shortcut: "heading1" },
-  { command: "heading-2", label: "Heading 2", shortcut: "heading2" },
-  { command: "heading-3", label: "Heading 3", shortcut: "heading3" },
-  { command: "heading-4", label: "Heading 4", shortcut: "heading4" },
-  { command: "heading-5", label: "Heading 5", shortcut: "heading5" },
-  { command: "heading-6", label: "Heading 6", shortcut: "heading6" },
+  { command: "paragraph", label: msg("Paragraph"), shortcut: "paragraph" },
+  { command: "heading-1", label: msg("Heading 1"), shortcut: "heading1" },
+  { command: "heading-2", label: msg("Heading 2"), shortcut: "heading2" },
+  { command: "heading-3", label: msg("Heading 3"), shortcut: "heading3" },
+  { command: "heading-4", label: msg("Heading 4"), shortcut: "heading4" },
+  { command: "heading-5", label: msg("Heading 5"), shortcut: "heading5" },
+  { command: "heading-6", label: msg("Heading 6"), shortcut: "heading6" },
   { command: "blockquote", label: WRITING_COMMAND_LABELS.quote },
 ];
 
@@ -257,6 +263,7 @@ function StyleMenuItems({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const messages = useMessages();
   return (
     <MenuRadioGroup value={styleMenuValue(snapshot)}>
       {STYLE_ITEMS.map((item) => {
@@ -274,12 +281,20 @@ function StyleMenuItems({
               aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
               onClick={() => controller.execute(item.command)}
             >
-              <MenuRow icon={commandIcon(item.command)} label={item.label} shortcut={shortcut} />
+              <MenuRow
+                icon={commandIcon(item.command)}
+                label={messages(item.label)}
+                shortcut={shortcut}
+              />
             </MenuRadioItem>
           </Fragment>
         );
       })}
-      {snapshot.inTable ? <p className="scient-menu-note">A table cell holds text only.</p> : null}
+      {snapshot.inTable ? (
+        <p className="scient-menu-note">
+          <T>A table cell holds text only.</T>
+        </p>
+      ) : null}
     </MenuRadioGroup>
   );
 }
@@ -288,10 +303,16 @@ function StyleMenuItems({
 function MathMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   return (
     <>
-      <MenuItem onClick={() => controller.mathInput.execute("math.inline")}>Inline math</MenuItem>
-      <MenuItem onClick={() => controller.mathInput.execute("math.display")}>Display math</MenuItem>
+      <MenuItem onClick={() => controller.mathInput.execute("math.inline")}>
+        <T>Inline math</T>
+      </MenuItem>
+      <MenuItem onClick={() => controller.mathInput.execute("math.display")}>
+        <T>Display math</T>
+      </MenuItem>
       <MenuSeparator />
-      <MenuItem onClick={() => controller.mathInput.open()}>Symbols &amp; structures</MenuItem>
+      <MenuItem onClick={() => controller.mathInput.open()}>
+        <T>Symbols &amp; structures</T>
+      </MenuItem>
     </>
   );
 }
@@ -303,6 +324,8 @@ function FormattingMenuItems({
   controller: ScientMarkdownEditorView;
   snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const active = new Set(snapshot.activeMarks);
   const items: ReadonlyArray<{
     command: ScientMarkdownCommand;
@@ -310,15 +333,25 @@ function FormattingMenuItems({
     mark: string;
     shortcut: ScientMarkdownShortcutId;
   }> = [
-    { command: "bold", label: WRITING_COMMAND_LABELS.bold, mark: "strong", shortcut: "bold" },
-    { command: "italic", label: WRITING_COMMAND_LABELS.italic, mark: "em", shortcut: "italic" },
+    {
+      command: "bold",
+      label: messages(WRITING_COMMAND_LABELS.bold),
+      mark: "strong",
+      shortcut: "bold",
+    },
+    {
+      command: "italic",
+      label: messages(WRITING_COMMAND_LABELS.italic),
+      mark: "em",
+      shortcut: "italic",
+    },
     {
       command: "inline-code",
-      label: WRITING_COMMAND_LABELS.inlineCode,
+      label: messages(WRITING_COMMAND_LABELS.inlineCode),
       mark: "code",
       shortcut: "inlineCode",
     },
-    { command: "strike", label: "Strikethrough", mark: "strike", shortcut: "strike" },
+    { command: "strike", label: gt("Strikethrough"), mark: "strike", shortcut: "strike" },
   ];
   return (
     <>
@@ -343,7 +376,7 @@ function FormattingMenuItems({
       >
         <MenuRow
           icon={<RemoveFormatting />}
-          label="Clear formatting"
+          label={gt("Clear formatting")}
           shortcut={scientMarkdownShortcut("clearFormatting")}
         />
       </MenuItem>
@@ -385,6 +418,7 @@ function FontSizeButton({
   readonly snapshot: ScientMarkdownEditorSnapshot;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const gt = useGT();
   const [open, setOpenState] = useState(false);
   const setOpen = (next: boolean) => {
     setOpenState(next);
@@ -403,9 +437,9 @@ function FontSizeButton({
           <button
             type="button"
             className={cn(dockButtonClass(false), "px-2 text-xs tabular-nums")}
-            aria-label="Font and size"
+            aria-label={gt("Font and size")}
           >
-            {snapshot.fontSize ?? "Aa"}
+            {snapshot.fontSize ?? gt("Aa", { $context: "sample letters on the font button" })}
           </button>
         }
       />
@@ -421,26 +455,33 @@ function FontSizeButton({
 function markdownTextContents(
   controller: ScientMarkdownEditorView,
   snapshot: ScientMarkdownEditorSnapshot,
+  resolve: MessageResolver,
 ) {
   return {
     paragraphStyle: <StyleMenuItems controller={controller} snapshot={snapshot} />,
     formatting: <FormattingMenuItems controller={controller} snapshot={snapshot} />,
     font: <MarkdownFontControls controller={controller} snapshot={snapshot} />,
     direction: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
-    directionLabel: snapshot.inTable ? "Table direction" : "Direction",
+    directionLabel: snapshot.inTable
+      ? resolve(msg("Table direction"))
+      : resolve(msg("Direction", { $context: "text direction menu" })),
   };
 }
 
-function listMenuLabel(kind: ScientMarkdownEditorSnapshot["listKind"]): string {
+/** The list menu's button label: "List: Numbered". */
+function listMenuLabel(
+  kind: ScientMarkdownEditorSnapshot["listKind"],
+  resolve: MessageResolver,
+): string {
   switch (kind) {
     case "ordered":
-      return "Numbered";
+      return resolve(msg("List: Numbered"));
     case "task":
-      return "Task";
+      return resolve(msg("List: Task"));
     case "bullet":
-      return "Bullet";
+      return resolve(msg("List: Bullet"));
     default:
-      return "None";
+      return resolve(msg("List: None"));
   }
 }
 
@@ -475,7 +516,7 @@ const LIST_ITEMS: ReadonlyArray<{
 }> = [
   { command: "bullet-list", label: WRITING_COMMAND_LABELS.bulletList, shortcut: "bulletList" },
   { command: "ordered-list", label: WRITING_COMMAND_LABELS.numberedList, shortcut: "orderedList" },
-  { command: "task-list", label: "Task list", shortcut: "taskList" },
+  { command: "task-list", label: msg("Task list"), shortcut: "taskList" },
 ];
 
 function ListsMenuItems({
@@ -485,6 +526,7 @@ function ListsMenuItems({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const messages = useMessages();
   return (
     <MenuRadioGroup value={listMenuValue(snapshot.listKind)}>
       {LIST_ITEMS.map((item) => {
@@ -497,15 +539,23 @@ function ListsMenuItems({
             aria-keyshortcuts={shortcut.ariaKeyShortcuts}
             onClick={() => controller.execute(item.command)}
           >
-            <MenuRow icon={commandIcon(item.command)} label={item.label} shortcut={shortcut} />
+            <MenuRow
+              icon={commandIcon(item.command)}
+              label={messages(item.label)}
+              shortcut={shortcut}
+            />
           </MenuRadioItem>
         );
       })}
       <MenuSeparator />
       <MenuRadioItem value="list-none" onClick={() => controller.execute("list-none")}>
-        <MenuRow icon={commandIcon("list-none")} label={WRITING_COMMAND_LABELS.noList} />
+        <MenuRow icon={commandIcon("list-none")} label={messages(WRITING_COMMAND_LABELS.noList)} />
       </MenuRadioItem>
-      {snapshot.inTable ? <p className="scient-menu-note">A table cell holds text only.</p> : null}
+      {snapshot.inTable ? (
+        <p className="scient-menu-note">
+          <T>A table cell holds text only.</T>
+        </p>
+      ) : null}
     </MenuRadioGroup>
   );
 }
@@ -517,9 +567,10 @@ function ListsMenu({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const messages = useMessages();
   return (
     <DockMenu
-      label={`List: ${listMenuLabel(snapshot.listKind)}`}
+      label={listMenuLabel(snapshot.listKind, messages)}
       icon={listTriggerIcon(snapshot.listKind)}
       popupClassName="w-48"
     >
@@ -532,37 +583,41 @@ const INSERT_ITEMS: ReadonlyArray<{
   readonly command: ScientMarkdownCommand;
   readonly label: string;
 }> = [
-  { command: "code-block", label: "Code block" },
-  { command: "footnote", label: "Footnote" },
-  { command: "image", label: "Image" },
-  { command: "wiki-link", label: "Wiki link ([[note]])" },
-  { command: "horizontal-rule", label: "Divider line" },
+  { command: "code-block", label: msg("Code block") },
+  { command: "footnote", label: msg("Footnote") },
+  { command: "image", label: msg("Image") },
+  { command: "result", label: msg("Result") },
+  { command: "wiki-link", label: msg("Wiki link ([[note]])") },
+  { command: "horizontal-rule", label: msg("Divider line") },
 ];
 
 /** Markdown's actions for the shared Insert menu: only what a Markdown file can hold. */
 function markdownInsertActions(
   controller: ScientMarkdownEditorView,
   openLinkEditor: () => void,
+  resolve: MessageResolver,
 ): readonly InsertMenuAction[] {
   return [
     {
       id: "link",
-      label: WRITING_COMMAND_LABELS.link,
+      label: resolve(WRITING_COMMAND_LABELS.link),
       icon: <WritingCommandIcon command="link" className="size-4 text-muted-foreground" />,
       shortcut: scientMarkdownShortcut("link"),
       run: openLinkEditor,
     },
-    ...INSERT_ITEMS.map((item) => ({
-      id: item.command,
-      label: item.label,
-      icon: commandIcon(item.command),
-      run: () => {
-        controller.execute(item.command);
-      },
-    })),
+    ...INSERT_ITEMS.filter((item) => item.command !== "result" || controller.canInsertResults).map(
+      (item) => ({
+        id: item.command,
+        label: resolve(item.label),
+        icon: commandIcon(item.command),
+        run: () => {
+          controller.execute(item.command);
+        },
+      }),
+    ),
     {
       id: "hard-break",
-      label: "Line break",
+      label: resolve(msg("Line break")),
       icon: commandIcon("hard-break"),
       shortcut: scientMarkdownShortcut("hardBreak"),
       run: () => {
@@ -576,11 +631,14 @@ function markdownInsertActions(
 const markdownInsertLayout: InsertMenuLayout = (item, table) => (
   <>
     {item("image")}
+    {item("result")}
     {table}
     {item("code-block")}
     <MenuSeparator />
     <MenuSub>
-      <MenuSubTrigger>References</MenuSubTrigger>
+      <MenuSubTrigger>
+        <T>References</T>
+      </MenuSubTrigger>
       <MenuSubPopup className="w-max min-w-40">
         {item("link")}
         {item("wiki-link")}
@@ -601,9 +659,10 @@ function InsertBlockMenu({
   readonly controller: ScientMarkdownEditorView;
   readonly openLinkEditor: () => void;
 }) {
+  const messages = useMessages();
   return (
     <InsertMenu
-      actions={markdownInsertActions(controller, openLinkEditor)}
+      actions={markdownInsertActions(controller, openLinkEditor, messages)}
       layout={markdownInsertLayout}
       onInsertTable={(rows, columns) => {
         controller.insertTable({ rows, columns });
@@ -618,9 +677,13 @@ const DIRECTION_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly accessibleLabel: string;
 }> = [
-  { command: "direction-auto", label: "Auto", accessibleLabel: "Auto" },
-  { command: "direction-ltr", label: "LTR", accessibleLabel: "Left-to-right" },
-  { command: "direction-rtl", label: "RTL", accessibleLabel: "Right-to-left" },
+  {
+    command: "direction-auto",
+    label: msg("Auto", { $context: "text direction" }),
+    accessibleLabel: msg("Auto", { $context: "text direction" }),
+  },
+  { command: "direction-ltr", label: "LTR", accessibleLabel: msg("Left-to-right") },
+  { command: "direction-rtl", label: "RTL", accessibleLabel: msg("Right-to-left") },
 ];
 
 function DirectionMenuItems({
@@ -630,6 +693,8 @@ function DirectionMenuItems({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const value =
     snapshot.textDirection === null ? "direction-auto" : `direction-${snapshot.textDirection}`;
   return (
@@ -640,8 +705,8 @@ function DirectionMenuItems({
           value={item.command}
           aria-label={
             snapshot.inTable && item.command === "direction-auto"
-              ? "Auto (detect from table)"
-              : item.accessibleLabel
+              ? gt("Auto (detect from table)")
+              : messages(item.accessibleLabel)
           }
           onClick={() => controller.execute(item.command)}
         >
@@ -649,8 +714,8 @@ function DirectionMenuItems({
             icon={commandIcon(item.command)}
             label={
               snapshot.inTable && item.command === "direction-auto"
-                ? "Auto (detect from table)"
-                : item.label
+                ? gt("Auto (detect from table)")
+                : messages(item.label)
             }
           />
         </MenuRadioItem>
@@ -667,6 +732,7 @@ function BlockActionsMenuItems({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const gt = useGT();
   const findShortcut = scientMarkdownShortcut("find");
   const moveUpShortcut = scientMarkdownShortcut("moveBlockUp");
   const moveDownShortcut = scientMarkdownShortcut("moveBlockDown");
@@ -680,13 +746,17 @@ function BlockActionsMenuItems({
       {snapshot.outlineItems.length === 0 ? (
         <MenuItem disabled>
           <ListTree />
-          <span>Document outline</span>
+          <span>
+            <T>Document outline</T>
+          </span>
         </MenuItem>
       ) : (
         <MenuSub>
           <MenuSubTrigger>
             <ListTree />
-            <span>Document outline</span>
+            <span>
+              <T>Document outline</T>
+            </span>
           </MenuSubTrigger>
           <MenuSubPopup className="w-60" data-keybinding-capture="">
             {snapshot.outlineItems.map((item, index) => (
@@ -704,7 +774,7 @@ function BlockActionsMenuItems({
                     index === snapshot.outlineActiveIndex && "font-medium",
                   )}
                 >
-                  {item.text || "Untitled heading"}
+                  {item.text || gt("Untitled heading")}
                 </span>
               </MenuItem>
             ))}
@@ -716,7 +786,9 @@ function BlockActionsMenuItems({
         onClick={() => controller.setFindOpen(!snapshot.findOpen)}
       >
         <Search />
-        <span>Find & Replace</span>
+        <span>
+          <T>Find & Replace</T>
+        </span>
         <MenuShortcut aria-hidden="true" dir="ltr">
           {findShortcut.display}
         </MenuShortcut>
@@ -732,7 +804,9 @@ function BlockActionsMenuItems({
             onClick={blockAction("move-up")}
           >
             <ArrowUp />
-            <span>Move block up</span>
+            <span>
+              <T>Move block up</T>
+            </span>
             <MenuShortcut aria-hidden="true" dir="ltr">
               {moveUpShortcut.display}
             </MenuShortcut>
@@ -745,7 +819,9 @@ function BlockActionsMenuItems({
             onClick={blockAction("move-down")}
           >
             <ArrowDown />
-            <span>Move block down</span>
+            <span>
+              <T>Move block down</T>
+            </span>
             <MenuShortcut aria-hidden="true" dir="ltr">
               {moveDownShortcut.display}
             </MenuShortcut>
@@ -758,7 +834,9 @@ function BlockActionsMenuItems({
             onClick={blockAction("duplicate")}
           >
             <Copy />
-            <span>Duplicate block</span>
+            <span>
+              <T>Duplicate block</T>
+            </span>
             <MenuShortcut aria-hidden="true" dir="ltr">
               {duplicateShortcut.display}
             </MenuShortcut>
@@ -769,7 +847,9 @@ function BlockActionsMenuItems({
             onClick={blockAction("delete")}
           >
             <Trash2 />
-            <span>Delete block</span>
+            <span>
+              <T>Delete block</T>
+            </span>
           </MenuItem>
         </>
       ) : null}
@@ -795,6 +875,8 @@ function LinkEditorTrigger({
   /** No button: only the place the link editor opens from (Link is in Insert). */
   readonly anchorOnly?: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the link editor handle and acknowledges the controller's link-edit request
   useEffect(() => {
     if (openRequest === 0) return;
@@ -827,7 +909,7 @@ function LinkEditorTrigger({
               <button
                 type="button"
                 className={dockButtonClass(active)}
-                aria-label="Add or edit link"
+                aria-label={gt("Add or edit link")}
                 aria-keyshortcuts={shortcut.ariaKeyShortcuts}
                 data-preserve-icon-weight="true"
               >
@@ -838,7 +920,7 @@ function LinkEditorTrigger({
         }
       />
       <TooltipPopup side="top">
-        <DockTooltipContent label={WRITING_COMMAND_LABELS.link} shortcut={shortcut} />
+        <DockTooltipContent label={messages(WRITING_COMMAND_LABELS.link)} shortcut={shortcut} />
       </TooltipPopup>
     </Tooltip>
   );
@@ -853,6 +935,8 @@ function LinkEditorPopup({
   readonly controller: ScientMarkdownEditorView;
   readonly handle: LinkEditorHandle;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [href, setHref] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const openedFromEditorRef = useRef(false);
@@ -915,7 +999,7 @@ function LinkEditorPopup({
         <div className="p-2">
           <form className="flex flex-col gap-2" onSubmit={submit}>
             <div className="flex items-center justify-between px-1">
-              <PopoverTitle size="compact">{WRITING_COMMAND_LABELS.link}</PopoverTitle>
+              <PopoverTitle size="compact">{messages(WRITING_COMMAND_LABELS.link)}</PopoverTitle>
               {active ? (
                 <button
                   type="button"
@@ -923,25 +1007,25 @@ function LinkEditorPopup({
                   onClick={remove}
                 >
                   <Trash2 className="size-3" />
-                  Remove
+                  <T context="button, removes the link">Remove</T>
                 </button>
               ) : null}
             </div>
             <Input
               ref={inputRef}
-              aria-label="Link destination"
+              aria-label={gt("Link destination")}
               inputMode="url"
-              placeholder="https://... or relative path"
+              placeholder={gt("https://... or relative path")}
               size="compact"
               value={href}
               onChange={(event) => setHref(event.target.value)}
             />
             <div className="flex items-center justify-end gap-1">
               <Button size="xs" type="button" variant="ghost" onClick={closeToEditor}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button disabled={!href.trim()} size="xs" type="submit">
-                Apply
+                <T context="button, applies the link">Apply</T>
               </Button>
             </div>
           </form>
@@ -952,6 +1036,7 @@ function LinkEditorPopup({
 }
 
 export function TableMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+  const gt = useGT();
   const execute = (command: ScientMarkdownCommand) => {
     controller.execute(command);
   };
@@ -960,68 +1045,98 @@ export function TableMenuItems({ controller }: { readonly controller: ScientMark
     <>
       <MenuItem onClick={() => execute("select-table")}>
         <TableIcon />
-        <span>Select whole table</span>
+        <span>
+          <T>Select whole table</T>
+        </span>
       </MenuItem>
       <MenuSeparator />
       <MenuItem onClick={() => execute("add-row-before")}>
         <ArrowUpToLine />
-        <span>Add row above</span>
+        <span>
+          <T>Add row above</T>
+        </span>
       </MenuItem>
       <MenuItem onClick={() => execute("add-row-after")}>
         <ArrowDownToLine />
-        <span>Add row below</span>
+        <span>
+          <T>Add row below</T>
+        </span>
       </MenuItem>
       <MenuSeparator />
       <MenuItem onClick={() => execute("add-column-before")}>
         <ArrowLeftToLine />
-        <span>Add column before</span>
+        <span>
+          <T>Add column before</T>
+        </span>
       </MenuItem>
       <MenuItem onClick={() => execute("add-column-after")}>
         <ArrowRightToLine />
-        <span>Add column after</span>
+        <span>
+          <T>Add column after</T>
+        </span>
       </MenuItem>
       <MenuSeparator />
-      <MenuItem disabled title="Markdown tables use one header row.">
+      <MenuItem disabled title={gt("Markdown tables use one header row.")}>
         <PanelTop />
-        <span>Toggle header cell</span>
+        <span>
+          <T>Toggle header cell</T>
+        </span>
       </MenuItem>
-      <MenuItem disabled title="Merged cells cannot be saved in a Markdown table.">
+      <MenuItem disabled title={gt("Merged cells cannot be saved in a Markdown table.")}>
         <Merge />
-        <span>Merge selected cells</span>
+        <span>
+          <T>Merge selected cells</T>
+        </span>
       </MenuItem>
-      <MenuItem disabled title="Merged cells cannot be saved in a Markdown table.">
+      <MenuItem disabled title={gt("Merged cells cannot be saved in a Markdown table.")}>
         <Split />
-        <span>Split cell</span>
+        <span>
+          <T>Split cell</T>
+        </span>
       </MenuItem>
       <MenuSeparator />
       <MenuItem onClick={() => execute("align-column-left")}>
         <AlignLeft />
-        <span>Align column left</span>
+        <span>
+          <T>Align column left</T>
+        </span>
       </MenuItem>
       <MenuItem onClick={() => execute("align-column-center")}>
         <AlignCenter />
-        <span>Align column center</span>
+        <span>
+          <T>Align column center</T>
+        </span>
       </MenuItem>
       <MenuItem onClick={() => execute("align-column-right")}>
         <AlignRight />
-        <span>Align column right</span>
+        <span>
+          <T>Align column right</T>
+        </span>
       </MenuItem>
       <MenuItem onClick={() => execute("align-column-default")}>
         <Eraser />
-        <span>Clear column alignment</span>
+        <span>
+          <T>Clear column alignment</T>
+        </span>
       </MenuItem>
       <MenuSeparator />
       <MenuItem variant="destructive" onClick={() => execute("delete-row")}>
         <Rows3 />
-        <span>Delete row</span>
+        <span>
+          <T>Delete row</T>
+        </span>
       </MenuItem>
       <MenuItem variant="destructive" onClick={() => execute("delete-column")}>
         <Columns3 />
-        <span>Delete column</span>
+        <span>
+          <T>Delete column</T>
+        </span>
       </MenuItem>
       <MenuItem variant="destructive" onClick={() => execute("delete-table")}>
         <Trash2 />
-        <span>Delete table</span>
+        <span>
+          <T>Delete table</T>
+        </span>
       </MenuItem>
     </>
   );
@@ -1034,39 +1149,44 @@ export function TableActions({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const gt = useGT();
   return (
-    <span className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Table actions">
+    <span
+      className="flex shrink-0 items-center gap-0.5"
+      role="group"
+      aria-label={gt("Table actions")}
+    >
       <CommandButton
         controller={controller}
         command="add-row-after"
-        label="Add row below"
+        label={gt("Add row below")}
         icon={<BetweenHorizontalEnd className="size-4" />}
       />
       <CommandButton
         controller={controller}
         command="add-column-after"
-        label="Add column after"
+        label={gt("Add column after")}
         icon={<BetweenVerticalEnd className="size-4" />}
       />
       <DockDivider />
       <CommandButton
         controller={controller}
         command="align-column-left"
-        label="Align column left"
+        label={gt("Align column left")}
         icon={<AlignLeft className="size-4" />}
         active={snapshot.tableAlignment === "left"}
       />
       <CommandButton
         controller={controller}
         command="align-column-center"
-        label="Align column center"
+        label={gt("Align column center")}
         icon={<AlignCenter className="size-4" />}
         active={snapshot.tableAlignment === "center"}
       />
       <CommandButton
         controller={controller}
         command="align-column-right"
-        label="Align column right"
+        label={gt("Align column right")}
         icon={<AlignRight className="size-4" />}
         active={snapshot.tableAlignment === "right"}
       />
@@ -1099,6 +1219,8 @@ function SelectionToolbar({
   readonly recentWikiLinkPaths: ReadonlyArray<string>;
   readonly onWikiLinkSelected: (path: string) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number; bottom: number } | null>(null);
   const [place, setPlace] = useState<"above" | "below">("above");
@@ -1201,7 +1323,7 @@ function SelectionToolbar({
       className="scient-markdown-selection-toolbar"
       data-keybinding-capture=""
       role="toolbar"
-      aria-label="Text formatting"
+      aria-label={gt("Text formatting")}
       aria-hidden={!visible}
       style={{
         left: anchor.left,
@@ -1215,7 +1337,7 @@ function SelectionToolbar({
       <CommandButton
         controller={controller}
         command="bold"
-        label={WRITING_COMMAND_LABELS.bold}
+        label={messages(WRITING_COMMAND_LABELS.bold)}
         icon={<WritingCommandIcon command="bold" />}
         preserveIconWeight
         shortcut="bold"
@@ -1224,7 +1346,7 @@ function SelectionToolbar({
       <CommandButton
         controller={controller}
         command="italic"
-        label={WRITING_COMMAND_LABELS.italic}
+        label={messages(WRITING_COMMAND_LABELS.italic)}
         icon={<WritingCommandIcon command="italic" />}
         active={active.has("em")}
         shortcut="italic"
@@ -1232,7 +1354,7 @@ function SelectionToolbar({
       <CommandButton
         controller={controller}
         command="inline-code"
-        label={WRITING_COMMAND_LABELS.inlineCode}
+        label={messages(WRITING_COMMAND_LABELS.inlineCode)}
         icon={<WritingCommandIcon command="inlineCode" />}
         preserveIconWeight
         active={active.has("code")}
@@ -1268,13 +1390,16 @@ function DocumentSettingsMenu({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   return (
     <MenuSub open={open} onOpenChange={setOpen}>
-      <MenuSubTrigger disabled={!snapshot.editable}>Document settings</MenuSubTrigger>
+      <MenuSubTrigger disabled={!snapshot.editable}>
+        <T>Document settings</T>
+      </MenuSubTrigger>
       <MenuSubPopup
         className="w-96 max-w-[calc(100vw-2rem)]"
-        aria-label="Document settings"
+        aria-label={gt("Document settings")}
         finalFocus={false}
       >
         {open ? (
@@ -1308,6 +1433,8 @@ export function ScientMarkdownControls({
   /** File-level actions, such as Export, listed after the editing actions in More actions. */
   readonly documentActions?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const snapshot = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
@@ -1328,7 +1455,13 @@ export function ScientMarkdownControls({
   const mathMenuAnchor = useRef<HTMLSpanElement>(null);
   const selectionLinkEditorTriggerId = `scient-markdown-link-selection-${useId()}`;
   const slashItems =
-    snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
+    snapshot.slashQuery === null
+      ? []
+      : filterScientMarkdownSlashCommands(
+          snapshot.slashQuery,
+          controller.canInsertResults,
+          messages,
+        );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the toolbar chrome when a link-edit request targets an empty selection
   useEffect(() => {
@@ -1359,7 +1492,7 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="undo"
-                label={WRITING_COMMAND_LABELS.undo}
+                label={messages(WRITING_COMMAND_LABELS.undo)}
                 icon={<WritingCommandIcon command="undo" />}
                 disabled={!snapshot.canUndo}
                 shortcut="undo"
@@ -1367,7 +1500,7 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="redo"
-                label={WRITING_COMMAND_LABELS.redo}
+                label={messages(WRITING_COMMAND_LABELS.redo)}
                 icon={<WritingCommandIcon command="redo" />}
                 disabled={!snapshot.canRedo}
                 shortcut="redo"
@@ -1375,7 +1508,7 @@ export function ScientMarkdownControls({
               <DockDivider />
             </>
           ),
-          overflowLabel: "History",
+          overflowLabel: gt("History", { $context: "undo and redo commands" }),
           overflow: (
             <>
               <MenuItem
@@ -1384,7 +1517,7 @@ export function ScientMarkdownControls({
                 onClick={() => controller.execute("undo")}
               >
                 <WritingCommandIcon command="undo" />
-                <span>{WRITING_COMMAND_LABELS.undo}</span>
+                <span>{messages(WRITING_COMMAND_LABELS.undo)}</span>
                 <MenuShortcut aria-hidden="true" dir="ltr">
                   {undoShortcut.display}
                 </MenuShortcut>
@@ -1395,7 +1528,7 @@ export function ScientMarkdownControls({
                 onClick={() => controller.execute("redo")}
               >
                 <WritingCommandIcon command="redo" />
-                <span>{WRITING_COMMAND_LABELS.redo}</span>
+                <span>{messages(WRITING_COMMAND_LABELS.redo)}</span>
                 <MenuShortcut aria-hidden="true" dir="ltr">
                   {redoShortcut.display}
                 </MenuShortcut>
@@ -1408,9 +1541,9 @@ export function ScientMarkdownControls({
           priority: 100,
           pinned: true,
           estimatedWidth: 62,
-          bar: <TextMenu {...markdownTextContents(controller, snapshot)} />,
-          overflowLabel: "Text",
-          overflow: <TextMenuItems {...markdownTextContents(controller, snapshot)} />,
+          bar: <TextMenu {...markdownTextContents(controller, snapshot, messages)} />,
+          overflowLabel: messages(WRITING_COMMAND_LABELS.text),
+          overflow: <TextMenuItems {...markdownTextContents(controller, snapshot, messages)} />,
         },
         {
           id: "insert",
@@ -1431,11 +1564,11 @@ export function ScientMarkdownControls({
               <DockDivider />
             </>
           ),
-          overflowLabel: "Insert",
+          overflowLabel: messages(WRITING_COMMAND_LABELS.insert),
           // The same searchable content as the bar's menu.
           overflow: (
             <InsertMenuContent
-              actions={markdownInsertActions(controller, openLinkEditor)}
+              actions={markdownInsertActions(controller, openLinkEditor, messages)}
               layout={markdownInsertLayout}
               onInsertTable={(rows, columns) => {
                 controller.insertTable({ rows, columns });
@@ -1450,16 +1583,16 @@ export function ScientMarkdownControls({
           bar: (
             <span ref={mathMenuAnchor} className="inline-flex">
               <DockMenu
-                label="Math"
+                label={gt("Math")}
                 // The word alone: "Math" says what it is.
-                icon={<span className="text-[13px]">Math</span>}
+                icon={<span className="text-[13px]">{gt("Math")}</span>}
                 popupClassName="w-max [&_[role=menuitem]]:whitespace-nowrap"
               >
                 <MathMenuItems controller={controller} />
               </DockMenu>
             </span>
           ),
-          overflowLabel: "Math",
+          overflowLabel: gt("Math"),
           overflow: <MathMenuItems controller={controller} />,
         },
         {
@@ -1472,7 +1605,7 @@ export function ScientMarkdownControls({
               <DockDivider />
             </>
           ),
-          overflowLabel: "Lists",
+          overflowLabel: gt("Lists"),
           overflow: <ListsMenuItems controller={controller} snapshot={snapshot} />,
         },
       ];
@@ -1480,8 +1613,8 @@ export function ScientMarkdownControls({
   return (
     <>
       <DockOverflowRow
-        label="Document actions"
-        overflowButtonLabel="Document"
+        label={gt("Document actions")}
+        overflowButtonLabel={gt("Document", { $context: "menu of actions on the document" })}
         overflowPosition="after-groups"
         overflowButtonIcon={<FileText className="size-4" />}
         expanded={expanded}
@@ -1502,7 +1635,9 @@ export function ScientMarkdownControls({
             {/* The same list of writing shortcuts the LaTeX editor opens. */}
             <MenuItem onClick={() => setShortcutsOpen(true)}>
               <Keyboard />
-              <span>Keyboard shortcuts</span>
+              <span>
+                <T>Keyboard shortcuts</T>
+              </span>
             </MenuItem>
             <PanelTabNewWindowItem separated />
           </>
@@ -1534,14 +1669,18 @@ export function ScientMarkdownControls({
         <MathInputTools controller={controller.mathInput} anchor={mathMenuAnchor} />
       ) : null}
 
+      {snapshot.editable && snapshot.citationItems.length > 0 ? (
+        <LibraryCitationMenu controller={controller} snapshot={snapshot} />
+      ) : null}
+
       {snapshot.editable && snapshot.slashQuery !== null && slashItems.length > 0 ? (
         <div
           className="scient-markdown-slash-menu flex max-h-72 w-56 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
           role="listbox"
-          aria-label="Insert block"
+          aria-label={gt("Insert block")}
         >
           <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-            Blocks
+            <T>Blocks</T>
           </div>
           {slashItems.map((item, index) => (
             <button
@@ -1557,12 +1696,52 @@ export function ScientMarkdownControls({
               onClick={() => controller.executeSlashCommand(item.command)}
             >
               {commandIcon(item.command)}
-              <span>{item.label}</span>
+              <span>{messages(item.label)}</span>
             </button>
           ))}
         </div>
       ) : null}
     </>
+  );
+}
+
+function LibraryCitationMenu(props: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  const gt = useGT();
+  return (
+    <div
+      className="scient-markdown-slash-menu scient-markdown-citation-menu flex max-h-72 w-72 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
+      role="listbox"
+      aria-label={gt("Cite from Library")}
+    >
+      <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+        <T context="the project's library of sources">Library</T>
+      </div>
+      {props.snapshot.citationItems.map((item, index) => (
+        <button
+          key={item.sourceId}
+          type="button"
+          role="option"
+          aria-selected={index === props.snapshot.citationActiveIndex}
+          className={cn(
+            "flex w-full flex-col items-start rounded-md px-2 py-1.5 text-start text-xs text-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+            index === props.snapshot.citationActiveIndex && "bg-accent text-accent-foreground",
+          )}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => props.controller.insertLibraryCitation(item.citationKey)}
+        >
+          <span className="w-full truncate font-medium">
+            {item.label}
+            <span className="ms-1.5 font-normal text-muted-foreground">@{item.citationKey}</span>
+          </span>
+          {item.title ? (
+            <span className="w-full truncate text-muted-foreground">{item.title}</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
   );
 }
 

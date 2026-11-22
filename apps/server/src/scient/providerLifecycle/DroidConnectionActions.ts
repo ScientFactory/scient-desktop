@@ -3,7 +3,11 @@
  * advertised ACP capabilities and scope the child to the attempt; never parse TUI wording as
  * lifecycle authority.
  */
-import type { DroidSettings, ProviderConnectionMethod } from "@t3tools/contracts";
+import type {
+  DroidSettings,
+  ProviderConnectionFailureReason,
+  ProviderConnectionMethod,
+} from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -30,8 +34,13 @@ import {
 
 const ACP_START_TIMEOUT = "30 seconds";
 
-const connectionError = (message: string, cause?: unknown) =>
+const connectionError = (
+  message: string,
+  cause?: unknown,
+  reason?: ProviderConnectionFailureReason,
+) =>
   new ProviderConnectionActionError({
+    ...(reason === undefined ? {} : { failureReason: reason }),
     message,
     ...(cause === undefined ? {} : { cause }),
   });
@@ -74,7 +83,9 @@ const openDroidAcp = Effect.fn("DroidConnectionActions.openAcp")(function* (inpu
   const resolved = yield* resolveSpawnCommand(spawn.command, spawn.args, {
     env: input.environment,
   }).pipe(
-    Effect.mapError((cause) => connectionError("Scient could not prepare Droid sign in.", cause)),
+    Effect.mapError((cause) =>
+      connectionError("Scient could not prepare Droid sign in.", cause, "start_failed"),
+    ),
   );
   const child = yield* input.spawner
     .spawn(
@@ -85,14 +96,20 @@ const openDroidAcp = Effect.fn("DroidConnectionActions.openAcp")(function* (inpu
       }),
     )
     .pipe(
-      Effect.mapError((cause) => connectionError("Scient could not start Droid sign in.", cause)),
+      Effect.mapError((cause) =>
+        connectionError("Scient could not start Droid sign in.", cause, "start_failed"),
+      ),
     );
   const context = yield* Layer.build(EffectAcpClient.layerChildProcess(child));
   const client = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(context));
   const initializeResult = yield* client.agent.initialize(initializeRequest).pipe(
     Effect.timeout(ACP_START_TIMEOUT),
     Effect.mapError((cause) =>
-      connectionError("Droid did not initialize its secure account connection.", cause),
+      connectionError(
+        "Droid did not initialize its secure account connection.",
+        cause,
+        "start_failed",
+      ),
     ),
   );
   return { client, initializeResult };
@@ -117,7 +134,7 @@ export function makeDroidConnectionActions(input: {
       authenticate: client.agent.authenticate({ methodId: DROID_AUTH_METHOD_DEVICE_PAIRING }).pipe(
         Effect.asVoid,
         Effect.mapError((cause) =>
-          connectionError("Droid could not complete Factory sign in.", cause),
+          connectionError("Droid could not complete Factory sign in.", cause, "provider_failed"),
         ),
       ),
       logout: client.agent
@@ -140,7 +157,11 @@ export function makeDroidConnectionActionsFromOpen(input: {
     methods: ["droid_device_pairing"],
     start: Effect.fn("DroidConnectionActions.start")(function* (method: ProviderConnectionMethod) {
       if (method !== "droid_device_pairing") {
-        return yield* connectionError("Droid does not support this sign-in method.");
+        return yield* connectionError(
+          "Droid does not support this sign-in method.",
+          undefined,
+          "start_failed",
+        );
       }
       const scope = yield* Scope.Scope;
       const session = yield* input.open;
@@ -148,6 +169,8 @@ export function makeDroidConnectionActionsFromOpen(input: {
       if (!droidAccountCapabilitiesFromInitializeResult(initializeResult).devicePairing) {
         return yield* connectionError(
           "This Droid version does not advertise Factory device pairing.",
+          undefined,
+          "start_failed",
         );
       }
 

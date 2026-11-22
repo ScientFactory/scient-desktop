@@ -84,6 +84,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly preflightFailure: Option.Option<PreflightFailure>;
   readonly runningDistro?: string;
   readonly wslRuntimeId?: string;
+  readonly wslT3Home?: string | null;
 }
 
 export interface PreflightFailure {
@@ -517,7 +518,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         decodeDesktopTelemetryControlLine(line).pipe(
           Effect.flatMap((message) =>
             message.type === "serverReady"
-              ? Deferred.succeed(serverReady, undefined)
+              ? Deferred.succeed(serverReady, undefined).pipe(
+                  // SCIENT-FORK: the publisher hands journaled update facts to a ready backend.
+                  Effect.andThen(handleControl(message)),
+                )
               : handleControl(message),
           ),
           Effect.catchCause((cause) =>
@@ -943,7 +947,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const program = runBackendProcess({
           ...config.value,
-          desktopTelemetryStream: desktopTelemetryPublisher.encoded,
+          // SCIENT-FORK: this backend's stream carries the update facts offered to it.
+          desktopTelemetryStream:
+            desktopTelemetryPublisher.encodedFor?.(spec.id) ?? desktopTelemetryPublisher.encoded,
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
           onDesktopTelemetryControl: (message) =>
@@ -992,6 +998,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* wslEnvironment.pruneRuntimes(
                 config.value.runningDistro,
                 config.value.wslRuntimeId,
+                config.value.wslT3Home ?? null,
               );
             }
           }),

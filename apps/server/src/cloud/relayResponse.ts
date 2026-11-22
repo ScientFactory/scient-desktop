@@ -68,8 +68,12 @@ function recoveryHint(error: RelayProtectedError): string {
       return "Unlink an unused environment in Scient remote connection, then restart Scient on this machine.";
     case "RelayAuthInvalidError":
       return "Run `scient connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `scient connect logout`, then run `scient connect` again. Restart Scient after signing in.";
-    case "RelayEnvironmentLinkProofExpiredError":
     case "RelayEnvironmentLinkProofInvalidError":
+      if (error.reason === "environment_key_mismatch") {
+        return "Scient Connect already has this environment linked with a different key. Unlink it in Scient Connect, then restart Scient on this machine.";
+      }
+      return "Check this machine's date and time, update Scient, then restart it.";
+    case "RelayEnvironmentLinkProofExpiredError":
       return "Check this machine's date and time, update Scient, then restart it.";
     default:
       return "Retry when the relay is available. If this continues, include the trace ID when reporting it.";

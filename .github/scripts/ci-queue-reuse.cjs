@@ -7,6 +7,7 @@ const { validateResult, validateScenarios } = require("./thread-transfer-report.
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
+const { comparisonBase } = require("./ci-comparison-base.cjs");
 // The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
 const MAX_QUEUE_SEGMENTS = 6;
 const SCHEMA = 4;
@@ -28,7 +29,7 @@ const RECEIPT_KEYS = [
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_REPORT = 64 * 1024 * 1024;
 // The test_web and test_server matrix sizes in ci.yml.
-const SHARDS = { web: 6, server: 12 };
+const SHARDS = { web: 12, server: 16 };
 const TRANSFER_RESULT = "thread-transfer-result.json";
 const TRANSFER_SCENARIOS = "thread-transfer-scenarios.json";
 const assert = (condition, message) => {
@@ -113,7 +114,6 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
     );
     assert(pr.head?.repo?.full_name === who.repository, "Fork pull requests are never reused");
     assert(SHA.test(pr.base.sha) && SHA.test(pr.head.sha), "Invalid pull request comparison");
-    baseSha = pr.base.sha;
   } else {
     throw new Error("Not a pull request or the main merge queue");
   }
@@ -143,17 +143,20 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
     ]),
   );
   const commit = await commitOf(github, context.repo, who.headSha);
-  if (
-    context.eventName === "pull_request" &&
-    !(
-      commit.parents.length === 2 &&
-      commit.parents[0] === baseSha &&
-      commit.parents[1] === context.payload.pull_request.head.sha
-    )
-  ) {
-    // The gates compared against the event's base; reuse requires the tested merge to join it.
-    core.info("The tested merge commit does not join this PR's base and head; nothing recorded.");
-    return false;
+  if (context.eventName === "pull_request") {
+    // The gates compared against the main this merge was made on, not the event's base.
+    const pr = context.payload.pull_request;
+    baseSha = comparisonBase(context.payload, commit.parents);
+    if (
+      !(
+        commit.parents.length === 2 &&
+        commit.parents[0] === baseSha &&
+        commit.parents[1] === pr.head.sha
+      )
+    ) {
+      core.info("The tested commit is not a merge of this PR's head; nothing recorded.");
+      return false;
+    }
   }
   const receipt = {
     schemaVersion: SCHEMA,

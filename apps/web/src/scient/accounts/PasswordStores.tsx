@@ -1,3 +1,4 @@
+import { msg, T, useGT } from "gt-react";
 import { CliPasswordStoreRow } from "./CliPasswordStores";
 import { type RefObject, useState } from "react";
 import type { AccountsSnapshot, EnvironmentId } from "@t3tools/contracts";
@@ -20,6 +21,7 @@ import { ControlsMenu } from "./AccountControls";
 import { MenuItem } from "~/components/ui/menu";
 import { StoreTitle } from "./StoreTitle";
 import { AccountField } from "./AccountDialog";
+import { m } from "~/i18n/messages";
 
 export function OnePasswordDialog({
   environmentId,
@@ -34,6 +36,7 @@ export function OnePasswordDialog({
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const connect = useAccountCommand(accountsState.connectOnePassword, environmentId);
+  const gt = useGT();
   return (
     <Dialog
       open
@@ -43,11 +46,13 @@ export function OnePasswordDialog({
     >
       <DialogPopup data-accounts-dialog>
         <DialogHeader>
-          <DialogTitle>Connect 1Password</DialogTitle>
+          <DialogTitle>
+            <T>Connect 1Password</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-4">
-            <AccountField label="Connect with">
+            <AccountField label={gt("Connect with")}>
               <NativeSelect
                 value={mode}
                 onChange={(event) => {
@@ -55,11 +60,13 @@ export function OnePasswordDialog({
                   setValue("");
                 }}
               >
-                <option value="service-account">Service account</option>
-                <option value="desktop">Desktop app</option>
+                <option value="service-account">{gt("Service account")}</option>
+                <option value="desktop">{gt("Desktop app")}</option>
               </NativeSelect>
             </AccountField>
-            <AccountField label={mode === "desktop" ? "Account name" : "Service-account token"}>
+            <AccountField
+              label={mode === "desktop" ? gt("Account name") : gt("Service-account token")}
+            >
               <Input
                 autoComplete="off"
                 type={mode === "desktop" ? "text" : "password"}
@@ -85,7 +92,7 @@ export function OnePasswordDialog({
               }
             }}
           >
-            Connect
+            <T>Connect</T>
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -107,10 +114,11 @@ export function PasswordStores({
   const [busy, setBusy] = useState(false);
   const disconnect = useAccountCommand(accountsState.disconnectOnePassword, environmentId);
   const status = snapshot.stores.onePassword;
+  const gt = useGT();
   return (
-    <SettingsSection title="Password stores" id="accounts-password-stores">
+    <SettingsSection title={gt("Password stores")} id="accounts-password-stores">
       {snapshot.stores.scient.protection === "file" ? (
-        <SettingsRow title="Scient" status="Store key protected by a local file" />
+        <SettingsRow title="Scient" status={gt("Store key protected by a local file")} />
       ) : null}
       <SettingsRow
         title={
@@ -125,7 +133,7 @@ export function PasswordStores({
             status={
               snapshot.stores.keychain.platform === "macos" || snapshot.stores.keychain.available
                 ? undefined
-                : "Unavailable"
+                : gt("Unavailable")
             }
             domain={snapshot.stores.keychain.platform === "macos" ? "apple.com" : undefined}
           />
@@ -138,9 +146,9 @@ export function PasswordStores({
             domain="1password.com"
             status={
               status.state === "connected"
-                ? `Connected · ${status.label}`
+                ? gt("Connected · {label}", { label: status.label })
                 : status.state === "error"
-                  ? "Connection needs attention"
+                  ? gt("Connection needs attention")
                   : undefined
             }
           />
@@ -155,12 +163,12 @@ export function PasswordStores({
                   setBusy(false);
                 }}
               >
-                Disconnect
+                <T>Disconnect</T>
               </MenuItem>
             </ControlsMenu>
           ) : (
             <Button size="xs" variant="outline" disabled={!canWrite} onClick={onConnect}>
-              Connect
+              <T>Connect</T>
             </Button>
           )
         }
@@ -201,7 +209,7 @@ export function PasswordFileInput({
         event.currentTarget.value = "";
         if (!file || !canWrite || busy) return;
         if (file.size > 10_000_000) {
-          toastManager.add({ type: "error", title: "Password file is too large" });
+          toastManager.add({ type: "error", title: m(msg("Password file is too large")) });
           return;
         }
         setBusy(true);
@@ -212,14 +220,18 @@ export function PasswordFileInput({
               type: "success",
               title:
                 [
-                  result.value.created ? `Added ${result.value.created}` : "",
-                  result.value.updated ? `Updated ${result.value.updated}` : "",
+                  result.value.created
+                    ? m(msg("Added {count}", { count: result.value.created }))
+                    : "",
+                  result.value.updated
+                    ? m(msg("Updated {count}", { count: result.value.updated }))
+                    : "",
                 ]
                   .filter(Boolean)
-                  .join(" · ") || "Nothing new to import",
+                  .join(" · ") || m(msg("Nothing new to import")),
             });
         } catch {
-          toastManager.add({ type: "error", title: "Could not read password file" });
+          toastManager.add({ type: "error", title: m(msg("Could not read password file")) });
         }
         setBusy(false);
       }}

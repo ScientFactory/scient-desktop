@@ -136,6 +136,19 @@ import Migration0098 from "./Migrations/098_TurnItemMessageOrdinalIndex.ts";
 import Migration0099 from "./Migrations/099_TurnItemInlineWorkOutput.ts";
 // T3's migration 96 follows Scient's immutable migration sequence.
 import Migration0100 from "./Migrations/100_RepairStaleTitleRegeneration.ts";
+// T3's migrations 97-98 follow Scient's immutable migration sequence.
+import Migration0101 from "./Migrations/101_IssueTrackerBindings.ts";
+import Migration0102 from "./Migrations/102_ActiveShellIndexIndexes.ts";
+// T3's migration 99 follows Scient's immutable migration sequence.
+import Migration0103 from "./Migrations/103_BackgroundRecoveryIndexes.ts";
+// T3's migrations 100-102 follow Scient's immutable migration sequence.
+import Migration0104 from "./Migrations/104_TurnStartReadIndexes.ts";
+import Migration0105 from "./Migrations/105_DelegatedTaskReadIndexes.ts";
+import Migration0106 from "./Migrations/106_ThreadItemCounts.ts";
+// T3's migrations 103-105 follow Scient's immutable migration sequence.
+import Migration0107 from "./Migrations/107_IssueTrackerAdditionalScopes.ts";
+import Migration0108 from "./Migrations/108_ProjectionProjectsTrackedFolders.ts";
+import Migration0109 from "./Migrations/109_TaskFolders.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -269,6 +282,19 @@ export const migrationEntries = [
   [99, "TurnItemInlineWorkOutput", Migration0099],
   // T3's migration 96 follows Scient's immutable migration sequence.
   [100, "RepairStaleTitleRegeneration", Migration0100],
+  // T3's migrations 97-98 follow Scient's immutable migration sequence.
+  [101, "IssueTrackerBindings", Migration0101],
+  [102, "ActiveShellIndexIndexes", Migration0102],
+  // T3's migration 99 follows Scient's immutable migration sequence.
+  [103, "BackgroundRecoveryIndexes", Migration0103],
+  // T3's migrations 100-102 follow Scient's immutable migration sequence.
+  [104, "TurnStartReadIndexes", Migration0104],
+  [105, "DelegatedTaskReadIndexes", Migration0105],
+  [106, "ThreadItemCounts", Migration0106],
+  // T3's migrations 103-105 follow Scient's immutable migration sequence.
+  [107, "IssueTrackerAdditionalScopes", Migration0107],
+  [108, "ProjectionProjectsTrackedFolders", Migration0108],
+  [109, "TaskFolders", Migration0109],
   // SCIENT-FORK:END
 ] as const;
 
@@ -317,11 +343,13 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const previewMigrations =
     // Only worth attempting once the caller intends to migrate past the
     // orchestration schema. 59 is T3's migration 55 at Scient's next free id.
-    toMigrationInclusive === undefined || toMigrationInclusive >= 59
+    // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
+    hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 59)
       ? yield* reconcileV2PreviewMigration()
       : [];
   // After the preview lift, so a repaired ledger is judged as this build sees it.

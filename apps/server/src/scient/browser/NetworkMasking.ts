@@ -535,10 +535,6 @@ export const knownMasker = (
   };
 };
 
-/** Every known secret in `text` hidden; a text too costly to check is hidden whole. */
-export const maskKnown = (text: string, context: MaskContext | undefined) =>
-  context === undefined ? text : (knownMasker(context.secrets)(text) ?? hide(text));
-
 // Best effort, by name, for values Scient does not know.
 
 /** The parameters with secret values hidden, in order and with repeated names kept; or undefined. */
@@ -1147,16 +1143,6 @@ export const checkBody = (
   if (!("text" in checked) || context === undefined) return checked;
   const masked = knownMasker(context.secrets, options)(checked.text, options.cut);
   return masked === undefined ? { leftOut: "too-costly" } : { text: masked };
-};
-
-/** A body with its secrets hidden, or `undefined` when it is left out. */
-export const maskBody = (
-  text: string,
-  contentType: string,
-  context?: MaskContext,
-): string | undefined => {
-  const checked = checkBody(text, contentType, context);
-  return "text" in checked ? checked.text : undefined;
 };
 
 const maskLink = (value: string, base: string | undefined) =>

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -20,6 +21,7 @@ export function MarkdownDocumentSettings(props: {
   readonly onApply: (font: MarkdownDocumentFont) => boolean;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   // The parent mounts a fresh card for each opening.
   const [original] = useState(props.font);
   const [font, setFont] = useState(original);
@@ -37,7 +39,7 @@ export function MarkdownDocumentSettings(props: {
         <Button
           size="icon-xs"
           variant="ghost"
-          aria-label="Close document settings"
+          aria-label={gt("Close document settings")}
           onClick={props.onClose}
         >
           <XIcon />
@@ -49,18 +51,18 @@ export function MarkdownDocumentSettings(props: {
           event.preventDefault();
           if (!changed || props.disabled) return;
           if (props.onApply(font)) props.onClose();
-          else setError("These settings could not be applied. The front matter is not YAML.");
+          else setError(gt("These settings could not be applied. The front matter is not YAML."));
         }}
       >
         <fieldset className="grid grid-cols-2 gap-x-3 gap-y-2.5" disabled={props.disabled}>
-          <DocumentSettingsField label="Text size">
+          <DocumentSettingsField label={gt("Text size")}>
             <LatexSelect
               size="sm"
               width="fluid"
-              aria-label="Text size"
+              aria-label={gt("Text size")}
               value={font.fontSize ?? DEFAULT_CHOICE}
               options={[
-                { value: DEFAULT_CHOICE, label: "Default" },
+                { value: DEFAULT_CHOICE, label: gt("Default", { $context: "document text size" }) },
                 ...DOCUMENT_FONT_SIZES.map((size) => ({
                   value: size,
                   label: size.replace("pt", " pt"),
@@ -73,14 +75,14 @@ export function MarkdownDocumentSettings(props: {
               }}
             />
           </DocumentSettingsField>
-          <DocumentSettingsField label="Font">
+          <DocumentSettingsField label={gt("Font")}>
             <LatexSelect
               size="sm"
               width="fluid"
-              aria-label="Font"
+              aria-label={gt("Document font")}
               value={font.fontFamily ?? DEFAULT_CHOICE}
               options={[
-                { value: DEFAULT_CHOICE, label: "Default" },
+                { value: DEFAULT_CHOICE, label: gt("Default", { $context: "document font" }) },
                 ...FONT_GROUPS.flatMap((group) =>
                   group.fonts.map((font) => ({ value: font.name, label: font.name })),
                 ),
@@ -102,10 +104,10 @@ export function MarkdownDocumentSettings(props: {
         )}
         <div className="flex justify-end gap-2">
           <Button size="xs" type="button" variant="outline" onClick={props.onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button size="xs" type="submit" disabled={!changed || props.disabled}>
-            Apply
+            <T>Apply</T>
           </Button>
         </div>
       </form>

@@ -229,8 +229,8 @@ export const piReplayFixtureProvenance = {
     reopened: false,
   },
   pi_compaction: {
-    liveDigest: "7b20a36515c95f0ee9b174970a1420146d6bfe18e6bb4c7e8189b3571a424182",
-    originalDigest: "26226612d6558dbb6a3bcc5ae696859a5106e1e2b3ab1b52a2138f2dae043a67",
+    liveDigest: "33fe5a6800d8a11f9d4cf1df5d30bb197ed0f180835e48645dbbf5bc8403ac14",
+    originalDigest: "45eb7813e5f3855f5ed30b47de4658dbe7966c47936fe4abd0946ccfb1e7c600",
     reopened: false,
   },
   provider_thread_resume: {
@@ -250,13 +250,13 @@ export const piReplayFixtureProvenance = {
     initialResponseAfterModelsRequest: true,
   },
   thread_rollback_after_stop: {
-    liveDigest: "01aa9e84e1d176f3370b6eb047e97e2e2a4df6b05d5235066bb2e270748709e4",
-    originalDigest: "420436a24d114174256b91f3b696f1c657a99200238f2b459287aab58e9a3a49",
+    liveDigest: "94656770b64d1cb9d87f9ce0f939601b3b1b7952eff06dd7183392d12240db5f",
+    originalDigest: "8dec81702f1e833d19ceead48ee4218e62bd5394e4c8e4c068bf9e909806a421",
     reopened: true,
   },
   turn_interrupt_mid_tool: {
-    liveDigest: "5a539ef96af7cb403f1407107cd7a3d5830ff46b8bcf4d34e6863175dd50a562",
-    originalDigest: "5f0a1b2a4afa36d9dbd2b431a60de7ecfdaada61bc132ef7ddc01bfb5f10ced2",
+    liveDigest: "31dd981b7dd71058161394c37775e21b8ecfd5ba2db86cf9b8e0655ddf330287",
+    originalDigest: "61b3fe598f69c4258ad548e15232d428f4a156285fadd373129b1cdef0d2140b",
     reopened: false,
   },
 } as const;
@@ -304,11 +304,11 @@ export function restorePiOriginalSkillDiscoveryRecording(input: {
   const queuedStartPromptLines: Readonly<Record<string, ReadonlyArray<number>>> = {
     simple: [18],
     multi_turn: [18, 53],
-    pi_compaction: [18, 74, 106, 156],
+    pi_compaction: [18, 72, 104, 154],
     provider_thread_resume: [18, 84],
     message_steering: [18],
     thread_rollback: [18, 64, 116],
-    thread_rollback_after_stop: [18, 54, 182, 245],
+    thread_rollback_after_stop: [18, 54, 184, 247],
     turn_interrupt_mid_tool: [18],
   };
   for (const index of queuedStartPromptLines[input.scenario] ?? []) {
@@ -521,8 +521,8 @@ const recordedPiSchedules: Readonly<
     states: [41, 74],
   },
   pi_compaction: {
-    digest: "f2114d37cc02f63aa45d5d626298f67b450e4d690e323d22477accce407bc064",
-    states: [44, 62, 94, 126, 144, 186],
+    digest: "0aed8ba0cf54f864f2a896b096f09f92243f5e29ca50fa958b5e431088e86c2a",
+    states: [44, 92, 124, 142, 184],
   },
   provider_thread_resume: {
     digest: "169e2165685d45ad0be48b704b873316e65274eab756b0cc621e2a470627e429",
@@ -537,11 +537,11 @@ const recordedPiSchedules: Readonly<
     states: [52, 85, 169],
   },
   thread_rollback_after_stop: {
-    digest: "0313a3bfec863b763e8cc9c31fcb5da1f8db790c445009d1389be9db1edaa500",
-    states: [42, 214, 284],
+    digest: "8651426b97d076b6f0aa8f6b5fcec20c11c235eeec857ba8f98ff1a67cb8c305",
+    states: [42, 216, 286],
   },
   turn_interrupt_mid_tool: {
-    digest: "e956bbd48a11fbf7454cbb7381ea4608c017320806e50ac1d7dddda609360158",
+    digest: "6b46173ba084db88779c334c40d13c5985f0c63f071aa490822de956822efb8a",
     states: [],
   },
 };
@@ -622,7 +622,9 @@ export function reconcilePiRecordedSchedules(input: {
     )
       refuse();
     const confirmation = syntheticState(state, `t3-${910000 + ordinal}`, "settle-confirmation");
-    if (input.scenario === "pi_compaction" && (index === 62 || index === 144)) {
+    // A failed manual compaction fails its turn without settling, so only the
+    // successful one at 142 is confirmed, and it is probed twice.
+    if (input.scenario === "pi_compaction" && index === 142) {
       // compaction_end and the compact ACK independently probe idle state.
       // Gate both reads before replying so both tree cursors retain the same
       // pinned boundary. These extra replies are static fixture observations.
@@ -697,6 +699,34 @@ export function reconcilePiRecordedSchedules(input: {
           isCompacting: false,
           pendingMessageCount: 0,
         }),
+      );
+    }
+    if (input.scenario === "pi_compaction" && index === 65) {
+      // The compact ACK fails the turn and reads the tree and session stats. The
+      // settle probe compaction_end started reads them too, then confirms the same idle state.
+      for (const [request, command, id] of [
+        [61, "get_entries", "t3-940000"],
+        [63, "get_session_stats", "t3-940001"],
+      ] as const) {
+        const original = entries[request]!;
+        const reply = response(request + 1, command);
+        if (original.type !== "expect_outbound" || !Predicate.isObject(original.frame))
+          return refuse();
+        result.push(
+          {
+            ...original,
+            label: `synthetic:failed-compaction-probe:${command}`,
+            frame: { ...original.frame, id },
+          },
+          {
+            ...reply.entry,
+            label: `synthetic:failed-compaction-probe:response:${command}`,
+            frame: { ...reply.frame, id },
+          },
+        );
+      }
+      result.push(
+        ...syntheticState(response(60, "get_state"), "t3-940002", "failed-compaction-probe"),
       );
     }
     const replacement = replacements.get(index);
@@ -921,7 +951,7 @@ export function reconcilePiBoundLaunchProtocol(input: {
     input.scenario === "provider_thread_resume"
       ? 62
       : input.scenario === "thread_rollback_after_stop"
-        ? 160
+        ? 162
         : undefined;
   const historicalRPCFrames: Array<ProviderReplayEntry> = attachedSwitches(prepared);
   if (start === undefined)

@@ -17,50 +17,53 @@ the workflow still reports whitespace and checker-test results without inventing
 work. The full product suite also runs for documentation-only changes so every protected context
 is present and the repository cannot merge around its own branch policy.
 
+Release-note changes run the full lanes like any other change. The Web suite validates the
+shipped catalog (`releaseNotes/model.test.ts`) and renders it in Chromium
+(`ScientReleaseNotes.browser.test.tsx`).
+
 For every pull request, merge-queue candidate (`merge_group`), and push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality
 gates (a queue candidate or main push may reuse an exact earlier qualification, described below):
-
-Release-note-only changes use **Release notes qualification** instead of the full lanes below.
-The event's immutable base and tested commit must differ only in `releaseNotes/catalog.ts`
-and optionally its existing `model.test.ts` and `ScientReleaseNotes.browser.test.tsx` files
-under `apps/web/src/scient/`. The catalog must change, both versions must contain literal
-data only, and all changed files must remain regular files. Empty or unresolved diffs,
-additions, deletions, renames, mode changes, executable catalog code, and any other path
-run full CI. Workflow, component, dependency and test-configuration changes therefore
-qualify through full CI, including changes to this optimization itself.
-
-The focused lane runs catalog/model validation, release-note Chromium tests, web type checking,
-and release-note formatting and lint. Only after all pass does it suppress unrelated workspace,
-server, full web shards, Rust, mobile, Compute, packaging and release-smoke qualification.
-The existing required shard names explicitly report that focused qualification passed and
-their suites were not applicable. No transfer measurements or full-suite reuse receipt are
-fabricated: focused runs do not produce them and are independently qualified on each event.
-Failures or absent qualification output retain full CI. Beta and Stable release workflows
-still build, sign, package and check their actual release artifacts normally.
 
 - **Check**: `knip:check` rejects unused files/dependencies repository-wide and unused exports in the enabled application/runtime workspaces. `brand:check` verifies Scient product identity on shipped code and `docs/user`; its reviewed exemptions live in `scripts/scient-brand-allowlist.json`, each with a reason, and an entry that no longer exempts anything fails the check. `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists,
   imports only modules that Electron's sandbox can load, and still exports callable expected APIs.
   The verifier first parses imports, then executes the trusted artifact with controlled bridge stubs.
-- **Test**: `vp run --parallel --concurrency-limit 4 --filter '!t3'
-  --filter '!@t3tools/web' --filter '!@t3tools/monorepo' test` across workspace packages except the
+- **Test**: `vp run --parallel --concurrency-limit 4 ... test` across workspace packages except the
   server, web app, and monorepo root, dropping the dependency-ordering wait that only bought idle
-  runner time. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
+  runner time. Six runners share it: `Test` runs every package the others don't name, so a new
+  package always runs; `Test 3` runs client-runtime, scripts, provider-runtime and shared;
+  `Test 2` and `Test 4` run halves of mobile (`--shard 1/2`, `2/2`); `Test 5` runs the oxlint
+  plugin; and `Test 6` runs desktop with its Electron runtime, browser secret helper libraries and
+  export smokes. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.
-- **Test Web**: three shards of `vp run --filter @t3tools/web test --shard N/3`, each on its own
+- **Test Web**: twelve shards of `vp run --filter @t3tools/web test --shard N/12`, each on its own
   runner, covering both unit tests and `*.browser.test.{ts,tsx}` in headless Chromium. This keeps
-  the large web suite from competing with other workspace packages.
-- **Test Server**: three shards of `vp run --filter t3 test --shard N/3`. The server sets
-  `fileParallelism: false`, so its test files run strictly serially and sharding spreads them over
-  separate runners instead of workers: files within a shard execute serially, and no
-  Electron download is spent on these shards. Chromium is installed explicitly for the server browser integration tests. Exactly one shard writes the thread transfer budget
+  the large web suite from competing with other workspace packages. **Test Web performance** runs
+  beside them: it builds and boots the production web client and runs the editor timing budgets. The Test step sets
+  `SCIENT_BROWSER_LIFECYCLE_DIAGNOSTICS`, so the Playwright provider
+  (`apps/web/src/testUtils/browserLifecycleDiagnostics.ts`) records page close/crash, navigation
+  category, browser disconnect and browser-API socket open/close/error as fixed event names and
+  per-process ordinals, never URLs, payloads or error messages. It marks the first close no
+  shutdown or page replacement explains and keeps that window. Only a failed shard uploads it,
+  as `browser-lifecycle-<shard>-attempt-<n>` for 14 days; it is evidence for investigating a
+  lost browser connection, not a qualification input, and does not change test results. Raw
+  TCP close carries no WebSocket close code or reason.
+- **Test Server**: sixteen shards of `vp run --filter t3 test --shard N/16 --fileParallelism
+  --maxWorkers=4`. The server config keeps `fileParallelism: false` for local runs; CI runs four
+  files at a time, each in its own process, and spends no Electron download on these shards.
+  **Test Server performance** runs beside them: the compute session Python bridge tests and the
+  server timing budgets. Both suites split by the durations of recent main runs (see
+  [development](../operations/development.md)). Chromium is installed explicitly for the server browser integration tests. Exactly one shard writes the thread transfer budget
   report; a presence-gated upload keeps a single `thread-transfer-results` artifact, the exact name
   [`thread-transfer-report.yml`](../../.github/workflows/thread-transfer-report.yml) resolves when
   it posts the PR comment. Web and server shards also preserve their normal human-readable output
   while uploading native Vitest JSON results for 14 days. The reports expose exact discovered,
   passed, failed, and skipped tests for performance and failure investigations; report upload does
   not control the test command's result.
+- **Dependency caches**: `.github/actions/setup-ci-deps` restores the pnpm store and lockfile
+  verification record. Merge-queue runs never save them: a `gh-readonly-queue/...` ref's caches
+  serve only reruns of that entry, and their ~1 GB stores would evict main's within the 10 GB limit.
 - **Rust**: `cargo fmt --check` and `cargo test --locked` for the native resource monitor, split
   out of Check and Test so neither lane pays a ~7-9s Rust toolchain install for checks that take
   under 3s.
@@ -69,8 +72,8 @@ still build, sign, package and check their actual release artifacts normally.
   the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
   SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, the root `package.json`
   that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
-  success for the required check. Like the other change gates, it diffs the event's base against the
-  tested commit with Git on every event, not a PR's live file list. Renames are matched on both their
+  success for the required check. Like the other change gates, it diffs the run's comparison base
+  against the tested commit with Git on every event, not a PR's live file list. Renames are matched on both their
   old and new path. The gate fails open in every other case: if the base is missing, the
   changed-file list cannot be resolved, or the gate job itself fails, the lint runs. The macOS job installs only the dependency closure needed
   by `@t3tools/scripts`, does not restore or save the repository-wide dependency cache, and fails if
@@ -80,10 +83,22 @@ still build, sign, package and check their actual release artifacts normally.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 - **Overleaf Windows** (required) and **Overleaf macOS** (advisory): each platform file listed in
-  `.github/scripts/overleaf-platform-tests.cjs` must run without skips. Files run two at a time,
+  `.github/scripts/overleaf-platform-tests.cjs` must run without skips. Files run three at a time,
   each in its own process, rather than the server configuration's one at a time. Neither job
   restores a dependency store: on these hosted runners restoring the whole-workspace store took
-  longer than installing the server and desktop closures without one.
+  longer than installing the server and desktop closures without one. Overleaf macOS runs on every
+  nightly run and every main push that cannot reuse, but on a pull request only when its diff can
+  reach what only macOS can show (`.github/scripts/overleaf-macos-ci-gate.mjs`: the Overleaf,
+  workspace and file-publication sources, the native publication helper, the Electron sign-in
+  smoke and setup, and the toolchain). The same files run on Linux and Windows in required lanes,
+  so a change that breaks them everywhere still fails there. Its steps cannot fail Changes: unless
+  a passing gate says `false`, the job runs.
+
+Every change gate diffs the tested commit against one comparison base
+(`.github/scripts/ci-comparison-base.cjs`): the group's base for a queue run, `main` before the
+push for a push, and for a PR run the `main` its tested merge was made on, the merge's first
+parent. A PR event's `base.sha` can lag that merge (about one PR run in ten), so it is used only
+when the tested commit is not a merge of the PR head, and no receipt is then written.
 
 A fully successful run records a qualification receipt: the exact content it tested (the
 commit's tree) and the comparison base its change gates used, with its repository, workflow,
@@ -91,14 +106,12 @@ run and attempt. Queue runs and PR runs from this repository record one; fork PR
 The receipt certifies all applicable lanes, including web browser tests and mobile static analysis.
 
 - **Queue candidate.** A `merge_group` run reuses the PR's passing run only when that run
-  tested the same content against the same base, and the PR head already holds that content:
-  the PR contained the latest `main` when its CI ran, nothing has landed since, and nothing is
-  queued ahead of it. The queue commit must merge exactly that PR head onto the group base, and
-  the PR run's tested merge commit, which its workflow ran from, must have the same tree and
-  parents. Every change gate compares the event's base with the tested commit, so equal base and
-  content give each gate the same input. Because the merge then changes nothing, a path-limited
-  history read such as Compute recipe sealing follows the PR head rather than the merge commit,
-  whose timestamp differs between the two merges. Otherwise the candidate runs normal CI.
+  tested the same content against the same base: nothing has landed on `main` since and nothing
+  is queued ahead of it. The queue commit must merge exactly that PR head onto the group base,
+  and the PR run's tested merge commit, which its workflow ran from, must have the same tree and
+  parents, so every change gate gets the same input. A path-limited history read, Compute recipe
+  sealing, would find each merge commit itself when both `main` and the PR changed the recipes;
+  that case, like any other mismatch, runs normal CI.
 - **Main push.** A push reuses queue qualification when every queue entry it lands qualified
   that exact commit from its first parent, back to the commit `main` held before the push. The
   queue lands up to `max_entries_to_merge` (6) entries in one push; a longer chain runs normal
@@ -112,16 +125,16 @@ the source qualification and `Transfer report artifact` still verifies the resto
 A matrix job skipped as a whole reports one unexpanded name, so a reusing queue candidate runs
 small `Test Web N` and `Test Server N` jobs that report the required shard names.
 
-Before confirming reuse, the run validates and republishes `thread-transfer-results` and all six
-Vitest JSON reports under the normal artifact names, using its own run attempt. The reuse job and
+Before confirming reuse, the run validates and republishes `thread-transfer-results` and every
+shard's Vitest JSON report under the normal artifact names, using its own run attempt. The reuse job and
 `Test` summaries link to the source run. This preserves the successful main-push baseline
 consumed by the transfer reporter. Native packaging artifacts remain on the linked source run;
 releases still build their own artifacts.
 
 A source qualifies through its gates, not its overall result: the newest run of that head must
 be in progress or completed with success or failure, and its latest attempt must hold exactly one
-successful `Check` and one successful `Qualification receipt`. Advisory jobs (Overleaf macOS,
-shard weights, main caches) may still be running or may have failed. A cancelled, timed-out or
+successful `Check` and one successful `Qualification receipt`. Advisory jobs (Overleaf macOS and
+the main caches) may still be running or may have failed. A cancelled, timed-out or
 unstarted run never qualifies, and an older run is never used behind a newer one of the same head.
 
 Missing, expired, malformed or mismatched proof/reports, API failures, and restoration failures
@@ -136,6 +149,12 @@ iterated against a real Windows box without one on hand. Dispatch it with `gh wo
 windows-tests.yml --ref <branch>`, optionally with `-f package=<dir>` to run one workspace package
 and `-f files="<paths>"` to run specific test files inside it. Once it is green, fold it into
 `ci.yml`.
+
+[`.github/workflows/scient-library-deep-tests.yml`](../../.github/workflows/scient-library-deep-tests.yml)
+runs the long forms of the Library's rule tests and the Sources eval's large import on main, on a
+schedule or by hand, never on a pull request, and is not a required check. The Sources guide's
+[Rules the stores keep](scient-sources.md#rules-the-stores-keep) says what it runs on which
+computer and how a failure is reported.
 
 [`promote-release.yml`](../../.github/workflows/promote-release.yml) manually fast-forwards
 `release/stable` to an exact green `main` commit. The manual-only
@@ -154,7 +173,7 @@ If the artifact is unavailable, installation runs the checks again.
 
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.
 
-The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.
+The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. For a pull request, the seam check reads GitHub's merge of the pull request into its base, so commits that reached main after the branch left it are not counted as its changes. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.
 
 Merge-queue candidates and their pushes to `main` may contain several PRs. The provenance
 guard admits only the contiguous two-parent integration chain from the event head back to

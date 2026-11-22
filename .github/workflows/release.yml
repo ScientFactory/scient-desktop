@@ -37,6 +37,15 @@ on:
         required: true
         default: false
         type: boolean
+      upgrade_from_run:
+        description: "Rehearsal only: completed signed rehearsal run to upgrade from on all four native targets"
+        required: false
+        type: string
+      upgrade_linux_only:
+        description: "Rehearsal qualification: exercise Linux first before dispatching the full matrix"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -581,7 +590,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/resource-monitor/target/${{ matrix.rust_target }}/release/scient-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
-          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
       - name: Cache Linux capture helpers
         if: matrix.platform == 'linux'
@@ -883,8 +892,15 @@ jobs:
           if [[ "$RELEASE_PLATFORM" == "mac" && "$RELEASE_ARCH" == "x64" ]]; then
             for manifest in release-publish/*-mac.yml; do mv "$manifest" "${manifest%.yml}-x64.yml"; done
           fi
-          printf '{"platform":"%s","arch":"%s","signed":%s}\n' \
-            "$RELEASE_PLATFORM" "$RELEASE_ARCH" "$signed" \
+          # A signed Windows build pins this publisher in the installed app's app-update.yml.
+          publisher=""
+          if [[ "$RELEASE_PLATFORM" == "win" && "$signed" == "true" ]]; then
+            publisher="$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"
+          fi
+          jq -cn --arg platform "$RELEASE_PLATFORM" --arg arch "$RELEASE_ARCH" \
+            --argjson signed "$signed" --arg publisher "$publisher" \
+            '{platform: $platform, arch: $arch, signed: $signed}
+              + (if $publisher == "" then {} else {publisherName: $publisher} end)' \
             > "release-publish/signing-$RELEASE_PLATFORM-$RELEASE_ARCH.json"
           if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
             echo "SCIENT_MAC_SIGNING_READY=$signed" >> "$GITHUB_ENV"
@@ -1007,9 +1023,37 @@ jobs:
         run: |
           $attestation = Get-Content verify/signing.json -Raw | ConvertFrom-Json
           if ($attestation.platform -ne 'win' -or $attestation.arch -ne 'x64') { throw "Invalid signing attestation target" }
+          # electron-updater checks each later installer against the publisherName list in the
+          # installed app's app-update.yml, comparing the signer certificate's CN.
+          $pinned = @()
+          $inList = $false
+          $updateConfig = 'verify/win-unpacked/resources/app-update.yml'
+          $lines = if (Test-Path $updateConfig) { Get-Content $updateConfig } else { @() }
+          if ($attestation.signed -and $lines.Count -eq 0) { throw "The signed Windows app has no app-update.yml" }
+          foreach ($line in $lines) {
+            if ($line -match '^publisherName:\s*(\S.*)?$') {
+              $inList = $true
+              if ($Matches[1]) { $pinned += $Matches[1].Trim().Trim("'").Trim('"') }
+              continue
+            }
+            if ($inList -and $line -match '^\s+-\s+(.+)$') { $pinned += $Matches[1].Trim().Trim("'").Trim('"'); continue }
+            $inList = $false
+          }
           if ($attestation.signed) {
+            $expected = [string]$attestation.publisherName
+            if (-not $expected) { throw "The signed Windows attestation names no publisher" }
+            if ($pinned.Count -ne 1 -or $pinned[0] -cne $expected) {
+              throw "The installed app would pin publisher '$($pinned -join "', '")', not the configured '$expected'"
+            }
             $signature = Get-AuthenticodeSignature (Resolve-Path verify/installer.exe)
             if ($signature.Status -ne "Valid") { throw "Invalid Windows signature: $($signature.Status)" }
+            $subject = $signature.SignerCertificate.Subject
+            if ($subject -notmatch '(?:^|,\s*)CN=("(?:[^"]|"")*"|[^,]+)') { throw "The installer's signer has no CN: $subject" }
+            $signer = $Matches[1].Trim()
+            if ($signer.StartsWith('"')) { $signer = $signer.Substring(1, $signer.Length - 2).Replace('""', '"') }
+            if ($signer -cne $expected) { throw "The installer is signed by '$signer', not the configured publisher '$expected'" }
+          } elseif ($pinned.Count -gt 0) {
+            throw "An unsigned Windows build must not pin publisher '$($pinned -join "', '")'"
           }
 
   # Needs every target's resource monitor and SyncTeX runtime, not their installers.
@@ -1163,6 +1207,7 @@ jobs:
         shell: bash
         env:
           ALLOW_UNSIGNED_WINDOWS: ${{ needs.preflight.outputs.allow_unsigned_windows }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           for attestation in release-assets/signing-mac-arm64.json release-assets/signing-mac-x64.json; do
@@ -1171,16 +1216,16 @@ jobs:
               exit 1
             }
           done
-          if ! jq -e '.signed == true' release-assets/signing-win-x64.json >/dev/null; then
-            if [[ "$ALLOW_UNSIGNED_WINDOWS" != "true" ]]; then
-              echo "Windows publication is unsigned; rerun only with explicit allow_unsigned_windows=true." >&2
-              exit 1
-            fi
-            echo "WARNING: publishing an unsigned Windows installer by explicit release approval."
-          fi
+          node scripts/windows-publication-signing.ts \
+            --attestation release-assets/signing-win-x64.json \
+            --allow-unsigned "$ALLOW_UNSIGNED_WINDOWS" \
+            --stable-repository "$SCIENT_DESKTOP_CANONICAL_REPOSITORY" \
+            --beta-repository "$SCIENT_DESKTOP_BETA_REPOSITORY"
       - name: Remove internal build attestations
         shell: bash
         run: |
+          # The handoff keeps the Windows signing record for the next publication's gate.
+          cp release-assets/signing-win-x64.json "$RUNNER_TEMP/signing-win-x64.json"
           rm -f release-assets/signing-*.json
           rm -f release-assets/builder-debug.yml
       - name: Verify complete updater and server artifact set
@@ -1207,6 +1252,7 @@ jobs:
             --channel "$RELEASE_CHANNEL" \
             --source-sha "$SOURCE_SHA" \
             --source-tree "$SOURCE_TREE" \
+            --windows-signing "$RUNNER_TEMP/signing-win-x64.json" \
             --output "release-assets/scient-release-handoff.json"
       - id: release_candidate
         name: Upload immutable release candidate
@@ -1251,6 +1297,16 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  qualify_installed_updates:
+    name: Qualify installed update restarts
+    needs: [preflight, assemble]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.preflight.outputs.rehearsal == 'true' && inputs.upgrade_from_run != '' }}
+    uses: ./.github/workflows/desktop-update-qualification.yml
+    with:
+      source_run_id: ${{ inputs.upgrade_from_run }}
+      target_run_id: ${{ github.run_id }}
+      linux_only: ${{ inputs.upgrade_linux_only }}
+
   publish:
     name: Publish GitHub release
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.assemble.result == 'success' && needs.preflight.outputs.publish_release == 'true' && needs.preflight.outputs.rehearsal != 'true' }}
@@ -1258,6 +1314,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: ${{ needs.preflight.outputs.channel == 'beta' && 'beta' || 'production' }}
+    # Both channels share installed Windows publisher pins; hold through public promotion.
+    concurrency:
+      group: scient-desktop-stable-beta-publication
+      cancel-in-progress: false
     permissions:
       # SCIENT-FORK:START — write lets the stable publish dispatch the hosted app's deploy.
       actions: write
@@ -1280,6 +1340,12 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$BETA_TOKEN" ]] || { echo "SCIENT_BETA_RELEASE_TOKEN is required for the isolated artifact repository." >&2; exit 1; }
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: package.json
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: scient-release-v${{ needs.preflight.outputs.version }}
@@ -1341,6 +1407,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ needs.preflight.outputs.channel == 'beta' && secrets.SCIENT_BETA_RELEASE_TOKEN || github.token }}
+          PIN_READ_TOKEN: ${{ github.token }}
           DISTRIBUTION_REPOSITORY: ${{ needs.preflight.outputs.repository }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
@@ -1359,7 +1426,7 @@ jobs:
           release_args=(--draft --latest=false)
           if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
             [[ "$DISTRIBUTION_REPOSITORY" == "$SCIENT_DESKTOP_BETA_REPOSITORY" ]] || exit 1
-            stable_latest_before="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+            stable_latest_before="$(GH_TOKEN="$PIN_READ_TOKEN" gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
             jq -ne --arg beta "$RELEASE_VERSION" --arg stable "$stable_latest_before" '
               ($beta | split("-")[0] | split(".") | map(tonumber)) >
               ($stable | ltrimstr("v") | split(".") | map(tonumber))
@@ -1382,10 +1449,17 @@ jobs:
           (cd published-assets && sha256sum -- * | sort) > "$RUNNER_TEMP/published-release-sha256.txt"
           diff -u "$RUNNER_TEMP/expected-release-sha256.txt" "$RUNNER_TEMP/published-release-sha256.txt"
 
+          # Read both public channels with the source token, not Beta's repository-only write token.
+          GH_TOKEN="$PIN_READ_TOKEN" node scripts/windows-publication-signing.ts \
+            --candidate-handoff release-assets/scient-release-handoff.json \
+            --allow-unsigned "$ALLOW_UNSIGNED_WINDOWS" \
+            --stable-repository "$SCIENT_DESKTOP_CANONICAL_REPOSITORY" \
+            --beta-repository "$SCIENT_DESKTOP_BETA_REPOSITORY"
+
           if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
             gh release edit "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" --draft=false --prerelease --latest=false
             gh release view "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" --json isDraft,isPrerelease | jq -e '.isDraft == false and .isPrerelease == true' >/dev/null
-            stable_latest_after="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+            stable_latest_after="$(GH_TOKEN="$PIN_READ_TOKEN" gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
             [[ "$stable_latest_before" == "$stable_latest_after" ]] || {
               echo "Stable Latest changed during Beta publication; investigate before accepting the release." >&2
               exit 1
@@ -1400,6 +1474,21 @@ jobs:
               exit 1
             }
           fi
+      # SCIENT-FORK:START — the download mirror publishes the release to the update feeds now,
+      # instead of at its next scheduled run. Its own workflow waits for the feeds, outside this
+      # run's release lock, and runs right after publication is verified, so a later failed step
+      # cannot skip it. A failed dispatch only warns: the mirror's schedule publishes it anyway.
+      - name: Start the download mirror for this release
+        if: needs.preflight.outputs.channel == 'stable' || needs.preflight.outputs.channel == 'beta'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ needs.preflight.outputs.channel }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          gh workflow run sync-download-mirror.yml --repo "$GITHUB_REPOSITORY" \
+            -f channel="$RELEASE_CHANNEL" -f tag="$RELEASE_TAG"
+      # SCIENT-FORK:END
       # SCIENT-FORK:START — release events from github.token start no workflows, so dispatch
       # the hosted app's deploy on the published tag.
       - name: Deploy the hosted app for this release

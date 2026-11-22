@@ -47,6 +47,15 @@ describe("Windows runtime filesystem recovery", () => {
     await expect(f.fs.rename("stage", "active")).rejects.toBe(locked);
     expect(f.pause.mock.calls.reduce((total, [ms]) => total + (ms ?? 0), 0)).toBe(15_000);
   });
+  it("waits as long as a caller's longer budget allows", async () => {
+    const f = fixture();
+    const locked = error("EPERM");
+    f.rename.mockRejectedValue(locked);
+    await expect(
+      f.fs.rename("runtime", "runtime.removing", { windowsRetryBudgetMs: 60_000 }),
+    ).rejects.toBe(locked);
+    expect(f.pause.mock.calls.reduce((total, [ms]) => total + (ms ?? 0), 0)).toBe(60_000);
+  });
   it("does not retry a permanent error or a non-Windows failure", async () => {
     for (const [platform, code] of [
       ["linux", "EPERM"],

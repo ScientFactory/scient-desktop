@@ -14,6 +14,7 @@ import {
   MessagesSquareIcon,
   type LucideIcon,
 } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { useBrowserDefaults } from "~/browser/browserDefaults";
@@ -153,6 +154,7 @@ function targetsTypingContext(target: Element) {
  * surface, the everyday ones first and the rest behind More.
  */
 export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const [moreOpen, setMoreOpen] = useState(false);
   const pick =
@@ -181,39 +183,41 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
       ? [
           {
             id: "side-chat",
-            label: "Side chat",
+            label: gt("Side chat"),
             icon: MessagesSquareIcon,
             // Upstream's S is Sources here.
             shortcut: "A",
             available: props.sideChatAvailable !== false,
-            unavailableHint: props.sideChatDisabledReason ?? "Available in a server thread.",
+            unavailableHint: props.sideChatDisabledReason ?? gt("Available in a server thread."),
             onClick: pick(props.onAddSideChat),
           },
         ]
       : []),
     {
       id: "files",
-      label: "Files",
+      label: gt("Files", { $context: "side panel tool" }),
       icon: ScientFilesIcon,
       shortcut: "F",
       available: props.filesAvailable,
-      unavailableHint: "Available when a project is open.",
+      unavailableHint: gt("Available when a project is open."),
       onClick: pick(props.onAddFiles),
     },
     {
       id: "browser",
-      label: "Browser",
+      label: gt("Browser", { $context: "side panel tool" }),
       icon: Globe,
       shortcut: "B",
       available: props.browserAvailable,
-      unavailableHint: "Only available in the desktop app.",
+      unavailableHint: gt("Only available in the desktop app."),
       onClick: pick(props.onAddBrowser),
       command: "preview.toggle",
       choice:
         browserDefaults.profiles.length > 1 ? (
           <CardChoice
-            label={defaultProfile?.name ?? "Default"}
-            ariaLabel="Open browser in a profile"
+            label={
+              defaultProfile?.name ?? gt("Default", { $context: "the default browser profile" })
+            }
+            ariaLabel={gt("Open browser in a profile")}
           >
             {browserDefaults.profiles.map((profile) => (
               <MenuItem
@@ -228,16 +232,16 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
     },
     {
       id: "documents",
-      label: "Document",
+      label: gt("Document", { $context: "side panel tool: new document" }),
       icon: FileText,
       shortcut: "W",
       available: props.documentsAvailable === true && props.onAddDocuments !== undefined,
-      unavailableHint: "Open a project to create documents.",
+      unavailableHint: gt("Open a project to create documents."),
       onClick: () => createDocument(documentFormat),
       choice: (
         <CardChoice
           label={NEW_DOCUMENT_FORMATS[documentFormat].label}
-          ariaLabel="Choose the document format"
+          ariaLabel={gt("Choose the document format")}
         >
           <NewDocumentMenuItems onChoose={createDocument} />
         </CardChoice>
@@ -245,68 +249,68 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
     },
     {
       id: "sources",
-      label: "Sources",
+      label: gt("Library", { $context: "side panel tool: reference library" }),
       icon: Library,
       shortcut: "S",
       available: props.sourcesAvailable,
-      unavailableHint: "Available inside a project.",
+      unavailableHint: gt("Available inside a project."),
       onClick: pick(props.onAddSources),
     },
     {
       id: "compute",
-      label: "Scientific computing",
+      label: gt("Scientific computing"),
       icon: Sigma,
       shortcut: "C",
       available: props.computeAvailable,
-      unavailableHint: "Available inside a project.",
+      unavailableHint: gt("Available inside a project."),
       onClick: pick(props.onAddCompute),
     },
     {
       id: "diff",
-      label: "Diff",
+      label: gt("Diff", { $context: "side panel tool: code changes" }),
       icon: FileDiff,
       shortcut: "D",
       available: props.diffAvailable,
-      unavailableHint: "Available for Git repositories.",
+      unavailableHint: gt("Available for Git repositories."),
       onClick: pick(props.onAddDiff),
       command: "diff.toggle",
     },
     {
       id: "terminal",
-      label: "Terminal",
+      label: gt("Terminal", { $context: "side panel tool" }),
       icon: TerminalSquare,
       shortcut: "T",
       available: props.terminalAvailable,
-      unavailableHint: "Available when a project is open.",
+      unavailableHint: gt("Available when a project is open."),
       onClick: pick(props.onAddTerminal),
     },
   ];
   const more: readonly LauncherEntry[] = [
     {
       id: "pull-request",
-      label: "Pull request",
+      label: gt("Pull request"),
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
       available: props.pullRequestAvailable,
-      unavailableHint: "No pull request on this branch yet.",
+      unavailableHint: gt("No pull request on this branch yet."),
       onClick: pick(props.onAddPullRequest),
     },
     {
       id: "pull-requests",
-      label: "Linked pull requests",
+      label: gt("Linked items"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,
-      unavailableHint: "No linked pull requests available.",
+      unavailableHint: gt("No linked pull requests available."),
       onClick: pick(props.onAddPullRequests),
     },
     {
       id: "device",
-      label: "Device",
+      label: gt("Device", { $context: "side panel tool: phone simulator" }),
       icon: Smartphone,
       shortcut: "M",
       available: props.deviceAvailable,
-      unavailableHint: "Available from a thread.",
+      unavailableHint: gt("Available from a thread."),
       onClick: pick(props.onAddDevice),
     },
   ];
@@ -376,14 +380,20 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
               <TooltipTrigger render={<span className="inline-flex" />}>
                 <Kbd>{globalShortcut}</Kbd>
               </TooltipTrigger>
-              <TooltipPopup>From anywhere</TooltipPopup>
+              <TooltipPopup>
+                <T>From anywhere</T>
+              </TooltipPopup>
             </Tooltip>
           ) : null}
           <Tooltip>
             <TooltipTrigger render={<span className="inline-flex" />}>
               <Kbd>{entry.shortcut}</Kbd>
             </TooltipTrigger>
-            <TooltipPopup>Press {entry.shortcut} to open</TooltipPopup>
+            <TooltipPopup>
+              <T>
+                Press <Var>{entry.shortcut}</Var> to open
+              </T>
+            </TooltipPopup>
           </Tooltip>
         </div>
       </div>
@@ -394,14 +404,16 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
     <div
       ref={focusOnMount}
       tabIndex={-1}
-      aria-label="Open in side panel"
+      aria-label={gt("Open in side panel")}
       data-scient-launcher
       className="scient-reading-ui scrollbar-gutter-both @container/launcher flex min-h-0 flex-1 flex-col overflow-y-auto bg-sidebar px-4 pt-12 pb-6 outline-none"
     >
       {/* Lowers the list in a tall panel; a short panel gives this room up before it scrolls. */}
       <div aria-hidden className="basis-16" />
       <div className="mx-auto w-full max-w-3xl">
-        <h2 className="mb-3 px-1 font-medium text-foreground text-sm">Tools</h2>
+        <h2 className="mb-3 px-1 font-medium text-foreground text-sm">
+          <T>Tools</T>
+        </h2>
         <div className="grid gap-2 @[36rem]/launcher:grid-cols-2">
           {main.map(card)}
           <button
@@ -413,7 +425,9 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
             <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/70 bg-muted/50 text-[color-mix(in_srgb,var(--sidebar-icon-color)_70%,var(--card-foreground))] transition-colors group-hover:text-foreground [&_svg]:[stroke-width:1.75]">
               <Ellipsis className="size-4" />
             </span>
-            <span className="min-w-0 flex-1 truncate">More</span>
+            <span className="min-w-0 flex-1 truncate">
+              <T context="more side panel tools">More</T>
+            </span>
             <ChevronDown
               className={cn(
                 "size-4 text-muted-foreground transition-transform",
@@ -433,13 +447,14 @@ export function ScientNewTabButton(props: {
   readonly onClick: () => void;
   readonly keybindings: ResolvedKeybindingsConfig;
 }) {
+  const gt = useGT();
   const shortcut = shortcutLabelForCommand(props.keybindings, "rightPanel.new");
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            aria-label="New tab"
+            aria-label={gt("New tab")}
             className="shrink-0 self-center"
             size="icon-sm"
             variant="ghost-muted"
@@ -450,7 +465,7 @@ export function ScientNewTabButton(props: {
         <Plus className="size-3.75" />
       </TooltipTrigger>
       <TooltipPopup>
-        New tab
+        <T>New tab</T>
         {shortcut ? <Kbd className="ms-2">{shortcut}</Kbd> : null}
       </TooltipPopup>
     </Tooltip>

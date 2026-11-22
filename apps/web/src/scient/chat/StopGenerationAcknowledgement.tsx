@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import type { ReactNode } from "react";
 
 /** Keep the status with its retry action without remounting the focused button. */
@@ -6,7 +7,7 @@ export function StopGenerationAcknowledgement(props: { isStopping: boolean; chil
     <div className="flex shrink-0 items-center gap-2">
       {props.isStopping ? (
         <span role="status" className="whitespace-nowrap text-muted-foreground text-xs">
-          Stopping…
+          <T>Stopping…</T>
         </span>
       ) : null}
       {props.children}

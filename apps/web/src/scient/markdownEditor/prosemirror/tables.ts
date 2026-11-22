@@ -2,6 +2,9 @@ import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
 import { Plugin, type Command } from "prosemirror-state";
 import { CellSelection, findTable, TableMap, TableView } from "prosemirror-tables";
 import { Decoration, DecorationSet, type EditorView, type NodeView } from "prosemirror-view";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import { guardPresentationMutations } from "../nodes/presentationMutations";
 import {
   resolveProseMirrorTableColumnDirections,
@@ -31,8 +34,8 @@ function markdownTableView(node: ProseMirrorNode, view: EditorView): NodeView {
   button.type = "button";
   button.contentEditable = "false";
   button.className = "scient-markdown-table-select";
-  button.setAttribute("aria-label", "Select whole table");
-  button.title = "Select whole table";
+  button.setAttribute("aria-label", m(msg("Select whole table")));
+  button.title = m(msg("Select whole table"));
   button.append(
     DOMSerializer.renderSpec(document, [
       "http://www.w3.org/2000/svg svg",

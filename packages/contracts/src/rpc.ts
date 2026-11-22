@@ -18,13 +18,21 @@ import {
 } from "./mcpApps.ts";
 import {
   PeerLink,
+  PeerLinkClientPairingInput,
+  PeerLinkLinkPairingInput,
+  PeerLinkClientPairingResult,
   PeerLinkCreateInput,
   PeerLinkError,
+  PeerLinkName,
   PeerLinkRemoveInput,
   PeerLinkRemoveResult,
   PeerLinkRequestAnswerInput,
   PeerLinkRequestError,
   PeerLinkSummary,
+  PeerLinkThreadHistoryInput,
+  PeerLinkThreadInput,
+  PeerLinkThreadItemInput,
+  PeerLinkThreadReadError,
 } from "./peerLink.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -97,6 +105,18 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  WorkspaceFoldersError,
+  TaskFolder,
+  TaskFolderError,
+  WorkspaceAddTaskFolderRepositoryInput,
+  WorkspaceListFoldersInput,
+  WorkspaceListFoldersResult,
+  WorkspaceScanFoldersInput,
+  WorkspaceScanFoldersResult,
+  WorkspaceTaskFolderInput,
+  WorkspaceTaskFolderResult,
+} from "./workspaceFolders.ts";
+import {
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -153,7 +173,7 @@ import {
   VcsStatusInput,
   VcsBranchStatus,
   VcsStatusSubscriptionInput,
-  VcsStatusResult,
+  VcsRefreshStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
@@ -167,7 +187,8 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
-  ThreadForkCommand,
+  AwaitForkInput,
+  ForkReadiness,
   GetForkOptionsInput,
   ForkOptions,
   OrchestrationGetSnapshotError,
@@ -175,11 +196,42 @@ import {
 } from "./scientConversationFork.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
+  ProviderMcpSignInCompleteInput,
+  ProviderMcpSignInCompleteResult,
+  ProviderMcpSignInError,
+  ProviderMcpSignInStartInput,
+  ProviderMcpSignInStartResult,
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
+import {
+  IssueCandidates,
+  IssueCommentInput,
+  IssueCommentsPage,
+  IssueCommentsPageInput,
+  IssueCreateInput,
+  IssueCreateResult,
+  IssueDetail,
+  IssueLinkedThreadsResult,
+  IssueListInput,
+  IssueListResult,
+  IssueOperationError,
+  IssueReactionInput,
+  IssueRef,
+  IssueScopeRef,
+  IssueSetStateInput,
+  IssueTemplateList,
+  IssueTrackerBindProjectInput,
+  IssueTrackerConnectInput,
+  IssueTrackerConnection,
+  IssueTrackerConnectionError,
+  IssueTrackerConnectionList,
+  IssueUnavailableError,
+  IssueUpdateInput,
+  ThreadIssueKey,
+} from "./issue.ts";
 import {
   GuestShareCreateError,
   GuestShareCreateInput,
@@ -250,6 +302,7 @@ import {
   OrchestrationV2CommandOutputError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2RpcSchemas,
+  OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
 import {
@@ -644,6 +697,9 @@ import {
   WsVoiceDictateWithChatGptRpc,
 } from "./scient/chatGptDictation.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+import { SCIENT_PLUGIN_SIGN_IN_WS_METHODS, WsPluginSignInOpenRpc } from "./scient/pluginSignIn.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient editor flush RPCs.
 import {
   SCIENT_EDITOR_FLUSH_WS_METHODS,
@@ -711,6 +767,10 @@ export const WS_METHODS = {
   shellOpenInEditor: "shell.openInEditor",
 
   filesystemBrowse: "filesystem.browse",
+  workspaceListFolders: "workspace.listFolders",
+  workspaceScanFolders: "workspace.scanFolders",
+  workspaceTaskFolder: "workspace.taskFolder",
+  workspaceAddTaskFolderRepository: "workspace.addTaskFolderRepository",
   // SCIENT-FORK:START — Scient file opening methods.
   ...SCIENT_FILE_OPENING_WS_METHODS,
   // SCIENT-FORK:END
@@ -733,6 +793,9 @@ export const WS_METHODS = {
   ...SCIENT_LIVE_VOICE_WS_METHODS,
   ...SCIENT_CHATGPT_DICTATION_WS_METHODS,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+  ...SCIENT_PLUGIN_SIGN_IN_WS_METHODS,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   ...SCIENT_WORKSPACE_ENTRY_WS_METHODS,
   // SCIENT-FORK:END
@@ -746,6 +809,8 @@ export const WS_METHODS = {
   mcpAppsUpdateModelContext: "mcpApps.updateModelContext",
 
   providerUploadFeedback: "provider.uploadFeedback",
+  providerMcpSignInStart: "provider.mcpSignIn.start",
+  providerMcpSignInComplete: "provider.mcpSignIn.complete",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   providerAuthComplete: "provider.auth.complete",
@@ -829,9 +894,15 @@ export const WS_METHODS = {
   // SCIENT-FORK:END
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
   peerLinksList: "peerLinks.list",
+  peerLinksNames: "peerLinks.names",
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
+  peerLinksSubscribeThread: "peerLinks.subscribeThread",
+  peerLinksThreadHistoryPage: "peerLinks.threadHistoryPage",
+  peerLinksThreadItem: "peerLinks.threadItem",
+  peerLinksPairClient: "peerLinks.pairClient",
+  peerLinksPairLink: "peerLinks.pairLink",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -912,6 +983,22 @@ export const WS_METHODS = {
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
   pullRequestsSetLabels: "pullRequests.setLabels",
+
+  // Issue tracking methods
+  issuesList: "issues.list",
+  issuesDetail: "issues.detail",
+  issuesComments: "issues.comments",
+  issuesTemplates: "issues.templates",
+  issuesCandidates: "issues.candidates",
+  issuesCreate: "issues.create",
+  issuesComment: "issues.comment",
+  issuesUpdate: "issues.update",
+  issuesSetState: "issues.setState",
+  issuesReact: "issues.react",
+  issuesLinkedThreads: "issues.linkedThreads",
+  issueTrackersList: "issueTrackers.list",
+  issueTrackersConnect: "issueTrackers.connect",
+  issueTrackersBindProject: "issueTrackers.bindProject",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1166,6 +1253,13 @@ const WsPeerLinksListRpc = Rpc.make(WS_METHODS.peerLinksList, {
   error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
 });
 
+/** The unexpired links' names, readable with thread read access. */
+const WsPeerLinksNamesRpc = Rpc.make(WS_METHODS.peerLinksNames, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({ links: Schema.Array(PeerLinkName) }),
+  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
+});
+
 const WsPeerLinksLinkRpc = Rpc.make(WS_METHODS.peerLinksLink, {
   payload: PeerLinkCreateInput,
   success: PeerLink,
@@ -1175,6 +1269,38 @@ const WsPeerLinksLinkRpc = Rpc.make(WS_METHODS.peerLinksLink, {
 const WsPeerLinksUnlinkRpc = Rpc.make(WS_METHODS.peerLinksUnlink, {
   payload: PeerLinkRemoveInput,
   success: PeerLinkRemoveResult,
+  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
+});
+
+/** A linked environment's thread, as its own thread subscription streams it. */
+const WsPeerLinksSubscribeThreadRpc = Rpc.make(WS_METHODS.peerLinksSubscribeThread, {
+  payload: PeerLinkThreadInput,
+  success: OrchestrationV2RpcSchemas.subscribeThread.output,
+  error: Schema.Union([PeerLinkThreadReadError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsPeerLinksThreadHistoryPageRpc = Rpc.make(WS_METHODS.peerLinksThreadHistoryPage, {
+  payload: PeerLinkThreadHistoryInput,
+  success: OrchestrationV2ThreadHistoryPage,
+  error: Schema.Union([PeerLinkThreadReadError, EnvironmentAuthorizationError]),
+});
+
+const WsPeerLinksThreadItemRpc = Rpc.make(WS_METHODS.peerLinksThreadItem, {
+  payload: PeerLinkThreadItemInput,
+  success: OrchestrationV2RpcSchemas.getTurnItem.output,
+  error: Schema.Union([PeerLinkThreadReadError, EnvironmentAuthorizationError]),
+});
+
+const WsPeerLinksPairClientRpc = Rpc.make(WS_METHODS.peerLinksPairClient, {
+  payload: PeerLinkClientPairingInput,
+  success: PeerLinkClientPairingResult,
+  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
+});
+
+const WsPeerLinksPairLinkRpc = Rpc.make(WS_METHODS.peerLinksPairLink, {
+  payload: PeerLinkLinkPairingInput,
+  success: PeerLinkClientPairingResult,
   error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
 });
 
@@ -1607,6 +1733,108 @@ const WsPullRequestsSetLabelsRpc = Rpc.make(WS_METHODS.pullRequestsSetLabels, {
   error: PullRequestRpcError,
 });
 
+const IssueRpcError = Schema.Union([
+  IssueUnavailableError,
+  IssueOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
+  payload: IssueListInput,
+  success: IssueListResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
+  payload: IssueRef,
+  success: IssueDetail,
+  error: IssueRpcError,
+});
+
+/** Older comments, one page at a time, past the cursor the detail handed over. */
+const WsIssuesLinkedThreadsRpc = Rpc.make(WS_METHODS.issuesLinkedThreads, {
+  payload: ThreadIssueKey,
+  success: IssueLinkedThreadsResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesCommentsRpc = Rpc.make(WS_METHODS.issuesComments, {
+  payload: IssueCommentsPageInput,
+  success: IssueCommentsPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesTemplatesRpc = Rpc.make(WS_METHODS.issuesTemplates, {
+  payload: IssueScopeRef,
+  success: IssueTemplateList,
+  error: IssueRpcError,
+});
+
+/** Read when a label or assignee picker opens, not with every issue. */
+const WsIssuesCandidatesRpc = Rpc.make(WS_METHODS.issuesCandidates, {
+  payload: IssueScopeRef,
+  success: IssueCandidates,
+  error: IssueRpcError,
+});
+
+const WsIssuesCreateRpc = Rpc.make(WS_METHODS.issuesCreate, {
+  payload: IssueCreateInput,
+  success: IssueCreateResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesCommentRpc = Rpc.make(WS_METHODS.issuesComment, {
+  payload: IssueCommentInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesUpdateRpc = Rpc.make(WS_METHODS.issuesUpdate, {
+  payload: IssueUpdateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
+  payload: IssueSetStateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesReactRpc = Rpc.make(WS_METHODS.issuesReact, {
+  payload: IssueReactionInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const IssueTrackerRpcError = Schema.Union([
+  IssueTrackerConnectionError,
+  EnvironmentAuthorizationError,
+]);
+
+/** Every standalone tracker this server ships, each with its connection probed afresh. */
+const WsIssueTrackersListRpc = Rpc.make(WS_METHODS.issueTrackersList, {
+  payload: Schema.Struct({}),
+  success: IssueTrackerConnectionList,
+  error: IssueTrackerRpcError,
+});
+
+/**
+ * Verifies the credential against the tracker before storing it; the result is the new status.
+ * A null token disconnects, which also unbinds every project that pointed at the tracker.
+ */
+const WsIssueTrackersConnectRpc = Rpc.make(WS_METHODS.issueTrackersConnect, {
+  payload: IssueTrackerConnectInput,
+  success: IssueTrackerConnection,
+  error: IssueTrackerRpcError,
+});
+
+const WsIssueTrackersBindProjectRpc = Rpc.make(WS_METHODS.issueTrackersBindProject, {
+  payload: IssueTrackerBindProjectInput,
+  success: Schema.Void,
+  error: IssueTrackerRpcError,
+});
+
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
   payload: SourceControlRepositoryLookupInput,
   success: SourceControlRepositoryInfo,
@@ -1815,6 +2043,33 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+const WsWorkspaceListFoldersRpc = Rpc.make(WS_METHODS.workspaceListFolders, {
+  payload: WorkspaceListFoldersInput,
+  success: WorkspaceListFoldersResult,
+  error: Schema.Union([WorkspaceFoldersError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceScanFoldersRpc = Rpc.make(WS_METHODS.workspaceScanFolders, {
+  payload: WorkspaceScanFoldersInput,
+  success: WorkspaceScanFoldersResult,
+  error: Schema.Union([WorkspaceFoldersError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceTaskFolderRpc = Rpc.make(WS_METHODS.workspaceTaskFolder, {
+  payload: WorkspaceTaskFolderInput,
+  success: WorkspaceTaskFolderResult,
+  error: Schema.Union([TaskFolderError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceAddTaskFolderRepositoryRpc = Rpc.make(
+  WS_METHODS.workspaceAddTaskFolderRepository,
+  {
+    payload: WorkspaceAddTaskFolderRepositoryInput,
+    success: TaskFolder,
+    error: Schema.Union([TaskFolderError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -1884,6 +2139,18 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
   error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
 
+const WsProviderMcpSignInStartRpc = Rpc.make(WS_METHODS.providerMcpSignInStart, {
+  payload: ProviderMcpSignInStartInput,
+  success: ProviderMcpSignInStartResult,
+  error: Schema.Union([ProviderMcpSignInError, EnvironmentAuthorizationError]),
+});
+
+const WsProviderMcpSignInCompleteRpc = Rpc.make(WS_METHODS.providerMcpSignInComplete, {
+  payload: ProviderMcpSignInCompleteInput,
+  success: ProviderMcpSignInCompleteResult,
+  error: Schema.Union([ProviderMcpSignInError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeVcsBranchRpc = Rpc.make(WS_METHODS.subscribeVcsBranch, {
   payload: VcsStatusInput,
   success: VcsBranchStatus,
@@ -1915,7 +2182,7 @@ const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
     ...VcsStatusInput.fields,
     localOnly: Schema.optional(Schema.Boolean),
   }),
-  success: VcsStatusResult,
+  success: VcsRefreshStatusResult,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
@@ -2174,9 +2441,8 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
-// Native run commands and Scient conversation-boundary forks share one registration.
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
-  payload: Schema.Union([OrchestrationV2RpcSchemas.dispatchCommand.input, ThreadForkCommand]),
+  payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: ScientConversationDispatchResult,
   error: Schema.Union([
     OrchestrationV2DispatchCommandError,
@@ -2189,6 +2455,12 @@ const WsOrchestrationGetForkOptionsRpc = Rpc.make("orchestration.getForkOptions"
   payload: GetForkOptionsInput,
   success: ForkOptions,
   error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+});
+
+const WsOrchestrationAwaitForkRpc = Rpc.make("orchestration.awaitFork", {
+  payload: AwaitForkInput,
+  success: ForkReadiness,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
 const WsOrchestrationV2GetTurnDiffRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnDiff, {
@@ -2542,6 +2814,7 @@ export const WsConversationRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsOrchestrationGetForkOptionsRpc,
+  WsOrchestrationAwaitForkRpc,
 );
 
 export const WsServerManagementRpcGroup = RpcGroup.make(
@@ -2554,6 +2827,8 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   // SCIENT-FORK:END
   WsVoiceCorrectTranscriptRpc,
   WsProviderUploadFeedbackRpc,
+  WsProviderMcpSignInStartRpc,
+  WsProviderMcpSignInCompleteRpc,
   WsServerUpdateProviderRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
@@ -2597,6 +2872,7 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,
+  WsPeerLinksNamesRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
@@ -2610,6 +2886,11 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsSkillsPersonalInspectRpc,
   WsSkillsPersonalRemoveRpc,
   WsSkillsPersonalUndoRpc,
+  WsPeerLinksSubscribeThreadRpc,
+  WsPeerLinksThreadHistoryPageRpc,
+  WsPeerLinksThreadItemRpc,
+  WsPeerLinksPairClientRpc,
+  WsPeerLinksPairLinkRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
   WsServerGetTraceDiagnosticsRpc,
@@ -2635,6 +2916,20 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
 );
 
 export const WsRepositoryRpcGroup = RpcGroup.make(
+  WsIssuesListRpc,
+  WsIssuesDetailRpc,
+  WsIssuesCommentsRpc,
+  WsIssuesTemplatesRpc,
+  WsIssuesCandidatesRpc,
+  WsIssuesLinkedThreadsRpc,
+  WsIssuesCreateRpc,
+  WsIssuesCommentRpc,
+  WsIssuesUpdateRpc,
+  WsIssuesSetStateRpc,
+  WsIssuesReactRpc,
+  WsIssueTrackersListRpc,
+  WsIssueTrackersConnectRpc,
+  WsIssueTrackersBindProjectRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsFilterOptionsRpc,
@@ -2713,6 +3008,10 @@ export { WsScientificRpcGroup };
 export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsWorkspaceListFoldersRpc,
+  WsWorkspaceScanFoldersRpc,
+  WsWorkspaceTaskFolderRpc,
+  WsWorkspaceAddTaskFolderRepositoryRpc,
   WsFilesystemPrepareFileOpenRpc,
   WsFilesystemResolveFileLinkRpc,
   WsFilesystemSubscribeFileChangesRpc,
@@ -2729,6 +3028,9 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsLiveVoiceCallRpc,
   WsLiveVoiceMuteRpc,
   WsVoiceDictateWithChatGptRpc,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+  WsPluginSignInOpenRpc,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush RPCs.
   WsEditorsFlushConnectRpc,

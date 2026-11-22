@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import {
   latexSourceArgument as arg,
   latexSourceCommands,
@@ -14,7 +16,8 @@ export function setLatexEnvironmentOption(
   value: string | null,
 ): { source: string } | { error: string } {
   const opening = `\\begin{${environment}}`;
-  if (!source.startsWith(opening)) return { error: "This environment has a custom opening." };
+  if (!source.startsWith(opening))
+    return { error: m(msg("This environment has a custom opening.")) };
   const options = arg(source, opening.length, "[", "]");
   const raw = options?.value ?? "";
   const clean = latexWithoutComments(raw);
@@ -43,7 +46,7 @@ export function setLatexEnvironmentOption(
   }
   const indexes = keys.flatMap((name, index) => (name === key ? [index] : []));
   if (indexes.length > 1)
-    return { error: "This option is repeated. Resolve its source before changing it." };
+    return { error: m(msg("This option is repeated. Resolve its source before changing it.")) };
   const entry = value === null ? "" : value === "" ? key : `${key}=${value}`;
   if (indexes[0] !== undefined) pieces[indexes[0]] = comments[indexes[0]] + entry;
   else if (entry) pieces.push(entry);
@@ -71,12 +74,12 @@ export function setLatexLayoutOpening(
       options.columns! < 2 ||
       options.columns! > 10
     )
-      return { error: "Choose between two and ten columns." };
+      return { error: m(msg("Choose between two and ten columns.")) };
     return { source: source.slice(0, count.from) + options.columns + source.slice(count.to) };
   }
   const opening = "\\begin{minipage}";
   if (!source.startsWith(opening))
-    return { error: "Select an individual panel to edit its dimensions." };
+    return { error: m(msg("Select an individual panel to edit its dimensions.")) };
   let at = opening.length;
   const optionalArguments: NonNullable<ReturnType<typeof arg>>[] = [];
   for (let index = 0; index < 3; index++) {
@@ -86,21 +89,21 @@ export function setLatexLayoutOpening(
     at = optional.end;
   }
   const width = arg(source, at);
-  if (!width) return { error: "This panel has a custom width." };
+  if (!width) return { error: m(msg("This panel has a custom width.")) };
   if (
     !/^(?:\d+(?:\.\d+)?|\.\d+)(?:mm|cm|in|pt|em|ex|\\(?:linewidth|textwidth|columnwidth))$/u.test(
       (options.width ?? "").trim(),
     ) ||
     !/^[tcb]$/u.test(options.alignment ?? "")
   )
-    return { error: "Choose an alignment and a width such as 0.46\\linewidth or 60mm." };
+    return { error: m(msg("Choose an alignment and a width such as 0.46\\linewidth or 60mm.")) };
   if (
     options.height &&
     !/^(?:\d+(?:\.\d+)?|\.\d+)(?:mm|cm|in|pt|em|ex)$/u.test(options.height.trim())
   )
-    return { error: "Use a fixed height such as 30mm, or leave it empty." };
+    return { error: m(msg("Use a fixed height such as 30mm, or leave it empty.")) };
   if (options.height && !/^[tcbs]$/u.test(options.innerAlignment ?? "t"))
-    return { error: "Choose a supported content alignment." };
+    return { error: m(msg("Choose a supported content alignment.")) };
   if (Boolean(options.height) === optionalArguments.length > 1) {
     const patches = [{ from: width.from, to: width.to, value: options.width! }];
     if (optionalArguments[0])
@@ -125,7 +128,7 @@ export function setLatexLayoutOpening(
         });
     }
     const next = patchLatexSource(source, patches);
-    return next === null ? { error: "The panel arguments overlap." } : { source: next };
+    return next === null ? { error: m(msg("The panel arguments overlap.")) } : { source: next };
   }
   return {
     source: `${opening}[${options.alignment}]${options.height ? `[${options.height}][${options.innerAlignment ?? "t"}]` : ""}{${options.width}}${source.slice(width.end)}`,
@@ -144,13 +147,13 @@ export function setLatexPanelRow(
     ratios.length > 6 ||
     ratios.some((value) => !Number.isFinite(value) || value <= 0)
   )
-    return { error: "Use two to six positive panel ratios." };
+    return { error: m(msg("Use two to six positive panel ratios.")) };
   if (
     !preserveGaps &&
     gap !== "auto" &&
     (!latexLayoutLength(gap) || latexLayoutLength(gap)!.endsWith("%"))
   )
-    return { error: "Choose an automatic gap or a fixed spacing." };
+    return { error: m(msg("Choose an automatic gap or a fixed spacing.")) };
   const panels: { from: number; to: number; width: NonNullable<ReturnType<typeof arg>> }[] = [];
   let depth = 0,
     from = 0;
@@ -168,13 +171,15 @@ export function setLatexPanelRow(
         if (option) at = option.end;
       }
       width = arg(source, at);
-      if (!width) return { error: "This panel has a custom opening." };
+      if (!width) return { error: m(msg("This panel has a custom opening.")) };
     } else if (--depth === 0 && width) panels.push({ from, to: env.end, width });
   }
   if (depth || !panels.length || panels.length > ratios.length)
-    return { error: "Remove an unwanted panel explicitly before reducing the panel count." };
+    return {
+      error: m(msg("Remove an unwanted panel explicitly before reducing the panel count.")),
+    };
   if (source.slice(0, panels[0]!.from).trim() || source.slice(panels.at(-1)!.to).trim())
-    return { error: "Select the side-by-side region to change its layout." };
+    return { error: m(msg("Select the side-by-side region to change its layout.")) };
   const patches: { from: number; to: number; value: string }[] = [];
   const total = ratios.reduce((sum, value) => sum + value, 0);
   const size = (i: number) => `${Number(((0.92 * ratios[i]!) / total).toFixed(5))}\\linewidth`;
@@ -189,7 +194,7 @@ export function setLatexPanelRow(
         to = panels[i]!.from;
       const between = source.slice(from, to);
       if (!latexMinipageSeparator(source.slice(from)))
-        return { error: "The space between these panels contains custom layout source." };
+        return { error: m(msg("The space between these panels contains custom layout source.")) };
       const comments = [...between.matchAll(/%[^\r\n]*(?:\r?\n|$)/gu)]
         .map((match) => match[0])
         .join("");
@@ -209,5 +214,5 @@ export function setLatexPanelRow(
         .join(""),
     });
   const next = patchLatexSource(source, patches);
-  return next === null ? { error: "The panel ranges overlap." } : { source: next };
+  return next === null ? { error: m(msg("The panel ranges overlap.")) } : { source: next };
 }

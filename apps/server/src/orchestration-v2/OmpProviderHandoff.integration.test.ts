@@ -48,6 +48,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -78,6 +79,12 @@ const mcpLayer = Layer.effect(
 );
 const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
 const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+  // SCIENT-FORK: these threads track no other folders.
+  Layer.provide(
+    Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+      forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+    }),
+  ),
   Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
   Layer.provide(
     Layer.mergeAll(
@@ -405,7 +412,7 @@ for (const target of [ompTarget, scientAgentTarget]) {
         assert.isBelow(firstHeld.ordinal, secondHeld.ordinal);
         const secondSequence = yield* sink.latestSequence({ threadId });
         yield* orchestrator.dispatch({
-          type: "queue.resume",
+          type: "queued-run.start",
           commandId: CommandId.make(`resume:${transition}`),
           threadId,
           runId: firstHeld.id,

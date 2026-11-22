@@ -1,4 +1,5 @@
 import type { ConnectorProviderSupport, ExtensionAudience } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
@@ -55,8 +56,9 @@ function LimitedAgentTile({
   readonly entry: ConnectorProviderSupport;
   readonly iconUrl: string | undefined;
 }) {
+  const gt = useGT();
   const [shown, setShown] = useState<"closed" | "shown" | "pinned">("closed");
-  const reason = entry.reason ?? "Works with limits";
+  const reason = entry.reason ?? gt("Works with limits");
   return (
     <Tooltip
       open={shown !== "closed"}
@@ -71,7 +73,7 @@ function LimitedAgentTile({
         render={
           <button
             type="button"
-            aria-label={`${entry.displayName}: ${reason}`}
+            aria-label={gt("{agent}: {reason}", { agent: entry.displayName, reason })}
             onClick={() => setShown((current) => (current === "pinned" ? "closed" : "pinned"))}
             className={cn(
               AGENT_TILE_CLASS,
@@ -98,17 +100,26 @@ export function WorksWithValue({
 }: {
   readonly audience?: ExtensionAudience | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { inventory, providers } = useExtensionsEnvironment();
-  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? []);
+  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? [], messages);
   if (support.length === 0) {
-    return <span className="text-muted-foreground">No agents reported</span>;
+    return (
+      <span className="text-muted-foreground">
+        <T>No agents reported</T>
+      </span>
+    );
   }
   const usable = worksWithCardAgents(audience, support);
   // Beside its "Works with" label the value is the names alone; chosen agents are named.
   const count =
     audience.layer === "scient" && audience.agents !== undefined && usable.length > 0
-      ? listLabels(usable.map((entry) => entry.displayName))
-      : audienceNames(audience);
+      ? listLabels(
+          usable.map((entry) => entry.displayName),
+          messages,
+        )
+      : audienceNames(audience, messages);
   if (usable.length === 0) return <span>{count}</span>;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
     providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
@@ -121,7 +132,7 @@ export function WorksWithValue({
         render={
           <button
             type="button"
-            aria-label={`Works with: ${count}`}
+            aria-label={gt("Works with: {names}", { names: count })}
             className={cn(GHOST_LINK_CLASS, "text-foreground")}
           />
         }
@@ -136,7 +147,7 @@ export function WorksWithValue({
         sideOffset={8}
         collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
         padding="comfortable"
-        aria-label="Agents"
+        aria-label={gt("Agents")}
         initialFocus={(openType) => openType === "keyboard"}
         className="w-max"
       >
@@ -179,8 +190,10 @@ export function WorksWithAgents({
 }: {
   readonly audience?: ExtensionAudience | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { inventory, providers } = useExtensionsEnvironment();
-  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? []);
+  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? [], messages);
   const usable = worksWithCardAgents(audience, support);
   // Scient's own connectors and plugins reach every agent: say so, not eleven logos.
   // "All agents" only when every agent has it now; one still to connect keeps its logo and reason.
@@ -190,15 +203,21 @@ export function WorksWithAgents({
       usable.length === support.length &&
       usable.every((entry) => entry.status === "supported"))
   )
-    return <span className="text-sm text-muted-foreground">All agents</span>;
+    return (
+      <span className="text-sm text-muted-foreground">
+        <T>All agents</T>
+      </span>
+    );
   if (usable.length === 0)
-    return <span className="text-sm text-muted-foreground">{audienceNames(audience)}</span>;
+    return (
+      <span className="text-sm text-muted-foreground">{audienceNames(audience, messages)}</span>
+    );
   const shown = usable.slice(0, 3);
   const more = usable.length - shown.length;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
     providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
   return (
-    <ul className="flex items-center gap-2.5" aria-label={audienceLabel(audience)}>
+    <ul className="flex items-center gap-2.5" aria-label={audienceLabel(audience, messages)}>
       {shown.map((entry) => (
         <li key={entry.providerInstanceId}>
           <Tooltip>
@@ -215,7 +234,10 @@ export function WorksWithAgents({
                   aria-label={
                     entry.status === "supported"
                       ? entry.displayName
-                      : `${entry.displayName}: ${entry.reason ?? "Works with limits"}`
+                      : gt("{agent}: {reason}", {
+                          agent: entry.displayName,
+                          reason: entry.reason ?? gt("Works with limits"),
+                        })
                   }
                 />
               }
@@ -230,7 +252,10 @@ export function WorksWithAgents({
             <TooltipPopup side="top">
               {entry.status === "supported"
                 ? entry.displayName
-                : `${entry.displayName}: ${entry.reason ?? "Works with limits"}`}
+                : gt("{agent}: {reason}", {
+                    agent: entry.displayName,
+                    reason: entry.reason ?? gt("Works with limits"),
+                  })}
             </TooltipPopup>
           </Tooltip>
         </li>

@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -154,10 +155,15 @@ async function recordCopies(
     const sites = website(row)?.sites ?? [];
     if (!landed.some((unit) => sites.every((site) => unit.sites.some((u) => siteUnder(site, u)))))
       continue;
-    await accountsState.mainFilled.run(registry, {
-      environmentId,
-      input: { accountId: row.accountId, profileName: profileName(fromProfile) },
-    });
+    await runAtomCommand(
+      registry,
+      accountsState.mainFilled,
+      {
+        environmentId,
+        input: { accountId: row.accountId, profileName: profileName(fromProfile) },
+      },
+      { reportFailure: false },
+    );
   }
 }
 
@@ -395,8 +401,14 @@ export async function withdrawFromMain(
 export const takeBackVia =
   (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
   async (sites: ReadonlyArray<string>) =>
-    (await accountsState.mainWithdrawn.run(registry, { environmentId, input: { sites } }))._tag ===
-    "Success";
+    (
+      await runAtomCommand(
+        registry,
+        accountsState.mainWithdrawn,
+        { environmentId, input: { sites } },
+        { reportFailure: false },
+      )
+    )._tag === "Success";
 
 /** Main's row changes once its copies are withdrawn; a profile allowed again keeps the rest. */
 export const settleVia =
@@ -412,11 +424,21 @@ export const settleVia =
     const { remove, signedOut } = withdrawnRows(current, units);
     for (const accountId of remove) {
       if (!live()) return;
-      await accountsState.remove.run(registry, { environmentId, input: { accountId } });
+      await runAtomCommand(
+        registry,
+        accountsState.remove,
+        { environmentId, input: { accountId } },
+        { reportFailure: false },
+      );
     }
     for (const accountId of signedOut) {
       if (!live()) return;
-      await accountsState.sessionEnded.run(registry, { environmentId, input: { accountId } });
+      await runAtomCommand(
+        registry,
+        accountsState.sessionEnded,
+        { environmentId, input: { accountId } },
+        { reportFailure: false },
+      );
     }
   };
 
@@ -446,10 +468,15 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
           (await fillFromProfile(registry, environmentId, snapshot, profileId)) !== null,
         done: async (profileIds) =>
           (
-            await accountsState.mainBackfilled.run(registry, {
-              environmentId,
-              input: { profileIds: profileIds.map((id) => BrowserProfileId.make(id)) },
-            })
+            await runAtomCommand(
+              registry,
+              accountsState.mainBackfilled,
+              {
+                environmentId,
+                input: { profileIds: profileIds.map((id) => BrowserProfileId.make(id)) },
+              },
+              { reportFailure: false },
+            )
           )._tag === "Success",
         makeMainDefault: () =>
           persistClientSettingsUpdate((current) => ({
@@ -483,10 +510,15 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
           }),
         done: async (profiles) =>
           (
-            await accountsState.mainFolded.run(registry, {
-              environmentId,
-              input: { profiles },
-            })
+            await runAtomCommand(
+              registry,
+              accountsState.mainFolded,
+              {
+                environmentId,
+                input: { profiles },
+              },
+              { reportFailure: false },
+            )
           )._tag === "Success",
       });
     },
@@ -515,12 +547,15 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
 }
 
 const readSnapshot = async (environmentId: EnvironmentId) => {
-  const read = await accountsState.readSnapshot
-    .run(appAtomRegistry, { environmentId, input: {} })
-    .catch((cause: unknown) => {
-      warn("Couldn't read Accounts to fill Main", cause);
-      return null;
-    });
+  const read = await runAtomCommand(
+    appAtomRegistry,
+    accountsState.readSnapshot,
+    { environmentId, input: {} },
+    { reportFailure: false },
+  ).catch((cause: unknown) => {
+    warn("Couldn't read Accounts to fill Main", cause);
+    return null;
+  });
   return read?._tag === "Success" ? read.value : undefined;
 };
 
@@ -575,12 +610,15 @@ async function fillFromProfile(
 /** An import into a profile of this desktop: its whole jar goes to other computers again. */
 const resendImported = async (environmentId: EnvironmentId, profileId: string) => {
   if (environmentId !== readPrimaryEnvironmentId()) return;
-  await accountsState.profileResend
-    .run(appAtomRegistry, {
+  await runAtomCommand(
+    appAtomRegistry,
+    accountsState.profileResend,
+    {
       environmentId,
       input: { profileId: BrowserProfileId.make(profileId), why: "import" },
-    })
-    .catch((cause: unknown) => warn("Couldn't mark an import to send again", cause));
+    },
+    { reportFailure: false },
+  ).catch((cause: unknown) => warn("Couldn't mark an import to send again", cause));
 };
 
 /** Trigger 1, an import or Refresh into another profile: then its sign-ins fill Main. */
@@ -833,10 +871,15 @@ export async function retireIntoMain(
   environmentId: EnvironmentId,
   profile: BrowserProfile,
 ) {
-  const retired = await accountsState.retireProfile.run(registry, {
-    environmentId,
-    input: { profileId: BrowserProfileId.make(profile.id), name: profile.name },
-  });
+  const retired = await runAtomCommand(
+    registry,
+    accountsState.retireProfile,
+    {
+      environmentId,
+      input: { profileId: BrowserProfileId.make(profile.id), name: profile.name },
+    },
+    { reportFailure: false },
+  );
   if (retired._tag !== "Success") return false;
   useBrowserShortcuts.getState().mergeProfile(profile.id, DEFAULT_BROWSER_PROFILE_ID);
   return true;
@@ -878,7 +921,11 @@ export async function importIntoMain(
 }
 
 /** A sign-in made in a Chrome window, copied into Main by an import's rules. */
-export async function chromeSignInIntoMain(environmentId: EnvironmentId, url: string) {
+export async function chromeSignInIntoMain(
+  environmentId: EnvironmentId,
+  url: string,
+  attemptId?: string,
+) {
   const signIn = window.desktopBridge?.accounts?.chromeSignIn;
   const rules = await outsideCopyRules(environmentId);
   if (!signIn || !rules) return { outcome: "failed" } as const;
@@ -887,6 +934,7 @@ export async function chromeSignInIntoMain(environmentId: EnvironmentId, url: st
     profileId: DEFAULT_BROWSER_PROFILE_ID,
     url,
     main: rules,
+    ...(attemptId === undefined ? {} : { attemptId }),
   });
   if (result.outcome === "copied") await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
   return result;

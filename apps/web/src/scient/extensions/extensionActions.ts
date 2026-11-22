@@ -15,9 +15,11 @@ import type {
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
 import { useContext, useEffect, useRef, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import { ensureLocalApi } from "../../localApi";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { commandFailureMessage } from "./ExtensionsFeedback";
@@ -258,9 +260,9 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
         if (removed?._tag !== "Success") return false;
         toastManager.add({
           type: "success",
-          title: `Removed ${connector.displayName}`,
+          title: m(msg("Removed {name}", { name: connector.displayName })),
           actionProps: {
-            children: "Undo",
+            children: m(msg("Undo")),
             onClick: () => void undoChange({ environmentId, input: { connectorId } }),
           },
         });
@@ -268,8 +270,13 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
       }
       const confirmed = await confirmDestructive(
         connector.auth.type === "none"
-          ? `Remove ${connector.displayName}? Agents stop receiving it.`
-          : `Remove ${connector.displayName}? Its stored sign-in or key is deleted and agents stop receiving it.`,
+          ? m(msg("Remove {name}? Agents stop receiving it.", { name: connector.displayName }))
+          : m(
+              msg(
+                "Remove {name}? Its stored sign-in or key is deleted and agents stop receiving it.",
+                { name: connector.displayName },
+              ),
+            ),
       );
       if (!confirmed) return false;
       const removed = await lock.run("remove", () =>
@@ -427,7 +434,11 @@ export function usePluginActions(plugin: ScientPluginSummary): PluginActionsStat
     remove: async () => {
       if (lock.locked) return;
       const confirmed = await confirmDestructive(
-        `Remove ${plugin.displayName}? Its skills and connected services are removed too.`,
+        m(
+          msg("Remove {name}? Its skills and connected services are removed too.", {
+            name: plugin.displayName,
+          }),
+        ),
       );
       if (confirmed) await lock.run("remove", () => remove({ environmentId, input: { pluginId } }));
     },
@@ -461,8 +472,17 @@ export function useProviderPluginActions(
       ),
     uninstall: async () => {
       if (lock.locked || plugin.canUninstall !== true) return;
+      const name = plugin.displayName ?? plugin.name;
+      // Antigravity keeps one plugin folder per OS user, shared with the Antigravity app.
       const confirmed = await confirmDestructive(
-        `Remove ${plugin.displayName ?? plugin.name} from ${label}?`,
+        provider.driver === "antigravity"
+          ? m(
+              msg(
+                "Remove {name} from Antigravity? It is removed from Antigravity for your user account on the computer Scient runs on, including the Antigravity app and every Antigravity agent there.",
+                { name },
+              ),
+            )
+          : m(msg("Remove {name} from {agent}?", { name, agent: label })),
       );
       if (!confirmed) return;
       await lock.run("uninstall", () =>
@@ -518,7 +538,9 @@ export function useProviderServerActions(
           if (!result.value.authorizationUrl) {
             toastManager.add({
               type: "info",
-              title: `${label} started sign-in for ${server.name}`,
+              title: m(
+                msg("{agent} started sign-in for {server}", { agent: label, server: server.name }),
+              ),
             });
           }
           return result.value.authorizationUrl ?? null;

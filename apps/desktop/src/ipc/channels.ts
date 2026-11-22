@@ -138,6 +138,13 @@ export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
 export const PREVIEW_FIND_RESULT_CHANNEL = "desktop:preview-find-result";
 // SCIENT-FORK: Scient Browser — Google sign-in is stopped and explained.
 export const PREVIEW_SIGN_IN_BLOCKED_CHANNEL = "desktop:preview-sign-in-blocked";
+export const PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL = "desktop:preview-tunnel-access-request";
+export const PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL = "desktop:preview-tunnel-access-resolve";
+export const PORT_FORWARD_START_CHANNEL = "desktop:port-forward-start";
+export const PORT_FORWARD_STOP_CHANNEL = "desktop:port-forward-stop";
+export const PORT_FORWARD_LIST_CHANNEL = "desktop:port-forward-list";
+export const PORT_FORWARD_CHANGE_CHANNEL = "desktop:port-forward-change";
+export const PORT_FORWARD_SHARES_LOOPBACK_CHANNEL = "desktop:port-forward-shares-loopback";
 
 // Scient local voice transcription (desktop-only).
 export const VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL = "desktop:voice-request-microphone-access";
@@ -149,6 +156,9 @@ export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
 export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
 
+// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources).
+export const PREVIEW_LIBRARY_PAGE_CHANNEL = "scient:preview:library-page";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
 export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";
 // SCIENT-FORK:END
@@ -175,6 +185,9 @@ export const SPELLING_DICTIONARY_READY_CHANNEL = "scient:spelling:dictionary-rea
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
+export const APPLE_SPEECH_AVAILABLE_CHANNEL = "desktop:apple-speech-available";
+export const APPLE_SPEECH_PREPARE_CHANNEL = "desktop:apple-speech-prepare";
+export const APPLE_SPEECH_TRANSCRIBE_CHANNEL = "desktop:apple-speech-transcribe";
 
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
 export const RENDER_DOCUMENT_PAGE_PDF_CHANNEL = "desktop:render-document-page-pdf";
@@ -187,3 +200,21 @@ export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
 
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+export const GET_RESTART_READINESS_TOKEN_CHANNEL = "scient:restart:readiness-token";
+export const REPORT_WORKSPACE_READY_CHANNEL = "scient:restart:workspace-ready";
+export const PREPARE_UPDATE_SAVE_CHANNEL = "scient:update:prepare-save";
+export const COMPLETE_UPDATE_SAVE_CHANNEL = "scient:update:complete-save";
+export const RELEASE_UPDATE_SAVE_CHANNEL = "scient:update:release-save";
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — feedback reports to the Scient team (scient/feedback).
+export const FEEDBACK_PREPARE_CHANNEL = "scient:feedback:prepare";
+export const FEEDBACK_CAPTURE_SCREENSHOT_CHANNEL = "scient:feedback:capture-screenshot";
+export const FEEDBACK_READ_RECENT_LOGS_CHANNEL = "scient:feedback:read-recent-logs";
+export const FEEDBACK_SUBMIT_CHANNEL = "scient:feedback:submit";
+export const FEEDBACK_TAKE_FIXED_NOTICES_CHANNEL = "scient:feedback:take-fixed-notices";
+// SCIENT-FORK:END
+
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

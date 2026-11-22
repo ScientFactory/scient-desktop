@@ -198,7 +198,6 @@ const SNAPSHOT_SCRIPT = `(() => {
     title: document.title,
     loading: document.readyState !== "complete",
     visibleText: document.body?.innerText || "",
-    interactiveElements: [],
   };
 })()`;
 
@@ -277,6 +276,8 @@ const pageChanged = () =>
   new ServerBrowserOperationError({
     tag: "PreviewAutomationExecutionError",
     message: "The page changed while capturing its snapshot. Take another snapshot.",
+    // SCIENT-FORK: a fixed reason analytics keep.
+    detail: { failureClass: "snapshot_page_changed" },
   });
 
 type SnapshotStage = typeof PreviewAutomationSnapshotStage.Type;
@@ -568,6 +569,8 @@ export const captureViewport = async (
             tag: "PreviewAutomationExecutionError",
             message:
               "The browser is not producing screenshot frames. For a desktop tab, show or restore the Scient window and try again.",
+            // SCIENT-FORK: a fixed reason analytics keep.
+            detail: { failureClass: "screenshot_no_frames" },
           }),
         ),
       SCREENSHOT_TIMEOUT_MS,
@@ -699,10 +702,7 @@ const capture = async (
       "page state",
       () =>
         input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
-          Pick<
-            PreviewAutomationSnapshot,
-            "url" | "title" | "loading" | "visibleText" | "interactiveElements"
-          >
+          Pick<PreviewAutomationSnapshot, "url" | "title" | "loading" | "visibleText">
         >,
     ),
     // A cheap real frame still sizes the screenshot; computing it from metrics drifted from the PNG.
@@ -1150,6 +1150,8 @@ export const evaluate = async (
     throw new ServerBrowserOperationError({
       tag: "PreviewAutomationExecutionError",
       message: result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+      // SCIENT-FORK: the page reported the script's own exception, a fact analytics keep.
+      detail: { failureClass: "script_exception" },
     });
   }
   const value =

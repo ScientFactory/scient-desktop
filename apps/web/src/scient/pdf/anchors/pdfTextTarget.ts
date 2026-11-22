@@ -12,8 +12,8 @@ import { version as pdfjsVersion } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 import type { PdfSelectedPage, PdfSelectionRefusal } from "./pdfTextLayer";
 
-/** The extractor version stored with every target; a pdf.js upgrade invalidates offsets. */
-export const PDF_EXTRACTOR_VERSION = pdfjsVersion;
+/** The extractor version stored with every target, as provenance; the live page proves offsets. */
+const PDF_EXTRACTOR_VERSION = pdfjsVersion;
 
 export function pdfTextHash(text: string): string {
   return [...sha256(new TextEncoder().encode(text))]
@@ -78,6 +78,11 @@ export function pdfDocumentIdentity(source: PdfSourceDescriptor): PdfDocumentIde
           }
         : null;
   }
+}
+
+/** The bytes the reader's producer proved, which a quote records; null when none were proved. */
+export function pdfDocumentMaterial(source: PdfSourceDescriptor): PdfMaterial | null {
+  return source._tag === "workspace-pdf" ? (source.material ?? null) : null;
 }
 
 export type PdfTextTargetResult =

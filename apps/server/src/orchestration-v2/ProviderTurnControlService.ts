@@ -7,6 +7,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   ThreadId,
+  withMessageSenderNote,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -29,6 +30,7 @@ import {
   type InterruptPendingStart,
 } from "./scient-fork/PendingStartInterrupt.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -133,6 +135,7 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | ServerConfig
   | FileSystem.FileSystem
+  | McpAppModelContext.McpAppModelContext
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | McpProviderSessions.McpProviderSessions
@@ -146,6 +149,7 @@ export const layer: Layer.Layer<
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const serverConfig = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
+    const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -476,15 +480,21 @@ export const layer: Layer.Layer<
             skillPlanner,
           }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
           let text = prepared.text;
+          let catalogDropped = false;
           yield* validateScientV2SteerInput({
             prepared,
             attachments: message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
             useFallback: (fallback) => {
               text = fallback;
+              catalogDropped = true;
             },
           }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           // SCIENT-FORK:END
+          const appContext = yield* McpAppModelContext.forProvider(
+            mcpAppModelContext,
+            input.threadId,
+          );
           const current = yield* load({ ...input, operation: "steer" });
           if (
             Option.isNone(current.session) ||
@@ -525,9 +535,10 @@ export const layer: Layer.Layer<
               ...(input.modelSelection === undefined
                 ? {}
                 : { modelSelection: input.modelSelection }),
+              ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,
-                text,
+                text: withMessageSenderNote(message, text),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
@@ -570,6 +581,8 @@ export const layer: Layer.Layer<
                 }),
               ),
             );
+          // SCIENT-FORK: the accepted steer carried the skill list, unless it went without it.
+          if (!catalogDropped) yield* prepared.recordCatalogDelivered;
         },
         (effect, input) =>
           effect.pipe(

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useContext, useState } from "react";
 import { Input } from "~/components/ui/input";
 import { MenuRadioGroup, MenuSeparator } from "~/components/ui/menu";
@@ -21,25 +22,26 @@ export function LatexCitationControls(props: {
   onKeys: (keys: string[]) => void;
   onOpen: ((key?: string) => void) | undefined;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const setup = useContext(LatexAuthoringContext);
   const packages = latexPackageInventory(setup.source).loaded;
   const prefix = props.notes.length === 2 ? props.notes[0]! : "";
   const forms = [
-    { value: "cite", label: "Citation" },
+    { value: "cite", label: gt("Citation", { $context: "citation form" }) },
     ...(packages.has("natbib")
       ? [
-          { value: "citep", label: "Parenthetical" },
-          { value: "citet", label: "In text" },
-          { value: "citeauthor", label: "Author" },
-          { value: "citeyear", label: "Year" },
+          { value: "citep", label: gt("Parenthetical") },
+          { value: "citet", label: gt("In text") },
+          { value: "citeauthor", label: gt("Author", { $context: "citation form" }) },
+          { value: "citeyear", label: gt("Year", { $context: "citation form" }) },
         ]
       : packages.has("biblatex")
         ? [
-            { value: "parencite", label: "Parenthetical" },
-            { value: "textcite", label: "In text" },
-            { value: "citeauthor", label: "Author" },
-            { value: "citeyear", label: "Year" },
+            { value: "parencite", label: gt("Parenthetical") },
+            { value: "textcite", label: gt("In text") },
+            { value: "citeauthor", label: gt("Author", { $context: "citation form" }) },
+            { value: "citeyear", label: gt("Year", { $context: "citation form" }) },
           ]
         : []),
   ];
@@ -49,11 +51,11 @@ export function LatexCitationControls(props: {
   const search = query.trim().toLowerCase();
   return (
     <>
-      <DockMenu icon={undefined} label="References" commandScope="latex">
+      <DockMenu icon={undefined} label={gt("References")} commandScope="latex">
         {props.keys.map((key, index) => (
           <LatexFooterSubmenu key={key} label={key}>
             <DockCommandItem disabled={!props.onOpen} onClick={() => props.onOpen?.(key)}>
-              {entries.has(key) ? "Edit reference" : "Find reference"}
+              {entries.has(key) ? gt("Edit reference") : gt("Find reference")}
             </DockCommandItem>
             <DockCommandItem
               disabled={props.disabled || index === 0}
@@ -63,24 +65,24 @@ export function LatexCitationControls(props: {
                 props.onKeys(keys);
               }}
             >
-              Move earlier
+              <T>Move earlier</T>
             </DockCommandItem>
             <DockCommandItem
               disabled={props.disabled || props.keys.length <= 1}
               onClick={() => props.onKeys(props.keys.filter((_, at) => at !== index))}
             >
-              Remove from citation
+              <T>Remove from citation</T>
             </DockCommandItem>
           </LatexFooterSubmenu>
         ))}
         <MenuSeparator />
-        <LatexFooterSubmenu label="Add reference" disabled={props.disabled}>
-          <LatexContextMenuForm label="Find citation reference">
+        <LatexFooterSubmenu label={gt("Add reference")} disabled={props.disabled}>
+          <LatexContextMenuForm label={gt("Find citation reference")}>
             <Input
               size="compact"
               type="search"
-              aria-label="Find citation reference"
-              placeholder="Search references"
+              aria-label={gt("Find citation reference")}
+              placeholder={gt("Search references")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -102,10 +104,15 @@ export function LatexCitationControls(props: {
             ))}
         </LatexFooterSubmenu>
         <DockCommandItem disabled={!props.onOpen} onClick={() => props.onOpen?.()}>
-          Manage references
+          <T>Manage references</T>
         </DockCommandItem>
       </DockMenu>
-      <DockMenu icon={undefined} label="Form" commandScope="latex" disabled={props.disabled}>
+      <DockMenu
+        icon={undefined}
+        label={gt("Form", { $context: "citation form" })}
+        commandScope="latex"
+        disabled={props.disabled}
+      >
         <MenuRadioGroup value={props.command}>
           {forms.map((form) => (
             <DockCommandRadioItem
@@ -122,7 +129,7 @@ export function LatexCitationControls(props: {
       </DockMenu>
       <DockMenu
         icon={undefined}
-        label="Note"
+        label={gt("Note", { $context: "citation note" })}
         commandScope="latex"
         disabled={props.disabled}
         popupClassName="w-max min-w-0 max-w-(--available-width)"
@@ -143,19 +150,20 @@ function CitationNotes(props: {
   notes: readonly string[];
   onChange: (notes: string[]) => void;
 }) {
+  const gt = useGT();
   const prefix = props.notes.length === 2 ? props.notes[0]! : "";
   const suffix = props.notes.at(-1) ?? "";
   const [before, setBefore] = useState(metadataText(prefix) ?? prefix);
   const [after, setAfter] = useState(metadataText(suffix) ?? suffix);
   const editable = metadataText(prefix) !== null && metadataText(suffix) !== null;
   return (
-    <LatexContextMenuForm label="Citation notes" width="content">
+    <LatexContextMenuForm label={gt("Citation notes")} width="content">
       {props.command !== "cite" && (
         <label>
-          Before citation
+          <T>Before citation</T>
           <Input
             size="compact"
-            aria-label="Citation prefix"
+            aria-label={gt("Citation prefix")}
             value={before}
             disabled={!editable}
             onChange={(event) => setBefore(event.target.value)}
@@ -163,10 +171,10 @@ function CitationNotes(props: {
         </label>
       )}
       <label>
-        Page / note
+        <T>Page / note</T>
         <Input
           size="compact"
-          aria-label="Citation note"
+          aria-label={gt("Citation note")}
           value={after}
           disabled={!editable}
           onChange={(event) => setAfter(event.target.value)}
@@ -180,7 +188,7 @@ function CitationNotes(props: {
           )
         }
       >
-        Apply
+        <T>Apply</T>
       </DockCommandItem>
     </LatexContextMenuForm>
   );

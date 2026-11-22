@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useContext, useId, type ReactNode } from "react";
 import { useEditorState, type NodeViewProps } from "@tiptap/react";
 import {
@@ -20,20 +21,21 @@ import { latexLabelInventory } from "./latexLabelAuthoring";
 import { algorithmStepSelection, type AlgorithmStepOperation } from "./latexAlgorithmEditing";
 import { applyAlgorithmStepEdit } from "./latexAlgorithmCommands";
 
+/** `label`s are `msg()` strings, resolved where the menu renders. */
 const steps = [
-  { value: "State", label: "Step" },
-  { value: "Return", label: "Return" },
-  { value: "Require", label: "Input" },
-  { value: "Ensure", label: "Output" },
-  { value: "Statex", label: "Unnumbered step" },
+  { value: "State", label: msg("Step", { $context: "algorithm step" }) },
+  { value: "Return", label: msg("Return", { $context: "algorithm step" }) },
+  { value: "Require", label: msg("Input", { $context: "algorithm step" }) },
+  { value: "Ensure", label: msg("Output", { $context: "algorithm step" }) },
+  { value: "Statex", label: msg("Unnumbered step", { $context: "algorithm step" }) },
 ];
 const blocks = [
-  { value: "If", label: "Condition" },
-  { value: "For", label: "For loop" },
-  { value: "ForAll", label: "For each loop" },
-  { value: "While", label: "While loop" },
-  { value: "Repeat", label: "Repeat until" },
-  { value: "Loop", label: "Loop" },
+  { value: "If", label: msg("Condition", { $context: "algorithm step" }) },
+  { value: "For", label: msg("For loop", { $context: "algorithm step" }) },
+  { value: "ForAll", label: msg("For each loop", { $context: "algorithm step" }) },
+  { value: "While", label: msg("While loop", { $context: "algorithm step" }) },
+  { value: "Repeat", label: msg("Repeat until", { $context: "algorithm step" }) },
+  { value: "Loop", label: msg("Loop", { $context: "algorithm step" }) },
 ];
 
 function AlgorithmSubmenu(props: { label: string; disabled?: boolean; children: ReactNode }) {
@@ -68,6 +70,8 @@ export function LatexAlgorithmControls({
   draftKey?: string | undefined;
   onCaption: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const context = useContext(LatexAuthoringContext);
   const report = useLatexActionNotice();
   const labels = latexLabelInventory(context.source);
@@ -106,34 +110,51 @@ export function LatexAlgorithmControls({
   const interval = Number(node.attrs.layout.interval ?? 0);
   const placement = String(node.attrs.layout.placement ?? "");
   const placements = [
-    { value: "", label: "Automatic" },
-    { value: "t", label: "Top" },
-    { value: "b", label: "Bottom" },
-    { value: "H", label: "Here" },
+    { value: "", label: gt("Automatic") },
+    { value: "t", label: gt("Top", { $context: "float placement" }) },
+    { value: "b", label: gt("Bottom", { $context: "float placement" }) },
+    { value: "H", label: gt("Here", { $context: "float placement" }) },
   ];
   if (!placements.some((option) => option.value === placement))
-    placements.push({ value: placement, label: placement === "htbp" ? "Prefer here" : "Custom" });
+    placements.push({
+      value: placement,
+      label:
+        placement === "htbp"
+          ? gt("Prefer here")
+          : gt("Custom", { $context: "custom float placement" }),
+    });
   const selection = active?.selection;
   return (
     <>
-      <DockMenu label="Algorithm steps" icon="Steps" commandScope="latex" disabled={!editable}>
-        <AlgorithmSubmenu label="Insert" disabled={!selection}>
+      <DockMenu
+        label={gt("Algorithm steps")}
+        icon={gt("Steps", { $context: "algorithm steps menu" })}
+        commandScope="latex"
+        disabled={!editable}
+      >
+        <AlgorithmSubmenu
+          label={gt("Insert", { $context: "insert algorithm step" })}
+          disabled={!selection}
+        >
           {steps.map((option) => (
             <DockCommandItem key={option.value} onClick={() => run("add", option.value)}>
-              {option.label}
+              {messages(option.label)}
             </DockCommandItem>
           ))}
           <MenuSeparator />
           {blocks.map((option) => (
             <DockCommandItem key={option.value} onClick={() => run("add", option.value)}>
-              {option.label}
+              {messages(option.label)}
             </DockCommandItem>
           ))}
         </AlgorithmSubmenu>
-        <AlgorithmSubmenu label="Wrap" disabled={!selection}>
+        <AlgorithmSubmenu
+          label={gt("Wrap", { $context: "wrap algorithm steps in a block" })}
+          disabled={!selection}
+        >
           {blocks.map((option) => (
             <DockCommandItem key={option.value} onClick={() => run("wrap", option.value)}>
-              {option.label}
+              {messages(option.label)}
             </DockCommandItem>
           ))}
         </AlgorithmSubmenu>
@@ -141,31 +162,33 @@ export function LatexAlgorithmControls({
           disabled={!selection || selection.first !== selection.last}
           onClick={() => run("comment")}
         >
-          {active?.comment ? "Edit comment" : "Add comment"}
+          {active?.comment ? gt("Edit comment") : gt("Add comment")}
         </DockCommandItem>
-        <AlgorithmSubmenu label="Add branch" disabled={selection?.condition == null}>
+        <AlgorithmSubmenu label={gt("Add branch")} disabled={selection?.condition == null}>
           <DockCommandItem
             disabled={!selection || selection.elseAt >= 0}
             onClick={() => run("else")}
           >
-            Else
+            <T context="algorithm else branch">Else</T>
           </DockCommandItem>
-          <DockCommandItem onClick={() => run("elseif")}>Else if</DockCommandItem>
+          <DockCommandItem onClick={() => run("elseif")}>
+            <T context="algorithm else-if branch">Else if</T>
+          </DockCommandItem>
         </AlgorithmSubmenu>
         <MenuSeparator />
         <DockCommandItem disabled={!selection?.up} onClick={() => run("up")}>
-          Move up
+          <T>Move up</T>
         </DockCommandItem>
         <DockCommandItem disabled={!selection?.down} onClick={() => run("down")}>
-          Move down
+          <T>Move down</T>
         </DockCommandItem>
         <DockCommandItem variant="destructive" disabled={!selection} onClick={() => run("remove")}>
-          Delete step
+          <T>Delete step</T>
         </DockCommandItem>
       </DockMenu>
       <DockMenu
-        label="Algorithm appearance"
-        icon="Appearance"
+        label={gt("Algorithm appearance")}
+        icon={gt("Appearance")}
         commandScope="latex"
         disabled={!editable}
       >
@@ -176,10 +199,10 @@ export function LatexAlgorithmControls({
           closeOnClick={false}
           onCheckedChange={(checked) => property({ interval: checked ? 1 : 0 })}
         >
-          Line numbers
+          <T>Line numbers</T>
         </MenuCheckboxItem>
         {floating && (
-          <AlgorithmSubmenu label="Placement">
+          <AlgorithmSubmenu label={gt("Placement")}>
             <MenuRadioGroup value={placement}>
               {placements.map((option) => (
                 <DockCommandRadioItem
@@ -199,15 +222,15 @@ export function LatexAlgorithmControls({
           className={dockButtonClass()}
           type="button"
           disabled={!editable}
-          aria-label={captioned ? "Edit algorithm caption" : "Add algorithm caption"}
+          aria-label={captioned ? gt("Edit algorithm caption") : gt("Add algorithm caption")}
           onClick={onCaption}
         >
-          Caption
+          <T>Caption</T>
         </button>
       )}
       {floating && captioned && (
         <LatexReferenceLabelControl
-          label="Algorithm reference label"
+          label={gt("Algorithm reference label")}
           allowEmpty
           value={label}
           draftKey={draftKey && `${draftKey}:label`}

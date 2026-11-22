@@ -1,6 +1,8 @@
 import type { AssetCopyResult } from "@scientfactory/document-artifacts";
+import { msg } from "gt-react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { ensureLocalApi } from "~/localApi";
 import { getLocalFileManagerName } from "~/lib/utils";
 
@@ -24,14 +26,14 @@ export function announcePdfSaveCopyResult(
   const revealAction =
     result._tag === "saved" && revealSavedAsset
       ? {
-          children: `Show in ${fileManagerName()}`,
+          children: m(msg("Show in {manager}", { manager: fileManagerName() })),
           onClick: () => {
             const manager = fileManagerName();
             void revealSavedAsset(result.path).catch((error) => {
               toastManager.add({
                 type: "error",
-                title: `Unable to show PDF in ${manager}`,
-                description: error instanceof Error ? error.message : "An error occurred.",
+                title: m(msg("Unable to show PDF in {manager}", { manager })),
+                description: error instanceof Error ? error.message : m(msg("An error occurred.")),
               });
             });
           },
@@ -40,7 +42,11 @@ export function announcePdfSaveCopyResult(
 
   toastManager.add({
     type: hasWarnings ? "warning" : presentation.type,
-    title: hasWarnings ? `${presentation.title} with warnings` : presentation.title,
+    title: !hasWarnings
+      ? presentation.title
+      : result._tag === "saved"
+        ? m(msg("PDF saved with warnings"))
+        : m(msg("PDF download started with warnings")),
     ...(description === undefined ? {} : { description }),
     ...(revealAction === undefined ? {} : { actionProps: revealAction }),
     ...(description === undefined ? { data: { compact: true } } : {}),

@@ -1,4 +1,5 @@
 import { getDroidModelSection } from "@t3tools/client-runtime/droid-model-presentation";
+import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -9,7 +10,11 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
-import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatProviderUpdateRequiredNotice,
+  providerUpdateChannelLags,
+} from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
@@ -27,6 +32,7 @@ import {
 import { ModelPickerOverlayContext } from "../../scient/providerConnection/ModelPickerOverlayContext";
 import { ModelPickerNewChatFooter } from "./ModelPickerNewChatFooter";
 import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
+import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import {
@@ -38,6 +44,7 @@ import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBann
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerSubProviderSectionKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
@@ -78,6 +85,7 @@ import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { Badge } from "../ui/badge";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -86,6 +94,7 @@ import {
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import { isActiveProviderConnectionOperation } from "~/scient/providerConnection/providerConnectionPresentation";
+import { hasRuntimeModelCatalog } from "../../providerModels";
 
 export type ModelPickerItem = {
   isDefault?: boolean | undefined;
@@ -136,9 +145,7 @@ function shouldIncludeModelPickerOption(input: {
   if (isProviderInstancePickerReady(input.entry)) return true;
   return (
     input.entry.enabled &&
-    (input.entry.driverKind === "opencode" ||
-      input.entry.driverKind === "antigravity" ||
-      input.entry.driverKind === "cursor") &&
+    hasRuntimeModelCatalog(input.entry.driverKind) &&
     input.entry.instanceId === input.activeInstanceId &&
     input.option.slug === input.activeModel &&
     input.option.isUnavailable === true
@@ -203,10 +210,16 @@ function ModelPickerProviderNotices({
   onOpenProviderSetup,
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
-  updateRequiredNotices: ReadonlyArray<{ instanceId: ProviderInstanceId; notice: string }>;
+  updateRequiredNotices: ReadonlyArray<{
+    instanceId: ProviderInstanceId;
+    notice: string;
+    canUpdateInSettings: boolean;
+  }>;
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   return (
     <>
@@ -215,7 +228,7 @@ function ModelPickerProviderNotices({
           {setupEntries.map((entry) => (
             <div key={entry.instanceId} className="px-1 py-1.5 text-xs leading-snug">
               <p className="line-clamp-3 text-muted-foreground">
-                {getProviderStatusMessage(entry.snapshot)}
+                {getProviderStatusMessage(entry.snapshot, messages)}
               </p>
               <InlineButton
                 className="mt-1"
@@ -224,26 +237,33 @@ function ModelPickerProviderNotices({
                   onOpenProviderSetup?.(entry.instanceId);
                 }}
               >
-                {setupEntries.length > 1 ? `Set up ${entry.displayName}` : "Open provider setup"}
+                {setupEntries.length > 1
+                  ? gt("Set up {provider}", { provider: entry.displayName })
+                  : gt("Open provider setup")}
               </InlineButton>
             </div>
           ))}
         </div>
       ) : null}
-      {updateRequiredNotices.map(({ instanceId, notice }) => (
+      {updateRequiredNotices.map(({ instanceId, notice, canUpdateInSettings }) => (
         <p
           key={instanceId}
           className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
         >
-          {notice}{" "}
-          <InlineButton
-            onClick={() => {
-              onRequestClose?.();
-              void navigate({ to: "/settings/providers" });
-            }}
-          >
-            Provider settings
-          </InlineButton>
+          {notice}
+          {canUpdateInSettings ? (
+            <>
+              {" "}
+              <InlineButton
+                onClick={() => {
+                  onRequestClose?.();
+                  void navigate({ to: "/settings/providers" });
+                }}
+              >
+                <T>Provider settings</T>
+              </InlineButton>
+            </>
+          ) : null}
         </p>
       ))}
     </>
@@ -356,6 +376,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** Closes the list column, inside the popup's fixed height. */
   listFooter?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const locale = useLocale();
   const {
     searchInputRef,
     keybindings: providedKeybindings,
@@ -473,6 +496,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     activeDriverKind: activeEntry?.driverKind,
   });
   // SCIENT-FORK:END
+  // The thread's backend opens expanded, so its models show without a click.
+  const [expandedSubProviderKeys, setExpandedSubProviderKeys] = useState(
+    () =>
+      new Set<string>(
+        activeModel?.subProvider
+          ? [modelPickerSubProviderSectionKey(props.activeInstanceId, activeModel.subProvider)]
+          : [],
+      ),
+  );
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
@@ -520,13 +552,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const flatModels = (() => {
     const out: ModelPickerItem[] = [];
+    const seenKeys = new Set<string>();
     for (const [instanceId, models] of modelOptionsByInstance) {
       const entry = entryByInstanceId.get(instanceId);
       if (!entry) {
         continue;
       }
       for (const model of models) {
+        const key = modelPickerModelKey(instanceId, model.slug);
         if (
+          seenKeys.has(key) ||
           !shouldIncludeModelPickerOption({
             entry,
             option: model,
@@ -536,6 +571,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ) {
           continue;
         }
+        seenKeys.add(key);
         out.push({
           slug: model.slug,
           name: model.name,
@@ -561,6 +597,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return out;
   })();
 
+  const subProvidersByInstance = new Map(
+    instanceEntries.flatMap((entry) =>
+      entry.snapshot.subProviders?.length
+        ? [[entry.instanceId, entry.snapshot.subProviders] as const]
+        : [],
+    ),
+  );
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
   // Fit the tallest tab so switching tabs never resizes the popup and moves the rail under the cursor.
@@ -585,6 +628,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     for (const instanceId of tabsWithLegacyRow) addRow(instanceId);
+    for (const [instanceId, subProviders] of subProvidersByInstance) {
+      for (const _subProvider of subProviders) addRow(instanceId);
+    }
     return Math.max(0, ...unitsByTab.values());
   })();
   const lockedDisabledInstanceIds = (() => {
@@ -724,8 +770,47 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   })();
 
+  // A provider whose models run on several backends, such as fx, lists each
+  // backend as a collapsible heading. Search and Favorites stay flat.
+  const subProviderSections = (() => {
+    const subProviders =
+      isSearching || selectedInstanceId === "favorites"
+        ? undefined
+        : subProvidersByInstance.get(selectedInstanceId);
+    if (!subProviders || selectedInstanceId === "favorites") return null;
+    const { ungrouped, groups } = groupModelsBySubProvider(
+      filteredModels,
+      subProviders,
+      (model) => model.subProvider,
+    );
+    return {
+      ungrouped,
+      sections: groups.map(({ subProvider, models }) => {
+        const key = modelPickerSubProviderSectionKey(selectedInstanceId, subProvider.name);
+        return {
+          key,
+          name: subProvider.name,
+          unavailableReason: subProvider.unavailableReason,
+          models,
+          isExpanded: expandedSubProviderKeys.has(key),
+        };
+      }),
+    };
+  })();
+  const subProviderSectionByKey = new Map(
+    subProviderSections?.sections.map((section) => [section.key, section] as const),
+  );
+
   const visibleModels = (() => {
     if (sourceSectionRows) return sourceSectionRows.visibleModels;
+    if (subProviderSections) {
+      return [
+        ...subProviderSections.ungrouped,
+        ...subProviderSections.sections.flatMap((section) =>
+          section.isExpanded ? section.models : [],
+        ),
+      ];
+    }
     if (!legacySection) {
       return droidGroups ? [...droidGroups.models, ...droidGroups.custom] : filteredModels;
     }
@@ -759,8 +844,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ? [selectedEntry]
         : []
   ).flatMap((entry) => {
-    const notice = formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery);
-    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
+    const notice = formatProviderUpdateRequiredNotice(
+      entry.snapshot,
+      searchQuery,
+      messages,
+      locale,
+    );
+    return notice
+      ? [
+          {
+            instanceId: entry.instanceId,
+            notice,
+            canUpdateInSettings: !providerUpdateChannelLags(entry.snapshot, searchQuery),
+          },
+        ]
+      : [];
   });
 
   const toggleLegacySection = (instanceId: ProviderInstanceId) => {
@@ -771,6 +869,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       } else {
         next.add(instanceId);
       }
+      return next;
+    });
+  };
+
+  const toggleSubProviderSection = (key: string) => {
+    setExpandedSubProviderKeys((expanded) => {
+      const next = new Set(expanded);
+      if (!next.delete(key)) next.add(key);
       return next;
     });
   };
@@ -846,12 +952,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
     ),
+    ...[...subProvidersByInstance].flatMap(([instanceId, subProviders]) =>
+      subProviders.map((subProvider) =>
+        modelPickerSubProviderSectionKey(instanceId, subProvider.name),
+      ),
+    ),
   ])();
   const filteredItemKeys = ((): string[] => {
     if (sourceSectionRows) return [...sourceSectionRows.itemKeys];
-    const modelKeys = visibleModels.map((model) =>
-      modelPickerModelKey(model.instanceId, model.slug),
-    );
+    const keyOf = (model: ModelPickerItem) => modelPickerModelKey(model.instanceId, model.slug);
+    if (subProviderSections) {
+      return [
+        ...subProviderSections.ungrouped.map(keyOf),
+        ...subProviderSections.sections.flatMap((section) => [
+          section.key,
+          ...(section.isExpanded ? section.models.map(keyOf) : []),
+        ]),
+      ];
+    }
+    const modelKeys = visibleModels.map(keyOf);
     // SCIENT-FORK:START — Droid's More models stay a section below their toggle.
     if (droidGroups && legacySection) {
       modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
@@ -923,7 +1042,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       setSearchQuery("");
       handleSelectInstance(next);
       announce(
-        next === "favorites" ? "Favorites" : (entryByInstanceId.get(next)?.displayName ?? next),
+        next === "favorites" ? gt("Favorites") : (entryByInstanceId.get(next)?.displayName ?? next),
         "model-picker",
       );
       return;
@@ -949,7 +1068,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const name = flatModels.find(
       (item) => item.slug === selectedSlug && item.instanceId === model.instanceId,
     )?.name;
-    announce(`Model: ${name ?? selectedSlug}`, "model-picker");
+    announce(gt("Model: {name}", { name: name ?? selectedSlug }), "model-picker");
   };
 
   return (
@@ -993,7 +1112,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
                   getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
-                    `${entry.displayName} is unavailable in this conversation. Fork to continue with ${entry.displayName}.`,
+                    gt(
+                      "{provider} is unavailable in this conversation. Fork to continue with {provider}.",
+                      { provider: entry.displayName },
+                    ),
                 }
               : {})}
           />
@@ -1035,6 +1157,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               toggleModelSourceSection(modelKey);
               return;
             }
+            if (subProviderSectionByKey.has(modelKey)) {
+              toggleSubProviderSection(modelKey);
+              return;
+            }
             const model = parseModelPickerModelKey(modelKey);
             if (model) {
               handleModelSelect(
@@ -1056,7 +1182,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {!selectedSetupEntry ? (
               <ComboboxSearchInput
                 ref={searchInputRef}
-                placeholder="Search models..."
+                placeholder={gt("Search models...")}
                 value={searchQuery}
                 onChange={(e) => {
                   if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
@@ -1138,6 +1264,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       toggleModelSourceSection(highlightedModelKeyRef.current);
                       return;
                     }
+                    if (subProviderSectionByKey.has(highlightedModelKeyRef.current)) {
+                      toggleSubProviderSection(highlightedModelKeyRef.current);
+                      return;
+                    }
                     const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
                     if (model) {
                       handleModelSelect(model.slug, model.instanceId, e.shiftKey);
@@ -1177,13 +1307,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         {droidGroups ? (
                           // SCIENT-FORK: Droid's More section keeps its labelled disclosure.
                           <ModelListDisclosureContent
-                            label="More models"
+                            label={gt("More models")}
                             count={legacySection.legacyModels.length}
                             expanded={legacySection.isExpanded}
                           />
                         ) : (
                           <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
-                            {legacySection.isExpanded ? "Show less" : "Show more"}
+                            {legacySection.isExpanded
+                              ? gt("Show less", { $context: "collapses the list of older models" })
+                              : gt("Show more", { $context: "expands the list of older models" })}
                           </span>
                         )}
                       </ComboboxItem>
@@ -1203,10 +1335,55 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           label={modelSourceSectionLabel(
                             sourceSection.section,
                             selectedEntry?.displayName ?? "provider",
+                            // SCIENT-FORK: the section label in the picker's language.
+                            messages,
                           )}
                           count={sourceSection.count}
                           expanded={sourceSection.expanded}
                         />
+                      </ComboboxItem>
+                    );
+                  }
+                  const subProviderSection = subProviderSectionByKey.get(modelKey);
+                  if (subProviderSection) {
+                    const unavailable = subProviderSection.unavailableReason !== undefined;
+                    return (
+                      <ComboboxItem
+                        hideIndicator
+                        index={index}
+                        value={modelKey}
+                        disabled={unavailable}
+                        aria-expanded={unavailable ? undefined : subProviderSection.isExpanded}
+                        className="group w-full cursor-pointer"
+                      >
+                        <div className="min-w-0 flex-1 text-left">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="min-w-0 truncate text-sm font-normal leading-snug">
+                              {subProviderSection.name}
+                            </div>
+                            {unavailable ? (
+                              <Badge variant="outline" size="sm">
+                                {gt("Unavailable", {
+                                  $context: "backend cannot be used right now",
+                                })}
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
+                            {subProviderSection.unavailableReason ??
+                              gt("{count, plural, one {{count} model} other {{count} models}}", {
+                                count: subProviderSection.models.length,
+                              })}
+                          </div>
+                        </div>
+                        {unavailable ? null : (
+                          <ChevronRightIcon
+                            className={cn(
+                              "size-4 shrink-0 transition-transform",
+                              subProviderSection.isExpanded && "rotate-90",
+                            )}
+                          />
+                        )}
                       </ComboboxItem>
                     );
                   }
@@ -1220,7 +1397,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     <div>
                       {droidGroups?.custom[0] === model ? (
                         <div className="px-2 pt-3 pb-1 text-[11px] text-muted-foreground">
-                          Custom models
+                          <T>Custom models</T>
                         </div>
                       ) : null}
                       <ModelListRow
@@ -1262,10 +1439,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               className={cn("empty:h-0", selectedSetupEntry && "hidden")}
             >
               {selectedInstanceId === "favorites" && !isSearching
-                ? "No favorites yet"
+                ? gt("No favorites yet")
                 : workspaceModelsScanning
-                  ? "Searching project models..."
-                  : "No models found"}
+                  ? gt("Searching project models...")
+                  : gt("No models found")}
             </ComboboxEmpty>
             {selectedFooterEntry && props.renderProviderFooter
               ? props.renderProviderFooter(selectedFooterEntry)

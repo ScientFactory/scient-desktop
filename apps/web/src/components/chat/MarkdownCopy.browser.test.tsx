@@ -3,25 +3,16 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { MarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { MarkdownTable } from "./MarkdownTable";
 
 // Insecure origins (a LAN or tailnet address over plain http) have no async clipboard.
 function withoutAsyncClipboard() {
   const original = Object.getOwnPropertyDescriptor(Navigator.prototype, "clipboard");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
-  let copiedSource: string | null = null;
-  const execCommand = vi.spyOn(document, "execCommand").mockImplementation(() => {
-    const selected = document.activeElement;
-    copiedSource =
-      selected instanceof HTMLTextAreaElement
-        ? selected.value.slice(selected.selectionStart, selected.selectionEnd)
-        : null;
-    return true;
-  });
+  const execCommand = vi.spyOn(document, "execCommand").mockReturnValue(true);
   return {
     execCommand,
-    copiedSource: () => copiedSource,
     [Symbol.dispose]() {
       execCommand.mockRestore();
       Reflect.deleteProperty(navigator, "clipboard");
@@ -39,7 +30,11 @@ describe("markdown copy without the async clipboard", () => {
         fenceTitle={null}
         theme="light"
         isStreaming={false}
-      />,
+      >
+        <pre>
+          <code>echo hi</code>
+        </pre>
+      </MarkdownCodeBlock>,
       // The block renders no links and reads no route.
       { router: false },
     );
@@ -48,7 +43,6 @@ describe("markdown copy without the async clipboard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copy code" }));
     await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
-    expect(clipboard.copiedSource()).toBe("echo hi");
   });
 
   it("copies a table through the execCommand fallback", async () => {
@@ -74,5 +68,89 @@ describe("markdown copy without the async clipboard", () => {
     await userEvent.click(page.getByRole("menuitem", { name: "Copy as Markdown" }));
     await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
+  });
+});
+
+describe("copying a table as HTML", () => {
+  it("writes the markup as plain text and as the rich HTML flavor", async () => {
+    await using screen = await render(
+      <div dir="rtl">
+        {/* SCIENT-FORK: Scient's table takes its direction from its own dir, which chat always sets. */}
+        <MarkdownTable dir="rtl">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th style={{ textAlign: "right" }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Ada &amp; co</td>
+              <td style={{ textAlign: "right" }}>1,200</td>
+            </tr>
+            <tr>
+              <td>
+                first
+                <br />
+                second
+              </td>
+              <td>
+                {/* The wrapper MarkdownMath renders around a formula. */}
+                <span data-markdown-math="inline" data-markdown-copy="\(x^2\)">
+                  x²
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td>zero</td>
+              <td>garbage</td>
+            </tr>
+          </tbody>
+        </MarkdownTable>
+      </div>,
+      // The table renders no links and reads no route.
+      { router: false },
+    );
+    // Raw span values, so the copy reads the DOM's own rowSpan/colSpan normalization.
+    const sourceCell = (text: string) =>
+      [...document.querySelectorAll("td")].find((cell) => cell.textContent === text);
+    sourceCell("zero")?.setAttribute("rowspan", "0");
+    sourceCell("garbage")?.setAttribute("colspan", "2garbage");
+    sourceCell("Ada & co")?.setAttribute("rowspan", "-1");
+    const items: ClipboardItem[] = [];
+    const write = vi.spyOn(navigator.clipboard, "write").mockImplementation(async (data) => {
+      items.push(...data);
+    });
+
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Copy table" }));
+      await userEvent.click(page.getByRole("menuitem", { name: "Copy as HTML" }));
+      await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+      const [item] = items;
+      expect(item?.types).toEqual(["text/plain", "text/html"]);
+      const markup = await (await item!.getType("text/plain")).text();
+      expect(markup).toMatch(/^<table[\s>]/);
+      expect(await (await item!.getType("text/html")).text()).toBe(
+        `<meta charset="utf-8">${markup}`,
+      );
+
+      const pasted = new DOMParser().parseFromString(markup, "text/html").querySelector("table");
+      expect(pasted?.getAttribute("dir")).toBe("rtl");
+      const cells = [...(pasted?.querySelectorAll("th, td") ?? [])] as HTMLElement[];
+      expect(cells[0]?.style.textAlign).toBe("right");
+      const span = (cell: HTMLElement | undefined) => [
+        cell?.getAttribute("rowspan") ?? null,
+        cell?.getAttribute("colspan") ?? null,
+      ];
+      // rowspan="0" runs to the section end, "2garbage" reads as 2, a negative span is dropped.
+      expect([span(cells[6]), span(cells[7]), span(cells[2])]).toEqual([
+        ["0", null],
+        [null, "2"],
+        [null, null],
+      ]);
+    } finally {
+      write.mockRestore();
+    }
   });
 });

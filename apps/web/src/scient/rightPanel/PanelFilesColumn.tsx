@@ -1,6 +1,7 @@
 import type { EnvironmentId, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { isHostPath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
+import { useGT } from "gt-react";
 import { lazy, Suspense, type ReactNode } from "react";
 
 import { FileExplorerPane } from "~/components/files/FileExplorerPane";
@@ -53,9 +54,10 @@ export function PanelFilesToggle(props: {
   readonly keybindings: ResolvedKeybindingsConfig;
 }) {
   const [open, setOpen] = usePanelFilesOpen();
+  const gt = useGT();
   if (!panelFilesToggleApplies(props.surface)) return null;
   const shortcut = shortcutLabelForCommand(props.keybindings, "rightPanel.toggleFiles");
-  const label = open ? "Hide files" : "Show files";
+  const label = open ? gt("Hide files") : gt("Show files");
   return (
     <Tooltip>
       <TooltipTrigger

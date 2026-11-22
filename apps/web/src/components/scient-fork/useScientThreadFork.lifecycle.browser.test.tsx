@@ -13,11 +13,22 @@ import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const commands = vi.hoisted(() => ({ dispatch: vi.fn(), options: vi.fn(), panels: vi.fn() }));
+const commands = vi.hoisted(() => ({
+  dispatch: vi.fn(),
+  options: vi.fn(),
+  ready: vi.fn(),
+  panels: vi.fn(),
+  toast: vi.fn(),
+}));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: { label: string }) =>
-    command.label.endsWith(":fork-options") ? commands.options : commands.dispatch,
+    command.label.endsWith(":fork-options")
+      ? commands.options
+      : command.label.endsWith(":await-fork")
+        ? commands.ready
+        : commands.dispatch,
 }));
+vi.mock("../ui/toast", () => ({ toastManager: { add: commands.toast } }));
 vi.mock("./forkViewContinuity", async (original) => ({
   ...(await original<typeof import("./forkViewContinuity")>()),
   stageForkViewContinuity: commands.panels,
@@ -32,16 +43,12 @@ const origin = { id: ThreadId.make("origin"), environmentId };
 const other = { id: ThreadId.make("other"), environmentId };
 const source = { kind: "assistant-response" as const, messageId: MessageId.make("answer") };
 const sourceRef = scopeThreadRef(environmentId, origin.id);
-const options = {
-  workspaceMode: "local" as const,
-  displayTitle: "My fork",
-  composerDraftSource: sourceRef,
-};
+const options = { workspaceMode: "local" as const, composerDraftSource: sourceRef };
 
 const navigate = vi.fn(async () => {});
 
 function Probe({ _fixture, thread }: { thread: typeof origin } & { _fixture: _Fixture }) {
-  const value = useScientThreadFork({ origin: thread, navigate, supportsRecovery: true });
+  const value = useScientThreadFork({ origin: thread, navigate, supported: _fixture.supported });
   useLayoutEffect(() => {
     _fixture.publishHook(value);
   });
@@ -57,6 +64,8 @@ async function _setupFixture0(_fixture: _Fixture) {
   localStorage.clear();
 
   commands.dispatch.mockReset().mockResolvedValue(AsyncResult.success({ sequence: 42 }));
+  commands.ready.mockReset().mockResolvedValue(AsyncResult.success({ forkAttachmentIdMap: {} }));
+  commands.toast.mockReset();
   commands.options.mockReset().mockResolvedValue(
     AsyncResult.success({
       available: true,
@@ -81,93 +90,6 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("fork lifecycle across navigation and remounts", () => {
-  it("submits from the checked menu without checking again, but rechecks the latest response", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await render(_fixture);
-    await act(() => _fixture.hook.prepareFork(source));
-    expect(commands.options).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
-    });
-    expect(commands.options).toHaveBeenCalledTimes(1);
-    expect(commands.dispatch).toHaveBeenCalledTimes(1);
-    // The menu's check is used once: another fork from the same point checks again.
-    await act(async () => {
-      await _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
-    });
-    expect(commands.options).toHaveBeenCalledTimes(2);
-    const latest = { kind: "assistant-response" as const, messageId: null, latest: true };
-    await act(() => _fixture.hook.prepareFork(latest));
-    await act(async () => {
-      await _fixture.hook.forkFromMessage(latest, { workspaceMode: "local" }, "/workspace");
-    });
-    expect(commands.options).toHaveBeenCalledTimes(4);
-  });
-
-  it("reuses the options of the menu shown, not a stale earlier check", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const other = { kind: "assistant-response" as const, messageId: MessageId.make("other") };
-    const resolved = (messageId: MessageId) =>
-      AsyncResult.success({
-        available: true,
-        localAvailable: true,
-        reason: null,
-        newWorktree: false,
-        sourceAssistantMessageId: messageId,
-        sourceUserMessageId: null,
-      });
-    let finishSlow!: () => void;
-    commands.options
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finishSlow = () => resolve(resolved(other.messageId));
-          }),
-      )
-      .mockImplementationOnce(async () => resolved(source.messageId));
-    await render(_fixture);
-    let slow!: Promise<void>;
-    await act(async () => {
-      slow = _fixture.hook.prepareFork(other);
-      await _fixture.hook.prepareFork(source);
-    });
-    await act(async () => {
-      finishSlow();
-      await slow;
-    });
-    await act(async () => {
-      await _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
-    });
-    expect(commands.options).toHaveBeenCalledTimes(2);
-    expect(commands.dispatch).toHaveBeenCalledTimes(1);
-  });
-
-  it("checks again when the menu's options are older than 30 seconds", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
-    try {
-      await render(_fixture);
-      await act(() => _fixture.hook.prepareFork(source));
-      now.mockReturnValue(1_000_000 + 30_001);
-      await act(async () => {
-        await _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
-      });
-      expect(commands.options).toHaveBeenCalledTimes(2);
-      expect(commands.dispatch).toHaveBeenCalledTimes(1);
-    } finally {
-      now.mockRestore();
-    }
-  });
-
   it.each([true, false])(
     "dispatches a missing-image fork only after confirmation (%s)",
     async (proceed) => {
@@ -218,7 +140,7 @@ describe("fork lifecycle across navigation and remounts", () => {
       expect(outcome).toBe(proceed ? "accepted" : "not-accepted");
       expect(commands.dispatch).toHaveBeenCalledTimes(proceed ? 1 : 0);
       if (proceed) {
-        const id = commands.dispatch.mock.calls[0]![0].input.newThreadId;
+        const id = commands.dispatch.mock.calls[0]![0].input.targetThreadId;
         expect(
           useComposerDraftStore.getState().draftsByThreadKey[
             scopedThreadKey(scopeThreadRef(environmentId, id))
@@ -267,15 +189,13 @@ describe("fork lifecycle across navigation and remounts", () => {
       ).toBe("Unsent provider-switch draft");
 
       await render(_fixture);
-      await act(() => _fixture.hook.prepareFork(source));
-      expect(_fixture.hook.preview?.locked).toBe(true);
       await act(() => _fixture.hook.forkFromMessage(source, options, "/workspace"));
       expect(commands.dispatch).toHaveBeenCalledOnce();
       expect(navigate).toHaveBeenCalledWith({
         to: "/$environmentId/$threadId",
-        params: { environmentId, threadId: firstCommand.newThreadId },
+        params: { environmentId, threadId: firstCommand.targetThreadId },
       });
-      const destination = scopeThreadRef(environmentId, firstCommand.newThreadId);
+      const destination = scopeThreadRef(environmentId, firstCommand.targetThreadId);
       expect(
         useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destination)]?.prompt,
       ).toBe("Unsent provider-switch draft");
@@ -311,17 +231,13 @@ describe("fork lifecycle across navigation and remounts", () => {
       _fixture.hook.forkFromMessage(request, { workspaceMode: "local" }, "/workspace"),
     );
     const first = commands.dispatch.mock.calls[0]![0].input;
-    const destination = scopeThreadRef(environmentId, first.newThreadId);
+    const destination = scopeThreadRef(environmentId, first.targetThreadId);
     expect(
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destination)]?.prompt,
     ).toBe(request.prompt);
     await render(_fixture, origin, "remounted");
     await act(() =>
-      _fixture.hook.forkFromMessage(
-        request,
-        { workspaceMode: "new-worktree", titleOverride: "Changed during retry" },
-        "/workspace",
-      ),
+      _fixture.hook.forkFromMessage(request, { workspaceMode: "new-worktree" }, "/workspace"),
     );
     expect(commands.dispatch.mock.calls[1]![0].input).toEqual(first);
     expect(navigate).toHaveBeenCalledOnce();
@@ -330,7 +246,7 @@ describe("fork lifecycle across navigation and remounts", () => {
     ).toBe(request.prompt);
   });
 
-  it("shows a removed worktree's project-folder notice again when a kept fork is retried", async () => {
+  it("says a removed worktree's fork works in the project folder, also after a retry", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -355,11 +271,15 @@ describe("fork lifecycle across navigation and remounts", () => {
       _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"),
     );
     commands.options.mockClear();
+    commands.toast.mockClear();
     await render(_fixture, origin, "remounted");
-    await act(() => _fixture.hook.prepareFork(source));
-    expect(_fixture.hook.preview?.locked).toBe(true);
+    await act(() =>
+      _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"),
+    );
+    // The kept attempt resumes with its saved command and notice; nothing is checked again.
     expect(commands.options).not.toHaveBeenCalled();
-    expect(_fixture.hook.preview?.options?.workspaceNotice).toBe(notice);
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(commands.toast).toHaveBeenCalledWith(expect.objectContaining({ description: notice }));
   });
 
   it("opens the fork on its own after the request lost its connection", async () => {
@@ -383,7 +303,6 @@ describe("fork lifecycle across navigation and remounts", () => {
       });
       await vi.waitFor(() => expect(commands.dispatch).toHaveBeenCalledOnce());
       expect(_fixture.hook.isForking).toBe(true);
-      expect(_fixture.hook.errorUpdate).toBeNull();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(FORK_RECONNECT_DELAYS_MS[0]!);
         await pending;
@@ -393,38 +312,11 @@ describe("fork lifecycle across navigation and remounts", () => {
       expect(commands.dispatch.mock.calls[1]![0].input).toEqual(
         commands.dispatch.mock.calls[0]![0].input,
       );
-      expect(_fixture.hook.errorUpdate).toBeNull();
+      expect(commands.toast).not.toHaveBeenCalled();
       expect(navigate).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("names the fork point an error is about, so another point's dialog does not show it", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    commands.dispatch.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new Error("The workspace could not be prepared."))),
-    );
-    await render(_fixture);
-    await act(() => _fixture.hook.prepareFork(source));
-    const failedKey = _fixture.hook.preview?.key;
-    await act(() =>
-      _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"),
-    );
-    expect(_fixture.hook.errorUpdate?.message).toContain("The workspace could not be prepared.");
-    expect(_fixture.hook.errorUpdate?.key).toBe(failedKey);
-
-    await act(() =>
-      _fixture.hook.prepareFork({
-        kind: "assistant-response",
-        messageId: MessageId.make("other-answer"),
-      }),
-    );
-    expect(_fixture.hook.preview?.key).not.toBe(failedKey);
-    expect(_fixture.hook.errorUpdate).toBeNull();
   });
 
   it("does not move a draft edited while the fork request was in flight", async () => {
@@ -486,7 +378,7 @@ describe("fork lifecycle across navigation and remounts", () => {
     await vi.waitFor(() => expect(commands.dispatch).toHaveBeenCalledOnce());
     const destination = scopeThreadRef(
       environmentId,
-      commands.dispatch.mock.calls[0]![0].input.newThreadId,
+      commands.dispatch.mock.calls[0]![0].input.targetThreadId,
     );
     useComposerDraftStore.getState().setPrompt(destination, "Draft written in ready fork");
     await act(async () => {
@@ -499,101 +391,6 @@ describe("fork lifecycle across navigation and remounts", () => {
     expect(
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destination)]?.prompt,
     ).toBe("Draft written in ready fork");
-  });
-
-  it("finishes the card exit before transferring the draft and navigating", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    let finishExit!: (completed: boolean) => void;
-    const beforeNavigate = vi.fn(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishExit = resolve;
-        }),
-    );
-    useComposerDraftStore.getState().setPrompt(sourceRef, "Keep visible until the card closes");
-    await render(_fixture);
-    let pending!: Promise<unknown>;
-    await act(async () => {
-      pending = _fixture.hook.forkFromMessage(source, { ...options, beforeNavigate }, "/workspace");
-    });
-    _fixture.cleanup.defer(async () => {
-      finishExit?.(false);
-      await pending;
-    });
-    await vi.waitFor(() => expect(beforeNavigate).toHaveBeenCalledOnce());
-    expect(navigate).not.toHaveBeenCalled();
-    expect(
-      useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(sourceRef)]?.prompt,
-    ).toBe("Keep visible until the card closes");
-    await act(async () => {
-      finishExit(true);
-      await pending;
-    });
-    expect(navigate).toHaveBeenCalledOnce();
-    expect(
-      useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(sourceRef)]?.prompt ?? "",
-    ).toBe("");
-  });
-
-  it("does not steal navigation when the source changes during the card exit", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    let finishExit!: (completed: boolean) => void;
-    await render(_fixture);
-    let pending!: Promise<unknown>;
-    await act(async () => {
-      pending = _fixture.hook.forkFromMessage(
-        source,
-        {
-          ...options,
-          beforeNavigate: () =>
-            new Promise((resolve) => {
-              finishExit = resolve;
-            }),
-        },
-        "/workspace",
-      );
-    });
-    _fixture.cleanup.defer(async () => {
-      finishExit?.(false);
-      await pending;
-    });
-    await vi.waitFor(() => expect(finishExit).toBeTypeOf("function"));
-    await render(_fixture, other);
-    await act(async () => {
-      finishExit(true);
-      await pending;
-    });
-    expect(navigate).not.toHaveBeenCalled();
-    await render(_fixture);
-    await act(() => _fixture.hook.forkFromMessage(source, options, "/workspace"));
-    expect(commands.dispatch).toHaveBeenCalledOnce();
-    expect(navigate).toHaveBeenCalledOnce();
-  });
-
-  it("keeps a cancelled exit recoverable without another fork command", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await render(_fixture);
-    await act(() =>
-      _fixture.hook.forkFromMessage(
-        source,
-        { ...options, beforeNavigate: async () => false },
-        "/workspace",
-      ),
-    );
-    expect(navigate).not.toHaveBeenCalled();
-    expect(_fixture.hook.isForking).toBe(false);
-    await act(() => _fixture.hook.forkFromMessage(source, options, "/workspace"));
-    expect(commands.dispatch).toHaveBeenCalledOnce();
-    expect(navigate).toHaveBeenCalledOnce();
   });
 
   it("uses the server's completed boundary for the latest-response entry point", async () => {
@@ -621,7 +418,10 @@ describe("fork lifecycle across navigation and remounts", () => {
       ),
     );
     expect(commands.options.mock.calls[0]![0].input).toEqual({ originThreadId: origin.id });
-    expect(commands.dispatch.mock.calls[0]![0].input.sourceAssistantMessageId).toBe(completed);
+    expect(commands.dispatch.mock.calls[0]![0].input.scient.boundary).toEqual({
+      kind: "assistant-response",
+      messageId: completed,
+    });
   });
 
   it("forks a running turn with its work in progress", async () => {
@@ -654,9 +454,243 @@ describe("fork lifecycle across navigation and remounts", () => {
       sourceRunningRunId: runningTurn,
     });
     const command = commands.dispatch.mock.calls[0]![0].input;
-    expect(command.sourceRunningRunId).toBe(runningTurn);
-    expect(command.sourceAssistantMessageId).toBeUndefined();
-    expect(command.workspaceMode).toBe("new-worktree");
+    expect(command.scient).toEqual({
+      boundary: { kind: "running-turn", runId: runningTurn },
+      workspaceMode: "new-worktree",
+    });
+  });
+
+  it("opens a new worktree fork only once its setup is ready", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    commands.options.mockResolvedValue(
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: true,
+        sourceAssistantMessageId: source.messageId,
+        sourceUserMessageId: null,
+      }),
+    );
+    let ready!: (value: unknown) => void;
+    commands.ready.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          ready = resolve;
+        }),
+    );
+    await render(_fixture);
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = _fixture.hook.forkFromMessage(source, { workspaceMode: "new-worktree" }, "/w");
+    });
+    _fixture.cleanup.defer(async () => {
+      ready?.(AsyncResult.success({ forkAttachmentIdMap: {} }));
+      await pending;
+    });
+    await vi.waitFor(() => expect(commands.ready).toHaveBeenCalledOnce());
+    const command = commands.dispatch.mock.calls[0]![0].input;
+    expect(commands.ready.mock.calls[0]![0].input).toEqual({ threadId: command.targetThreadId });
+    expect(navigate).not.toHaveBeenCalled();
+    await act(async () => {
+      ready(AsyncResult.success({ forkAttachmentIdMap: { "origin-file": "fork-file" } }));
+      await pending;
+    });
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(commands.panels).toHaveBeenCalledWith(
+      expect.objectContaining({ attachmentIdMap: { "origin-file": "fork-file" } }),
+    );
+  });
+
+  it("discards the draft of a fork the server refused", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const request = {
+      kind: "user-message" as const,
+      messageId: MessageId.make("refused-user"),
+      prompt: "Refused request",
+      attachments: [],
+    };
+    commands.options.mockResolvedValue(
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: false,
+        sourceAssistantMessageId: null,
+        sourceUserMessageId: request.messageId,
+      }),
+    );
+    commands.dispatch.mockResolvedValueOnce(
+      AsyncResult.failure(
+        Cause.fail(
+          Object.assign(new Error("The original conversation was deleted."), {
+            commandDisposition: "rejected",
+          }),
+        ),
+      ),
+    );
+    await render(_fixture);
+    await act(() =>
+      _fixture.hook.forkFromMessage(request, { workspaceMode: "local" }, "/workspace"),
+    );
+    expect(Object.keys(useComposerDraftStore.getState().draftsByThreadKey)).toEqual([]);
+    expect(commands.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        description: "The original conversation was deleted.",
+      }),
+    );
+    // A refused fork is gone: forking the same message again starts a new one.
+    await act(() =>
+      _fixture.hook.forkFromMessage(request, { workspaceMode: "local" }, "/workspace"),
+    );
+    expect(commands.dispatch.mock.calls[1]![0].input.targetThreadId).not.toBe(
+      commands.dispatch.mock.calls[0]![0].input.targetThreadId,
+    );
+  });
+
+  it("explains, without dispatching, that an older server cannot take this fork", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    _fixture.supported = false;
+    await render(_fixture);
+    await act(() =>
+      _fixture.hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"),
+    );
+    expect(commands.dispatch).not.toHaveBeenCalled();
+    expect(commands.toast).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }));
+  });
+});
+
+describe("forks from the fork card", () => {
+  it("sends the edited title and reuses the card's check", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(source));
+    expect(_fixture.hook.preview).toMatchObject({ checking: false, locked: false });
+    expect(_fixture.hook.preview?.options?.available).toBe(true);
+    await act(() =>
+      _fixture.hook.forkFromMessage(
+        source,
+        {
+          workspaceMode: "local",
+          titleOverride: "Renamed",
+          displayTitle: "Renamed",
+          fromCard: true,
+        },
+        "/workspace",
+      ),
+    );
+    expect(commands.options).toHaveBeenCalledOnce();
+    expect(commands.dispatch.mock.calls[0]![0].input.title).toBe("Renamed");
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(commands.toast).not.toHaveBeenCalled();
+  });
+
+  it("leaves the title to the server when it was not edited", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    await act(() =>
+      _fixture.hook.forkFromMessage(source, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.dispatch.mock.calls[0]![0].input).not.toHaveProperty("title");
+  });
+
+  it("shows a failed fork in the card, and the card resumes it with its title", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    commands.ready.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("The worktree could not be created."))),
+    );
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(source));
+    await act(() =>
+      _fixture.hook.forkFromMessage(
+        source,
+        {
+          workspaceMode: "local",
+          titleOverride: "Renamed",
+          displayTitle: "Renamed",
+          fromCard: true,
+        },
+        "/workspace",
+      ),
+    );
+    expect(commands.toast).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(_fixture.hook.errorUpdate?.message).toContain("Retry to resume this same fork");
+    expect(_fixture.hook.preview?.locked).toBe(true);
+    // Opening the card again finds the saved fork and its title.
+    await act(() => _fixture.hook.prepareFork(source));
+    expect(_fixture.hook.preview).toMatchObject({
+      locked: true,
+      retryTitle: "Renamed",
+      retryWorkspaceMode: "local",
+    });
+  });
+
+  it("says a workspace move found only when Fork is pressed, but not one the card showed", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const notice = "The original worktree was removed, so this fork works in the project folder.";
+    const latest = { kind: "assistant-response" as const, messageId: null, latest: true };
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(latest));
+    // "Latest" is checked again on Fork, and only then finds the worktree gone.
+    commands.options.mockResolvedValue(
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: false,
+        workspaceNotice: notice,
+        sourceAssistantMessageId: source.messageId,
+        sourceUserMessageId: null,
+      }),
+    );
+    await act(() =>
+      _fixture.hook.forkFromMessage(latest, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.toast).toHaveBeenCalledWith(expect.objectContaining({ description: notice }));
+
+    // A card that already showed the notice does not say it again.
+    commands.toast.mockClear();
+    await act(() => _fixture.hook.prepareFork(source));
+    await act(() =>
+      _fixture.hook.forkFromMessage(source, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.toast).not.toHaveBeenCalled();
+  });
+
+  it("says in the card that an older server cannot take this fork", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    _fixture.supported = false;
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(source));
+    expect(commands.options).not.toHaveBeenCalled();
+    expect(_fixture.hook.errorUpdate?.message).toContain("Update Scient");
+    expect(commands.toast).not.toHaveBeenCalled();
   });
 });
 
@@ -674,6 +708,7 @@ function _createFixture() {
     },
 
     container: undefined! as HTMLDivElement,
+    supported: true,
     stack,
     cleanup,
     root0: undefined! as Screen,

@@ -99,6 +99,8 @@ const OMP_FAILURE_KIND_PRIORITY = [
   "empty-response",
   "provider-finish-error",
   "timeout",
+  // Scient Agent: no response reached the provider (DNS, refused, offline), unlike an outage.
+  "network",
   "silent-abort",
   "user-interrupt",
   "abort",
@@ -111,16 +113,34 @@ const httpStatus = (value: number | undefined) =>
     : undefined;
 
 /**
- * One code for why the provider failed a turn: `cost_cap`, then the agent's most specific error
- * kind, then `http_<status>`. Agents before error kinds report only the status.
+ * Codes that say only where a failure's evidence came from, when the agent gave no cause. A more
+ * specific reason found later, such as a stalled retry, replaces them.
  */
-const ompFailureCode = (evidence: OmpTurnEvidence): string | undefined => {
+export const OMP_EVIDENCE_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "unrecognized_error_kind",
+  "prompt_result_error",
+  "retry_exhausted",
+  "assistant_error",
+  "prompt_command_failed",
+]);
+
+/**
+ * One code for why the provider failed a turn: `cost_cap`, then the agent's most specific error
+ * kind, then `http_<status>`. Agents before error kinds report only the status. A failed turn
+ * with none of these names its evidence instead.
+ */
+const ompFailureCode = (evidence: OmpTurnEvidence, failed: boolean): string | undefined => {
   if (evidence.promptErrorCode === "cost_cap") return "cost_cap";
   const kinds = new Set(evidence.promptErrorKinds);
   const kind = OMP_FAILURE_KIND_PRIORITY.find((candidate) => kinds.has(candidate));
   if (kind !== undefined) return kind;
   const status = httpStatus(evidence.promptHttpStatus);
-  return status === undefined ? undefined : `http_${status}`;
+  if (status !== undefined) return `http_${status}`;
+  if (!failed) return undefined;
+  if (kinds.size > 0) return "unrecognized_error_kind";
+  if (evidence.promptStatus === "error") return "prompt_result_error";
+  if (evidence.retryExhausted === true) return "retry_exhausted";
+  return evidence.stopReason === "error" ? "assistant_error" : undefined;
 };
 
 const firstText = (...values: ReadonlyArray<string | undefined>) =>
@@ -143,7 +163,7 @@ export const classifyOmpTurnOutcome = (
       : evidence.stopReason === "error" || evidence.retryExhausted === true
         ? "error"
         : "completed");
-  const failureCode = ompFailureCode(evidence);
+  const failureCode = ompFailureCode(evidence, category === "error");
   const status = httpStatus(evidence.promptHttpStatus);
   const cause = {
     ...(failureCode === undefined ? {} : { failureCode }),

@@ -214,6 +214,7 @@ function makeRegistry(
       refreshInstance: () => Ref.get(providersRef),
       refreshInstanceStrict: () => Ref.get(providersRef),
       refreshInstanceAfterAccountChange: () => Ref.get(providersRef),
+      readFreshInstance: () => Effect.die("Maintenance never reads fresh account state."),
       reloadInstance: () => Ref.get(providersRef),
       reloadInstanceStrict: () => Ref.get(providersRef),
       reloadSecretsAndRefresh: () => Ref.get(providersRef),

@@ -527,7 +527,9 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     delete env.SCIENT_AGENT_ENABLE_SOURCES;
     // Scient shows pages in its own browser, so the agent opens no system browser beside it.
     env.SCIENT_AGENT_HOST_PAGES = "1";
-    if (supportsScientClaudePlugins(version)) env.SCIENT_AGENT_ENABLE_SOURCES = "claude-plugins";
+    // A build without Codex plugin discovery ignores the id it does not know.
+    if (supportsScientClaudePlugins(version))
+      env.SCIENT_AGENT_ENABLE_SOURCES = "claude-plugins,codex-plugins";
   }
   const command = yield* resolveSpawnCommand(
     resolvedBinary,

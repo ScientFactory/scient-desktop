@@ -358,7 +358,7 @@ const make = Effect.gen(function* () {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_client_metadata",
           error_description:
-            "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
+            'Linked environments is off on that machine. Turn it on in its Settings → Labs, or without a desktop, set "linkedEnvironmentsEnabled": true in userdata/settings.json in its Scient home (~/.scient-next by default).',
         });
       }
       const clientId = yield* signClientId(name, redirectUris, peerLink);
@@ -481,19 +481,21 @@ const make = Effect.gen(function* () {
           description: "Linking needs a plain pairing code, not an app approval code.",
         });
       }
-      access = yield* environmentAuth.consumeMcpApprovalCode(decision.code, decision.access).pipe(
-        Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
-          Effect.logError("MCP approval code check failed.", { cause }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new McpOAuthPageError({
-                  description: "The code could not be checked. Try again.",
-                }),
+      access = yield* environmentAuth
+        .consumeMcpApprovalCode(decision.code, decision.access, input.authorization.client.peerLink)
+        .pipe(
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
+            Effect.logError("MCP approval code check failed.", { cause }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new McpOAuthPageError({
+                    description: "The code could not be checked. Try again.",
+                  }),
+                ),
               ),
             ),
           ),
-        ),
-      );
+        );
     } else {
       const session = yield* approvingSession(input.request, input.authorization);
       if (
@@ -632,6 +634,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     label: client.label,
                     access: client.access,
                     linked: client.peerLink,
+                    linkExpiresAt: client.linkExpiresAt,
                     ...(client.peerLink
                       ? {}
                       : { hostedAppUrl: hostedAppUrl ?? requestUrls(request).issuer }),

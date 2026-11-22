@@ -97,9 +97,9 @@ describe("WSL runtime cache", () => {
   it.each([
     [
       "install",
-      (id: string) => buildWslRuntimeInstallScript("/runtime.tar.gz", id, "b".repeat(64)),
+      (id: string) => buildWslRuntimeInstallScript("/runtime.tar.gz", id, "b".repeat(64), null),
     ],
-    ["prune", buildWslRuntimePruneScript],
+    ["prune", (id: string) => buildWslRuntimePruneScript(id, null)],
     ["invalidate", buildWslRuntimeInvalidateScript],
   ] as const)("sanitizes cache ids in the %s script", (_, buildScript) => {
     const runtimeId = "1.2.3/x64; touch /tmp/nope";
@@ -157,7 +157,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       [
         `HOME=${sh(`${work}/home`)}`,
         "export HOME",
-        buildWslRuntimeInstallScript(archive, runtimeId, sha),
+        buildWslRuntimeInstallScript(archive, runtimeId, sha, null),
       ].join("\n");
     return {
       work,
@@ -366,7 +366,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `sh ${sh(`${fixture.work}/select.sh`)}`,
         `HOME=${sh(`${fixture.work}/home`)}`,
         "export HOME",
-        buildWslRuntimePruneScript("sha256-current"),
+        buildWslRuntimePruneScript("sha256-current", null),
         `test -d ${sh(fixture.runtimeRoot)}`,
       ].join("\n"),
     );
@@ -393,7 +393,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         'touch -d "180 minutes ago" "$stale"',
         `HOME=${sh(`${fixture.work}/home`)}`,
         "export HOME",
-        buildWslRuntimePruneScript(fixture.runtimeId),
+        buildWslRuntimePruneScript(fixture.runtimeId, null),
         'test ! -e "$stale"',
       ].join("\n"),
     );
@@ -474,11 +474,15 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         const translated = yield* wsl.windowsToWslPath("Ubuntu", fixture.archivePath);
         expect(translated._tag).toBe("None");
 
-        const prepared = yield* wsl.prepareRuntime("Ubuntu", {
-          windowsPath: fixture.archivePath,
-          runtimeId: fixture.runtimeId,
-          sha256: fixture.archiveSha,
-        });
+        const prepared = yield* wsl.prepareRuntime(
+          "Ubuntu",
+          {
+            windowsPath: fixture.archivePath,
+            runtimeId: fixture.runtimeId,
+            sha256: fixture.archiveSha,
+          },
+          null,
+        );
 
         expect(prepared).toEqual({ ok: true, linuxAppRoot: fixture.runtimeRoot });
         // SCIENT-FORK:START scient-wsl-runtime-cache
@@ -520,7 +524,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         holdInstallLock('"$runtime_parent/.sha256-locked.install.lock"'),
         `HOME="$home"`,
         "export HOME",
-        buildWslRuntimePruneScript("sha256-current"),
+        buildWslRuntimePruneScript("sha256-current", null),
         'test -d "$runtime_parent/sha256-current"',
         'test -d "$runtime_parent/sha256-previous"',
         'test -d "$runtime_parent/sha256-active"',

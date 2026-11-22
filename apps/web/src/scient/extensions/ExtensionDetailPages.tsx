@@ -25,9 +25,11 @@ import {
   type LucideIcon,
   RefreshCwIcon,
 } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { LocalSetupDialog } from "./LocalSetupFields";
@@ -93,13 +95,14 @@ import {
   isCatalogOnlyEntry,
   MCP_SERVER_STATUS_TEXT,
   pluginGlyph,
+  providerAvailable,
   TEST_OUTCOME_LABELS,
   urlHost,
   workspaceLabel,
   connectorAudience,
 } from "./extensionsView";
 import { useInstalledEntries } from "./installedEntries";
-import { providerInventoryMessage } from "./providerInventory";
+import { providerInventoryMessage } from "./providerInventoryCopy";
 
 const isExtensionsError = Schema.is(ExtensionsError);
 
@@ -107,10 +110,11 @@ type BackTo = "discover" | "installed";
 
 /** Back to the list the page was opened from; `to` is used when it was opened directly. */
 function DetailBack({ to }: { readonly to: BackTo }) {
+  const gt = useGT();
   return to === "discover" ? (
-    <BackToList fallback="/settings/extensions" fallbackLabel="Discover" />
+    <BackToList fallback="/settings/extensions" fallbackLabel={gt("Discover")} />
   ) : (
-    <BackToList fallback="/settings/extensions/installed" fallbackLabel="Installed" />
+    <BackToList fallback="/settings/extensions/installed" fallbackLabel={gt("Installed")} />
   );
 }
 
@@ -172,6 +176,7 @@ export function DetailHeader({
   readonly developer?: string | undefined;
   readonly actions: ReactNode;
 }) {
+  const gt = useGT();
   return (
     <header className="flex flex-wrap items-center gap-4">
       <ExtensionIcon
@@ -185,7 +190,9 @@ export function DetailHeader({
         <h1 className="truncate text-2xl font-medium tracking-[-0.02em] text-foreground">{name}</h1>
         {developer || tagline ? (
           <p className="text-sm text-muted-foreground">
-            {[developer ? `By ${developer}` : undefined, tagline].filter(Boolean).join(" • ")}
+            {[developer ? gt("By {developer}", { developer }) : undefined, tagline]
+              .filter(Boolean)
+              .join(" • ")}
           </p>
         ) : null}
       </div>
@@ -299,10 +306,11 @@ function fact(label: string, value: ReactNode | null | undefined): Fact | null {
 
 /** Key/value rows in a card; rows without data are left out. */
 export function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> }) {
+  const gt = useGT();
   const shown = rows.filter((row) => row !== null);
   if (shown.length === 0) return null;
   return (
-    <DetailSection title="About">
+    <DetailSection title={gt("About")}>
       <dl className={cn(CARD_CLASS, "text-sm")}>
         {shown.map(([label, value]) => (
           <div key={label} className="grid grid-cols-[35%_minmax(0,1fr)] gap-4 px-4 py-3">
@@ -419,7 +427,7 @@ function MutedCard({ children }: { readonly children: string }) {
   );
 }
 
-const TOOLS_AFTER_SIGN_IN = "Tools appear after you add and sign in.";
+const TOOLS_AFTER_SIGN_IN = msg("Tools appear after you add and sign in.");
 
 /**
  * "See tools" runs one test before displaying the connector's tools.
@@ -437,19 +445,21 @@ function ToolsSection({
   readonly testResult: ConnectorTestResult | null;
   readonly onTest: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId } = useExtensionsEnvironment();
   if (testResult?.outcome === "ok") {
     return <ConnectorToolsList tools={testResult.tools} environmentId={environmentId} />;
   }
   if (!canTest) {
     return (
-      <DetailSection title="Tools">
-        <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
+      <DetailSection title={gt("Tools")}>
+        <MutedCard>{messages(TOOLS_AFTER_SIGN_IN)}</MutedCard>
       </DetailSection>
     );
   }
   return (
-    <DetailSection title="Tools">
+    <DetailSection title={gt("Tools")}>
       <div className={CARD_CLASS}>
         <button
           type="button"
@@ -458,14 +468,18 @@ function ToolsSection({
           className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm transition-colors not-disabled:hover:bg-foreground/[0.035] disabled:cursor-default"
         >
           <span className="font-medium text-foreground">
-            {testing ? "Listing tools…" : testResult ? "Try again" : "See tools"}
+            {testing ? gt("Listing tools…") : testResult ? gt("Try again") : gt("See tools")}
           </span>
           <ChevronRightIcon aria-hidden className="size-4 text-muted-foreground" />
         </button>
         {testResult ? (
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            {TEST_OUTCOME_LABELS[testResult.outcome]}
-            {testResult.message ? ` · ${testResult.message}` : ""}
+            {testResult.message
+              ? gt("{outcome} · {message}", {
+                  outcome: messages(TEST_OUTCOME_LABELS[testResult.outcome]),
+                  message: testResult.message,
+                })
+              : messages(TEST_OUTCOME_LABELS[testResult.outcome])}
           </p>
         ) : null}
       </div>
@@ -473,36 +487,53 @@ function ToolsSection({
   );
 }
 
-function connectionState(connector: ConnectorSummary): string {
-  if (connector.status === "needs-auth") return "Needs sign-in";
+function connectionState(connector: ConnectorSummary, resolve: MessageResolver = m): string {
+  if (connector.status === "needs-auth") return resolve(msg("Needs sign-in"));
   if (connector.status === "needs-credential") {
-    return connector.auth.type === "source-control" ? "Account missing" : "Key missing";
+    return resolve(
+      connector.auth.type === "source-control" ? msg("Account missing") : msg("Key missing"),
+    );
   }
-  if (connector.local !== undefined) return "Runs on this computer";
-  return connector.auth.type === "none" ? "No account needed" : "Signed in";
+  if (connector.local !== undefined) return resolve(msg("Runs on this computer"));
+  return resolve(connector.auth.type === "none" ? msg("No account needed") : msg("Signed in"));
 }
 
-function connectionDetail(connector: ConnectorSummary, busy: string | null): string {
-  if (busy === "sign-in") return "Opening sign-in…";
+function connectionDetail(
+  connector: ConnectorSummary,
+  busy: string | null,
+  resolve: MessageResolver = m,
+): string {
+  if (busy === "sign-in") return resolve(msg("Opening sign-in…"));
   if (connector.status === "needs-credential") {
     if (connector.auth.type === "source-control") {
-      return `Source Control no longer has ${connector.auth.account}. Sign in to GitHub again.`;
+      return resolve(
+        msg("Source Control no longer has {account}. Sign in to GitHub again.", {
+          account: connector.auth.account,
+        }),
+      );
     }
-    return connector.auth.type === "credential" && connector.auth.storage === "bound"
-      ? "The secret this service used is no longer available."
-      : "The stored key is gone. Remove this service and add it again.";
+    return resolve(
+      connector.auth.type === "credential" && connector.auth.storage === "bound"
+        ? msg("The secret this service used is no longer available.")
+        : msg("The stored key is gone. Remove this service and add it again."),
+    );
   }
   if (connector.local !== undefined) {
     const { running, missing, problem } = connector.local;
     if (problem !== undefined) return problem;
-    if (missing.length > 0) return `Needs ${missing.join(", ")}`;
+    if (missing.length > 0) return resolve(msg("Needs {items}", { items: missing.join(", ") }));
     return running === 0
-      ? "Starts when an agent uses it"
-      : `${running} ${running === 1 ? "copy" : "copies"} running, one per chat`;
+      ? resolve(msg("Starts when an agent uses it"))
+      : resolve(
+          msg(
+            "{count, plural, one {{count} copy running, one per chat} other {{count} copies running, one per chat}}",
+            { count: running },
+          ),
+        );
   }
   return connector.auth.type === "none"
     ? (urlHost(connector.url) ?? connector.url)
-    : connectorAuthLabel(connector.auth);
+    : connectorAuthLabel(connector.auth, resolve);
 }
 
 /**
@@ -522,6 +553,7 @@ function AvailabilityRows({
   readonly locked: boolean;
   readonly setAvailability: ConnectorActionsState["setAvailability"];
 }) {
+  const gt = useGT();
   const { projects, projectsKnown } = useExtensionsEnvironment();
   const availability = connector.availability;
   const selectedIds = availability.type === "projects" ? availability.projectIds : [];
@@ -536,13 +568,15 @@ function AvailabilityRows({
     sendProjects(enabled ? [...others, projectId] : others);
   };
   return (
-    <div role="group" aria-label="Projects" className="divide-y divide-border">
+    <div role="group" aria-label={gt("Projects")} className="divide-y divide-border">
       <CardRow>
-        <span className="min-w-0 flex-1 text-sm text-foreground">Projects</span>
+        <span className="min-w-0 flex-1 text-sm text-foreground">
+          <T>Projects</T>
+        </span>
         <span className="w-44">
           <NativeSelect
             size="sm"
-            aria-label={`Where ${name} is available`}
+            aria-label={gt("Where {name} is available", { name })}
             value={availability.type}
             disabled={locked}
             onChange={(event) =>
@@ -551,8 +585,8 @@ function AvailabilityRows({
                 : sendProjects(liveIds)
             }
           >
-            <option value="all-projects">All projects</option>
-            <option value="projects">Selected projects</option>
+            <option value="all-projects">{gt("All projects")}</option>
+            <option value="projects">{gt("Selected projects")}</option>
           </NativeSelect>
         </span>
       </CardRow>
@@ -560,16 +594,22 @@ function AvailabilityRows({
         <>
           {liveIds.length === 0 ? (
             <NestedRow>
-              <span className="text-muted-foreground">Not available in any project.</span>
+              <span className="text-muted-foreground">
+                <T>Not available in any project.</T>
+              </span>
             </NestedRow>
           ) : null}
           {!projectsKnown ? (
             <NestedRow>
-              <span className="text-muted-foreground">Loading projects…</span>
+              <span className="text-muted-foreground">
+                <T>Loading projects…</T>
+              </span>
             </NestedRow>
           ) : projects.length === 0 && deletedIds.length === 0 ? (
             <NestedRow>
-              <span className="text-muted-foreground">No projects yet.</span>
+              <span className="text-muted-foreground">
+                <T>No projects yet.</T>
+              </span>
             </NestedRow>
           ) : null}
           {projectsKnown
@@ -582,7 +622,11 @@ function AvailabilityRows({
                       size="sm"
                       checked={enabled}
                       disabled={locked}
-                      aria-label={`${enabled ? "Turn off" : "Turn on"} in ${project.title}`}
+                      aria-label={
+                        enabled
+                          ? gt("Turn off in {project}", { project: project.title })
+                          : gt("Turn on in {project}", { project: project.title })
+                      }
                       onCheckedChange={(checked) => toggle(project.id, Boolean(checked))}
                     />
                   </NestedRow>
@@ -591,15 +635,17 @@ function AvailabilityRows({
             : null}
           {deletedIds.map((projectId) => (
             <NestedRow key={projectId}>
-              <span className="min-w-0 truncate text-muted-foreground">Deleted project</span>
+              <span className="min-w-0 truncate text-muted-foreground">
+                <T>Deleted project</T>
+              </span>
               <Button
                 size="xs"
                 variant="ghost-muted"
                 disabled={locked}
-                aria-label={`Remove deleted project ${projectId}`}
+                aria-label={gt("Remove deleted project {id}", { id: projectId })}
                 onClick={() => sendProjects(liveIds)}
               >
-                Remove
+                <T>Remove</T>
               </Button>
             </NestedRow>
           ))}
@@ -619,6 +665,8 @@ function ConnectorDetail({
   readonly entry: DiscoverEntry | undefined;
   readonly back: BackTo;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { inventory, catalog, environmentId, canWrite } = useExtensionsEnvironment();
   const actions = useConnectorActions(connector);
   const backToList = useBackToList();
@@ -636,7 +684,11 @@ function ConnectorDetail({
       input: { cwd: folder, editor: "file-manager", reveal: true },
     });
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Unable to show the folder", description: folder });
+      toastManager.add({
+        type: "error",
+        title: gt("Unable to show the folder"),
+        description: folder,
+      });
     }
   };
   const name = entry ? entryName(entry) : connector.displayName;
@@ -665,21 +717,23 @@ function ConnectorDetail({
                 })
               }
             >
-              Remove
+              <T>Remove</T>
             </Button>
           }
         />
       }
       description={extraDescription(entry?.description ?? connector.description, tagline)}
     >
-      <DetailSection title="Connection">
+      <DetailSection title={gt("Connection")}>
         <div className={CARD_CLASS}>
           <CardRow>
             <ExtensionIcon name={name} iconUrl={iconUrl} size="avatar" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-foreground">{connectionState(connector)}</p>
+              <p className="text-sm font-medium text-foreground">
+                {connectionState(connector, messages)}
+              </p>
               <p className="truncate text-xs text-muted-foreground">
-                {connectionDetail(connector, actions.busy)}
+                {connectionDetail(connector, actions.busy, messages)}
               </p>
             </div>
             {allowed.signIn ? (
@@ -688,28 +742,28 @@ function ConnectorDetail({
                 disabled={!actions.canSignIn}
                 onClick={() => void actions.signIn()}
               >
-                {actions.busy === "sign-in" ? "Opening…" : "Sign in"}
+                {actions.busy === "sign-in" ? gt("Opening…") : gt("Sign in")}
               </PrimaryAction>
             ) : null}
-            <MoreMenu label={`More for ${name} connection`}>
+            <MoreMenu label={gt("More for {name} connection", { name })}>
               {connector.status === "connected" && connector.auth.type === "oauth" ? (
                 <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
-                  Sign in again
+                  <T>Sign in again</T>
                 </MenuItem>
               ) : null}
               <MenuItem
                 disabled={actions.locked || !allowed.canTest}
                 onClick={() => void actions.test()}
               >
-                Test
+                {gt("Test", { $context: "verb, tests a connector" })}
               </MenuItem>
               {connector.local !== undefined ? (
                 <>
                   <MenuItem disabled={actions.locked} onClick={() => void actions.restart()}>
-                    Restart
+                    <T>Restart</T>
                   </MenuItem>
                   <MenuItem onClick={() => void revealFolder(connector.local!.directory)}>
-                    Show in folder
+                    <T>Show in folder</T>
                   </MenuItem>
                   <LocalConnectorMenuItems connector={connector} actions={actions} />
                 </>
@@ -720,8 +774,14 @@ function ConnectorDetail({
             <CardRow>
               <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
                 {[
-                  local.forkedFrom ? `Your copy of ${local.forkedFrom}` : null,
-                  `Changed by ${local.changedBy === "agent" ? "an agent" : "you"} on ${formatDate(connector.updatedAt)}`,
+                  local.forkedFrom ? gt("Your copy of {name}", { name: local.forkedFrom }) : null,
+                  local.changedBy === "agent"
+                    ? gt("Changed by an agent on {date}", {
+                        date: formatDate(connector.updatedAt) ?? "",
+                      })
+                    : gt("Changed by you on {date}", {
+                        date: formatDate(connector.updatedAt) ?? "",
+                      }),
                 ]
                   .filter(Boolean)
                   .join(". ")}
@@ -733,17 +793,21 @@ function ConnectorDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.undo()}
                 >
-                  Undo last change
+                  <T>Undo last change</T>
                 </Button>
               ) : null}
             </CardRow>
           ) : null}
           <CardRow>
-            <span className="min-w-0 flex-1 text-sm text-foreground">Use with agents</span>
+            <span className="min-w-0 flex-1 text-sm text-foreground">
+              <T>Use with agents</T>
+            </span>
             <Switch
               checked={connector.enabled}
               disabled={actions.locked}
-              aria-label={`${connector.enabled ? "Turn off" : "Turn on"} ${name}`}
+              aria-label={
+                connector.enabled ? gt("Turn off {name}", { name }) : gt("Turn on {name}", { name })
+              }
               onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
             />
           </CardRow>
@@ -776,7 +840,7 @@ function ConnectorDetail({
                   )
                 }
               >
-                Fix with an agent
+                <T>Fix with an agent</T>
               </Button>
             ) : null}
           </div>
@@ -786,13 +850,15 @@ function ConnectorDetail({
             {signIn !== undefined ? (
               <CardRow>
                 <span className="min-w-0 flex-1 text-sm text-foreground">
-                  Sign-in to {siteHost(signIn.site)}
+                  <T>
+                    Sign-in to <Var>{siteHost(signIn.site)}</Var>
+                  </T>
                 </span>
                 <span className="truncate text-sm text-muted-foreground">
                   {signIn.state === "missing"
-                    ? "Missing"
+                    ? gt("Missing")
                     : signIn.state === "needs-user"
-                      ? "Needs sign-in"
+                      ? gt("Needs sign-in")
                       : signIn.account}
                 </span>
                 {signIn.state === "needs-user" && signIn.accountId !== undefined ? (
@@ -802,7 +868,7 @@ function ConnectorDetail({
                     // The next time its session ends, the connector takes the one the person made.
                     onClick={() => void signInPerson(AccountId.make(signIn.accountId!))}
                   >
-                    Sign in
+                    <T>Sign in</T>
                   </Button>
                 ) : null}
               </CardRow>
@@ -812,11 +878,11 @@ function ConnectorDetail({
                 <span className="min-w-0 flex-1 text-sm text-foreground">{field.title}</span>
                 <span className="truncate text-sm text-muted-foreground">
                   {field.sensitive
-                    ? (account ?? (field.required ? "Missing" : "Not set"))
+                    ? (account ?? (field.required ? gt("Missing") : gt("Not set")))
                     : value === undefined
                       ? field.required
-                        ? "Missing"
-                        : "Not set"
+                        ? gt("Missing")
+                        : gt("Not set")
                       : Array.isArray(value)
                         ? value.join(", ")
                         : String(value)}
@@ -831,7 +897,7 @@ function ConnectorDetail({
                 disabled={!canWrite}
                 onClick={() => setEditing(true)}
               >
-                Edit setup
+                <T>Edit setup</T>
               </Button>
             </CardRow>
           </div>
@@ -856,16 +922,16 @@ function ConnectorDetail({
       />
       <AboutCard
         rows={[
-          fact("Added on", formatDate(connector.createdAt)),
-          ...connectorFacts(entry, connector),
-          fact("Category", categoryLabel(entry, catalog)),
-          fact("Website", entry?.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
+          fact(gt("Added on"), formatDate(connector.createdAt)),
+          ...connectorFacts(entry, connector, messages),
+          fact(gt("Category"), categoryLabel(entry, catalog)),
+          fact(gt("Website"), entry?.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
           fact(
-            "Repository",
+            gt("Repository"),
             entry?.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
           ),
           [
-            "Works with",
+            gt("Works with"),
             <WorksWithValue key="works-with" audience={connectorAudience(connector)} />,
           ],
           ...(connector.local === undefined
@@ -873,22 +939,25 @@ function ConnectorDetail({
                 // Connection already says when there is no sign-in.
                 connector.auth.type === "none"
                   ? null
-                  : ["Sign-in used", connectorAuthLabel(connector.auth)],
+                  : [gt("Sign-in used"), connectorAuthLabel(connector.auth, messages)],
                 ["URL", <Mono key="url">{connector.url}</Mono>],
               ] satisfies ReadonlyArray<Fact | null>)
             : [
-                fact("Version", connector.local.version),
-                fact("Author", connector.local.author),
+                fact(gt("Version"), connector.local.version),
+                fact(gt("Author"), connector.local.author),
                 fact(
-                  "Runs",
+                  gt("Runs", { $context: "the command a connector runs" }),
                   connector.local.commandLine === undefined ? null : (
                     <Mono key="runs">{connector.local.commandLine}</Mono>
                   ),
                 ),
-                ["Folder", <Mono key="folder">{connector.local.directory}</Mono>] satisfies Fact,
+                [
+                  gt("Folder"),
+                  <Mono key="folder">{connector.local.directory}</Mono>,
+                ] satisfies Fact,
               ]),
-          ["Server name", <Mono key="server-name">{connector.serverName}</Mono>],
-          ["Source", connectorSourceLabel(source, curated, pluginName)],
+          [gt("Server name"), <Mono key="server-name">{connector.serverName}</Mono>],
+          [gt("Source"), connectorSourceLabel(source, curated, pluginName, messages)],
         ]}
       />
     </DetailLayout>
@@ -900,6 +969,7 @@ function ConnectorDetail({
  * entries carry its id, registry connectors are looked up by registry name.
  */
 function ConnectorDetailContent({ connectorId }: { readonly connectorId: string }) {
+  const gt = useGT();
   const { environmentId, inventory, inventoryError } = useExtensionsEnvironment();
   const connector = inventory?.connectors.find((item) => item.connectorId === connectorId);
   const fromCatalog = useInstalledEntries().find(
@@ -919,7 +989,9 @@ function ConnectorDetailContent({ connectorId }: { readonly connectorId: string 
       <>
         <DetailBack to="installed" />
         <MutedLine>
-          {inventory === null ? (inventoryError ?? "Loading…") : "This service is not connected."}
+          {inventory === null
+            ? (inventoryError ?? gt("Loading…"))
+            : gt("This service is not connected.")}
         </MutedLine>
       </>
     );
@@ -953,8 +1025,16 @@ function ServerDetail({
   /** Opens the add form, for the chosen agents (absent: every agent). */
   readonly onAddWithOptions: (agents?: ReadonlyArray<ProviderInstanceId>) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { catalog, providers, environmentId } = useExtensionsEnvironment();
+  const claude = providers.find(
+    (provider) => provider.driver === "claudeAgent" && providerAvailable(provider),
+  );
   const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
+  const antigravity = providers.find(
+    (provider) => provider.driver === "antigravity" && provider.enabled,
+  );
   const actions = useAddEntry(entry);
   const startChat = useConnectorAgentChat(environmentId);
   const name = entryName(entry);
@@ -979,14 +1059,16 @@ function ServerDetail({
                 trigger={
                   <Button size="sm" type="button" variant="ghost-primary" data-primary-action="">
                     <PlusIcon aria-hidden />
-                    {actions.busy === "add" ? "Adding…" : "Add"}
+                    {actions.busy === "add"
+                      ? gt("Adding…")
+                      : gt("Add", { $context: "verb, adds an extension" })}
                   </Button>
                 }
               />
               {actions.canAdd && entry.localBundle === undefined ? (
-                <MoreMenu label={`More for ${name}`}>
+                <MoreMenu label={gt("More for {name}", { name })}>
                   <MenuItem disabled={actions.locked} onClick={() => onAddWithOptions()}>
-                    Add with options…
+                    <T>Add with options…</T>
                   </MenuItem>
                 </MoreMenu>
               ) : null}
@@ -1002,7 +1084,7 @@ function ServerDetail({
               <div className="min-w-0 flex-1">
                 <MutedLine>
                   {entry.unsupportedReason ??
-                    "Scient can't add this server: it has no remote endpoint to connect to."}
+                    gt("Scient can't add this server: it has no remote endpoint to connect to.")}
                 </MutedLine>
               </div>
               {startChat !== undefined && !catalogOnly ? (
@@ -1021,31 +1103,37 @@ function ServerDetail({
                     )
                   }
                 >
-                  Make with an agent
+                  <T>Make with an agent</T>
                 </Button>
               ) : null}
             </div>
           ) : null}
-          {entry.accountRequired === false ? <MutedLine>No account needed</MutedLine> : null}
+          {entry.accountRequired === false ? (
+            <MutedLine>
+              <T>No account needed</T>
+            </MutedLine>
+          ) : null}
           <ActionFeedback feedback={actions.feedback} />
         </>
       }
     >
-      <DetailSection title="Tools">
+      <DetailSection title={gt("Tools")}>
         <MutedCard>
-          {entry.accountRequired === false ? "Tools appear after you add it." : TOOLS_AFTER_SIGN_IN}
+          {entry.accountRequired === false
+            ? gt("Tools appear after you add it.")
+            : messages(TOOLS_AFTER_SIGN_IN)}
         </MutedCard>
       </DetailSection>
       <AboutCard
         rows={[
-          ...entryFacts(entry),
-          fact("Category", categoryLabel(entry, catalog)),
-          fact("Website", entry.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
+          ...entryFacts(entry, messages),
+          fact(gt("Category"), categoryLabel(entry, catalog)),
+          fact(gt("Website"), entry.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
           fact(
-            "Repository",
+            gt("Repository"),
             entry.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
           ),
-          ["Works with", <WorksWithValue key="works-with" />],
+          [gt("Works with"), <WorksWithValue key="works-with" />],
           fact(
             "URL",
             entry.remotes.length > 0 ? (
@@ -1056,19 +1144,48 @@ function ServerDetail({
               </span>
             ) : null,
           ),
-          catalogOnly ? null : ["Registry name", <Mono key="registry-name">{entry.name}</Mono>],
-          catalogOnly ? null : ["Version", entry.version],
-          ["Source", entrySourceLabel(entry)],
+          catalogOnly ? null : [gt("Registry name"), <Mono key="registry-name">{entry.name}</Mono>],
+          catalogOnly ? null : [gt("Version"), entry.version],
+          [gt("Source"), entrySourceLabel(entry, messages)],
           fact(
-            "Also available",
-            entry.agentStores?.codex && codex ? (
-              <Link
-                to="/settings/extensions/item/store/$instanceId/$entryId"
-                params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
-                className={cn(GHOST_LINK_CLASS, "text-foreground")}
-              >
-                Also in {codex.displayName ?? "Codex"}’s store
-              </Link>
+            gt("Also available"),
+            (entry.agentStores?.claude && claude) ||
+              (entry.agentStores?.codex && codex) ||
+              (entry.agentStores?.antigravity && antigravity) ? (
+              <span className="grid gap-1">
+                {entry.agentStores?.claude && claude ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{ instanceId: claude.instanceId, entryId: entry.agentStores.claude }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>Also in Claude Code’s store</T>
+                  </Link>
+                ) : null}
+                {entry.agentStores?.codex && codex ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>
+                      Also in <Var>{codex.displayName ?? "Codex"}</Var>’s store
+                    </T>
+                  </Link>
+                ) : null}
+                {entry.agentStores?.antigravity && antigravity ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{
+                      instanceId: antigravity.instanceId,
+                      entryId: entry.agentStores.antigravity,
+                    }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>Also in the Antigravity Marketplace</T>
+                  </Link>
+                ) : null}
+              </span>
             ) : null,
           ),
         ]}
@@ -1093,6 +1210,7 @@ function AgentRows({
   readonly locked: boolean;
   readonly setAgents: ConnectorActionsState["setAgents"];
 }) {
+  const gt = useGT();
   const agents = useConnectorAgents();
   if (agents.length <= 1 && connector.agents === undefined) return null;
   const chosen = connector.agents ?? [];
@@ -1101,13 +1219,15 @@ function AgentRows({
     void setAgents(on ? [...others, instanceId] : others);
   };
   return (
-    <div role="group" aria-label="Agents" className="divide-y divide-border">
+    <div role="group" aria-label={gt("Agents")} className="divide-y divide-border">
       <CardRow>
-        <span className="min-w-0 flex-1 text-sm text-foreground">Agents</span>
+        <span className="min-w-0 flex-1 text-sm text-foreground">
+          <T>Agents</T>
+        </span>
         <span className="w-44">
           <NativeSelect
             size="sm"
-            aria-label={`Which agents get ${name}`}
+            aria-label={gt("Which agents get {name}", { name })}
             value={connector.agents === undefined ? "all" : "chosen"}
             disabled={locked}
             onChange={(event) =>
@@ -1116,8 +1236,8 @@ function AgentRows({
               )
             }
           >
-            <option value="all">All agents</option>
-            <option value="chosen">Selected agents</option>
+            <option value="all">{gt("All agents")}</option>
+            <option value="chosen">{gt("Selected agents")}</option>
           </NativeSelect>
         </span>
       </CardRow>
@@ -1131,7 +1251,11 @@ function AgentRows({
                   size="sm"
                   checked={on}
                   disabled={locked || (on && chosen.length === 1)}
-                  aria-label={`${on ? "Turn off" : "Turn on"} for ${agent.label}`}
+                  aria-label={
+                    on
+                      ? gt("Turn off for {agent}", { agent: agent.label })
+                      : gt("Turn on for {agent}", { agent: agent.label })
+                  }
                   onCheckedChange={(checked) => toggle(agent.instanceId, Boolean(checked))}
                 />
               </NestedRow>
@@ -1148,6 +1272,7 @@ function AgentRows({
  * "Add with options" stays open across that switch, for its sign-in step.
  */
 function ServerDetailContent({ name }: { readonly name: string }) {
+  const gt = useGT();
   const { environmentId, callbackOrigin, inventory } = useExtensionsEnvironment();
   // The add form, with the agents chosen for it (none chosen: every agent).
   const [withOptions, setWithOptions] = useState<{
@@ -1161,7 +1286,7 @@ function ServerDetailContent({ name }: { readonly name: string }) {
       <>
         <DetailBack to="discover" />
         <MutedLine>
-          {notFound ? "This server was not found." : (lookup.error ?? "Loading…")}
+          {notFound ? gt("This server was not found.") : (lookup.error ?? gt("Loading…"))}
         </MutedLine>
       </>
     );
@@ -1215,13 +1340,20 @@ type PluginPart = ExtensionComponent & {
   readonly type: Exclude<ExtensionComponent["type"], "skill">;
 };
 
+/** `kind` is a `msg()` string. */
 const COMPONENT_KINDS: Readonly<
   Record<PluginPart["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
 > = {
-  connector: { group: "Connected services", kind: "Connected service" },
-  "mcp-tools": { group: "Tools", kind: "Tools" },
-  settings: { group: "Other", kind: "Settings" },
-  panel: { group: "Other", kind: "Panel" },
+  connector: { group: "Connected services", kind: msg("Connected service") },
+  "mcp-tools": { group: "Tools", kind: msg("Tools") },
+  settings: { group: "Other", kind: msg("Settings") },
+  panel: { group: "Other", kind: msg("Panel") },
+};
+
+const COMPONENT_GROUP_LABELS: Readonly<Record<ComponentGroupLabel, string>> = {
+  "Connected services": msg("Connected services"),
+  Tools: msg("Tools"),
+  Other: msg("Other", { $context: "other plugin parts" }),
 };
 
 const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
@@ -1230,9 +1362,12 @@ const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
   "Other",
 ];
 
-function componentGroups(components: ReadonlyArray<PluginPart>): ReadonlyArray<DetailGroup> {
+function componentGroups(
+  components: ReadonlyArray<PluginPart>,
+  resolve: MessageResolver,
+): ReadonlyArray<DetailGroup> {
   return COMPONENT_GROUP_ORDER.map((label) => ({
-    label,
+    label: resolve(COMPONENT_GROUP_LABELS[label]),
     rows: components
       .filter((component) => COMPONENT_KINDS[component.type].group === label)
       .map((component) => ({
@@ -1245,12 +1380,14 @@ function componentGroups(components: ReadonlyArray<PluginPart>): ReadonlyArray<D
           ),
         detail:
           component.detail ??
-          (label === "Other" ? COMPONENT_KINDS[component.type].kind : undefined),
+          (label === "Other" ? resolve(COMPONENT_KINDS[component.type].kind) : undefined),
       })),
   }));
 }
 
 function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
+  const gt = useGT();
+  const messages = useMessages();
   const actions = usePluginActions(plugin);
   const builtIn = plugin.origin === "built-in";
   const glyph = pluginGlyph(plugin);
@@ -1270,10 +1407,18 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
                   <Switch
                     checked={plugin.enabled}
                     disabled={actions.locked}
-                    aria-label={`${plugin.enabled ? "Turn off" : "Turn on"} ${plugin.displayName}`}
+                    aria-label={
+                      plugin.enabled
+                        ? gt("Turn off {name}", { name: plugin.displayName })
+                        : gt("Turn on {name}", { name: plugin.displayName })
+                    }
                     onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
                   />
-                  <span className="w-6">{plugin.enabled ? "On" : "Off"}</span>
+                  <span className="w-6">
+                    {plugin.enabled
+                      ? gt("On", { $context: "switch state" })
+                      : gt("Off", { $context: "switch state" })}
+                  </span>
                 </label>
               ) : null}
               {plugin.canRemove ? (
@@ -1282,7 +1427,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
                   disabled={actions.locked}
                   onClick={() => void actions.remove()}
                 >
-                  Remove
+                  <T>Remove</T>
                 </Button>
               ) : null}
             </>
@@ -1298,13 +1443,14 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
         input={{ pluginId: plugin.pluginId }}
       />
       {plugin.components.some((component) => component.type !== "skill") ? (
-        <DetailSection title="Includes">
+        <DetailSection title={gt("Includes")}>
           <GroupsCard
-            label="Parts"
+            label={gt("Parts")}
             groups={componentGroups(
               plugin.components.filter(
                 (component): component is PluginPart => component.type !== "skill",
               ),
+              messages,
             )}
           />
         </DetailSection>
@@ -1312,19 +1458,19 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
       <AboutCard
         rows={[
           // A built-in's header and Source already say whose it is.
-          builtIn ? null : ["Developer", plugin.publisher],
-          builtIn ? null : ["Version", plugin.version],
-          fact("Installed on", formatDate(plugin.installedAt)),
+          builtIn ? null : [gt("Developer"), plugin.publisher],
+          builtIn ? null : [gt("Version"), plugin.version],
+          fact(gt("Installed on"), formatDate(plugin.installedAt)),
           fact(
-            "Settings",
+            gt("Settings"),
             settingsPath ? (
               <Link to={settingsPath} className={cn(GHOST_LINK_CLASS, "text-foreground")}>
-                Open settings
+                <T>Open settings</T>
               </Link>
             ) : null,
           ),
-          ["Works with", <WorksWithValue key="works-with" />],
-          ["Source", builtIn ? "Built into Scient" : "Plugin bundle"],
+          [gt("Works with"), <WorksWithValue key="works-with" />],
+          [gt("Source"), builtIn ? gt("Built into Scient") : gt("Plugin bundle")],
           fact("SHA-256", plugin.digest ? <Mono>{plugin.digest}</Mono> : null),
         ]}
       />
@@ -1333,6 +1479,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
 }
 
 function PluginDetailContent({ pluginId }: { readonly pluginId: string }) {
+  const gt = useGT();
   const { inventory, inventoryError } = useExtensionsEnvironment();
   const plugin = inventory?.plugins.find((item) => item.pluginId === pluginId);
   if (!plugin) {
@@ -1340,7 +1487,9 @@ function PluginDetailContent({ pluginId }: { readonly pluginId: string }) {
       <>
         <DetailBack to="installed" />
         <MutedLine>
-          {inventory === null ? (inventoryError ?? "Loading…") : "This plugin is not installed."}
+          {inventory === null
+            ? (inventoryError ?? gt("Loading…"))
+            : gt("This plugin is not installed.")}
         </MutedLine>
       </>
     );
@@ -1364,7 +1513,13 @@ function useProviderGroup(instanceId: string): ProviderExtensionGroup | undefine
 }
 
 function ManagedBy({ label }: { readonly label: string }) {
-  return <span className="text-sm text-muted-foreground">Managed by {label}</span>;
+  return (
+    <span className="text-sm text-muted-foreground">
+      <T>
+        Managed by <Var>{label}</Var>
+      </T>
+    </span>
+  );
 }
 
 function ProviderPluginDetailContent({
@@ -1376,6 +1531,8 @@ function ProviderPluginDetailContent({
   readonly pluginId: string;
   readonly workspace: string | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const group = useProviderGroup(instanceId);
   const { providerInventory } = useExtensionsEnvironment();
   const found = group?.plugins.find(
@@ -1387,8 +1544,8 @@ function ProviderPluginDetailContent({
         <DetailBack to="installed" />
         <MutedLine>
           {providerInventory.phase === "ready"
-            ? "This plugin is no longer reported."
-            : providerInventoryMessage(providerInventory)}
+            ? gt("This plugin is no longer reported.")
+            : providerInventoryMessage(providerInventory, messages)}
         </MutedLine>
       </>
     );
@@ -1405,6 +1562,8 @@ function ProviderPluginDetail({
   readonly plugin: ServerProviderPlugin;
   readonly workspace: string | undefined;
 }) {
+  const gt = useGT();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderPluginActions(group.provider, group.label, plugin, workspace);
   const name = plugin.displayName ?? plugin.name;
   return (
@@ -1426,10 +1585,10 @@ function ProviderPluginDetail({
                   <Switch
                     checked={plugin.enabled}
                     disabled={actions.locked}
-                    aria-label={`Use ${name}`}
+                    aria-label={gt("Use {name}", { name })}
                     onCheckedChange={(enabled) => void actions.setEnabled(enabled)}
                   />
-                  Use plugin
+                  <T>Use plugin</T>
                 </label>
               ) : null}
               {plugin.canUninstall === true ? (
@@ -1438,13 +1597,13 @@ function ProviderPluginDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.uninstall()}
                 >
-                  Remove from {group.label}
+                  {gt("Remove from {agent}", { agent: group.label })}
                 </Button>
               ) : (
                 <MutedLine>
                   {group.provider.driver === "claudeAgent"
-                    ? "Remove this plugin in Claude Code using its original install scope."
-                    : `Remove this plugin in ${group.label}’s plugin manager.`}
+                    ? gt("Remove this plugin in Claude Code using its original install scope.")
+                    : gt("Remove this plugin in {agent}’s plugin manager.", { agent: group.label })}
                 </MutedLine>
               )}
             </>
@@ -1467,18 +1626,26 @@ function ProviderPluginDetail({
       <AboutCard
         rows={[
           [
-            "Works with",
+            gt("Works with"),
             <WorksWithValue
               key="works-with"
-              audience={providerExtensionAudience(group.provider, plugin)}
+              audience={providerExtensionAudience(group.provider, plugin, providers)}
             />,
           ],
           // Claude records a commit hash where others give a version; a hash tells a person nothing.
-          fact("Version", /^[0-9a-f]{7,40}$/.test(plugin.version ?? "") ? null : plugin.version),
-          fact("Marketplace", plugin.marketplace),
-          fact("Source", plugin.sourceLabel),
-          fact("Workspace", workspace ? workspaceLabel(workspace) : null),
-          ["State", plugin.enabled ? "On" : "Off"],
+          fact(
+            gt("Version"),
+            /^[0-9a-f]{7,40}$/.test(plugin.version ?? "") ? null : plugin.version,
+          ),
+          fact(gt("Marketplace"), plugin.marketplace),
+          fact(gt("Source"), plugin.sourceLabel),
+          fact(gt("Workspace"), workspace ? workspaceLabel(workspace) : null),
+          [
+            gt("State"),
+            plugin.enabled
+              ? gt("On", { $context: "switch state" })
+              : gt("Off", { $context: "switch state" }),
+          ],
         ]}
       />
     </DetailLayout>
@@ -1504,6 +1671,8 @@ function ProviderServerDetailContent({
   readonly instanceId: string;
   readonly serverName: string;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const group = useProviderGroup(instanceId);
   const { providerInventory } = useExtensionsEnvironment();
   const server = group?.mcpServers.find((candidate) => candidate.name === serverName);
@@ -1513,8 +1682,8 @@ function ProviderServerDetailContent({
         <DetailBack to="installed" />
         <MutedLine>
           {providerInventory.phase === "ready"
-            ? "This MCP server is no longer reported."
-            : providerInventoryMessage(providerInventory)}
+            ? gt("This MCP server is no longer reported.")
+            : providerInventoryMessage(providerInventory, messages)}
         </MutedLine>
       </>
     );
@@ -1529,19 +1698,25 @@ function ProviderServerDetail({
   readonly group: ProviderExtensionGroup;
   readonly server: ServerProviderMcpServer;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderServerActions(group.provider, group.label, server);
   const canSignIn = server.canStartSignIn === true || Boolean(server.connectUrl);
+  const statusText = MCP_SERVER_STATUS_TEXT[server.status];
   const status =
     server.status === "connected"
-      ? "Connected"
-      : (MCP_SERVER_STATUS_TEXT[server.status] ?? "Unknown");
+      ? gt("Connected")
+      : statusText === null
+        ? gt("Unknown", { $context: "connector status" })
+        : messages(statusText);
   return (
     <DetailLayout
       back="installed"
       header={
         <DetailHeader
           name={providerServerDisplayName(server)}
-          tagline={mcpServerSummary(server)}
+          tagline={mcpServerSummary(server, messages)}
           actions={
             <>
               {canSignIn ? (
@@ -1550,8 +1725,8 @@ function ProviderServerDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.signIn()}
                 >
-                  {providerServerConnectLabel(server) ??
-                    (server.status === "connected" ? "Sign in again" : "Sign in")}
+                  {providerServerConnectLabel(server, messages) ??
+                    (server.status === "connected" ? gt("Sign in again") : gt("Sign in"))}
                 </PrimaryAction>
               ) : null}
               <ManagedBy label={group.label} />
@@ -1571,13 +1746,13 @@ function ProviderServerDetail({
       <AboutCard
         rows={[
           [
-            "Works with",
+            gt("Works with"),
             <WorksWithValue
               key="works-with"
-              audience={providerExtensionAudience(group.provider, server)}
+              audience={providerExtensionAudience(group.provider, server, providers)}
             />,
           ],
-          ["Status", status],
+          [gt("Status"), status],
         ]}
       />
     </DetailLayout>

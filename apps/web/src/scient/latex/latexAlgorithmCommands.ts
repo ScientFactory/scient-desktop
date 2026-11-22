@@ -5,6 +5,8 @@ import {
   editAlgorithmSteps,
   type AlgorithmStepOperation,
 } from "./latexAlgorithmEditing";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 /** Menu and keyboard edits share one balanced transaction and source acceptance check. */
 export function applyAlgorithmStepEdit(
@@ -13,12 +15,13 @@ export function applyAlgorithmStepEdit(
   operation: AlgorithmStepOperation,
   kind?: string,
 ): string | null {
-  if (!editor.isEditable || editor.isDestroyed) return "The algorithm is not editable.";
+  if (!editor.isEditable || editor.isDestroyed) return m(msg("The algorithm is not editable."));
   const current = editor.state.doc.nodeAt(at);
   const selected = current && algorithmStepSelection(current, at, editor.state.selection);
-  if (!current || !selected) return "The algorithm editing position is no longer available.";
+  if (!current || !selected)
+    return m(msg("The algorithm editing position is no longer available."));
   const changed = editAlgorithmSteps(current, selected, operation, kind);
-  if (!changed) return "This action cannot preserve the selected algorithm structure.";
+  if (!changed) return m(msg("This action cannot preserve the selected algorithm structure."));
   const replacement = current.type.create(
     current.attrs,
     changed.rows.map((row) => editor.schema.nodeFromJSON(row)),
@@ -36,7 +39,7 @@ export function applyAlgorithmStepEdit(
   tr.setSelection(TextSelection.create(tr.doc, offset));
   editor.view.dispatch(tr.scrollIntoView());
   if (!editor.state.doc.nodeAt(at)?.eq(replacement))
-    return "The algorithm source could not preserve this change. Your content was kept.";
+    return m(msg("The algorithm source could not preserve this change. Your content was kept."));
   editor.view.focus();
   return null;
 }

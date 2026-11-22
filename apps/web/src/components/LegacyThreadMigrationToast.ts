@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { primaryServerLegacyThreadMigrationAtom } from "../state/server";
 import { toastManager } from "./ui/toast";
@@ -26,13 +29,23 @@ export function startLegacyThreadMigrationToast(): () => void {
       if (status === "failed") {
         toastId = toastManager.add({
           type: "error",
-          title: "Thread restoration needs attention",
+          title: m(msg("Thread restoration needs attention")),
           description:
             pendingThreadCount === undefined
-              ? "Restoration could not be verified. Your original data is preserved. Restart Scient to retry."
-              : `${pendingThreadCount.toLocaleString()} ${
-                  pendingThreadCount === 1 ? "thread still needs" : "threads still need"
-                } restoration. Original data is preserved. Reopen to retry. Repeated failures need review.`,
+              ? m(
+                  msg(
+                    "Restoration could not be verified. Your original data is preserved. Restart Scient to retry.",
+                  ),
+                )
+              : m(
+                  msg(
+                    "{count, plural, one {{total} thread still needs restoration. Original data is preserved. Reopen to retry. Repeated failures need review.} other {{total} threads still need restoration. Original data is preserved. Reopen to retry. Repeated failures need review.}}",
+                    {
+                      count: pendingThreadCount,
+                      total: pendingThreadCount.toLocaleString(),
+                    },
+                  ),
+                ),
           timeout: 0,
         });
         return;
@@ -41,10 +54,16 @@ export function startLegacyThreadMigrationToast(): () => void {
       if (status === "running") {
         toastId = toastManager.add({
           type: "loading",
-          title: "Restoring your threads…",
-          description: `Migrating ${totalThreadCount.toLocaleString()} ${
-            totalThreadCount === 1 ? "thread" : "threads"
-          } from the previous version. You can keep working while this finishes.`,
+          title: m(msg("Restoring your threads…")),
+          description: m(
+            msg(
+              "{count, plural, one {Migrating {total} thread from the previous version. You can keep working while this finishes.} other {Migrating {total} threads from the previous version. You can keep working while this finishes.}}",
+              {
+                count: totalThreadCount,
+                total: totalThreadCount.toLocaleString(),
+              },
+            ),
+          ),
           timeout: 0,
         });
       }

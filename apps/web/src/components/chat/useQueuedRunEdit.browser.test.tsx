@@ -1,6 +1,7 @@
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
+  ChatAttachmentId,
   MessageId,
   RunId,
   ThreadId,
@@ -8,7 +9,11 @@ import {
 } from "@t3tools/contracts";
 import { useImperativeHandle, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
+import { toastManager } from "../ui/toast";
 
 import { act, render } from "../../../test/render";
 import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
@@ -28,12 +33,15 @@ import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attach
 interface RunStatus {
   readonly id: RunId;
   readonly status: string;
+  readonly activeAttemptId?: string;
 }
 
 const mocks = await vi.hoisted(async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     editQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" | "Failure" }>>(),
+    promoteQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" }>>(),
+    promoteCommand: {},
     // The projection's runs per thread, written by each test to stand in for the server.
     threadRuns: Atom.family((_key: string) =>
       Atom.make<ReadonlyArray<RunStatus> | null>(null).pipe(Atom.keepAlive),
@@ -42,7 +50,8 @@ const mocks = await vi.hoisted(async () => {
 });
 
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => mocks.editQueuedRun,
+  useAtomCommand: (command: unknown) =>
+    command === mocks.promoteCommand ? mocks.promoteQueuedRun : mocks.editQueuedRun,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
@@ -58,13 +67,35 @@ vi.mock("../../state/threads", async () => {
     threadEnvironment: {
       snapshotAtom: () => Atom.make(null),
       editQueuedRun: {},
+      promoteQueuedRun: mocks.promoteCommand,
     },
     environmentThreadDetails: {
       statusAtom: () => Atom.make("ready"),
       quietThreadAtom: (ref: ScopedThreadRef) =>
         Atom.make((get) => {
           const runs = get(mocks.threadRuns(key(ref)));
-          return runs === null ? null : { projection: { runs } };
+          if (runs === null) return null;
+          // A Claude-like session whose running turn takes steering.
+          return {
+            projection: {
+              thread: { id: ref.threadId, activeProviderThreadId: null },
+              runs,
+              messages: [],
+              providerThreads: [],
+              providerSessions: [
+                {
+                  id: "session",
+                  status: "running",
+                  capabilities: { turns: { supportsActiveSteering: true } },
+                },
+              ],
+              providerTurns: runs.flatMap((run) =>
+                run.activeAttemptId
+                  ? [{ runAttemptId: run.activeAttemptId, status: "running" }]
+                  : [],
+              ),
+            },
+          };
         }),
     },
     environmentThreadShells: {
@@ -123,6 +154,7 @@ function Harness(props: {
       isEnvironmentUnavailable={false}
       isPreparingWorktree={false}
       hasSendableContent={sendState.hasSendableContent}
+      isEditingQueuedMessage
       onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}
       onPreviousPendingQuestion={() => {}}
       onInterrupt={() => {}}
@@ -145,6 +177,7 @@ function view(
 
 function setup() {
   mocks.editQueuedRun.mockReset();
+  mocks.promoteQueuedRun.mockReset();
   useAttachmentUploadStore.setState({ uploadsByImageId: {} });
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   setRuns(THREAD_A, "queued");
@@ -186,6 +219,130 @@ const promptOf = (ref: ScopedThreadRef) =>
   useComposerDraftStore.getState().getComposerDraft(ref)?.prompt ?? "";
 
 describe("useQueuedRunEdit", () => {
+  it.each(["", "Ultrathink:\n"])(
+    "opens attachment-only edits without the placeholder and preserves effort on save (%j)",
+    async (prefix) => {
+      const { hook } = setup();
+      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      await using screen = await render(view(THREAD_A, "queued", hook));
+      using toast = vi.spyOn(toastManager, "add");
+      const attachments = [
+        {
+          type: "image" as const,
+          id: ChatAttachmentId.make("kept"),
+          name: "kept.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ];
+      const request = {
+        runId: RUN,
+        messageId: MessageId.make("message-1"),
+        text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        attachments,
+      };
+      await act(() => requireHook(hook).beginEdit(request));
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt ??
+          "",
+      ).toBe(prefix.trimEnd());
+      expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment)).toEqual(
+        attachments,
+      );
+      await act(() =>
+        useComposerDraftStore
+          .getState()
+          .setRuntimeMode(requireHook(hook).draftTarget, "full-access"),
+      );
+      await act(() => setRuns(THREAD_A, "running"));
+      expect(toast).not.toHaveBeenCalled();
+      expect(requireHook(hook).isEditing).toBe(false);
+      await act(() => setRuns(THREAD_A, "queued"));
+      await act(() => requireHook(hook).beginEdit(request));
+      const update = screen.getByRole("button", { name: "Update queued message" });
+      await expect.element(update).toBeEnabled();
+      await update.click();
+      await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+      expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+            edit: expect.objectContaining({ attachments }),
+          }),
+        }),
+      );
+    },
+  );
+
+  it.each([
+    // Cmd+Enter or Cmd-click with Queue as the default: save, then steer.
+    { dispatchMode: "steer", submissionIntent: "alternate", steers: true },
+    // Enter or the Update button with Steer as the default: save in place only.
+    { dispatchMode: "steer", submissionIntent: "foreground", steers: false },
+    // Cmd+Enter with Steer as the default queues, so the message stays queued.
+    { dispatchMode: "queue", submissionIntent: "alternate", steers: false },
+  ] as const)(
+    "a saved edit sent as $submissionIntent/$dispatchMode steers: $steers",
+    async (submission) => {
+      const { hook } = setup();
+      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      mocks.promoteQueuedRun.mockResolvedValue({ _tag: "Success" });
+      const activeRun = RunId.make("run-active");
+      appAtomRegistry.set(mocks.threadRuns(runsKey(THREAD_A)), [
+        { id: activeRun, status: "running", activeAttemptId: "attempt-1" },
+        { id: RUN, status: "queued" },
+      ]);
+      await using _screen = await render(view(THREAD_A, "queued", hook));
+      await beginChangedEdit(hook);
+      await act(() => requireHook(hook).saveEdit(savedContent("changed"), () => {}, submission));
+      expect(mocks.editQueuedRun).toHaveBeenCalledOnce();
+      if (!submission.steers) {
+        expect(mocks.promoteQueuedRun).not.toHaveBeenCalled();
+        return;
+      }
+      expect(mocks.promoteQueuedRun).toHaveBeenCalledExactlyOnceWith({
+        environmentId: ENV,
+        input: { threadId: THREAD_A.threadId, queuedRunId: RUN, targetRunId: activeRun },
+      });
+      expect(mocks.editQueuedRun.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.promoteQueuedRun.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
+
+  it("saves an effort-only prompt without claiming removed attachments remain", async () => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    await using screen = await render(view(THREAD_A, "queued", hook));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId: MessageId.make("message-1"),
+        text: `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        attachments: [
+          {
+            type: "image",
+            id: ChatAttachmentId.make("removed"),
+            name: "removed.png",
+            mimeType: "image/png",
+            sizeBytes: 10,
+          },
+        ],
+      }),
+    );
+    await act(() => requireHook(hook).removeEditingAttachment("removed"));
+    await screen.getByRole("button", { name: "Update queued message" }).click();
+    await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          text: "Ultrathink:",
+          edit: expect.objectContaining({ attachments: [] }),
+        }),
+      }),
+    );
+  });
+
   it("opens an edit with only the thread and machine records its text still mentions", async () => {
     const { hook } = setup();
     const thread = threadContextRecord(THREAD_B, "Support Any File Uploads");

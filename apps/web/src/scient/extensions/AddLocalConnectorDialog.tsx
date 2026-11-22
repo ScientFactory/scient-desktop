@@ -15,6 +15,7 @@ import type {
 } from "@t3tools/contracts";
 import { VaultSecretRef } from "@t3tools/contracts";
 import { BotIcon, ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
@@ -126,6 +127,7 @@ function ServerRows({
   readonly busy: string | null;
   readonly onAdd: (server: LocalImportableServer) => void;
 }) {
+  const gt = useGT();
   return (
     <ul className="divide-y divide-border rounded-lg border border-border">
       {servers.map((server) => {
@@ -137,16 +139,21 @@ function ServerRows({
               <p className="truncate text-xs text-muted-foreground">{server.sourceLabel}</p>
             </div>
             {server.installedConnectorId ? (
-              <span className="text-xs text-muted-foreground">Added</span>
+              <span className="text-xs text-muted-foreground">
+                <T>Added</T>
+              </span>
             ) : (
               <Button
                 size="xs"
                 variant="outline"
-                aria-label={`Add ${server.name} from ${server.sourceLabel}`}
+                aria-label={gt("Add {name} from {app}", {
+                  name: server.name,
+                  app: server.sourceLabel,
+                })}
                 disabled={busy !== null}
                 onClick={() => onAdd(server)}
               >
-                {busy === key ? "Adding…" : "Add"}
+                {busy === key ? gt("Adding…") : gt("Add", { $context: "verb, adds an extension" })}
               </Button>
             )}
           </li>
@@ -157,16 +164,23 @@ function ServerRows({
 }
 
 function CheckResult({ step }: { readonly step: Extract<Step, { name: "check" }> }) {
+  const gt = useGT();
   const { connector, result } = step;
   if (result === null) {
-    return <p className="text-sm text-muted-foreground">Checking that it starts…</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        <T>Checking that it starts…</T>
+      </p>
+    );
   }
   if (result.outcome === "ok") {
     const names = result.tools.slice(0, 6).map((tool) => tool.name);
     return (
       <div className="grid gap-1">
         <p className="text-sm font-medium">
-          Ready: {result.tools.length} {result.tools.length === 1 ? "tool" : "tools"}
+          {gt("Ready: {count, plural, one {{count} tool} other {{count} tools}}", {
+            count: result.tools.length,
+          })}
         </p>
         {names.length > 0 ? (
           <p className="text-xs text-muted-foreground">
@@ -180,18 +194,30 @@ function CheckResult({ step }: { readonly step: Extract<Step, { name: "check" }>
   if (result.outcome === "needs-setup") {
     return (
       <p className="text-sm">
-        {connector.displayName} is added and still needs{" "}
-        {connector.local?.missing.join(", ") ?? "setup"}. Agents ask for it in the chat when they
-        use it, or you can set it up on its page.
+        {connector.local === undefined ? (
+          <T>
+            <Var>{connector.displayName}</Var> is added and still needs setup. Agents ask for it in
+            the chat when they use it, or you can set it up on its page.
+          </T>
+        ) : (
+          <T>
+            <Var>{connector.displayName}</Var> is added and still needs{" "}
+            <Var>{connector.local.missing.join(", ")}</Var>. Agents ask for it in the chat when they
+            use it, or you can set it up on its page.
+          </T>
+        )}
       </p>
     );
   }
   return (
     <div className="grid gap-1">
       <p className="text-sm">
-        {connector.displayName} is added but did not start. Fix it on its page, then choose Restart.
+        <T>
+          <Var>{connector.displayName}</Var> is added but did not start. Fix it on its page, then
+          choose Restart.
+        </T>
       </p>
-      <ErrorNote message={result.message ?? "It did not answer."} />
+      <ErrorNote message={result.message ?? gt("It did not answer.")} />
     </div>
   );
 }
@@ -221,6 +247,7 @@ export function AddLocalConnectorDialog({
   /** On the Skills tab, other agents' skills are offered instead of their servers. */
   readonly kind?: ExtensionKind | undefined;
 }) {
+  const gt = useGT();
   const formId = useId();
   const pkg = entry?.localPackage;
   const add = useAtomCommand(addConnector, { reportFailure: false });
@@ -291,7 +318,7 @@ export function AddLocalConnectorDialog({
   const readSkills = async (source: PersonalSkillSource) => {
     const result = await inspectSkills({ environmentId, input: { source } });
     if (result._tag !== "Success") {
-      setError(commandFailureMessage(result), "Scient could not use that.");
+      setError(commandFailureMessage(result), gt("Scient could not use that."));
       return "failed" as const;
     }
     if (result.value.kind === "none") return "none" as const;
@@ -317,7 +344,7 @@ export function AddLocalConnectorDialog({
     });
     setBusy(null);
     if (result._tag !== "Success") {
-      setError(commandFailureMessage(result), "Scient could not add it.");
+      setError(commandFailureMessage(result), gt("Scient could not add it."));
       return;
     }
     onOpenChange(false);
@@ -326,17 +353,17 @@ export function AddLocalConnectorDialog({
       result.value.added.length === 1 && only !== undefined
         ? {
             type: "success",
-            title: `Added ${only}`,
-            description: "It is on for every agent from your next message.",
+            title: gt("Added {name}", { name: only }),
+            description: gt("It is on for every agent from your next message."),
             actionProps: {
-              children: "Undo",
+              children: gt("Undo"),
               onClick: () => void undoSkill({ environmentId, input: { name: only } }),
             },
           }
         : {
             type: "success",
-            title: `Added ${result.value.added.length} skills`,
-            description: "They are on for every agent from your next message.",
+            title: gt("Added {count} skills", { count: result.value.added.length }),
+            description: gt("They are on for every agent from your next message."),
           },
     );
   };
@@ -345,7 +372,7 @@ export function AddLocalConnectorDialog({
     if (!startChat) return;
     const purpose = candidate.conflict ? "rename" : "finish";
     if (await startChat(finishSkillPrompt(candidate, sourceLabel), purpose)) onOpenChange(false);
-    else setError("Scient could not open a new chat.");
+    else setError(gt("Scient could not open a new chat."));
   };
 
   const importSkill = async (skill: ImportableSkill) => {
@@ -358,8 +385,10 @@ export function AddLocalConnectorDialog({
     setBusy(null);
     if (result._tag !== "Success" || result.value.kind === "none") {
       setError(
-        result._tag === "Success" ? "That is no longer a skill." : commandFailureMessage(result),
-        "Scient could not use that.",
+        result._tag === "Success"
+          ? gt("That is no longer a skill.")
+          : commandFailureMessage(result),
+        gt("Scient could not use that."),
       );
       return;
     }
@@ -396,12 +425,12 @@ export function AddLocalConnectorDialog({
     if (isWeb) {
       setReading(false);
       if (onWebAddress) return onWebAddress(trimmed);
-      return setError("Scient found no skill at that address.");
+      return setError(gt("Scient found no skill at that address."));
     }
     const result = await inspect({ environmentId, input: { path: trimmed } });
     setReading(false);
     if (result._tag !== "Success") {
-      setError(commandFailureMessage(result), "Scient could not use that.");
+      setError(commandFailureMessage(result), gt("Scient could not use that."));
       return;
     }
     if (result.value.kind === "plugin") {
@@ -417,7 +446,7 @@ export function AddLocalConnectorDialog({
     if (!displayName.trim()) setDisplayName(result.value.displayName);
   };
 
-  const finish = async (target: ConnectorAddInput["target"], busyKey: string, label = "it") => {
+  const finish = async (target: ConnectorAddInput["target"], busyKey: string, label?: string) => {
     setBusy(busyKey);
     setError(null);
     const name = displayName.trim();
@@ -433,7 +462,12 @@ export function AddLocalConnectorDialog({
     });
     setBusy(null);
     if (result._tag !== "Success") {
-      setError(commandFailureMessage(result), `Scient could not add ${label}.`);
+      setError(
+        commandFailureMessage(result),
+        label === undefined
+          ? gt("Scient could not add it.")
+          : gt("Scient could not add {name}.", { name: label }),
+      );
       return;
     }
     const connector = result.value.connector;
@@ -450,7 +484,7 @@ export function AddLocalConnectorDialog({
               outcome: "error",
               checkedAt: connector.updatedAt,
               tools: [],
-              message: commandFailureMessage(checked) ?? "The check did not finish",
+              message: commandFailureMessage(checked) ?? gt("The check did not finish"),
             },
     });
   };
@@ -459,7 +493,9 @@ export function AddLocalConnectorDialog({
     const entries = variables.filter((variable) => variable.name.trim() || variable.value);
     for (const variable of entries) {
       if (!VARIABLE_NAME.test(variable.name.trim())) {
-        return `${variable.name.trim() || "A variable"} is not a valid variable name.`;
+        return variable.name.trim()
+          ? gt("{name} is not a valid variable name.", { name: variable.name.trim() })
+          : gt("A variable is not a valid variable name.");
       }
     }
     return entries.map((variable) => ({
@@ -479,7 +515,7 @@ export function AddLocalConnectorDialog({
       if (result._tag === "Success") return onOpenChange(false);
       return setError(
         commandFailureMessage(result),
-        `Scient could not install ${step.displayName}.`,
+        gt("Scient could not install {name}.", { name: step.displayName }),
       );
     }
     if (pkg !== undefined && entry !== null) {
@@ -518,9 +554,9 @@ export function AddLocalConnectorDialog({
     }
     if (step.name === "command") {
       const parts = splitCommandLine(commandLine.trim());
-      if (parts === null) return setError("A quote in the command is not closed.");
+      if (parts === null) return setError(gt("A quote in the command is not closed."));
       const [command, ...args] = parts;
-      if (command === undefined) return setError("Enter the command that starts the server.");
+      if (command === undefined) return setError(gt("Enter the command that starts the server."));
       const variablesInput = environment();
       if (typeof variablesInput === "string") return setError(variablesInput);
       return finish({ type: "local-command", command, args, environment: variablesInput }, "add");
@@ -541,29 +577,33 @@ export function AddLocalConnectorDialog({
 
   const title =
     step.name === "check"
-      ? `${step.connector.displayName} added`
+      ? gt("{name} added", { name: step.connector.displayName })
       : entry
-        ? `Add ${entryName(entry)}`
+        ? gt("Add {name}", { name: entryName(entry) })
         : step.name === "plugin"
-          ? `Install ${step.displayName}`
+          ? gt("Install {name}", { name: step.displayName })
           : step.name === "skills"
             ? step.candidates.length === 1
-              ? "Add a skill"
-              : "Add skills"
-            : "Add your own";
+              ? gt("Add a skill")
+              : gt("Add skills")
+            : gt("Add your own");
   const showsSetup = pkg !== undefined || step.name === "bundle" || step.name === "command";
   const description =
     step.name === "plugin"
-      ? "A Scient plugin: it adds the skills and connectors it lists. Nothing in it runs."
+      ? gt("A Scient plugin: it adds the skills and connectors it lists. Nothing in it runs.")
       : step.name === "skills"
-        ? "A skill you add is on for every agent from your next message. You can turn it off or undo the change in Skills."
+        ? gt(
+            "A skill you add is on for every agent from your next message. You can turn it off or undo the change in Skills.",
+          )
         : step.name === "choose" && pkg === undefined
-          ? "A skill, connector or plugin. Every agent can use it."
-          : `This runs a program on the computer running this environment. ${
-              agents === undefined
-                ? "Every agent can use its tools."
-                : "The agents you chose can use its tools."
-            }`;
+          ? gt("A skill, connector or plugin. Every agent can use it.")
+          : agents === undefined
+            ? gt(
+                "This runs a program on the computer running this environment. Every agent can use its tools.",
+              )
+            : gt(
+                "This runs a program on the computer running this environment. The agents you chose can use its tools.",
+              );
   const choosing = step.name === "choose" && pkg === undefined;
   const importCount = skillsFirst ? importableSkills.length : importable.length;
 
@@ -608,16 +648,20 @@ export function AddLocalConnectorDialog({
                     }}
                   >
                     <p className="text-sm text-muted-foreground">
-                      {getPathForFile ? "Drop a file or folder here, or" : "Choose a folder"}
+                      {getPathForFile
+                        ? gt("Drop a file or folder here, or")
+                        : gt("Choose a folder")}
                     </p>
                     <Menu>
                       <MenuTrigger render={<Button variant="outline" size="sm" />}>
-                        Choose…
+                        <T>Choose…</T>
                         <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
                       </MenuTrigger>
                       <MenuPopup align="center">
                         {getPathForFile ? (
-                          <MenuItem onClick={() => filePicker.current?.click()}>A file…</MenuItem>
+                          <MenuItem onClick={() => filePicker.current?.click()}>
+                            <T>A file…</T>
+                          </MenuItem>
                         ) : null}
                         {pickFolder ? (
                           <MenuItem
@@ -627,7 +671,7 @@ export function AddLocalConnectorDialog({
                               })
                             }
                           >
-                            A folder…
+                            <T>A folder…</T>
                           </MenuItem>
                         ) : null}
                       </MenuPopup>
@@ -650,10 +694,10 @@ export function AddLocalConnectorDialog({
                 ) : null}
                 <div className="flex items-start gap-2">
                   <Textarea
-                    aria-label="Path, web address or text"
+                    aria-label={gt("Path, web address or text")}
                     className="min-w-0 flex-1 [&_textarea]:max-h-48 [&_textarea]:min-h-0 [&_textarea]:resize-none [&_textarea]:[field-sizing:content]"
                     rows={1}
-                    placeholder="Or paste a path, a web address, or a skill's text"
+                    placeholder={gt("Or paste a path, a web address, or a skill's text")}
                     value={path}
                     spellCheck={false}
                     onChange={(event) => setPath(event.target.value)}
@@ -669,7 +713,7 @@ export function AddLocalConnectorDialog({
                     disabled={reading || !path.trim()}
                     onClick={() => void readPath(path)}
                   >
-                    {reading ? "Reading…" : "Open"}
+                    {reading ? gt("Reading…") : gt("Open", { $context: "verb, opens a path" })}
                   </Button>
                 </div>
                 {!skillsFirst && startConnectorChat !== undefined ? (
@@ -683,7 +727,7 @@ export function AddLocalConnectorDialog({
                     }}
                   >
                     <BotIcon aria-hidden />
-                    Or make a connector with an agent
+                    <T>Or make a connector with an agent</T>
                   </Button>
                 ) : null}
                 {importCount > 0 ? (
@@ -695,8 +739,9 @@ export function AddLocalConnectorDialog({
                       aria-expanded={showImports}
                       onClick={() => setShowImports((shown) => !shown)}
                     >
-                      {skillsFirst ? "From your other agents" : "From your other apps"} ·{" "}
-                      {importCount}
+                      {skillsFirst
+                        ? gt("From your other agents · {count}", { count: importCount })
+                        : gt("From your other apps · {count}", { count: importCount })}
                       <ChevronDownIcon
                         aria-hidden
                         className={`size-3.5 transition-transform ${showImports ? "rotate-180" : ""}`}
@@ -724,7 +769,11 @@ export function AddLocalConnectorDialog({
 
             {step.name === "skills" ? (
               <div className="grid grid-cols-1 gap-2">
-                <Label>Found in {step.sourceLabel}</Label>
+                <Label>
+                  <T>
+                    Found in <Var>{step.sourceLabel}</Var>
+                  </T>
+                </Label>
                 <SkillCandidateRows
                   candidates={step.candidates}
                   busy={busy}
@@ -742,14 +791,22 @@ export function AddLocalConnectorDialog({
 
             {step.name === "servers" ? (
               <div className="grid grid-cols-1 gap-2">
-                <Label>Servers in that folder</Label>
+                <Label>
+                  <T>Servers in that folder</T>
+                </Label>
                 <ServerRows servers={step.servers} busy={busy} onAdd={importServer} />
               </div>
             ) : null}
 
             {pkg !== undefined && step.name === "choose" ? (
               <p className="text-sm text-muted-foreground">
-                Runs <code>{pkg.identifier}</code> {pkg.version} through {pkg.runner}.
+                <T>
+                  Runs{" "}
+                  <code>
+                    <Var>{pkg.identifier}</Var>
+                  </code>{" "}
+                  <Var>{pkg.version}</Var> through <Var>{pkg.runner}</Var>.
+                </T>
               </p>
             ) : null}
 
@@ -760,14 +817,18 @@ export function AddLocalConnectorDialog({
                   <span className="font-normal text-muted-foreground">{step.bundle.version}</span>
                 </p>
                 {step.bundle.author ? (
-                  <p className="text-xs text-muted-foreground">by {step.bundle.author}</p>
+                  <p className="text-xs text-muted-foreground">
+                    <T>
+                      by <Var>{step.bundle.author}</Var>
+                    </T>
+                  </p>
                 ) : null}
                 {step.bundle.description ? (
                   <p className="text-sm text-muted-foreground">{step.bundle.description}</p>
                 ) : null}
                 <ErrorNote
                   message={step.bundle.unavailableReason ?? null}
-                  summary="It cannot run on this computer."
+                  summary={gt("It cannot run on this computer.")}
                 />
               </div>
             ) : null}
@@ -785,9 +846,12 @@ export function AddLocalConnectorDialog({
             {step.name === "command" ? (
               <>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="local-command">Command</Label>
+                  <Label htmlFor="local-command">
+                    <T>Command</T>
+                  </Label>
                   <Input
                     id="local-command"
+                    // oxlint-disable-next-line t3code/no-untranslated-copy -- an example command line
                     placeholder="uvx my-mcp-server --flag"
                     value={commandLine}
                     autoFocus
@@ -795,12 +859,14 @@ export function AddLocalConnectorDialog({
                     onChange={(event) => setCommandLine(event.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Put keys in variables below, not in the command.
+                    <T>Put keys in variables below, not in the command.</T>
                   </p>
                 </div>
                 <div className="grid grid-cols-1 gap-2">
                   <div className="flex items-center justify-between">
-                    <Label>Environment variables</Label>
+                    <Label>
+                      <T>Environment variables</T>
+                    </Label>
                     <Button
                       size="xs"
                       variant="ghost-muted"
@@ -812,13 +878,13 @@ export function AddLocalConnectorDialog({
                       }
                     >
                       <PlusIcon aria-hidden />
-                      Add variable
+                      <T>Add variable</T>
                     </Button>
                   </div>
                   {variables.map((variable) => (
                     <div key={variable.id} className="flex items-center gap-2">
                       <Input
-                        aria-label="Variable name"
+                        aria-label={gt("Variable name")}
                         className="w-40"
                         placeholder="NAME"
                         value={variable.name}
@@ -829,7 +895,11 @@ export function AddLocalConnectorDialog({
                       />
                       {variable.secret ? (
                         <SecretInput
-                          aria-label={`${variable.name || "Variable"} value`}
+                          aria-label={
+                            variable.name
+                              ? gt("{name} value", { name: variable.name })
+                              : gt("Variable value")
+                          }
                           className="min-w-0 flex-1"
                           value={variable.value}
                           onChange={(event) =>
@@ -838,7 +908,11 @@ export function AddLocalConnectorDialog({
                         />
                       ) : (
                         <Input
-                          aria-label={`${variable.name || "Variable"} value`}
+                          aria-label={
+                            variable.name
+                              ? gt("{name} value", { name: variable.name })
+                              : gt("Variable value")
+                          }
                           className="min-w-0 flex-1"
                           value={variable.value}
                           onChange={(event) =>
@@ -853,12 +927,16 @@ export function AddLocalConnectorDialog({
                             patchVariable(variable.id, { secret: checked === true })
                           }
                         />
-                        Key
+                        {gt("Key", { $context: "marks a variable as a secret key" })}
                       </label>
                       <Button
                         size="icon-sm"
                         variant="ghost-muted"
-                        aria-label={`Remove ${variable.name || "variable"}`}
+                        aria-label={
+                          variable.name
+                            ? gt("Remove {name}", { name: variable.name })
+                            : gt("Remove variable")
+                        }
                         onClick={() =>
                           setVariables((current) =>
                             current.filter((item) => item.id !== variable.id),
@@ -870,7 +948,7 @@ export function AddLocalConnectorDialog({
                     </div>
                   ))}
                   <p className="text-xs text-muted-foreground">
-                    A variable marked Key is saved in Accounts & secrets.
+                    <T>A variable marked Key is saved in Accounts & secrets.</T>
                   </p>
                 </div>
               </>
@@ -878,10 +956,12 @@ export function AddLocalConnectorDialog({
 
             {showsSetup ? (
               <div className="grid gap-1.5">
-                <Label htmlFor="local-name">Name (optional)</Label>
+                <Label htmlFor="local-name">
+                  <T>Name (optional)</T>
+                </Label>
                 <Input
                   id="local-name"
-                  placeholder="Defaults to the program's name"
+                  placeholder={gt("Defaults to the program's name")}
                   value={displayName}
                   onChange={(event) => setDisplayName(event.target.value)}
                 />
@@ -894,7 +974,7 @@ export function AddLocalConnectorDialog({
         <DialogFooter variant="bare">
           {step.name === "check" ? (
             <Button disabled={step.result === null} onClick={() => onOpenChange(false)}>
-              Done
+              <T>Done</T>
             </Button>
           ) : (
             <>
@@ -902,13 +982,15 @@ export function AddLocalConnectorDialog({
                 <Button
                   variant="ghost-muted"
                   className="me-auto"
-                  title="For developers: start a connector from the command that runs it, such as uvx my-server."
+                  title={gt(
+                    "For developers: start a connector from the command that runs it, such as uvx my-server.",
+                  )}
                   onClick={() => {
                     setError(null);
                     setStep({ name: "command" });
                   }}
                 >
-                  Run a command…
+                  <T>Run a command…</T>
                 </Button>
               ) : null}
               {step.name !== "choose" && pkg === undefined ? (
@@ -919,16 +1001,16 @@ export function AddLocalConnectorDialog({
                     setStep({ name: "choose" });
                   }}
                 >
-                  Back
+                  <T>Back</T>
                 </Button>
               ) : (
                 <Button variant="outline" onClick={() => onOpenChange(false)}>
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
               )}
               {step.name === "plugin" ? (
                 <Button disabled={busy !== null} onClick={() => void submit()}>
-                  {busy === "add" ? "Installing…" : "Install"}
+                  {busy === "add" ? gt("Installing…") : gt("Install")}
                 </Button>
               ) : null}
               {step.name === "skills" && step.candidates.filter(canAddCandidate).length > 1 ? (
@@ -943,8 +1025,10 @@ export function AddLocalConnectorDialog({
                   }
                 >
                   {busy === "all"
-                    ? "Adding…"
-                    : `Add all ${step.candidates.filter(canAddCandidate).length}`}
+                    ? gt("Adding…")
+                    : gt("Add all {count}", {
+                        count: step.candidates.filter(canAddCandidate).length,
+                      })}
                 </Button>
               ) : null}
               {showsSetup ? (
@@ -955,7 +1039,9 @@ export function AddLocalConnectorDialog({
                   }
                   onClick={() => void submit()}
                 >
-                  {busy === "add" ? "Adding…" : "Add"}
+                  {busy === "add"
+                    ? gt("Adding…")
+                    : gt("Add", { $context: "verb, adds an extension" })}
                 </Button>
               ) : null}
             </>

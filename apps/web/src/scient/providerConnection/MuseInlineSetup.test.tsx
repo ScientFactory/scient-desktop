@@ -10,6 +10,10 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const auth = vi.hoisted(() => ({ state: null as ProviderAuthState | null }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: auth.state, error: null }),

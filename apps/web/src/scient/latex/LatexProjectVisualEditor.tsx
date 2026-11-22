@@ -34,6 +34,8 @@ import { projectVisualNavigation, type LatexSourceNavigation } from "./latexSour
 import { toastManager } from "~/components/ui/toast";
 import { beginScientUiOperation } from "~/scient/analytics/client";
 import { createVisualEditAnalytics } from "./visualEditAnalytics";
+import { msg, T, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 
 interface FileState {
   data: VisualProjectFile | null;
@@ -171,6 +173,7 @@ function ProjectFileSession(props: {
   reported: (path: string, value: boolean) => void;
   detach: (path: string) => void;
 }) {
+  const gt = useGT();
   const { owner, path } = props;
   const { environmentId, cwd } = owner;
   const selected = path === owner.relativePath;
@@ -239,7 +242,9 @@ function ProjectFileSession(props: {
       ? null
       : admissionError !== null
         ? (documentFailureReason(admissionError) ??
-          (admissionError instanceof Error ? admissionError.message : `Could not open ${path}.`))
+          (admissionError instanceof Error
+            ? admissionError.message
+            : gt("Could not open {path}.", { path })))
         : query.error;
 
   const { pending, failure, reported, update } = props;
@@ -255,7 +260,9 @@ function ProjectFileSession(props: {
   useEffect(() => {
     failure(
       path,
-      needsAttention ? `Could not save ${path}. Open its Source view to resolve the save.` : null,
+      needsAttention
+        ? m(msg("Could not save {path}. Open its Source view to resolve the save.", { path }))
+        : null,
     );
   }, [path, needsAttention, failure]);
   const saved = useEffectEvent((source: string) => {
@@ -381,6 +388,10 @@ export function LatexProjectVisualEditor(props: Props) {
     return () => registerSaveProject?.(null);
   }, [registerSaveProject, states]);
   const [pendingPaths, setPendingPaths] = useState(new Set<string>());
+  // Files an insertion is about to include. Read first, so the edit that adds
+  // the include assembles with their text instead of as a missing file.
+  const [includePaths, setIncludePaths] = useState<ReadonlySet<string>>(new Set());
+  const includeWaiters = useRef(new Map<string, Array<(loaded: boolean) => void>>());
   const [saveErrors, setSaveErrors] = useState(new Map<string, string>());
   const [editError, setEditError] = useState<string | null>(null);
   const update = (path: string, file: FileState) => {
@@ -464,11 +475,11 @@ export function LatexProjectVisualEditor(props: Props) {
     warnedNavigation.current = request.requestId;
     toastManager.add({
       type: "warning",
-      title: "Could not locate this source in Visual",
+      title: m(msg("Could not locate this source in Visual")),
       description:
         files.get(request.path)?.contents !== request.source
-          ? "The draft has changed. Double-click the source again."
-          : "This source line has no displayed content in Visual.",
+          ? m(msg("The draft has changed. Double-click the source again."))
+          : m(msg("This source line has no displayed content in Visual.")),
     });
   }, [document, files, props.sourceNavigation, visualNavigation]);
   // A document compiled outside this environment still has its last printed
@@ -609,7 +620,7 @@ export function LatexProjectVisualEditor(props: Props) {
       current.document.missing.length ||
       request.snapshot.id !== current.editorSnapshot.id
     )
-      return refuse("The source context changed while this edit was being prepared.");
+      return refuse(m(msg("The source context changed while this edit was being prepared.")));
     for (const path of current.document.paths) {
       const file = current.files.get(path);
       if (!file?.owner) continue;
@@ -621,7 +632,7 @@ export function LatexProjectVisualEditor(props: Props) {
         live.owner.editVersion !== file.owner.editVersion ||
         saveErrors.has(path)
       )
-        return refuse("The source changed while this edit was being prepared.");
+        return refuse(m(msg("The source changed while this edit was being prepared.")));
     }
     const plan = planVisualProjectEdit(current.document, request.edit, current.files, root);
     if (plan.error) return refuse(plan.error);
@@ -632,7 +643,7 @@ export function LatexProjectVisualEditor(props: Props) {
     for (const [path, edit] of plan.edits) {
       const file = current.files.get(path)!;
       const state = current.states.get(path);
-      if (!state) return refuse(`The source session for ${path} is unavailable.`);
+      if (!state) return refuse(m(msg("The source session for {path} is unavailable.", { path })));
       if (path === props.relativePath) {
         const outcome = props.onEdit({
           snapshot: current.selectedSnapshot,
@@ -642,7 +653,10 @@ export function LatexProjectVisualEditor(props: Props) {
         selectedSnapshot = outcome.snapshot;
       } else {
         const outcome = state.applyEdit(edit);
-        if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
+        if (!outcome.accepted)
+          return refuse(
+            m(msg("The source edit was refused ({reason}).", { reason: outcome.reason })),
+          );
       }
       const lease =
         path === props.relativePath
@@ -699,6 +713,46 @@ export function LatexProjectVisualEditor(props: Props) {
       inverseEdit: { source: nextSnapshot.source, patches: [], physical: inverses },
     };
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- answers callers waiting for a file they asked to read before including it
+  useEffect(() => {
+    for (const [path, waiters] of includeWaiters.current) {
+      if (!states.get(path)?.data) continue;
+      includeWaiters.current.delete(path);
+      for (const resolve of waiters) resolve(true);
+    }
+  }, [states]);
+  const prepareIncludedFiles = (paths: ReadonlyArray<string>) => {
+    const needed = paths.filter(
+      (path) => isLatexPreviewFile(path) && !states.get(path)?.data && path !== props.relativePath,
+    );
+    if (needed.length === 0) return Promise.resolve(true);
+    setIncludePaths((previous) => new Set([...previous, ...needed]));
+    return Promise.all(
+      needed.map(
+        (path) =>
+          new Promise<boolean>((resolve) => {
+            const waiters = includeWaiters.current.get(path) ?? [];
+            includeWaiters.current.set(path, [...waiters, resolve]);
+            globalThis.setTimeout(() => {
+              // A file that never arrived is not kept open for an insertion that gave up.
+              const left = (includeWaiters.current.get(path) ?? []).filter(
+                (item) => item !== resolve,
+              );
+              if (left.length > 0) includeWaiters.current.set(path, left);
+              else includeWaiters.current.delete(path);
+              if (left.length === 0)
+                setIncludePaths((previous) => {
+                  if (!previous.has(path)) return previous;
+                  const next = new Set(previous);
+                  next.delete(path);
+                  return next;
+                });
+              resolve(false);
+            }, 8000);
+          }),
+      ),
+    ).then((loaded) => loaded.every(Boolean));
+  };
   const ready =
     !!document &&
     !document.missing.length &&
@@ -715,18 +769,20 @@ export function LatexProjectVisualEditor(props: Props) {
     null;
   return (
     <>
-      {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys()])].map((path) => (
-        <ProjectFileSession
-          key={path}
-          owner={props}
-          path={path}
-          update={update}
-          pending={pending}
-          failure={failure}
-          reported={reported}
-          detach={detach}
-        />
-      ))}
+      {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys(), ...includePaths])].map(
+        (path) => (
+          <ProjectFileSession
+            key={path}
+            owner={props}
+            path={path}
+            update={update}
+            pending={pending}
+            failure={failure}
+            reported={reported}
+            detach={detach}
+          />
+        ),
+      )}
       {ready && document ? (
         <LatexVisualEditor
           {...props}
@@ -746,6 +802,7 @@ export function LatexProjectVisualEditor(props: Props) {
           draftKey={draftKey}
           fileRevision={JSON.stringify(paths.map((path) => [path, files.get(path)?.revision]))}
           onEdit={onEdit}
+          prepareIncludedFiles={prepareIncludedFiles}
           flushReferenceEdits={async () => {
             const results = await Promise.all([
               props.flushReferenceEdits?.() ?? Promise.resolve(false),
@@ -807,7 +864,7 @@ export function LatexProjectVisualEditor(props: Props) {
               onClick={props.onRetryRootResolution}
               disabled={props.rootResolutionPending}
             >
-              Retry opening document
+              <T>Retry opening document</T>
             </button>
           ) : null}
         </div>

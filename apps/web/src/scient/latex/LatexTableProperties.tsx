@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useId, useState, type ReactNode } from "react";
 import { Input } from "~/components/ui/input";
 import {
@@ -38,6 +39,7 @@ export function LatexTableProperties(props: {
   children: ReactNode;
   apply: (action: LatexTableAction) => void;
 }) {
+  const gt = useGT();
   const shape = latexTableSourceShape(props.source);
   const column = shape?.columns[props.column];
   const [width, setWidth] = useState(column?.width ?? "30mm");
@@ -57,36 +59,36 @@ export function LatexTableProperties(props: {
     <>
       {props.children}
       <MenuSeparator />
-      <TableSubmenu label="Column">
-        <LatexContextMenuForm label="Column options">
+      <TableSubmenu label={gt("Column", { $context: "table column" })}>
+        <LatexContextMenuForm label={gt("Column options")}>
           <label>
-            Alignment
+            <T>Alignment</T>
             <LatexSelect
               size="sm"
-              aria-label="Column text alignment"
+              aria-label={gt("Column text alignment")}
               value={alignment}
               disabled={props.disabled}
               onValueChange={(value) => setAlignment(value as typeof alignment)}
               options={[
-                { value: "left", label: "Left" },
-                { value: "center", label: "Center" },
-                { value: "right", label: "Right" },
+                { value: "left", label: gt("Left", { $context: "text alignment" }) },
+                { value: "center", label: gt("Center", { $context: "text alignment" }) },
+                { value: "right", label: gt("Right", { $context: "text alignment" }) },
               ]}
             />
           </label>
           <label>
-            Width
+            <T>Width</T>
             <LatexSelect
               size="sm"
-              aria-label="Column wrapping"
+              aria-label={gt("Column wrapping")}
               value={wrapping}
               disabled={props.disabled}
               onValueChange={(value) => setWrapping(value as typeof wrapping)}
               options={[
-                { value: "natural", label: "Fit content" },
-                { value: "fixed", label: "Fixed width" },
+                { value: "natural", label: gt("Fit content") },
+                { value: "fixed", label: gt("Fixed width") },
                 ...(shape?.environment === "tabularx"
-                  ? [{ value: "flexible", label: "Flexible" }]
+                  ? [{ value: "flexible", label: gt("Flexible") }]
                   : []),
               ]}
             />
@@ -94,7 +96,7 @@ export function LatexTableProperties(props: {
           {wrapping === "fixed" && (
             <LatexLengthField
               size="sm"
-              label="Column width"
+              label={gt("Column width")}
               value={width}
               onChange={setWidth}
               relative
@@ -103,7 +105,7 @@ export function LatexTableProperties(props: {
           )}
           <div className="flex justify-end">
             {action(
-              "Apply",
+              gt("Apply"),
               { kind: "column", width, wrapping, alignment },
               props.disabled ||
                 (wrapping === "fixed" &&
@@ -112,29 +114,35 @@ export function LatexTableProperties(props: {
           </div>
         </LatexContextMenuForm>
       </TableSubmenu>
-      <TableSubmenu label="Borders">
-        {action("Add above", { kind: "rule", edge: "above", enabled: true })}
-        {action("Add below", { kind: "rule", edge: "below", enabled: true })}
+      <TableSubmenu label={gt("Borders", { $context: "table borders" })}>
+        {action(gt("Add above"), { kind: "rule", edge: "above", enabled: true })}
+        {action(gt("Add below"), { kind: "rule", edge: "below", enabled: true })}
         <MenuSeparator />
-        {action("Remove above", { kind: "rule", edge: "above", enabled: false })}
-        {action("Remove below", { kind: "rule", edge: "below", enabled: false })}
+        {action(gt("Remove above"), { kind: "rule", edge: "above", enabled: false })}
+        {action(gt("Remove below"), { kind: "rule", edge: "below", enabled: false })}
       </TableSubmenu>
-      <TableSubmenu label="Layout">
+      <TableSubmenu label={gt("Layout")}>
         {props.hasCaption && (
-          <TableSubmenu label="Caption position">
-            {action("Above", { kind: "caption-position", position: "above" })}
-            {action("Below", { kind: "caption-position", position: "below" })}
+          <TableSubmenu label={gt("Caption position")}>
+            {action(gt("Above", { $context: "caption position" }), {
+              kind: "caption-position",
+              position: "above",
+            })}
+            {action(gt("Below", { $context: "caption position" }), {
+              kind: "caption-position",
+              position: "below",
+            })}
           </TableSubmenu>
         )}
         {float && (
-          <TableSubmenu label="Placement">
+          <TableSubmenu label={gt("Placement")}>
             <MenuRadioGroup value={float[1] ?? "htbp"}>
               {[
-                { value: "htbp", label: "Automatic" },
-                { value: "t", label: "Top" },
-                { value: "b", label: "Bottom" },
-                { value: "p", label: "Float page" },
-                { value: "H", label: "Here" },
+                { value: "htbp", label: gt("Automatic") },
+                { value: "t", label: gt("Top", { $context: "float placement" }) },
+                { value: "b", label: gt("Bottom", { $context: "float placement" }) },
+                { value: "p", label: gt("Float page") },
+                { value: "H", label: gt("Here", { $context: "float placement" }) },
               ].map((option) => (
                 <DockCommandRadioItem
                   key={option.value}
@@ -150,18 +158,18 @@ export function LatexTableProperties(props: {
         )}
         {shape?.environment !== "longtable" &&
           action(
-            "Multipage",
+            gt("Multipage"),
             { kind: "multipage" },
             props.disabled || shape?.environment !== "tabular",
           )}
         {shape?.environment === "longtable" && (
-          <TableSubmenu label="Continuation">
-            <LatexContextMenuForm label="Table continuation">
+          <TableSubmenu label={gt("Continuation")}>
+            <LatexContextMenuForm label={gt("Table continuation")}>
               <label>
-                Header rows
+                <T>Header rows</T>
                 <Input
                   size="compact"
-                  aria-label="Repeated header row count"
+                  aria-label={gt("Repeated header row count")}
                   type="number"
                   min={1}
                   max={10}
@@ -171,7 +179,7 @@ export function LatexTableProperties(props: {
                 />
               </label>
               {action(
-                "Repeat header",
+                gt("Repeat header"),
                 { kind: "repeat-header", rows: Number(headerRows) },
                 props.disabled ||
                   !Number.isInteger(Number(headerRows)) ||
@@ -179,17 +187,17 @@ export function LatexTableProperties(props: {
                   Number(headerRows) > 10,
               )}
               <label>
-                Footer
+                <T context="table continuation footer">Footer</T>
                 <Input
                   size="compact"
-                  aria-label="Table continuation footer"
+                  aria-label={gt("Table continuation footer")}
                   value={continuation}
                   disabled={props.disabled}
                   onChange={(event) => setContinuation(event.target.value)}
                 />
               </label>
               {action(
-                "Apply footer",
+                gt("Apply footer"),
                 { kind: "continuation", text: continuation },
                 props.disabled || /[\\{}%#$&_^~]/u.test(continuation),
               )}

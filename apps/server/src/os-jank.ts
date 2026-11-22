@@ -4,10 +4,12 @@ import {
   extractEnvironmentValues,
   listLoginShellCandidates,
   mergePathEntries,
+  mergePathValues,
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
   setWindowsPath,
+  WindowsShellEnvironment,
 } from "@t3tools/shared/shell";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "__MISE_DIFF",
   "JAVA_HOME",
+  "T3CODE_FEATURE_FLAGS",
   // SCIENT-FORK:START - Compute looks where the person's shell setup says their tools are.
   ...DISCOVERY_VARIABLES,
   // SCIENT-FORK:END
@@ -70,6 +73,10 @@ function applyLoginShellEnvironment(
   // is only reachable through the JAVA_HOME the shell profile sets.
   if (!env.JAVA_HOME && shellEnvironment.JAVA_HOME) {
     env.JAVA_HOME = shellEnvironment.JAVA_HOME;
+  }
+  // A headless server (systemd, launchd) reads no profile, yet flags belong where users export them.
+  if (env.T3CODE_FEATURE_FLAGS === undefined && shellEnvironment.T3CODE_FEATURE_FLAGS) {
+    env.T3CODE_FEATURE_FLAGS = shellEnvironment.T3CODE_FEATURE_FLAGS;
   }
   // SCIENT-FORK:START
   for (const name of DISCOVERY_VARIABLES) {
@@ -229,6 +236,20 @@ export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(
   } else {
     yield* Effect.logWarning(`Login shell ${shell} printed no PATH; PATH is unchanged.`);
   }
+});
+
+// Installers write PATH to the registry, which the server's launch-time PATH never sees again.
+// Returns whether PATH gained a directory.
+export const refreshWindowsPath = Effect.fn("refreshWindowsPath")(function* () {
+  if ((yield* HostProcess.Platform) !== "win32") return false;
+  const env = yield* HostProcess.Environment;
+  const readEnvironment = yield* WindowsShellEnvironment;
+  const { PATH: registryPath } = yield* readEnvironment(["PATH"], { loadProfile: false });
+  const currentPath = env.PATH ?? env.Path ?? env.path;
+  const mergedPath = mergePathValues(currentPath, registryPath, "win32");
+  if (!mergedPath || mergedPath === currentPath) return false;
+  setWindowsPath(env, mergedPath);
+  return true;
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {
