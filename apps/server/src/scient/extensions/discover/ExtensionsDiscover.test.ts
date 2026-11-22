@@ -4,6 +4,7 @@ import {
   DiscoverCatalog,
   DiscoverEntry,
   DiscoverPage,
+  ExtensionCategory,
   isExtensionIconDataUri,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -30,6 +31,7 @@ import {
   MOST_USED_SERVER_IDS,
   type CuratedServer,
 } from "./curatedCatalog.ts";
+import { forClientCategories } from "./clientCategories.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
 import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
 import recordedPage from "./fixtures/registry-servers-page.json" with { type: "json" };
@@ -746,6 +748,53 @@ describe("curated Discover catalog", () => {
           },
           [...CURATED_SERVERS].reverse(),
         ).layer(),
+      ),
+    ),
+  );
+
+  it.effect("names only categories the client decodes; older clients get the old ones", () =>
+    Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const catalog = yield* discover.catalog();
+      // What clients decoded before they sent `knownCategories`.
+      const OlderCategory = Schema.Literals([
+        "most-used",
+        "papers",
+        "biology",
+        "code",
+        "data",
+        "physics-math",
+        "files",
+        "communication",
+        "projects",
+        "figures",
+        "chemistry",
+        "earth",
+        "social-science",
+      ]);
+      const decodesForOlder = Schema.is(Schema.Array(OlderCategory));
+      const named = (value: DiscoverCatalog) =>
+        value.sections.flatMap((section) => [
+          section.category,
+          ...section.entries.flatMap((entry) => entry.categories),
+        ]);
+      expect(decodesForOlder(named(catalog))).toBe(false);
+      const older = forClientCategories(undefined).catalog(catalog);
+      expect(decodesForOlder(named(older))).toBe(true);
+      const huggingFace = older.sections[0]?.entries.find(
+        (entry) => entry.title === "Hugging Face",
+      );
+      expect(huggingFace?.categories).toEqual(["most-used", "code", "data"]);
+      const page = yield* discover.search({ scope: "curated", query: "Vercel" });
+      const olderPage = forClientCategories(undefined).page(page);
+      expect(olderPage.entries.length).toBeGreaterThan(0);
+      expect(decodesForOlder(olderPage.entries.flatMap((entry) => entry.categories))).toBe(true);
+      expect(forClientCategories(ExtensionCategory.literals).catalog(catalog)).toEqual(catalog);
+    }).pipe(
+      Effect.provide(
+        harness(() => {
+          throw new Error("No registry expected");
+        }).layer(),
       ),
     ),
   );

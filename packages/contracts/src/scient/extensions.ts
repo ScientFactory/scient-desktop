@@ -648,6 +648,14 @@ export const ExtensionCategory = Schema.Literals([
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
 /**
+ * The categories a client can decode, sent with every Discover request. Servers then name only
+ * these: an entry in a newer category is listed under the categories it had before, and a newer
+ * section is left out. Clients from before this field send nothing and receive the categories
+ * that existed then.
+ */
+const KnownExtensionCategories = Schema.optional(Schema.Array(Schema.String));
+
+/**
  * `curated`: Scient's catalog, answered locally without the network.
  * `registry`: the MCP Registry, without the servers the same curated query returns.
  */
@@ -663,6 +671,7 @@ export const DiscoverSearchInput = Schema.Struct({
   cursor: Schema.optional(TrimmedNonEmptyString),
   /** `registry` only: page size, 1 to 100. */
   limit: Schema.optional(Schema.Number),
+  knownCategories: KnownExtensionCategories,
 });
 export type DiscoverSearchInput = typeof DiscoverSearchInput.Type;
 
@@ -739,8 +748,14 @@ export const DiscoverCatalog = Schema.Struct({
 });
 export type DiscoverCatalog = typeof DiscoverCatalog.Type;
 
+export const DiscoverCatalogInput = Schema.Struct({ knownCategories: KnownExtensionCategories });
+export type DiscoverCatalogInput = typeof DiscoverCatalogInput.Type;
+
 /** Exact lookup of one curated or registry entry by name; fails with `not-found`. */
-export const DiscoverEntryInput = Schema.Struct({ name: TrimmedNonEmptyString });
+export const DiscoverEntryInput = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  knownCategories: KnownExtensionCategories,
+});
 export type DiscoverEntryInput = typeof DiscoverEntryInput.Type;
 
 export const DiscoverPage = Schema.Struct({
