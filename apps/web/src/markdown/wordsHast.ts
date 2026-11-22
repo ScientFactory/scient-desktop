@@ -1166,6 +1166,8 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
       source,
       toOriginal: insights?.toOriginal,
       withoutMath: (markdown) => parse(markdown, { ...renderOptions, math: false }),
+      breaks: options.breaks,
+      breakLines: (paragraph) => breakLines(paragraph, options.breaks),
     });
   } else if (walk.math.size > 0) restoreMath(hast, walk.math);
   // SCIENT-FORK:END

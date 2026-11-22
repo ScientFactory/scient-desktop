@@ -77,8 +77,8 @@ interface Formula {
   readonly literal: boolean;
   /** A math fence without its closing fence, shown as code. */
   readonly unclosed: boolean;
-  /** The line that made a display formula a setext heading: a rule or a paragraph after it. */
-  readonly underline: string | undefined;
+  /** The line that made a display formula a setext heading, and whether a line follows it. */
+  readonly underline: { readonly line: string; readonly continued: boolean } | undefined;
   readonly tex: string;
   /** The source Words read, so insight blocks can map the formula back to the message. */
   readonly origin: string;
@@ -126,12 +126,19 @@ export function scientWordsFormula(svg: Element, source: string): Element {
     literal:
       tex.length > MAX_SCIENT_TEX_LENGTH ||
       (!doubleDollar && authored.startsWith("$") && isScientShellVariableTex(tex)),
-    underline:
-      display && ownLine ? SETEXT_UNDERLINE.exec(source.slice(end, end + 1024))?.[1] : undefined,
+    underline: display && ownLine ? setextUnderline(source, end) : undefined,
     tex,
     origin: source,
   });
   return formula;
+}
+
+/** The setext underline on the line after `end`, if any, and whether text continues past it. */
+function setextUnderline(source: string, end: number): Formula["underline"] {
+  const found = SETEXT_UNDERLINE.exec(source.slice(end, end + 1024));
+  if (!found) return undefined;
+  const after = end + found[0].length;
+  return { line: found[1]!, continued: /^[ \t>]*\S/.test(source.slice(after, after + 256)) };
 }
 
 export interface ScientWordsMathRestore {
@@ -145,6 +152,10 @@ export interface ScientWordsMathRestore {
   readonly toOriginal?: ((offset: number) => number) | undefined;
   /** Words' tree for Markdown read without math, for an image's alt text. */
   readonly withoutMath: (markdown: string) => Root;
+  /** Soft line breaks render as `<br>`. */
+  readonly breaks: boolean;
+  /** wordsHast's line breaks for a paragraph this pass rebuilds. */
+  readonly breakLines: (paragraph: Element) => void;
 }
 
 /**
@@ -252,7 +263,9 @@ export function restoreScientWordsMath(
    * A setext heading whose last line is an underlined display formula: the prose before it, the
    * formula and its underline.
    */
-  const underlinedFormula = (heading: Element): [ElementContent[], Element, string] | undefined => {
+  const underlinedFormula = (
+    heading: Element,
+  ): [ElementContent[], Element, NonNullable<Formula["underline"]>] | undefined => {
     const content = heading.children as ElementContent[];
     let last = content.length - 1;
     while (last >= 0 && isBlank(content[last])) last--;
@@ -278,20 +291,33 @@ export function restoreScientWordsMath(
       }
       const underlined = /^h[12]$/.test(child.tagName) ? underlinedFormula(child) : undefined;
       if (underlined && mathAllowed && !options.preview && BLOCK_PARENTS.has(parentTag)) {
-        // A one-line display formula stays a block after its paragraph; its underline is a rule
-        // or a paragraph.
+        // A one-line display formula stays a block after its paragraph. Its underline is a rule
+        // when it is one; otherwise it is text that starts the paragraph after it.
         const [prose, code, underline] = underlined;
         const paragraph: Element = { type: "element", tagName: "p", properties: {}, children: [] };
         const before = paragraphFromRun(paragraph, prose);
-        const after: Element = underline.startsWith("-")
-          ? { type: "element", tagName: "hr", properties: {}, children: [] }
-          : { ...paragraph, children: [text(underline)] };
+        if (before) options.breakLines(before);
         const blocks: ElementContent[] = [
           ...(before ? [before, text("\n")] : []),
           mathElement(code, "div", true),
-          text("\n"),
-          after,
         ];
+        if (/^-{3,}$/.test(underline.line)) {
+          blocks.push(text("\n"), { type: "element", tagName: "hr", properties: {}, children: [] });
+        } else {
+          let next = index + 1;
+          while (next < children.length && isBlank(children[next])) next++;
+          const following = children[next];
+          const lineEnd: ElementContent[] = options.breaks
+            ? [
+                text(underline.line),
+                { type: "element", tagName: "br", properties: {}, children: [] },
+                text("\n"),
+              ]
+            : [text(`${underline.line}\n`)];
+          if (underline.continued && following?.type === "element" && following.tagName === "p") {
+            following.children.unshift(...lineEnd);
+          } else blocks.push(text("\n"), { ...paragraph, children: [text(underline.line)] });
+        }
         children.splice(index, 1, ...blocks);
         // The new blocks are visited in turn, so formulas in the prose are placed too.
         index--;

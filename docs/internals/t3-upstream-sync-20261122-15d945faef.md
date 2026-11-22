@@ -48,7 +48,8 @@ Scient's behaviour sits in Scient modules mounted at marked seams in `wordsHast.
   SVG's label, and the authored source, sliced from Words' source position, rides on the element
   for Find. Words' inline or display reading stands, with three presentation rules applied when
   the formula is placed: `$$…$$` beside other text on its line shows inline, a one-line display
-  formula that Words underlined into a setext heading stays a block followed by its rule, and a
+  formula that Words underlined into a setext heading stays a block, its underline a rule only
+  when it is one (otherwise text starting the next paragraph), and a
   single-dollar formula whose TeX is a shell variable or path (`$PATH$`, `$HOME/$USER`) or TeX
   over 1,000 characters shows its source. An image's alt text keeps a formula's delimiters.
   Words' SVG costs about 0.05 ms per 5 KB message; dropping the remark grammar took a math-heavy
@@ -59,6 +60,14 @@ Scient's behaviour sits in Scient modules mounted at marked seams in `wordsHast.
   formulas of 300–1,000 characters are math, and `$x | y$` in a table cell is one formula. T3
   deleted the KaTeX `%` repair Scient still uses; it now lives in `scient/math/katexPercentRepair.ts`
   with T3's test.
+  Known limits:
+  - An unused footnote's formula still selects a `$skill` when its definition sits in a list item,
+    its label holds an escaped bracket, or an unfinished fence after it swallows the reference the
+    range finder appends.
+  - A math fence that only the end of its quote or list item closes shows as code rebuilt from its
+    TeX: blank lines at its edges and its info-string title are lost.
+  - An Insight opener whose callout begins with prose, a display formula and a `---` line reads as
+    a setext heading before math is placed, so the callout does not open.
 - **Direction.** `rehypeScientBidi` replaces T3's per-block direction pass inside `wordsHast.ts`;
   T3's `markdownTextDirection.ts` stays deleted. Its letter classes stay exported in
   `textDirection.ts` as T3 ships them (knip exception).

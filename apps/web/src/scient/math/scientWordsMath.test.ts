@@ -147,7 +147,7 @@ describe("Scient math on Words", () => {
     const atx = toHtml(chatHast("# \\[x\\]\n---"));
     expect(atx).toMatch(/<h1[^>]*>/);
     expect(atx.match(/<hr>/g)).toHaveLength(1);
-    expect(toHtml(chatHast("\\[x^2\\]\n===\nafter"))).toMatch(/<\/pre>\n<p[^>]*>===<\/p>/);
+    expect(toHtml(chatHast("\\[x^2\\]\n===\nafter"))).toMatch(/<\/pre>\n<p[^>]*>===\nafter<\/p>/);
     const indented = toHtml(chatHast("```math\nx\n```\n    code line"));
     expect(indented).toMatch(/<pre[^>]*><code[^>]*>code line/);
     expect(toHtml(chatHast("> $$\n> y\n> $$\n> ---"))).toContain("<hr>");
@@ -183,6 +183,24 @@ describe("Scient math on Words", () => {
         tree.children.flatMap((child) => (child.type === "element" ? [child.tagName] : [])),
       ).toEqual(["p", "pre", "hr", "p"]);
     }
+    const short = toHtml(chatHast("before\n$$x$$\n--\nafter"));
+    expect(short).not.toContain("<hr>");
+    expect(short).toMatch(/<\/pre>\n<p[^>]*>--\nafter<\/p>/);
+    expect(toHtml(chatHast("before\n$$x$$\n--\n\nafter"))).toMatch(
+      /<\/pre>\n<p[^>]*>--<\/p>\n<p[^>]*>after<\/p>/,
+    );
+    const broken = toHtml(
+      wordsHast("line 1\nline 2\n$$x$$\n---\nafter", {
+        math: true,
+        breaks: true,
+        escapeHtml: false,
+        insights: false,
+        extensions: {},
+        scient: { math: true, contentDirection: "ltr" },
+      }),
+    );
+    expect(broken).toMatch(/<p[^>]*>line 1<br>\nline 2<\/p>/);
+    expect(broken).toContain("<hr>");
     expect(formulas(chatHast("with $y$\n$$x$$\n---")).map((formula) => formula.kind)).toEqual([
       "inline",
       "display",
