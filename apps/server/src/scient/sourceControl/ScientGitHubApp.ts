@@ -6,10 +6,7 @@ import * as Option from "effect/Option";
 /** The public client ID of the Scient for GitHub app. Device flow needs no secret. */
 export const SCIENT_GITHUB_APP_CLIENT_ID = "Iv23lieBEtqTwH75xtnk";
 
-/**
- * `flags` with Scient's app when the operator named none. An explicitly empty
- * `github_app_client_id=` still turns the app sign-in off.
- */
+/** `flags` with Scient's app when the operator named none (T3 reads an empty value as none). */
 export const withScientGitHubApp = (
   flags: FeatureFlags.FeatureFlagValues,
 ): FeatureFlags.FeatureFlagValues =>

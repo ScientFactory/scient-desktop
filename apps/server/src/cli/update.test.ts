@@ -259,11 +259,16 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const repointed = yield* repointLauncher({ launchedAs, baseDir, targetEntryPath });
 
       assert.equal(Option.getOrUndefined(repointed), launcher);
-      assert.equal(yield* fs.readFileString(launcher), `@echo off\r\n"${targetEntryPath}" %*`);
+      // SCIENT-FORK: Scient's launcher runs the entry through its own Node.
+      assert.equal(
+        yield* fs.readFileString(launcher),
+        `@echo off\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"C:\\Scient\\node.exe" "${targetEntryPath}" %*`,
+      );
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      Effect.provideService(HostProcess.ExecutablePath, "C:\\Scient\\node.exe"),
     ),
   );
 

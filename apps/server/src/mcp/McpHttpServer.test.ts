@@ -1192,18 +1192,14 @@ it.effect("sheds log entries before locators when every list is full", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const long = "x".repeat(2_000);
+      // Snapshots carry their locators (`[ref=…]`) in the ARIA tree.
+      const accessibilityTree = Array.from(
+        { length: 20 },
+        (_, i) => `- button "Button ${i}" [ref=t3-1-e${i}]`,
+      ).join("\n");
       const oversized = {
         ...snapshotResult,
-        interactiveElements: Array.from({ length: 20 }, (_, i) => ({
-          tag: "button",
-          role: "button",
-          name: `Button ${i}`,
-          selector: `#button-${i}`,
-          x: 0,
-          y: 0,
-          width: 10,
-          height: 10,
-        })),
+        accessibilityTree,
         consoleEntries: Array.from({ length: 200 }, () => ({
           level: long,
           text: long,
@@ -1237,18 +1233,18 @@ it.effect("sheds log entries before locators when every list is full", () =>
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
       );
       const parsed = decodeJsonText(body) as {
-        readonly interactiveElements: ReadonlyArray<unknown>;
+        readonly accessibilityTree: string;
         readonly consoleEntries: ReadonlyArray<unknown>;
         readonly networkEntries: ReadonlyArray<unknown>;
         readonly actionTimeline: ReadonlyArray<unknown>;
       };
-      expect(parsed.interactiveElements).toHaveLength(20);
+      expect(parsed.accessibilityTree).toBe(accessibilityTree);
       expect(
         parsed.consoleEntries.length + parsed.networkEntries.length + parsed.actionTimeline.length,
       ).toBeLessThan(120);
       const noticeText = notice?.type === "text" ? notice.text : "";
       expect(noticeText).toContain("40 of 40 actionTimeline");
-      expect(noticeText).not.toMatch(/\d+ of \d+ interactiveElements/);
+      expect(noticeText).not.toContain("accessibilityTree");
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

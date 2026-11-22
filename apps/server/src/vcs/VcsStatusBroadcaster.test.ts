@@ -1208,7 +1208,7 @@ describe("VcsStatusBroadcaster", () => {
         ...baseRemoteStatus,
         aheadCount: 2,
       };
-      const refreshed = yield* broadcaster.refreshStatus("/repo");
+      const { refsDigest: _refsDigest, ...refreshed } = yield* broadcaster.refreshStatus("/repo");
       // Explicit refresh publishes local state first and reads it again only when the
       // remote fetch moved the refs, which it did not here.
       assert.equal(state.localStatusCalls, 2);

@@ -9,7 +9,6 @@ describe("withScientGitHubApp", () => {
   it.effect.each([
     ["Scient's app when the operator set none", undefined, SCIENT_GITHUB_APP_CLIENT_ID],
     ["the operator's own test app", "github_app_client_id=Iv-test-app", "Iv-test-app"],
-    ["no app when the operator turned it off", "github_app_client_id=", ""],
   ])("signs in with %s", ([_, flags, expected]) =>
     Effect.gen(function* () {
       const resolved = withScientGitHubApp(yield* FeatureFlags.resolve(flags));

@@ -1395,7 +1395,7 @@ when they add it) is unset, and Source Control connectors move between
 
 Scient for GitHub (client ID `Iv23lieBEtqTwH75xtnk`, device flow, no secret) is
 the default app sign-in on every server; the `github_app_client_id` entry of
-`T3CODE_FEATURE_FLAGS` overrides it, and an empty value turns it off. Device sign-in from the add dialog shows
+`T3CODE_FEATURE_FLAGS` replaces it with another app. Device sign-in from the add dialog shows
 the code and opens `github.com/login/device` in Scient's browser. A token remains
 available. Only user-added URLs expose custom OAuth client settings.
 

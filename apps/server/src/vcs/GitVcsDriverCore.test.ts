@@ -518,6 +518,8 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
         language: "C",
       },
       { args: ["rev-parse", "--symbolic-full-name", "HEAD"], language: "C" },
+      // The branch list reads the layout in one call; a failed read falls back to the common dir.
+      { args: ["rev-parse", "--git-common-dir", "--show-toplevel"], language: "C" },
       { args: ["rev-parse", "--git-common-dir"], language: "C" },
     ]);
   }).pipe(Effect.provide(layer));
