@@ -17,7 +17,6 @@ import {
   type AccountPlainKey,
   type AccountPlainKeyInput,
   type AccountsCheckInput,
-  type AccountsSnapshot,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -547,22 +546,15 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
           Effect.provideService(Path.Path, path),
         );
   return {
-    // A check can find sessions back, so papers waiting on the user go on. A glance never signs
-    // in, so it lets them go on only when it found its university newly signed in.
+    // A check can find sessions back, so papers waiting on the user go on. A glance leaves them:
+    // a paper that goes on may sign in elsewhere, and a glance never signs in.
     check: (input: AccountsCheckInput) =>
       run((environmentId) =>
-        Effect.gen(function* () {
-          const signedIn = (snapshot: AccountsSnapshot) =>
-            snapshot.accounts.find(({ accountId }) => accountId === input.accountId)?.signIn
-              ?.state === "signed-in";
-          const before = input.glance ? signedIn(yield* accounts.snapshot) : false;
-          const result = yield* checkAccounts(input, environmentId);
-          if (result.checked === 0) return result;
-          if (!input.glance) yield* continueWaitingPapers(environmentId);
-          else if (!before && input.accountId && signedIn(yield* accounts.snapshot))
-            yield* continueWaitingPapers(environmentId, input.accountId);
-          return result;
-        }),
+        checkAccounts(input, environmentId).pipe(
+          Effect.tap(({ checked }) =>
+            checked > 0 && !input.glance ? continueWaitingPapers(environmentId) : Effect.void,
+          ),
+        ),
       ),
     paperForSource: (input: AccountPaperForSourceInput) =>
       run((environmentId) =>

@@ -219,9 +219,9 @@ export function UniversityCrest({
     for (const { accountId } of universities) {
       if (now - (glancedAt.get(accountId) ?? 0) < GLANCE_AGAIN_MS) continue;
       glancedAt.set(accountId, now);
-      // A request that failed may be asked again on the next open.
+      // A request that failed, or was turned away by a running check, is asked again next open.
       void check({ accountId, glance: true }).then((result) => {
-        if (!result.ok) glancedAt.delete(accountId);
+        if (!result.ok || result.value.alreadyRunning) glancedAt.delete(accountId);
       });
     }
   });
