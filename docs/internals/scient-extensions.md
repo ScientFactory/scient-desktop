@@ -938,8 +938,9 @@ read keeps what the same build last reported.
 Plugins reach an agent only through the home it reads. Claude instances report
 `pluginHomes.claude` (their resolved Claude home); Scient Agent reports
 `pluginHomes.claude` (its `CLAUDE_CONFIG_DIR` or `~/.claude`) and, while it loads
-Codex's plugins, `pluginHomes.codex` (its `CODEX_HOME` or `~/.codex`); Codex
-instances report their home as `runtimePaths.homePath`. A Claude Code plugin's
+Codex's plugins, `pluginHomes.codex` (its `CODEX_HOME`, expanded like Codex's own
+home and passed on resolved, or `~/.codex`); Codex instances report their shared
+home as `pluginHomes.codex`. A Claude Code plugin's
 `shared` audience and a Codex plugin's `codex` audience carry the owner's
 `pluginHome`, and reach only agents reading the same home (an unknown home on
 either side counts as the same). `storeInstallTarget` sends Scient Agent's Add

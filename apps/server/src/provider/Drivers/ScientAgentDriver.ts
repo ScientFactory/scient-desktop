@@ -5,6 +5,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -149,10 +150,16 @@ export const ScientAgentDriver: ScientProviderDriver<
         path.join(yield* HostProcess.HomeDirectory, ".claude"),
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
-    // The Codex home whose installed plugins the codex-plugins source reads, as Codex resolves it.
+    // The Codex home whose installed plugins the codex-plugins source reads. A given CODEX_HOME is
+    // expanded as Codex expands its home and passed on resolved, so both read the same folder.
+    const userHome = yield* HostProcess.HomeDirectory;
+    const configuredCodexHome = processEnv.CODEX_HOME?.trim();
     const codexHome = path.resolve(
-      processEnv.CODEX_HOME?.trim() || path.join(yield* HostProcess.HomeDirectory, ".codex"),
+      configuredCodexHome
+        ? expandHomePath(configuredCodexHome, userHome)
+        : path.join(userHome, ".codex"),
     );
+    if (configuredCodexHome) processEnv.CODEX_HOME = codexHome;
     // Image generation waits for the provider check to find an account that can make images.
     const writeHostConfig = (imageAccount: boolean) =>
       writeScientAgentHostConfig(root, {

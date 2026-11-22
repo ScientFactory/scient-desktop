@@ -443,10 +443,7 @@ describe("account services", () => {
     );
     // No Claude reads that home: Scient Agent installs it itself.
     expect(storeInstallTarget(agent, "shared", [work, agent])?.instanceId).toBe(agent.instanceId);
-    const codexAt = (home: string) => ({
-      ...codex,
-      runtimePaths: { homePath: home, shadowHomePath: null },
-    });
+    const codexAt = (home: string) => ({ ...codex, pluginHomes: { codex: home } });
     expect(storeInstallTarget(agent, "codex", [codexAt("/u/.codex"), agent])?.driver).toBe("codex");
     expect(storeInstallTarget(agent, "codex", [codexAt("/u/other"), agent])).toBeUndefined();
     const linear = { kind: "codex" as const, id: "linear@openai-curated", apps: [] };

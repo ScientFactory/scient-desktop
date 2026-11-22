@@ -500,9 +500,13 @@ export function StoreEntryAgents({ entry }: { readonly entry: ProviderStoreEntry
       }),
     ),
   );
-  // One copy per store; the first reader that lists it names it.
+  // One copy per store. Readers of one store that list it under different ids (separate Claude
+  // homes with differently named marketplaces) leave that store out: one id serves every agent
+  // reading it, and a wrong id would fail to install.
   const found = matches.filter(
-    ([kind], index) => matches.findIndex(([other]) => other === kind) === index,
+    ([kind, id], index) =>
+      matches.findIndex(([other]) => other === kind) === index &&
+      matches.every(([other, otherId]) => other !== kind || otherId === id),
   );
   if (found.length === 0) return null;
   const ids: Partial<Record<ProviderStoreEntry["kind"], string>> = Object.fromEntries([

@@ -428,12 +428,8 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
 const CODEX_HOST_MARKETPLACE = "openai-bundled";
 
 /** The Codex home a Codex instance installs plugins into, or the one a Scient Agent reads. */
-function codexPluginHome(
-  provider: Pick<ServerProvider, "driver" | "runtimePaths" | "pluginHomes">,
-): string | undefined {
-  return provider.driver === "codex"
-    ? provider.runtimePaths?.homePath
-    : provider.pluginHomes?.codex;
+function codexPluginHome(provider: Pick<ServerProvider, "pluginHomes">): string | undefined {
+  return provider.pluginHomes?.codex;
 }
 
 /** Two plugin homes are the same unless both are known and differ. */
@@ -477,7 +473,7 @@ export function storeInstallTarget(
  * from the same Codex home reach too, when one does; `undefined` leaves it Codex's own.
  */
 function codexPluginAudience(
-  provider: Pick<ServerProvider, "driver" | "instanceId" | "runtimePaths" | "pluginHomes">,
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "pluginHomes">,
   /** The plugin's `<name>@<marketplace>` id; absent for the store as a whole. */
   id: string | undefined,
   providers: ReadonlyArray<ServerProvider>,
@@ -560,7 +556,7 @@ export function providerExtensionAudience(
  * Antigravity Marketplace serves Antigravity.
  */
 export function providerStoreAudience(
-  provider: Pick<ServerProvider, "driver" | "instanceId" | "runtimePaths" | "pluginHomes">,
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "pluginHomes">,
   kind: ProviderStoreEntry["kind"],
   providers: ReadonlyArray<ServerProvider>,
   /** One entry's plugin id; absent for the store as a whole. */
