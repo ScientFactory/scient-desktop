@@ -42,7 +42,7 @@ const PAUSE_MS = 1_500;
 const UNIVERSITY_LOOKS = 12;
 const STEADY_LOOKS = 4;
 /** OpenAthens' quiet ask goes to its sign-in service and back, which takes a few seconds. */
-const OPEN_ATHENS_LOOKS = 50;
+const OPEN_ATHENS_WAIT = "15 seconds";
 
 const decodePage = Schema.decodeUnknownEffect(ProfileDetection);
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
@@ -158,18 +158,24 @@ const askOpenAthens = Effect.fn("AccountsCheck.openAthens")(function* (
   ) => Effect.Effect<A, AccountsError>,
   tabId: PreviewTabId,
 ) {
-  for (let look = 0; look < OPEN_ATHENS_LOOKS; look++) {
-    // A look during a page change fails; the next one reads the page that came.
-    const answer = yield* invoke<unknown>(
-      "evaluate",
-      { expression: openAthensCheckScript },
-      tabId,
-    ).pipe(Effect.orElseSucceed(() => "wait"));
-    if (answer === "signed-in") return "signed-in" as const;
-    if (answer === "signed-out") return "signed-out" as const;
-    yield* Effect.sleep("300 millis");
-  }
-  return "unknown" as const;
+  const looks = Effect.gen(function* () {
+    for (;;) {
+      // A look during a page change fails; the next one reads the page that came.
+      const answer = yield* invoke<unknown>(
+        "evaluate",
+        { expression: openAthensCheckScript },
+        tabId,
+      ).pipe(Effect.orElseSucceed(() => "wait"));
+      if (answer === "signed-in") return "signed-in" as const;
+      if (answer === "signed-out") return "signed-out" as const;
+      yield* Effect.sleep("300 millis");
+    }
+  });
+  // One deadline for the whole ask, so a browser that stops answering can't hold other checks.
+  return yield* looks.pipe(
+    Effect.timeoutOption(OPEN_ATHENS_WAIT),
+    Effect.map(Option.getOrElse(() => "unknown" as const)),
+  );
 });
 
 const lookOnce = Effect.fn("AccountsCheck.one")(function* (
