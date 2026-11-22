@@ -343,8 +343,18 @@ function candidateProvider(input: {
   if (Object.keys(input.artifacts).length !== policies.length) {
     throw new Error(`${input.provider} discovery did not return every app-approved target.`);
   }
+  // A zstd copy too large to download is left out, so the raw binary is offered on its own.
+  const artifacts = Object.fromEntries(
+    Object.entries(input.artifacts).map(([key, artifact]) => {
+      const policy = policies.find((entry) => entry.key === key)?.policy;
+      const limit = policy?.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES;
+      if (!artifact.compressed || artifact.compressed.size <= limit) return [key, artifact];
+      const { compressed: _oversized, ...raw } = artifact;
+      return [key, raw];
+    }),
+  ) as typeof input.artifacts;
   for (const { key, policy } of policies) {
-    const artifact = input.artifacts[key];
+    const artifact = artifacts[key];
     if (!artifact) throw new Error(`${input.provider} is missing ${key}.`);
     const hydrated = hydrateManagedRuntimeArtifact(
       policy,
@@ -368,7 +378,7 @@ function candidateProvider(input: {
     channel: "stable",
     version: input.version,
     ...(input.supersedes ? { supersedes: input.supersedes.toSorted() } : {}),
-    artifacts: input.artifacts,
+    artifacts,
   };
 }
 
