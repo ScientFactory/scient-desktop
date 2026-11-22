@@ -272,6 +272,9 @@ it.effect("a glance at a university only looks, at most every two minutes", () =
     expect(first.checked).toEqual({ checked: 1 });
     expect(first.uses).toEqual([]);
     expect(first.checks).toEqual([{ accountId: typed.accountId, state: "signed-out" }]);
+    // A glance names its university; without one it looks at nothing.
+    const unnamed = yield* run([typed], true, {}, { glance: true });
+    expect(unnamed).toMatchObject({ checked: { checked: 0 }, operations: [] });
     const soon = yield* run([typed], true, {}, glance);
     expect(soon).toMatchObject({ checked: { checked: 0 }, operations: [] });
     // Check is the user's own press: it still looks, and tries the sign-in, within the two minutes.

@@ -53,9 +53,12 @@ const CHECK_THREAD = ThreadId.make("scient-accounts-check");
 
 const run = Semaphore.makeUnsafe(1);
 
+/** Full checks, one at a time; a second press is told one is already running. */
+const fullRun = Semaphore.makeUnsafe(1);
+
 /** A glance trusts a look this recent. An unchanged look writes nothing, so `signIn.at` can't tell. */
 const GLANCE_FRESH_MS = 2 * 60 * 1000;
-/** When this server last finished a look at each account. */
+/** When this server last got a clear answer about each account. */
 const lookedAt = new Map<AccountId, number>();
 
 /** The browser identity of something the user asked for, which is no agent's run. */
@@ -247,10 +250,10 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
     const { state, identity } = openAthens
       ? { state: yield* askOpenAthens(invoke, tabId), identity: undefined }
       : yield* readPage;
-    if (keepsLastSeen(account, state)) return;
+    if (keepsLastSeen(account, state)) return state;
     // Check is the user's own press: a signed-out sign-in with a saved password gets one attempt.
     if (state !== "signed-out" || account.secrets.password === undefined || observeOnly) {
-      return yield* accounts.recordCheck(account.accountId, {
+      yield* accounts.recordCheck(account.accountId, {
         state,
         ...(state === "signed-in" && identity ? { username: identity } : {}),
         ...(state === "unknown"
@@ -264,6 +267,7 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
           ? { detail: "The site is limiting access from this network." }
           : {}),
       });
+      return state;
     }
     const result = yield* guardedSignIn({
       page: { tabId },
@@ -279,6 +283,7 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
         state,
         ...(result.message === undefined ? {} : { detail: result.message }),
       });
+    return state;
   }).pipe(
     Effect.ensuring(
       Effect.forEach(tabs, (tab) => invoke("close", {}, tab).pipe(Effect.ignore), {
@@ -288,10 +293,15 @@ const lookOnce = Effect.fn("AccountsCheck.one")(function* (
   );
 });
 
+/** A look that couldn't tell earns no skip, so the next glance asks again. */
 const checkOne = (account: AccountSummary, url: string, observeOnly = false) =>
   lookOnce(account, url, observeOnly).pipe(
-    Effect.tap(() =>
-      Clock.currentTimeMillis.pipe(Effect.map((now) => void lookedAt.set(account.accountId, now))),
+    Effect.tap((state) =>
+      state === "unknown"
+        ? Effect.void
+        : Clock.currentTimeMillis.pipe(
+            Effect.map((now) => void lookedAt.set(account.accountId, now)),
+          ),
     ),
   );
 
@@ -363,6 +373,8 @@ export const checkAccountNow = (account: AccountSummary, environmentId: Environm
       );
 };
 
+type CheckResult = { readonly checked: number; readonly alreadyRunning?: boolean };
+
 /**
  * Opens each browser sign-in in its own profile, one at a time, and keeps what it found on the
  * account. A signed-out account with a saved password gets one unattended sign-in; one the site
@@ -371,19 +383,23 @@ export const checkAccountNow = (account: AccountSummary, environmentId: Environm
 export const checkAccounts = (input: AccountsCheckInput, environmentId: EnvironmentId) => {
   const invocation = userRunInvocation(CHECK_THREAD, environmentId);
   // A glance waits its turn, so every university gets one; its freshness is read once it runs.
-  if (input.glance && input.accountId !== undefined)
-    return runGlance(input.accountId).pipe(
-      Effect.provideService(AgentInvocationContext, invocation),
-      run.withPermits(1),
-      Effect.map((checked): { checked: number; alreadyRunning?: boolean } => ({ checked })),
-    );
+  if (input.glance)
+    return input.accountId === undefined
+      ? Effect.succeed<CheckResult>({ checked: 0 })
+      : runGlance(input.accountId).pipe(
+          Effect.provideService(AgentInvocationContext, invocation),
+          run.withPermits(1),
+          Effect.map((checked): CheckResult => ({ checked })),
+        );
+  // A press waits behind a glance, which is short; only another full check turns it away.
   return runCheck(input).pipe(
     Effect.provideService(AgentInvocationContext, invocation),
-    run.withPermitsIfAvailable(1),
+    run.withPermits(1),
+    fullRun.withPermitsIfAvailable(1),
     Effect.map(
       Option.match({
-        onNone: () => ({ checked: 0, alreadyRunning: true }),
-        onSome: (checked) => ({ checked }),
+        onNone: (): CheckResult => ({ checked: 0, alreadyRunning: true }),
+        onSome: (checked): CheckResult => ({ checked }),
       }),
     ),
   );

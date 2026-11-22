@@ -189,6 +189,11 @@ export function UniversityPicker({
   );
 }
 
+/** The server skips a university it saw recently; an older server ignores the glance and checks. */
+const GLANCE_AGAIN_MS = 2 * 60 * 1000;
+/** When this window last asked about each university, so an older server is asked at most as often. */
+const glancedAt = new Map<AccountId, number>();
+
 /**
  * The university slot beside the Sources title. Connected: the crest, answering whether Scient
  * can get papers through it now, with Sign in when one is needed. Opening it takes a glance, which
@@ -206,16 +211,18 @@ export function UniversityCrest({
   const startSignIn = useStableCallback(useSignIn(environmentId));
   const check = useAccountCommand(accountsState.check, environmentId);
   const navigate = useNavigate();
-  // The server skips a university it looked at recently; this only avoids asking twice at once.
-  const glancing = useRef(new Set<AccountId>());
   const [signingIn, setSigningIn] = useState<ReadonlySet<AccountId>>(new Set());
   const universities = universitiesOf(data?.accounts ?? []);
   const askAgain = useStableCallback((open: boolean) => {
     if (!open || !canWrite) return;
+    const now = Date.now();
     for (const { accountId } of universities) {
-      if (glancing.current.has(accountId)) continue;
-      glancing.current.add(accountId);
-      void check({ accountId, glance: true }).finally(() => glancing.current.delete(accountId));
+      if (now - (glancedAt.get(accountId) ?? 0) < GLANCE_AGAIN_MS) continue;
+      glancedAt.set(accountId, now);
+      // A request that failed may be asked again on the next open.
+      void check({ accountId, glance: true }).then((result) => {
+        if (!result.ok) glancedAt.delete(accountId);
+      });
     }
   });
   const [connecting, setConnecting] = useState(false);
