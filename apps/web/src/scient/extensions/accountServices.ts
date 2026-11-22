@@ -163,7 +163,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     description: msg(
       "Codex and Scient Agent reach Microsoft Teams through your ChatGPT account, and Claude through claude.ai’s Microsoft 365 connector. Scient never holds your Microsoft sign-in.",
     ),
-    categories: ["communication"],
+    categories: ["most-used", "communication"],
     websiteUrl: "https://teams.microsoft.com",
     chatgptAppId: "connector_246af0940da3457da0e751171dc1ce60",
     claude: claudeConnectorFor("Microsoft Teams"),
@@ -221,10 +221,21 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     description: msg(
       "Each agent reaches Figma through its own ChatGPT or Claude account. Scient never holds your Figma sign-in.",
     ),
-    categories: ["figures", "code"],
+    categories: ["most-used", "figures", "code"],
     websiteUrl: "https://www.figma.com",
     chatgptAppId: "connector_68df038e0ba48191908c8434991bbac2",
     claude: claudeConnectorFor("Figma"),
+  },
+  {
+    id: "zotero",
+    name: "Zotero",
+    tagline: msg("Find saved papers and add citations"),
+    description: msg(
+      "Codex and Scient Agent reach Zotero through OpenAI’s Zotero plugin for Codex, which works with the Zotero desktop app on this computer.",
+    ),
+    categories: ["most-used", "papers"],
+    websiteUrl: "https://www.zotero.org",
+    stores: { codex: "zotero@openai-curated" },
   },
   {
     id: "readwise",
