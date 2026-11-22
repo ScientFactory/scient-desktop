@@ -25,6 +25,7 @@ import { rehypeHeadingIds } from "../components/chat/markdownFragments";
 import {
   scientChatHast,
   scientInertRichFences,
+  scientNotebookInert,
   scientWordsHastMath,
   type ScientWordsHastOptions,
 } from "../scient/markdown/scientWordsHast";
@@ -50,6 +51,10 @@ export interface MarkdownExtensions {
   };
   /** Expand GitHub `:alias:` emoji shortcodes in prose outside code. */
   readonly githubEmoji?: boolean;
+  // SCIENT-FORK:START — a live notebook cell: links, images and HTML are inert, while inline code
+  // and diagrams render as in chat (scient/markdown/scientWordsHast.ts).
+  readonly scientNotebook?: boolean;
+  // SCIENT-FORK:END
 }
 
 export interface WordsHastOptions {
@@ -1125,7 +1130,8 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
     codeMeta: true,
     directives: CODEX_DIRECTIVES,
     // Previews and inert Markdown drop raw HTML, as their remark plugins dropped html nodes.
-    ...(extensions.preview || extensions.inert
+    // SCIENT-FORK: a notebook cell drops raw HTML too.
+    ...(extensions.preview || extensions.inert || extensions.scientNotebook
       ? { skipHtml: true }
       : { escapeHtml: options.escapeHtml }),
   };
@@ -1157,6 +1163,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   if (extensions.inert) makeInert(hast);
   // SCIENT-FORK:START
   if (extensions.inert) scientInertRichFences(hast);
+  if (extensions.scientNotebook) scientNotebookInert(hast);
   // SCIENT-FORK:END
   if (extensions.preview) return flattenPreview(hast, extensions.preview);
   addHeadingIds(hast);

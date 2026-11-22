@@ -3,7 +3,7 @@
  * grammar, its image cards, its content direction in place of T3's per-block direction, and inert
  * rich fences.
  */
-import type { Element, Root } from "hast";
+import type { Element, ElementContent, Root } from "hast";
 
 import type { ContentDirection, FixedContentDirection } from "../bidi/contentDirection";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
@@ -75,6 +75,25 @@ export function scientChatHast(tree: Root, options: ScientWordsHastOptions | und
     ...(requestedDirection ? { requestedDirection } : {}),
   })(tree as never);
   isolateInlineCode(tree);
+}
+
+/** A notebook cell never loads URLs or acts: a link shows its text and an image its alt text. */
+export function scientNotebookInert(node: Root | Element) {
+  const children = node.children as ElementContent[];
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]!;
+    if (child.type !== "element") continue;
+    if (child.tagName === "a") {
+      children.splice(index, 1, ...child.children);
+      index--;
+      continue;
+    }
+    if (child.tagName === "img") {
+      children[index] = { type: "text", value: String(child.properties.alt ?? "") };
+      continue;
+    }
+    scientNotebookInert(child);
+  }
 }
 
 /** Inert Markdown shows every rich fence (Mermaid, Plotly, Vega) as its source. */

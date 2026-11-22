@@ -44,7 +44,7 @@ export interface NotebookPlace {
 const RASTER_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
 
 /** Notebook Markdown never loads URLs or turns links into app actions. */
-export const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
+export const NOTEBOOK_MARKDOWN: MarkdownExtensions = { scientNotebook: true };
 
 /** A saved MIME bundle in the shape Compute's renderers read, so notebooks and Results match. */
 function richDisplays(data: Readonly<Record<string, unknown>>): ReadonlyArray<ComputeRichDisplay> {
