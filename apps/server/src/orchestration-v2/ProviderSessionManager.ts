@@ -443,7 +443,10 @@ interface LiveSessionEntry {
   /** Keyed by native thread: a fresh session leaves the replaced one to unload on its own timer. */
   readonly idleThreadUnloads: ReadonlyMap<ProviderThreadId, IdleThreadUnload>;
   // SCIENT-FORK:START — an idle unload's native close may still be pending when a handoff detaches.
-  readonly idleUnloadedProviderThreads: ReadonlyMap<ThreadId, OrchestrationV2ProviderThread>;
+  readonly idleUnloadedProviderThreads: ReadonlyMap<
+    ThreadId,
+    ReadonlyArray<OrchestrationV2ProviderThread>
+  >;
   // SCIENT-FORK:END
 }
 
@@ -2875,8 +2878,14 @@ export const layerWithOptions = (
                   if (isCurrent) loadedProviderThreadKeyByThread.delete(input.threadId);
                   // SCIENT-FORK:START — detach re-joins this release if a handoff follows.
                   const idleUnloadedProviderThreads = new Map(latest.idleUnloadedProviderThreads);
-                  if (isCurrent)
-                    idleUnloadedProviderThreads.set(input.threadId, pending.providerThread);
+                  // Once the current thread unloads, an older timer also reads as current: keep both.
+                  if (isCurrent) {
+                    const released = idleUnloadedProviderThreads.get(input.threadId) ?? [];
+                    idleUnloadedProviderThreads.set(input.threadId, [
+                      ...released.filter((thread) => thread.id !== pending.providerThread.id),
+                      pending.providerThread,
+                    ]);
+                  }
                   // SCIENT-FORK:END
                   const updated = new Map(current);
                   updated.set(key, {
@@ -4702,12 +4711,11 @@ export const layerWithOptions = (
                 heldProviderThreads.push(pending.providerThread);
               }
               // SCIENT-FORK:START — the handoff waits for an idle release already under way.
-              const idleUnloaded = entry.idleUnloadedProviderThreads.get(input.threadId);
-              if (
-                idleUnloaded !== undefined &&
-                !heldProviderThreads.some((held) => held.id === idleUnloaded.id)
-              ) {
-                heldProviderThreads.push(idleUnloaded);
+              for (const idleUnloaded of entry.idleUnloadedProviderThreads.get(input.threadId) ??
+                []) {
+                if (!heldProviderThreads.some((held) => held.id === idleUnloaded.id)) {
+                  heldProviderThreads.push(idleUnloaded);
+                }
               }
               const idleUnloadedProviderThreads = new Map(entry.idleUnloadedProviderThreads);
               idleUnloadedProviderThreads.delete(input.threadId);
