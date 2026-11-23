@@ -4848,3 +4848,121 @@ it.effect.each([false, true])(
       );
     }),
 );
+
+it.effect(
+  "ProviderSessionManagerV2 handoff detach re-joins only the most recent released native threads",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(
+          "thread-provider-session-manager-many-released-native-threads",
+        );
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        // Each scheduled "fresh session" round opens a new native thread in the same app thread.
+        const providerThreads: Array<ReturnType<typeof makeProviderThread>> = [];
+        for (const round of Array.from({ length: 18 }, (_, index) => index + 1)) {
+          const runId = idAllocator.derive.run({ threadId, ordinal: round });
+          const providerThread = makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-round-${round}`,
+          });
+          providerThreads.push(providerThread);
+          // No projection rows: detach finds these threads only through the remembered releases.
+          yield* runtime.resumeThread({ threadId, providerThread, modelSelection, runtimePolicy });
+          yield* runtime.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: round,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "server",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: round }),
+              text: "Reply with OK.",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+          const subscription = yield* runtime.subscribeEvents!;
+          yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+            type: "turn.terminal",
+            driver: CODEX_DRIVER,
+            providerThreadId: providerThread.id,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId: `native-turn-${round}`,
+            }),
+            runOrdinal: round,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* subscription.events.pipe(Stream.runHead);
+          // Each round unloads as the current native thread before the next starts.
+          yield* TestClock.adjust("1 second");
+        }
+
+        const otherInstanceId = ProviderInstanceId.make("codex-other");
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: {
+                ...providerThreads.at(-1)!,
+                providerInstanceId: otherInstanceId,
+                providerSessionId: idAllocator.derive.providerSession({
+                  providerInstanceId: otherInstanceId,
+                }),
+              },
+            },
+          ],
+        });
+        const beforeDetach = (yield* Ref.get(state)).unloadedNativeThreadIds.length;
+        yield* manager.detach({ providerSessionId, threadId });
+        const rejoined = (yield* Ref.get(state)).unloadedNativeThreadIds.slice(beforeDetach);
+        assert.lengthOf(rejoined, 16);
+        assert.notInclude(rejoined, "native-round-2");
+        assert.include(rejoined, "native-round-18");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 1000,
+            // Keep the shared app-server open, as other conversations do.
+            hasPendingBackgroundWork: Effect.succeed(true),
+          }),
+        ),
+      );
+    }),
+);

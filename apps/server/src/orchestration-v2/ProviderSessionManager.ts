@@ -552,6 +552,11 @@ function providerThreadRuntimeKey(
     : `${nativeThreadRef.driver}:${nativeThreadRef.nativeId}`;
 }
 
+// SCIENT-FORK:START — fresh sessions can release many native threads before a detach; any release
+// older than the last few has long closed, so only the most recent are re-joined.
+const MAX_REMEMBERED_IDLE_RELEASES = 16;
+// SCIENT-FORK:END
+
 function isLoadKeyFor(
   loadKey: string | undefined,
   providerThread: Parameters<typeof providerThreadRuntimeKey>[0],
@@ -2882,7 +2887,9 @@ export const layerWithOptions = (
                   if (isCurrent) {
                     const released = idleUnloadedProviderThreads.get(input.threadId) ?? [];
                     idleUnloadedProviderThreads.set(input.threadId, [
-                      ...released.filter((thread) => thread.id !== pending.providerThread.id),
+                      ...released
+                        .filter((thread) => thread.id !== pending.providerThread.id)
+                        .slice(1 - MAX_REMEMBERED_IDLE_RELEASES),
                       pending.providerThread,
                     ]);
                   }
