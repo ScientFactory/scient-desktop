@@ -1726,9 +1726,11 @@ page, and what the paper says instead when it is not there. An agent can also
 save a web page with `scient_sources_save_page`, keeping a passage as you would.
 
 The conversation's [permission mode](permission-modes.md) and provider approval
-flow still apply to writes. Library tools stay scoped to the current project:
-they do not grant arbitrary host file paths or turn uncertain metadata into
-verified evidence. Agents can browse and import from Zotero, refresh from it
+flow still apply to writes. Library tools read and change the current
+project's sources and the Library, and never turn uncertain metadata into
+verified evidence. As you can, an agent allowed to change things can back up the
+whole Library into a folder you name, restore or add from a backup folder, and
+put back a Library a restore kept; a Read only connection can do none of these. Agents can browse and import from Zotero, refresh from it
 and send to it with the same rules as you; they change Zotero only when you ask
 them to send. An agent brings a large collection 500 references at a time and
 goes on until none remain; it does not go on with an import you stopped. An agent can also read the same **Recent changes** list as you,
