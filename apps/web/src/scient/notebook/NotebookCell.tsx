@@ -25,26 +25,23 @@ import { T, msg, useGT, useMessages } from "gt-react";
 import { useStore } from "zustand";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
-import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
-import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "~/pierre-icons";
 import {
   createScientNestedCodeEditor,
-  highlightedCodeSpans,
-  type HighlightedCodeSpan,
   type ScientNestedCodeEditor,
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
-import { CodeBlockActions, useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
+import { useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
 import { ComputeWrittenFiles } from "~/scient/compute/ComputeWrittenFiles";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { resultTime } from "~/scient/results/resultState";
 import type { NotebookCaret, NotebookCellActivity, NotebookController } from "./notebookController";
 import { NOTEBOOK_MARKDOWN, NotebookCellOutputs, type NotebookPlace } from "./NotebookOutputs";
+import { NotebookCodeHeader, NotebookCodeSource, notebookCodeCardSurface } from "./NotebookCode";
 
 type Cell = NotebookCellView;
 
@@ -331,63 +328,43 @@ function CodeCellTopRow(props: {
   readonly menu: ReactElement | null;
 }) {
   const gt = useGT();
-  const fileName = syntheticFileNameForLanguageId(props.language);
-  const hasIcon = hasSpecificPierreIconForFileName(fileName);
   return (
-    <div className="scient-markdown-code-header flex min-h-7 items-center justify-between gap-1.5 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
-      <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground/80">
-        {hasIcon ? (
-          <PierreEntryIcon
-            pathValue={fileName}
-            kind="file"
-            theme={props.theme}
-            className="size-3.5 shrink-0 opacity-85"
-          />
+    <NotebookCodeHeader
+      language={props.language}
+      theme={props.theme}
+      wrapped={props.wrapped}
+      onWrapChange={props.onWrapChange}
+      readCode={props.readCode}
+      status={props.silentResult ? <T>No output</T> : undefined}
+    >
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
+        {props.onAsk !== null ? (
+          <CellAction label={gt("Ask in chat")} onClick={props.onAsk}>
+            <MessageSquarePlus />
+          </CellAction>
         ) : null}
-        <span className={cn("truncate", hasIcon && "hidden @[19rem]/code-box:inline")}>
-          {props.language}
-        </span>
-        {props.silentResult ? (
-          <span className="truncate font-sans">
-            <T>No output</T>
-          </span>
-        ) : null}
-      </span>
-      <div className="flex shrink-0 items-center gap-0.5">
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
-          {props.onAsk !== null ? (
-            <CellAction label={gt("Ask in chat")} onClick={props.onAsk}>
-              <MessageSquarePlus />
+        {props.editsDisabled ? null : (
+          <>
+            <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
+              <ArrowUp />
             </CellAction>
-          ) : null}
-          {props.editsDisabled ? null : (
-            <>
-              <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
-                <ArrowUp />
-              </CellAction>
-              <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
-                <ArrowDown />
-              </CellAction>
-            </>
-          )}
-          {props.menu}
-          {props.editsDisabled ? null : (
-            <CellAction
-              label={gt("Delete", { $context: "verb, deletes a cell" })}
-              onClick={props.onDelete}
-            >
-              <Trash2 />
+            <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
+              <ArrowDown />
             </CellAction>
-          )}
-          <span aria-hidden className="mx-0.5 h-3 w-px bg-border/80" />
-        </div>
-        <CodeBlockActions
-          wrapped={props.wrapped}
-          onWrapChange={props.onWrapChange}
-          readCode={props.readCode}
-        />
+          </>
+        )}
+        {props.menu}
+        {props.editsDisabled ? null : (
+          <CellAction
+            label={gt("Delete", { $context: "verb, deletes a cell" })}
+            onClick={props.onDelete}
+          >
+            <Trash2 />
+          </CellAction>
+        )}
+        <span aria-hidden className="mx-0.5 h-3 w-px bg-border/80" />
       </div>
-    </div>
+    </NotebookCodeHeader>
   );
 }
 
@@ -448,162 +425,6 @@ function CellRow(props: {
         )}
       </div>
     </div>
-  );
-}
-
-interface HighlightedCodeLine {
-  readonly number: number;
-  readonly startOffset: number;
-  readonly spans: ReadonlyArray<HighlightedCodeSpan>;
-}
-
-function splitHighlightedLines(
-  source: string,
-  spans: ReadonlyArray<HighlightedCodeSpan> | null,
-): ReadonlyArray<HighlightedCodeLine> {
-  const input = spans ?? [{ text: source, className: "" }];
-  const lines: Array<{ number: number; startOffset: number; spans: HighlightedCodeSpan[] }> = [
-    { number: 1, startOffset: 0, spans: [] },
-  ];
-  let offset = 0;
-  for (const span of input) {
-    const parts = span.text.split("\n");
-    for (let index = 0; index < parts.length; index++) {
-      const part = parts[index]!;
-      if (index > 0) {
-        offset += 1;
-        lines.push({ number: lines.length + 1, startOffset: offset, spans: [] });
-      }
-      if (part.length > 0) {
-        lines[lines.length - 1]!.spans.push({ text: part, className: span.className });
-        offset += part.length;
-      }
-    }
-  }
-  return lines;
-}
-
-/** Where a click landed in the code, so the editor opens with the caret there. */
-function textOffsetAt(root: HTMLElement, x: number, y: number): number | "end" {
-  const point = root.ownerDocument.caretRangeFromPoint(x, y);
-  if (point === null || !root.contains(point.startContainer)) return "end";
-  const anchorElement =
-    point.startContainer instanceof Element
-      ? point.startContainer
-      : point.startContainer.parentElement;
-  const lineElement = anchorElement?.closest<HTMLElement>("[data-line-start]");
-  if (lineElement !== null && lineElement !== undefined && root.contains(lineElement)) {
-    const base = Number(lineElement.dataset.lineStart);
-    if (!Number.isNaN(base)) {
-      const walker = root.ownerDocument.createTreeWalker(lineElement, NodeFilter.SHOW_TEXT);
-      let offset = 0;
-      while (walker.nextNode()) {
-        if (walker.currentNode === point.startContainer) return base + offset + point.startOffset;
-        offset += walker.currentNode.textContent?.length ?? 0;
-      }
-      return base;
-    }
-  }
-  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let offset = 0;
-  while (walker.nextNode()) {
-    if (walker.currentNode === point.startContainer) return offset + point.startOffset;
-    offset += walker.currentNode.textContent?.length ?? 0;
-  }
-  return "end";
-}
-
-/** A cell's code without an editor. It lays out exactly like one, so opening never moves it. */
-function StaticCode(props: {
-  readonly source: string;
-  readonly language: string;
-  readonly wrapped: boolean;
-  readonly lineNumbers: boolean;
-  readonly theme: "light" | "dark";
-  readonly near: boolean;
-  readonly onEdit: (offset: number | "end") => void;
-}) {
-  const { source, language, wrapped, lineNumbers, theme, near } = props;
-  const [spans, setSpans] = useState<ReadonlyArray<HighlightedCodeSpan> | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- colors arrive once the language parser has loaded or theme changes.
-  useEffect(() => {
-    if (!near) return;
-    let cancelled = false;
-    void highlightedCodeSpans(source, language, theme).then((next) => {
-      if (!cancelled) setSpans(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [language, near, source, theme]);
-  if (lineNumbers) {
-    const lines = splitHighlightedLines(source, spans);
-    return (
-      <pre
-        className={cn(
-          "min-w-0 cursor-text px-3 pt-1.5 pb-3 font-mono text-[13px] leading-5",
-          wrapped ? "wrap-anywhere whitespace-break-spaces" : "overflow-x-auto whitespace-pre",
-        )}
-        onClick={(event) => {
-          if (!selectingText()) {
-            props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY));
-          }
-        }}
-      >
-        <span className={wrapped ? "block" : "block w-max min-w-full"}>
-          {lines.map((line) => (
-            <span
-              key={line.number}
-              data-line={line.number}
-              data-line-start={line.startOffset}
-              className={cn(
-                "grid gap-x-2.5 before:content-[attr(data-line)] before:text-right before:font-mono before:text-[11px] before:leading-5 before:text-muted-foreground/65 before:tabular-nums before:select-none",
-                wrapped
-                  ? "grid-cols-[2rem_minmax(0,1fr)]"
-                  : "grid-cols-[2rem_max-content] before:sticky before:left-0 before:bg-(--markdown-code-block-background)",
-              )}
-            >
-              <span className="min-h-5 min-w-0">
-                {line.spans.map((span, index) =>
-                  span.className === "" ? (
-                    span.text
-                  ) : (
-                    // oxlint-disable-next-line react/no-array-index-key -- spans are the text in order and have no identity.
-                    <span key={index} className={span.className}>
-                      {span.text}
-                    </span>
-                  ),
-                )}
-              </span>
-            </span>
-          ))}
-        </span>
-      </pre>
-    );
-  }
-  return (
-    <pre
-      className="min-w-0 cursor-text py-[calc(--spacing(1)+4px)] pr-[calc(--spacing(1)+2px)] pl-[calc(--spacing(1)+6px)] font-mono text-[13px] leading-[1.4] wrap-anywhere whitespace-break-spaces"
-      onClick={(event) => {
-        if (!selectingText()) {
-          props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY));
-        }
-      }}
-    >
-      {spans === null
-        ? source
-        : spans.map((span, index) =>
-            span.className === "" ? (
-              span.text
-            ) : (
-              // oxlint-disable-next-line react/no-array-index-key -- spans are the text in order and have no identity.
-              <span key={index} className={span.className}>
-                {span.text}
-              </span>
-            ),
-          )}
-      {source === "" || source.endsWith("\n") ? "\n" : null}
-    </pre>
   );
 }
 
@@ -754,9 +575,7 @@ export function NotebookCell(props: {
           data-notebook-cell-box=""
           className={cn(
             "border transition-colors",
-            isCode
-              ? "@container/code-box rounded-lg bg-(--markdown-code-block-background)"
-              : "rounded-md bg-background",
+            isCode ? notebookCodeCardSurface : "rounded-md bg-background",
             editing
               ? "border-foreground/35"
               : selected
@@ -834,7 +653,7 @@ export function NotebookCell(props: {
               caretRequest={caretRequest}
             />
           ) : (
-            <StaticCode
+            <NotebookCodeSource
               source={cell.source}
               language={language}
               wrapped={wrapped}

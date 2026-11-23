@@ -216,7 +216,11 @@ const notebook: NotebookView = {
     },
     { ...cell("results", "markdown", `## ${heading}`), folded: ["source"] },
     {
-      ...cell("compute", "code", "print(threshold)"),
+      ...cell(
+        "compute",
+        "code",
+        "# A long source line holds the formulation and parameters together for someone reading the notebook.\nprint(threshold)",
+      ),
       executionCount: 1,
       outputs: [
         {
@@ -522,8 +526,29 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
       await page.screenshot({ path: `${screenshots}/reader-unsaved-360-${theme}.png` });
     await screen.getByRole("button", { name: "Reset" }).click();
     await expect.element(screen.getByRole("row", { name: "4 2" })).toBeVisible();
-    await screen.getByRole("button", { name: "Code", exact: true }).first().click();
-    await expect.element(screen.getByText("threshold = 0.5", { exact: true })).toBeVisible();
+    const disclosures = screen.getByRole("button", { name: "Code", exact: true });
+    const parameterCode = disclosures.first();
+    await parameterCode.click();
+    const parameterSource = parameterCode.element().parentElement!.querySelector("pre")!;
+    await expect.element(page.elementLocator(parameterSource)).toHaveTextContent("threshold = 0.5");
+    const computeCode = disclosures.nth(1);
+    await computeCode.click();
+    const computeCard = page.elementLocator(computeCode.element().parentElement!);
+    const code = computeCard.element().querySelector("pre")!;
+    const wrap = computeCard.getByRole("button", { name: "Disable line wrap" });
+    await expect.element(wrap).toHaveAttribute("aria-pressed", "true");
+    expect(code.scrollWidth).toBe(code.clientWidth);
+    if (screenshots) {
+      await page.screenshot({ path: `${screenshots}/reader-code-wrapped-${theme}.png` });
+    }
+    await wrap.click();
+    await vi.waitFor(() => expect(code.scrollWidth).toBeGreaterThan(code.clientWidth));
+    expect(getComputedStyle(code, "::-webkit-scrollbar").height).toBe("4px");
+    if (screenshots) {
+      await page.screenshot({ path: `${screenshots}/reader-code-scroll-${theme}.png` });
+    }
+    await computeCard.getByRole("button", { name: "Wrap lines" }).click();
+    await vi.waitFor(() => expect(code.scrollWidth).toBe(code.clientWidth));
     expect(freshStart).toHaveBeenCalledTimes(1);
   },
 );

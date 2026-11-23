@@ -15,11 +15,13 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 import { resultTime } from "~/scient/results/resultState";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { NotebookCodeHeader, NotebookCodeSource, notebookCodeCardSurface } from "../NotebookCode";
 import { NotebookParameterControls } from "../NotebookParameters";
 import { NOTEBOOK_MARKDOWN } from "../NotebookOutputs";
 import { alternativeAt, parameterValues, renderAlternativeProse } from "./notebookReaderModel";
@@ -107,6 +109,31 @@ function SavedOutputs(props: { readonly alternative: Alternative }) {
           ))}
         </dl>
       ) : null}
+    </div>
+  );
+}
+
+function ReaderCode({ source, language }: { readonly source: string; readonly language: string }) {
+  const theme = useRenderedAppearance();
+  const [wrapped, setWrapped] = useState(true);
+  return (
+    <div
+      className={cn("mt-1 border border-(--markdown-code-block-border)", notebookCodeCardSurface)}
+    >
+      <NotebookCodeHeader
+        language={language}
+        theme={theme}
+        wrapped={wrapped}
+        onWrapChange={setWrapped}
+        readCode={() => source}
+      />
+      <NotebookCodeSource
+        source={source}
+        language={language}
+        theme={theme}
+        wrapped={wrapped}
+        lineNumbers
+      />
     </div>
   );
 }
@@ -270,17 +297,16 @@ export function NotebookReader(props: {
                   {cell.cellType === "code" ? <T>Code</T> : <T>Raw cell</T>}
                 </CollapsibleTrigger>
                 <CollapsiblePanel animate={false}>
-                  <pre
-                    className={cn(
-                      "mt-1 overflow-x-auto rounded-lg text-sm",
-                      cell.cellType === "code"
-                        ? "border border-(--markdown-code-block-border) bg-(--markdown-code-block-background) px-3 py-2.5"
-                        : "bg-muted/40 p-2",
-                    )}
-                    dir="auto"
-                  >
-                    {cell.source}
-                  </pre>
+                  {cell.cellType === "code" ? (
+                    <ReaderCode source={cell.source} language={notebook.language} />
+                  ) : (
+                    <pre
+                      className="scient-content-scrollbar mt-1 overflow-x-auto rounded-lg bg-muted/40 p-2 text-sm"
+                      dir="auto"
+                    >
+                      {cell.source}
+                    </pre>
+                  )}
                 </CollapsiblePanel>
               </Collapsible>
             ),
