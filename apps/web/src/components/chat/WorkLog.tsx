@@ -8,6 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "../../lib/utils";
+// SCIENT-FORK:START — Compute rows share the history disclosure treatment.
+import { disclosureRowFocus, disclosureRowSurface } from "../ui/collapsible";
+// SCIENT-FORK:END
 
 const GroupedRows = createContext(false);
 
@@ -98,20 +101,35 @@ function useRowClassName(interactive: boolean, focusable = interactive) {
   );
 }
 
+// SCIENT-FORK:START — Compute's work-log button shares history's selected fill and focus edge.
 export function WorkLogButton({
   icon,
   label,
   trailing,
   wrapLabel = false,
+  surface,
   ...buttonProps
-}: RowContent & Omit<ComponentProps<"button">, "className" | "style" | "children">) {
-  const className = useRowClassName(true);
+}: RowContent &
+  Omit<ComponentProps<"button">, "className" | "style" | "children"> & {
+    surface?: "disclosure" | undefined;
+  }) {
+  const disclosure = surface === "disclosure";
+  const className = cn(
+    useRowClassName(true, !disclosure),
+    disclosure && [disclosureRowSurface, disclosureRowFocus],
+  );
   return (
-    <button {...buttonProps} type="button" className={className}>
+    <button
+      {...buttonProps}
+      type="button"
+      className={className}
+      data-open={(disclosure && buttonProps["aria-expanded"] === true) || undefined}
+    >
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
     </button>
   );
 }
+// SCIENT-FORK:END
 
 type RowProps = Omit<ComponentProps<"div">, "className" | "style"> & {
   toggle?: LineProps | undefined;

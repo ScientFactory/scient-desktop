@@ -47,14 +47,17 @@ describe("compute environment policy", () => {
       expect(removedKeys).toContain("T3_PAIRING_KEY");
     });
 
-    it("passes the results folder only when Scient set it for the run", () => {
-      const environment = { SCIENT_RESULTS_DIR: "/state/results/run", PATH: "/bin" };
-      expect(sanitizeComputeEnvironment(environment).environment).not.toHaveProperty(
-        "SCIENT_RESULTS_DIR",
-      );
+    it("passes the results folder and parameters only when Scient set them for the run", () => {
+      const runVariables = {
+        SCIENT_RESULTS_DIR: "/state/results/run",
+        SCIENT_PARAMETERS: '{"n":2}',
+      };
+      const environment = { ...runVariables, PATH: "/bin" };
+      for (const key of Object.keys(runVariables))
+        expect(sanitizeComputeEnvironment(environment).environment).not.toHaveProperty(key);
       expect(
         sanitizeComputeEnvironment(environment, { keepRunKeys: true }).environment,
-      ).toHaveProperty("SCIENT_RESULTS_DIR", "/state/results/run");
+      ).toMatchObject(runVariables);
     });
 
     it("preserves ordinary runtime variables", () => {

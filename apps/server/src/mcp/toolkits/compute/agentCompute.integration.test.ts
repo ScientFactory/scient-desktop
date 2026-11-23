@@ -4,6 +4,7 @@ import * as NodeProcess from "node:process";
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
   ComputeExecutionId,
+  ComputeLanguageId,
   ComputeSessionId,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
@@ -35,9 +36,11 @@ import {
   listScientComputeSessions,
   readScientComputeOutput,
   runScientCompute,
+  runScientComputeFile,
 } from "./handlers.ts";
 
 const TEST_PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
+const TEST_THRESHOLD_PROJECT = NodeProcess.env.SCIENT_TEST_THRESHOLD_PROJECT;
 
 describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
   it.live("runs code in the agent's own session and returns text, errors and figures", () =>
@@ -66,10 +69,11 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
 
       yield* Effect.gen(function* () {
         const compute = yield* ComputeSessionService.ComputeSessionService;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const gateway = makeComputeRpcGateway({
           workspaceResolver: computeWorkspaceResolverForTest,
           compute,
-          workspaceFileSystem: yield* WorkspaceFileSystem.WorkspaceFileSystem,
+          workspaceFileSystem,
           serverSettings: {
             getSettings: Effect.succeed({
               ...DEFAULT_SERVER_SETTINGS,
@@ -86,6 +90,10 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
             Effect.provideService(ComputeMcpGateway, {
               ...gateway,
               notebookOutputs: () => Effect.die("not used"),
+              runNotebookFresh: () => Effect.die("not used"),
+              notebookFreshStatus: () => Effect.die("not used"),
+              waitNotebookFresh: () => Effect.die("not used"),
+              notebookAlternatives: () => Effect.die("not used"),
               readNotebook: () => Effect.die("not used"),
               readNotebookOutput: () => Effect.die("not used"),
               editNotebook: () => Effect.die("not used"),
@@ -93,8 +101,15 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
               flushNotebook: () => Effect.die("not used"),
               getFileRun: () => Effect.die("not used"),
               inspectFileRuntimes: () => Effect.die("not used"),
+              resultHandoffChoices: () => Effect.die("not used"),
+              exportResultPackage: () => Effect.die("not used"),
+              verifyResultPackage: () => Effect.die("not used"),
               resolveResults: () => Effect.die("not used"),
               listResults: () => Effect.die("not used"),
+              resultOutputContent: () => Effect.die("not used"),
+              resultSetup: () => Effect.die("not used"),
+              resultHistory: () => Effect.die("not used"),
+              compareResults: () => Effect.die("not used"),
               placeResultFigure: () => Effect.die("not used"),
               rerunResults: () => Effect.die("not used"),
               checkResults: () => Effect.die("not used"),
@@ -102,7 +117,10 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
               latexResultFiles: () => Effect.die("not used"),
               startFileRun: () => Effect.die("not used"),
               subscribeFileRuns: () => Effect.die("not used"),
-              readFile: () => Effect.die("not used"),
+              readFile: workspaceFileSystem.readFile,
+              profileDataset: () => Effect.die("not used"),
+              previewDataView: () => Effect.die("not used"),
+              materializeDataView: () => Effect.die("not used"),
               readOutput: (ref, kind) =>
                 Effect.gen(function* () {
                   const resolved =
@@ -177,6 +195,117 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
         const { sessions } = yield* provide(listScientComputeSessions());
         expect(sessions).toHaveLength(1);
         expect(sessions[0]?.recentRuns.at(-1)?.source).toBe("agent (this chat): code");
+
+        const fixture = TEST_THRESHOLD_PROJECT;
+        const path = fixture ? "threshold.py" : "saved.py";
+        if (fixture) {
+          yield* fs.copyFile(`${fixture}/threshold.py`, `${projectRoot}/threshold.py`);
+          yield* fs.copy(`${fixture}/data`, `${projectRoot}/data`);
+        } else {
+          yield* fs.writeFileString(
+            `${projectRoot}/saved.py`,
+            "from pathlib import Path\nPath('metrics.json').write_text('42')\nprint(42)\n",
+          );
+        }
+        const file = yield* provide(runScientComputeFile({ path }));
+        expect(file.run.status).toBe("succeeded");
+        expect(file.run.output).toContain(fixture ? "'recall': 0.8" : "42");
+        expect(file.wrote).toContain(fixture ? "results/metrics.json" : "metrics.json");
+        if (fixture) expect(file.wrote).toContain("results/confusion.csv");
+        const retrieved = yield* provide(
+          readScientComputeOutput({
+            session: first.session.session,
+            run: file.run.run,
+          }),
+        );
+        expect(retrieved.wrote).toEqual(file.wrote);
+        expect("session" in file && file.session.session).toBe(first.session.session);
+        const history = yield* gateway.listAllExecutions({
+          cwd: projectRoot,
+          sessionId: ComputeSessionId.make(first.session.session),
+        });
+        expect(history.at(-1)?.request).toMatchObject({
+          source: { _tag: "document", origin: "file", path, bufferState: "saved" },
+          actor: { _tag: "agent", threadId: "thread-agent-compute" },
+        });
+        expect(history.at(-1)?.request.source).toHaveProperty("revision", expect.any(String));
+        const researcher = yield* gateway.startSession({
+          cwd: projectRoot,
+          sessionId: ComputeSessionId.make("researcher-session"),
+          languageId: ComputeLanguageId.make("python"),
+          executable: null,
+          owner: { _tag: "file", path },
+        });
+        const other = yield* provide(runScientComputeFile({ path, session: researcher.sessionId }));
+        expect(other.run.status).toBe("succeeded");
+        const page = yield* gateway.runHistory({ cwd: projectRoot, path, limit: 1 });
+        expect(page.runs.map(({ execution }) => execution.request.executionId)).toEqual([
+          other.run.run,
+        ]);
+        expect(page.next).not.toBeNull();
+        if (page.next === null) return yield* Effect.die("No run history cursor.");
+        const older = yield* gateway.runHistory({
+          cwd: projectRoot,
+          filter: path.toUpperCase(),
+          limit: 1,
+          before: page.next,
+        });
+        expect(older.runs.map(({ execution }) => execution.request.executionId)).toEqual([
+          file.run.run,
+        ]);
+        expect(older.next).toBeNull();
+        const copy = "marker = 17\nprint(marker * 3)\n";
+        yield* fs.writeFileString(`${projectRoot}/copy.py`, copy);
+        const pasted = yield* provide(runScientCompute({ code: copy }));
+        expect(pasted.run.source).toBe("agent (this chat): file of copy.py");
+        const pastedHistory = yield* gateway.runHistory({
+          cwd: projectRoot,
+          filter: "copy.py",
+          limit: 1,
+        });
+        expect(pastedHistory.runs[0]?.execution.request.source).toMatchObject({
+          origin: "file",
+          path: "copy.py",
+          bufferState: "saved",
+          revision: expect.any(String),
+        });
+        yield* fs.writeFileString(`${projectRoot}/duplicate.py`, copy);
+        const ambiguous = yield* provide(runScientCompute({ code: copy }));
+        expect(ambiguous.run.source).toBe("agent (this chat): code");
+        const configuredPath = fixture ? path : "parameterized.py";
+        if (!fixture) {
+          yield* fs.writeFileString(`${projectRoot}/input.txt`, "fixture\n");
+          yield* fs.writeFileString(
+            `${projectRoot}/parameterized.py`,
+            "import json, os\nprint(json.loads(os.environ['SCIENT_PARAMETERS'])['threshold'])\n",
+          );
+        }
+        const setup = {
+          parameters: { threshold: "0.7", label: '"control"', flags: "[true,null]", legacy: "0.7" },
+          inputs: [fixture ? "data/predictions.csv" : "input.txt"],
+        };
+        const configured = yield* provide(
+          runScientComputeFile({
+            path: configuredPath,
+            parameters: { threshold: 0.7, label: "control", flags: [true, null], legacy: "0.7" },
+            inputs: setup.inputs,
+          }),
+        );
+        expect(configured.run).toMatchObject({ ...setup, status: "succeeded" });
+        expect(configured.run.output).toContain(fixture ? "'precision': 0.75" : "0.7");
+        if (fixture) expect(configured.wrote).toContain("results/metrics.json");
+        const configuredHistory = yield* gateway.runHistory({
+          cwd: projectRoot,
+          filter: configuredPath,
+          limit: 1,
+        });
+        expect(configuredHistory.runs[0]?.execution.request).toMatchObject(setup);
+        expect(configuredHistory.runs[0]?.session).toMatchObject({ lifetime: "fresh" });
+        expect(
+          (yield* provide(
+            runScientCompute({ code: "import os; print(os.getenv('SCIENT_PARAMETERS'))" }),
+          )).run.output,
+        ).toContain("None");
       }).pipe(Effect.provide(Layer.mergeAll(computeLayer, workspaceLayer)));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

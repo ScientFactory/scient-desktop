@@ -1,7 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- canonical path validation needs node:path.
 import * as NodePath from "node:path";
 
-import { RESULTS_FOLDER_VARIABLE } from "@t3tools/shared/computeResults";
+import {
+  RESULTS_FOLDER_VARIABLE,
+  RESULTS_PARAMETERS_VARIABLE,
+} from "@t3tools/shared/computeResults";
 
 /**
  * Python/Jupyter overrides would change how the bridge loads, and the app's own sign-in tokens
@@ -72,7 +75,10 @@ const DENIED_KEYS: ReadonlySet<string> = new Set(ENVIRONMENT_DENYLIST.map(canoni
 const DENIED_PREFIXES: ReadonlyArray<string> = ENVIRONMENT_PREFIX_DENYLIST.map(canonicalKey);
 
 /** Variables Scient sets for one run, which a launch keeps and a host environment never passes. */
-const SCIENT_RUN_KEYS: ReadonlySet<string> = new Set([canonicalKey(RESULTS_FOLDER_VARIABLE)]);
+const SCIENT_RUN_KEYS: ReadonlySet<string> = new Set([
+  canonicalKey(RESULTS_FOLDER_VARIABLE),
+  canonicalKey(RESULTS_PARAMETERS_VARIABLE),
+]);
 
 function isDenied(key: string, keepRunKeys: boolean): boolean {
   const canonical = canonicalKey(key);

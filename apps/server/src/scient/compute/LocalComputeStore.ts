@@ -32,12 +32,24 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../../config.ts";
 
 /**
- * Separate immutable requests from replaceable results: request without result proves in-flight
- * work at server death. Durable filesystem records, not vanished runtime memory, decide recovery.
+ * An immutable request may carry its initial queued receipt. A later result takes precedence.
+ * Without either receipt, recovery treats the request as in flight.
  */
 
 const SessionJson = Schema.fromJsonString(ComputeSessionRecord);
-const RequestJson = Schema.fromJsonString(ComputeExecutionRequestRecord);
+const RequestJson = Schema.fromJsonString(
+  Schema.Struct({
+    ...ComputeExecutionRequestRecord.fields,
+    initialResult: Schema.optional(ComputeExecutionResultRecord),
+  }),
+);
+function queuedReceipt(
+  executionId: ComputeExecutionId,
+  result: ComputeExecutionResultRecord | undefined,
+): ComputeExecutionResultRecord | null {
+  return result?.status === "queued" && result.executionId === executionId ? result : null;
+}
+
 const ResultJson = Schema.fromJsonString(ComputeExecutionResultRecord);
 const OutputJson = Schema.fromJsonString(ComputeOutput);
 const JournalJson = Schema.fromJsonString(ComputeSessionJournalEntry);
@@ -119,9 +131,15 @@ export class LocalComputeStore extends Context.Service<
       sessionId: ComputeSessionId,
       entry: ComputeSessionJournalEntry,
     ) => Effect.Effect<void, LocalComputeStoreError>;
+    readonly appendJournalBatch: (
+      projectId: ComputeProjectId,
+      sessionId: ComputeSessionId,
+      entries: ReadonlyArray<ComputeSessionJournalEntry>,
+    ) => Effect.Effect<void, LocalComputeStoreError>;
     readonly writeExecutionRequest: (
       projectId: ComputeProjectId,
       request: ComputeExecutionRequestRecord,
+      initialResult?: ComputeExecutionResultRecord,
     ) => Effect.Effect<void, LocalComputeStoreError>;
     readonly writeExecutionResult: (
       projectId: ComputeProjectId,
@@ -380,17 +398,17 @@ const make = Effect.gen(function* () {
     );
 
   /** Appends without taking the write lease, for a caller that already holds it. */
-  const appendJournalEntry = Effect.fn("LocalComputeStore.appendJournalEntry")(function* (
+  const appendJournalEntries = Effect.fn("LocalComputeStore.appendJournalEntries")(function* (
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
-    entry: ComputeSessionJournalEntry,
+    entries: ReadonlyArray<ComputeSessionJournalEntry>,
   ) {
     const directory = yield* sessionDirectory(projectId, sessionId);
     const filePath = path.join(directory, "journal.ndjson");
-    const line = yield* encodeJournalEntry(entry).pipe(
-      mapStoreError("encode-journal-entry", filePath),
+    const lines = yield* Effect.forEach(entries, (entry) =>
+      encodeJournalEntry(entry).pipe(mapStoreError("encode-journal-entry", filePath)),
     );
-    yield* appendLine(filePath, "append-journal", line);
+    yield* appendLine(filePath, "append-journal", lines.join("\n"));
   });
 
   const appendJournal = (
@@ -399,9 +417,24 @@ const make = Effect.gen(function* () {
     entry: ComputeSessionJournalEntry,
   ) => writeLock.withPermits(1)(appendJournalEntry(projectId, sessionId, entry));
 
+  const appendJournalEntry = (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+    entry: ComputeSessionJournalEntry,
+  ) => appendJournalEntries(projectId, sessionId, [entry]);
+
+  const appendJournalBatch = Effect.fn("LocalComputeStore.appendJournalBatch")(
+    (
+      projectId: ComputeProjectId,
+      sessionId: ComputeSessionId,
+      entries: ReadonlyArray<ComputeSessionJournalEntry>,
+    ) => writeLock.withPermits(1)(appendJournalEntries(projectId, sessionId, entries)),
+  );
+
   const writeExecutionRequest = (
     projectId: ComputeProjectId,
     request: ComputeExecutionRequestRecord,
+    initialResult?: ComputeExecutionResultRecord,
   ) =>
     writeLock.withPermits(1)(
       Effect.gen(function* () {
@@ -418,9 +451,10 @@ const make = Effect.gen(function* () {
             new Error("A compute execution request is immutable once written."),
           );
         }
-        const contents = yield* encodeRequest(request).pipe(
-          mapStoreError("encode-execution-request", filePath),
-        );
+        const contents = yield* encodeRequest({
+          ...request,
+          ...(initialResult === undefined ? {} : { initialResult }),
+        }).pipe(mapStoreError("encode-execution-request", filePath));
         yield* atomicWrite(filePath, contents);
       }),
     );
@@ -650,62 +684,66 @@ const make = Effect.gen(function* () {
     const entries = yield* fs
       .readDirectory(executionsRoot)
       .pipe(mapStoreError("read-executions", executionsRoot));
-    const executions: ComputeExecutionRecord[] = [];
-    for (const entry of entries) {
-      if (!isSafeSegment(entry)) continue;
-      const requestPath = path.join(executionsRoot, entry, "request.json");
-      if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath)))) continue;
-      const requestText = yield* fs
-        .readFileString(requestPath)
-        .pipe(mapStoreError("read-execution-request", requestPath));
-      const request = decodeRequest(requestText);
-      if (Option.isNone(request)) {
-        // Skipped, not fatal, for the same reason as `loadSessions`: one
-        // unreadable request must not make a whole session's history
-        // unreadable, and there is nothing else to be done with a request
-        // that cannot be decoded -- it cannot even be marked lost.
-        yield* Effect.logWarning("compute execution request skipped as unreadable", {
-          projectId,
-          sessionId,
-          executionId: entry,
-        });
-        continue;
-      }
-      if (request.value.sessionId !== sessionId || request.value.executionId !== entry) {
-        yield* Effect.logWarning("compute execution request identity did not match its path", {
-          projectId,
-          sessionId,
-          executionId: entry,
-        });
-        continue;
-      }
-      const resultPath = path.join(executionsRoot, entry, "result.json");
-      const hasResult = yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath));
-      // A missing or unreadable result is the same fact: the execution was in
-      // flight when writing stopped. Recovery repairs it; reading it must not
-      // fail, or one torn file would make a whole session unreadable.
-      const result = hasResult
-        ? decodeResult(
-            yield* fs
-              .readFileString(resultPath)
-              .pipe(mapStoreError("read-execution-result", resultPath)),
-          )
-        : Option.none<ComputeExecutionResultRecord>();
-      const decodedResult = Option.getOrNull(result);
-      if (decodedResult !== null && decodedResult.executionId !== request.value.executionId) {
-        yield* Effect.logWarning("compute execution result identity did not match its path", {
-          projectId,
-          sessionId,
-          executionId: entry,
-        });
-        executions.push({ request: request.value, result: null });
-      } else {
-        executions.push({ request: request.value, result: decodedResult });
-      }
-    }
-    return executions.toSorted((left, right) =>
-      left.request.submittedAt.localeCompare(right.request.submittedAt),
+    // One trace for the bounded parallel scan, rather than a span for each receipt.
+    const executions = yield* Effect.forEach(
+      entries,
+      Effect.fnUntraced(function* (entry) {
+        if (!isSafeSegment(entry)) return null;
+        const requestPath = path.join(executionsRoot, entry, "request.json");
+        if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath))))
+          return null;
+        const requestText = yield* fs
+          .readFileString(requestPath)
+          .pipe(mapStoreError("read-execution-request", requestPath));
+        const request = decodeRequest(requestText);
+        if (Option.isNone(request)) {
+          // Skipped, not fatal, for the same reason as `loadSessions`: one
+          // unreadable request must not make a whole session's history
+          // unreadable, and there is nothing else to be done with a request
+          // that cannot be decoded -- it cannot even be marked lost.
+          yield* Effect.logWarning("compute execution request skipped as unreadable", {
+            projectId,
+            sessionId,
+            executionId: entry,
+          });
+          return null;
+        }
+        if (request.value.sessionId !== sessionId || request.value.executionId !== entry) {
+          yield* Effect.logWarning("compute execution request identity did not match its path", {
+            projectId,
+            sessionId,
+            executionId: entry,
+          });
+          return null;
+        }
+        const { initialResult, ...requestRecord } = request.value;
+        const resultPath = path.join(executionsRoot, entry, "result.json");
+        const hasResult = yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath));
+        // A missing result can still have an admission receipt. An unreadable
+        // result leaves the execution in flight for recovery.
+        const result = hasResult
+          ? decodeResult(
+              yield* fs
+                .readFileString(resultPath)
+                .pipe(mapStoreError("read-execution-result", resultPath)),
+            )
+          : Option.fromNullOr(queuedReceipt(requestRecord.executionId, initialResult));
+        const decodedResult = Option.getOrNull(result);
+        if (decodedResult !== null && decodedResult.executionId !== request.value.executionId) {
+          yield* Effect.logWarning("compute execution result identity did not match its path", {
+            projectId,
+            sessionId,
+            executionId: entry,
+          });
+          return { request: requestRecord, result: null };
+        }
+        return { request: requestRecord, result: decodedResult };
+      }),
+      { concurrency: 8 },
     );
+    return executions
+      .filter((execution) => execution !== null)
+      .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt));
   });
 
   const loadExecution = Effect.fn("LocalComputeStore.loadExecution")(function* (
@@ -731,14 +769,15 @@ const make = Effect.gen(function* () {
         new Error("The stored execution request identity does not match its path."),
       );
     }
+    const { initialResult, ...requestRecord } = request.value;
     const resultPath = path.join(directory, "result.json");
     if (!(yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath)))) {
-      return { request: request.value, result: null };
+      return { request: requestRecord, result: queuedReceipt(executionId, initialResult) };
     }
     const result = decodeResult(
       yield* fs.readFileString(resultPath).pipe(mapStoreError("read-execution-result", resultPath)),
     );
-    if (Option.isNone(result)) return { request: request.value, result: null };
+    if (Option.isNone(result)) return { request: requestRecord, result: null };
     if (result.value.executionId !== executionId) {
       return yield* storeError(
         "decode-execution-result",
@@ -746,7 +785,7 @@ const make = Effect.gen(function* () {
         new Error("The stored execution result identity does not match its path."),
       );
     }
-    return { request: request.value, result: result.value };
+    return { request: requestRecord, result: result.value };
   });
 
   const loadOutputs = Effect.fn("LocalComputeStore.loadOutputs")(function* (
@@ -1043,6 +1082,7 @@ const make = Effect.gen(function* () {
     prepareResultsFolder,
     writeSession,
     appendJournal,
+    appendJournalBatch,
     writeExecutionRequest,
     writeExecutionResult,
     appendOutputs,

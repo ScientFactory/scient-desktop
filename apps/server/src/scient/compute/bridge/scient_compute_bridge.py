@@ -74,6 +74,8 @@ MAX_IOPUB_BATCH = 256
 STARTUP_TIMEOUT = 30
 SHUTDOWN_TIMEOUT = 5
 IDLE_POLL_INTERVAL = 0.02
+QUICK_REPLY_WINDOW = 0.02
+QUICK_REPLY_POLL_INTERVAL = 0.002
 LIVENESS_INTERVAL = 1.0
 INTERRUPT_BUSY_TIMEOUT = 2.0
 INTERRUPT_SETTLE_TIMEOUT = 2.0
@@ -111,6 +113,7 @@ PYTHON_RICH_DISPLAY_SETUP = r"""
 from IPython import get_ipython
 from IPython.core.formatters import JSONFormatter
 import datetime
+import decimal
 import json
 import linecache
 import math
@@ -119,6 +122,7 @@ import sys
 
 def table_preview(frame):
     try:
+        import pandas as pd
         if frame.columns.nlevels != 1 or frame.index.nlevels != 1:
             return None
         names = list(frame.columns[:20])
@@ -144,8 +148,14 @@ def table_preview(frame):
                 return value if math.isfinite(value) else None
             if type(value).__module__.startswith("numpy") and type(value).__name__ not in {"ndarray", "object_"}:
                 return scalar(value.item())
-            if type(value) in {datetime.date, datetime.datetime, datetime.time}:
+            if value is pd.NaT or value is pd.NA:
+                return None
+            if isinstance(value, (datetime.date, datetime.time)):
                 return value.isoformat()
+            if isinstance(value, datetime.timedelta):
+                return value.isoformat() if isinstance(value, pd.Timedelta) else str(value)
+            if isinstance(value, (decimal.Decimal, pd.Period)):
+                return scalar(str(value))
             clipped = True
             return "[" + type(value).__name__[:80] + "]"
         rows = [
@@ -269,73 +279,282 @@ _scient_shell.config.InlineBackend.figure_formats = {"png", "pdf"}
 # too, with their size and modification time when opened, so a result can name its inputs; reads by
 # native code that bypasses Python's open are not seen. The hook never raises.
 def _scient_install_write_recorder():
+    import hashlib
     import types
+    from importlib.util import source_from_cache
     if not hasattr(sys, "addaudithook"):
         return
+    import glob
+    import stat as stat_mode
+    import tempfile
+    import threading
+
     extensions = frozenset({".png", ".svg", ".csv", ".tsv", ".parquet", ".xlsx"})
     write_flags = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
     destination_events = frozenset({"os.rename", "shutil.copyfile", "os.link"})
-    # Cells being run, outermost first; nested run_cell calls stack up.
-    record = {"cells": [], "paths": {}, "reads": {}, "reads_truncated": False, "invalid": False}
-    fspath, fsdecode, abspath, splitext = os.fspath, os.fsdecode, os.path.abspath, os.path.splitext
-    stat = os.stat
-    project = os.path.join(os.path.realpath(os.getcwd()), "")
-    ignored_parts = (os.sep + "__pycache__" + os.sep, os.sep + ".git" + os.sep)
+    project_root = os.path.normcase(os.path.realpath(os.getcwd()))
+    project = os.path.join(project_root, "")
+    relevant_events = destination_events | {
+        "open", "os.remove", "os.truncate", "os.listdir", "os.scandir", "glob.glob", "glob.glob/2",
+    }
+    result_root = os.environ.get("SCIENT_RESULTS_DIR")
+    result_folder = (
+        os.path.join(os.path.normcase(os.path.realpath(result_root)), "") if result_root else None
+    )
+    guard = threading.local()
+    interpreter_folders = {
+        os.path.join(os.path.normcase(os.path.realpath(prefix)), "")
+        for prefix in (sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix)
+        if prefix
+    }
+    interpreter_folders = tuple(folder for folder in interpreter_folders if not project.startswith(folder))
+    home = os.path.normcase(os.path.expanduser("~"))
+    outside_noise = [
+        tempfile.gettempdir(),
+        *(os.path.join(home, folder) for folder in (
+            ".cache", ".config", ".matplotlib", ".fontconfig", "Library/Caches",
+            "Library/Fonts", "Library/Preferences",
+        )),
+        *(os.environ.get(name) for name in (
+            "TMPDIR", "TEMP", "TMP", "MPLCONFIGDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+            "SystemRoot", "ProgramFiles", "ProgramFiles(x86)",
+        )),
+    ]
+    if os.name != "nt":
+        outside_noise.extend(("/System", "/usr", "/Library", "/etc"))
+    noise_folders = tuple(
+        os.path.join(os.path.normcase(os.path.realpath(path)), "")
+        for path in outside_noise if path
+    )
+    data_extensions = frozenset({
+        ".arrow", ".csv", ".dta", ".duckdb", ".feather", ".geojson", ".gpkg",
+        ".h5", ".hdf", ".hdf5", ".json", ".jsonl", ".mat", ".ndjson", ".npy",
+        ".npz", ".parquet", ".rda", ".rdata", ".rds", ".sas7bdat", ".sav",
+        ".shp", ".sqlite", ".sqlite3", ".tsv", ".xls", ".xlsx",
+    })
 
-    def note_read(path):
+    import_modules = frozenset({
+        "importlib._bootstrap", "importlib._bootstrap_external",
+        "_frozen_importlib", "_frozen_importlib_external",
+        "importlib.metadata", "importlib_metadata", "pkg_resources",
+    })
+    tooling_modules = ("importlib.metadata.", "importlib_metadata.", "pkg_resources.",
+                       "IPython.", "ipykernel.")
+
+    def empty_record():
+        return {
+            "cells": [], "paths": {}, "reads": {}, "outside": {}, "directories": {},
+            "writes": set(), "input_writes": set(), "read_aliases": {}, "venv_dirs": {},
+            "reads_truncated": False, "writes_truncated": False, "invalid": False,
+        }
+
+    record = empty_record()
+
+    def ignored(path):
+        return (
+            any(part in {".git", "__pycache__"} for part in path.split(os.sep))
+            or (result_folder is not None and os.path.normcase(path).startswith(result_folder))
+        )
+
+    def environment_path(path, identity, directory=False):
+        for candidate in (os.path.normcase(path), identity):
+            if any(candidate.startswith(prefix) or candidate == os.path.normpath(prefix)
+                   for prefix in interpreter_folders):
+                return True
+            if any(part in {"site-packages", "dist-packages", "__pycache__"}
+                   for part in candidate.split(os.sep)):
+                return True
+            folder = candidate if directory else os.path.dirname(candidate)
+            venv_dirs = record["venv_dirs"]
+            while folder != project_root and folder.startswith(project):
+                is_venv = venv_dirs.get(folder)
+                if is_venv is None:
+                    is_venv = os.path.isfile(os.path.join(folder, "pyvenv.cfg"))
+                    if len(venv_dirs) < 4096:
+                        venv_dirs[folder] = is_venv
+                if is_venv:
+                    return True
+                folder = os.path.dirname(folder)
+        return False
+
+    def outside_data_path(path, identity):
+        if os.path.splitext(path.lower())[1] not in data_extensions:
+            return None
+        if any(candidate.startswith(noise)
+               for candidate in (os.path.normcase(path), identity) for noise in noise_folders):
+            return None
+        name = os.path.relpath(path, home) if os.path.normcase(path).startswith(os.path.join(home, "")) else path
+        return ("~/" + name.replace(os.sep, "/")) if name != path else path.replace(os.sep, "/")
+
+    def note_read(path, identity):
+        if identity in record["writes"] or ignored(identity) or environment_path(path, identity):
+            return
+        lexical = os.path.normcase(path)
+        inside = lexical.startswith(project)
+        outside_name = None if inside else outside_data_path(path, identity)
+        if not inside and outside_name is None:
+            return
+        reads = record["reads"] if inside else record["outside"]
+        key = lexical if inside else identity
+        if key in reads:
+            return
+        try:
+            status = os.stat(path)
+        except OSError:
+            return
+        if not stat_mode.S_ISREG(status.st_mode):
+            return
+        if len(reads) >= (1024 if inside else 64):
+            record["reads_truncated"] = True
+        elif inside:
+            reads[key] = [path, status.st_size, str(status.st_mtime_ns), str(status.st_ctime_ns)]
+            record["read_aliases"].setdefault(identity, set()).add(key)
+        else:
+            reads[key] = outside_name
+
+    def note_write(path, identity):
+        writes = record["writes"]
+        if not ignored(identity):
+            for key in record["read_aliases"].pop(identity, ()):
+                record["reads"].pop(key, None)
+            record["outside"].pop(identity, None)
+            if identity in writes or len(writes) < 4096:
+                writes.add(identity)
+            else:
+                record["writes_truncated"] = True
+            if result_folder is not None and (os.path.normcase(path).startswith(project) or identity.startswith(project)):
+                input_writes = record["input_writes"]
+                for candidate in {path, identity}:
+                    if candidate in input_writes or len(input_writes) < 1024:
+                        input_writes.add(candidate)
+                    else:
+                        record["writes_truncated"] = True
+        paths = record["paths"]
+        if os.path.splitext(path)[1].lower() in extensions and len(paths) < 256:
+            paths[path] = None
+
+    def paths_for(path):
         if isinstance(path, int):
+            # Subprocesses wrap their pipes with open(fd); pipes are not file inputs.
+            status = os.fstat(path)
+            if stat_mode.S_ISREG(status.st_mode) or stat_mode.S_ISDIR(status.st_mode):
+                record["reads_truncated"] = True
+            return None
+        path = os.path.abspath(os.fsdecode(os.fspath(path)))
+        real = os.path.realpath(path)
+        return path, os.path.normcase(real)
+
+    placement_directories = frozenset({"assets", "results", ".scient"})
+
+    def user_root_listing(frame):
+        # glob and pathlib are user-facing listing APIs; the first caller is the source.
+        while (frame.f_globals.get("__name__") or "").split(".")[0] in {"glob", "pathlib", "os"}:
+            frame = frame.f_back
+            if frame is None:
+                return False
+        filename = frame.f_code.co_filename
+        if filename.startswith("<scient-compute-source:"):
+            return True
+        path = os.path.normcase(filename)
+        return path.startswith(project) and not environment_path(path, os.path.realpath(path))
+
+    def note_directory(path, caller):
+        target = paths_for("." if path is None else path)
+        if target is None:
             return
-        path = abspath(fsdecode(fspath(path)))
-        reads = record["reads"]
-        if path in reads or not path.startswith(project) or any(p in path for p in ignored_parts):
+        path, identity = target
+        lexical = os.path.normcase(path)
+        if (ignored(identity) or environment_path(path, identity, directory=True)
+                or (lexical != project_root and not lexical.startswith(project))):
             return
-        if len(reads) >= 1024:
+        if lexical == project_root and not user_root_listing(caller):
+            return
+        relative = os.path.relpath(lexical, project_root)
+        if any(part in placement_directories for part in relative.split(os.sep)):
+            return
+        directories = record["directories"]
+        if lexical in directories:
+            return
+        if len(directories) >= 128:
             record["reads_truncated"] = True
             return
         try:
-            status = stat(path)
-        except OSError:
+            with os.scandir(path) as entries:
+                names = []
+                for entry in entries:
+                    if entry.name in {".git", "__pycache__"} or entry.name in placement_directories:
+                        continue
+                    if len(names) >= 512:
+                        record["reads_truncated"] = True
+                        return
+                    names.append(entry.name)
+            listing = json.dumps(sorted(names), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        except (OSError, UnicodeError):
+            record["reads_truncated"] = True
             return
-        reads[path] = [status.st_size, status.st_mtime_ns, status.st_ctime_ns]
+        directories[lexical] = [path, hashlib.sha256(listing).hexdigest()]
 
-    def note(path):
-        if isinstance(path, int):
+    def glob_directory(pattern, root_dir, caller):
+        pattern = os.fsdecode(pattern)
+        if not glob.has_magic(pattern):
             return
-        path = fsdecode(fspath(path))
-        if splitext(path)[1].lower() not in extensions:
-            return
-        path = abspath(path)
-        paths = record["paths"]
-        if path not in paths and len(paths) < 256:
-            paths[path] = None
+        if root_dir:
+            pattern = os.path.join(os.fsdecode(root_dir), pattern)
+        directory = os.path.dirname(pattern)
+        while glob.has_magic(directory):
+            directory = os.path.dirname(directory)
+        note_directory(directory or ".", caller)
 
     def hook(event, args):
-        if not record["cells"]:
+        if not record["cells"] or getattr(guard, "active", False):
+            return
+        if event not in relevant_events:
             return
         try:
+            guard.active = True
             if event == "open":
+                target = paths_for(args[0])
+                if target is None:
+                    return
                 mode, flags = args[1], args[2]
                 writes = (isinstance(flags, int) and flags & write_flags) or (
                     isinstance(mode, str) and any(c in mode for c in "wax+")
                 )
                 if writes:
-                    note(args[0])
-                # r+ (and O_RDWR without truncation) reads what was there before writing.
-                if (
-                    not writes
-                    or (isinstance(mode, str) and "r" in mode and "+" in mode)
-                    or (
-                        not isinstance(mode, str)
-                        and isinstance(flags, int)
-                        and flags & os.O_RDWR
-                        and not flags & os.O_TRUNC
-                    )
-                ):
-                    note_read(args[0])
-            elif event in destination_events:
-                note(args[1])
+                    note_write(*target)
+                else:
+                    path, identity = target
+                    if (identity.startswith(project) and "__pycache__" in path.split(os.sep)
+                            and path.endswith(".pyc")
+                            and sys._getframe(1).f_globals.get("__name__") in import_modules):
+                        # A warm import opens the cache; keep its portable source as evidence.
+                        source = source_from_cache(path)
+                        target = paths_for(source)
+                    note_read(*target)
+            elif event in destination_events or event in {"os.remove", "os.truncate"}:
+                positions = (0, 1) if event == "os.rename" else (1,) if event in destination_events else (0,)
+                for position in positions:
+                    target = paths_for(args[position])
+                    if target is not None:
+                        note_write(*target)
+            elif event in {"os.listdir", "os.scandir"}:
+                # Module and entry-point lookup can scan every sys.path entry, including cwd.
+                caller = sys._getframe(1)
+                module_name = caller.f_globals.get("__name__") or ""
+                if module_name not in import_modules and not module_name.startswith(tooling_modules):
+                    note_directory(args[0], caller)
+            elif event == "glob.glob/2":
+                if args[3] is None:
+                    glob_directory(args[0], args[2], sys._getframe(1))
+                else:
+                    record["reads_truncated"] = True
+            elif sys.version_info < (3, 10):
+                # Newer CPython also raises glob.glob/2 with the complete path context.
+                glob_directory(args[0], None, sys._getframe(1))
         except Exception:
             pass
+        finally:
+            guard.active = False
 
     def pre_run(info):
         record["cells"].append(info)
@@ -366,18 +585,15 @@ def _scient_install_write_recorder():
             if invalid
             else {
                 "paths": list(record["paths"]),
-                "reads": [
-                    [path, size, str(mtime), str(ctime)]
-                    for path, (size, mtime, ctime) in record["reads"].items()
-                ],
-                "readsTruncated": record["reads_truncated"],
+                "reads": list(record["reads"].values()),
+                "readsOutsideProject": len(record["outside"]),
+                "outsideDataPaths": sorted(record["outside"].values()),
+                "directoryReads": list(record["directories"].values()),
+                **({"inputWrites": sorted(record["input_writes"])} if record["input_writes"] else {}),
+                "readsTruncated": record["reads_truncated"] or record["writes_truncated"],
             }
         )
-        record["cells"] = []
-        record["paths"] = {}
-        record["reads"] = {}
-        record["reads_truncated"] = False
-        record["invalid"] = False
+        record.update(empty_record())
         return taken
 
     module = types.ModuleType("_scient_compute_writes")
@@ -395,6 +611,13 @@ except Exception:
 
 # Read after each Python cell; the module is absent when the recorder could not be installed.
 WRITE_RECORD_EXPRESSION = '__import__("sys").modules["_scient_compute_writes"].take()'
+PACKAGE_EVIDENCE_LIMIT = 4000
+PACKAGE_EVIDENCE_EXPRESSION = (
+    '__import__("json").dumps([(metadata.get("Name"), metadata.get("Version")) '
+    'for metadata in (distribution.metadata for distribution in __import__("itertools").islice('
+    '__import__("importlib.metadata", fromlist=["distributions"]).distributions(), '
+    f'{PACKAGE_EVIDENCE_LIMIT + 1}))], ensure_ascii=True)'
+)
 
 
 # A single expression keeps inspection out of the user's history and namespace.
@@ -504,13 +727,16 @@ VARIABLE_INSPECTION_EXPRESSION = r"""
 # fresh dict each time; the one view it remembers (sort and search order) lives on a private
 # module and is keyed by the execution count, so any run invalidates it.
 TABLE_PAGE_SOURCE = r"""
-import json, math, reprlib, sys, types
+import json, math, reprlib, sys, time, types
 
 MAX_COLUMNS = 1024
 MAX_ROWS = 200
 MAX_CELLS = 16384
 MAX_CELL = 200
 MAX_LABEL = 255
+PROFILE_SECONDS = 6.0
+PROFILE_BATCH = 2048
+PROFILE_TRACKED_VALUES = 16384
 
 _short = reprlib.Repr()
 _short.maxstring = MAX_CELL
@@ -589,6 +815,9 @@ class _FrameTable:
             ordered = keys.astype(str).where(keys.notna()).sort_values(**options).index.to_numpy()
         return ordered if positions is None else positions[ordered]
 
+    def column_values(self, index, start, stop):
+        return self.frame.iloc[start:stop, index].tolist()
+
     def rows(self, positions):
         part = self.frame.iloc[positions, : self.width]
         columns = [part.iloc[:, index].tolist() for index in range(self.width)]
@@ -629,11 +858,89 @@ class _ArrayTable:
             ordered = ordered[::-1] if descending else ordered
         return ordered if positions is None else positions[ordered]
 
+    def column_values(self, index, start, stop):
+        return self.array[start:stop, index].tolist()
+
     def rows(self, positions):
         return [
             {"label": str(position), "cells": [_cell(value, None, self.np) for value in row]}
             for position, row in zip(positions, self.array[positions, : self.width].tolist())
         ]
+
+
+def _profile_value(value):
+    text = str(value) if type(value) in (str, int, float, bool) else _short.repr(value)
+    if len(text) <= MAX_CELL // 2:
+        return text, False
+    encoded = text.encode("utf-16-le", errors="replace")
+    if len(encoded) <= 2 * MAX_CELL:
+        return text, False
+    return encoded[:2 * MAX_CELL].decode("utf-16-le", errors="ignore") + "\u2026", True
+
+
+def _is_missing(value, pd, np):
+    return (
+        value is None
+        or (pd is not None and (value is pd.NA or value is pd.NaT))
+        or (isinstance(value, float) and math.isnan(value))
+        or (np is not None and isinstance(value, (np.floating, np.datetime64)) and np.isnan(value))
+    )
+
+
+def _profile_table(table, columns, pd, np):
+    deadline = time.monotonic() + PROFILE_SECONDS
+    limit = PROFILE_TRACKED_VALUES // max(1, table.width)
+    result = []
+    for index, column in enumerate(columns):
+        missing = 0
+        counts = {}
+        cap_reached = False
+        represented = False
+        low, high = None, None
+        numeric = column["type"] in ("integer", "number")
+        for start in range(0, table.length, PROFILE_BATCH):
+            if time.monotonic() >= deadline:
+                return None
+            for value in table.column_values(index, start, start + PROFILE_BATCH):
+                if _is_missing(value, pd, np):
+                    missing += 1
+                    continue
+                if np is not None and isinstance(value, np.generic):
+                    value = value.item()
+                if numeric and type(value) in (int, float):
+                    low = value if low is None or value < low else low
+                    high = value if high is None or value > high else high
+                if type(value) in (str, int, float, bool, bytes, complex):
+                    key = (type(value), value)
+                else:
+                    # Keep the count bounded even for unhashable objects.
+                    key = (type(value), _short.repr(value))
+                    represented = True
+                if key in counts or len(counts) < limit:
+                    counts[key] = counts.get(key, 0) + 1
+                else:
+                    cap_reached = True
+        bounds = {"min": str(low), "max": str(high)} if low is not None else None
+        top = []
+        clipped = False
+        if bounds is None:
+            for (_, value), count in sorted(counts.items(), key=lambda item: -item[1])[:3]:
+                text, shortened = _profile_value(value)
+                clipped |= shortened
+                top.append({"value": text, "count": count})
+        result.append({
+            "missing": missing,
+            "distinct": len(counts),
+            "distinctLowerBound": cap_reached and not represented,
+            **({"distinctApproximate": True, "topApproximate": True} if represented else {}),
+            "range": bounds,
+            "topTracked": cap_reached,
+            "valuesClipped": clipped,
+            "top": top,
+        })
+    if time.monotonic() >= deadline:
+        return None
+    return {"rowCount": table.length, "columns": result}
 
 
 def scient_table_page(namespace, raw):
@@ -651,6 +958,21 @@ def scient_table_page(namespace, raw):
         table = _ArrayTable(value, np)
     else:
         raise TypeError("%s is not a table." % name)
+
+    columns = table.columns()
+    if request.get("profile"):
+        totals = _profile_table(table, columns, pd, np)
+        if totals is not None:
+            return json.dumps({
+                "columns": columns,
+                "columnCount": table.column_count,
+                "rowCount": table.length,
+                "matchCount": table.length,
+                "truncated": False,
+                "offset": 0,
+                "rows": [],
+                "totals": totals,
+            }, ensure_ascii=False, allow_nan=False)
 
     sort, needle = request["sort"], request["search"].strip().lower()
     if sort is not None and sort["column"] >= table.width:
@@ -681,7 +1003,7 @@ def scient_table_page(namespace, raw):
     )
     return json.dumps(
         {
-            "columns": table.columns(),
+            "columns": columns,
             "columnCount": table.column_count,
             "rowCount": table.length,
             "matchCount": count,
@@ -834,6 +1156,12 @@ def validate_kernel_spec(value: Any) -> Optional[dict[str, Any]]:
     for flag in ("pythonFeatures", "interruptedReplyIsOk"):
         if value.get(flag) not in {None, True}:
             raise ProtocolViolation(f"start-kernel kernel {flag} must be true when present.")
+    if env is not None:
+        # Jupyter overlays kernelspec env after inheriting the bridge's env.
+        return {**value, "env": {
+            key: setting for key, setting in env.items()
+            if key.upper() not in {"SCIENT_RESULTS_DIR", "SCIENT_PARAMETERS"}
+        }}
     return value
 
 
@@ -1065,6 +1393,60 @@ class InboundReader:
 # ---------------------------------------------------------------------------
 
 
+R_SAVED_ERROR_MARKER = "<scient-r-saved-file>"
+
+
+def r_saved_file_code(code: str, path: str) -> str:
+    # Ark drops srcrefs when rendering an error, so preserve them in the condition.
+    lines = ", ".join(json.dumps(line, ensure_ascii=False) for line in code.split("\n"))
+    filename = json.dumps(path, ensure_ascii=False)
+    return f"""(function() {{
+  old <- base::options(keep.source = TRUE)
+  base::on.exit(base::options(old))
+  text <- base::c({lines})
+  path <- {filename}
+  marker <- "{R_SAVED_ERROR_MARKER}"
+  # R caps the printed parse filename. Give the parser a short name and restore it.
+  src <- base::srcfilecopy("scient-source", text)
+  parsed <- base::tryCatch(
+    base::parse(text = text, srcfile = src, keep.source = TRUE),
+    error = function(condition) {{
+      message <- base::conditionMessage(condition)
+      if (base::startsWith(message, "scient-source:"))
+        message <- base::paste0(path, base::substring(message, 14L))
+      base::stop(base::simpleError(base::paste0(marker, message)))
+    }}
+  )
+  src$filename <- path
+  result <- base::withCallingHandlers({{
+    value <- base::list(value = NULL, visible = FALSE)
+    refs <- base::attr(parsed, "srcref")
+    for (i in base::seq_along(parsed)) {{
+      expression <- base::as.expression(parsed[[i]])
+      base::attr(expression, "srcref") <- refs[i]
+      value <- base::withVisible(base::eval(expression, envir = .GlobalEnv))
+      if (i < base::length(parsed) && value$visible) base::print(value$value)
+    }}
+    value
+  }}, error = function(condition) {{
+    calls <- base::rev(base::sys.calls())
+    locations <- base::unique(base::unlist(base::lapply(calls, function(call) {{
+      ref <- base::attr(call, "srcref")
+      if (base::is.null(ref)) return(NULL)
+      file <- utils::getSrcFilename(ref, full.names = TRUE)
+      if (base::length(file) && base::nzchar(file[1L]))
+        base::paste0("at ", base::normalizePath(file[1L], winslash = "/", mustWork = FALSE),
+                     ":", ref[1L], ":", ref[5L])
+    }})))
+    base::stop(base::simpleError(
+      base::paste(base::c(base::paste0(marker, base::conditionMessage(condition)), locations), collapse = "\\n"),
+      base::conditionCall(condition)
+    ))
+  }})
+  if (result$visible) result$value else base::invisible(result$value)
+}})()"""
+
+
 class ScientBridge:
     """Owns one kernel and translates between Scient and Jupyter."""
 
@@ -1097,6 +1479,10 @@ class ScientBridge:
         self._execution_task: Optional[asyncio.Task[None]] = None
         self._kernel_monitor_task: Optional[asyncio.Task[None]] = None
         self._recent_msg_ids: dict[str, str] = {}
+        self._julia = False
+        self._r = False
+        self._julia_inputs: dict[int, str] = {}
+        self._julia_document_request: Optional[str] = None
         self._kernel_transitioning = False
         self._running = True
         self._handshake_complete = False
@@ -1503,6 +1889,8 @@ class ScientBridge:
         )
         self._serves_tables = python_features
         self._records_writes = python_features
+        self._julia = (kernel or {}).get("language") == "julia"
+        self._r = (kernel or {}).get("language", "").casefold() == "r"
         self._mapping.interrupted_reply_is_ok = bool((kernel or {}).get("interruptedReplyIsOk"))
         # Kernels that compile on first start (IJulia) ask for longer than ipykernel needs.
         self._startup_timeout = (kernel or {}).get("startupTimeoutSeconds") or STARTUP_TIMEOUT
@@ -1536,9 +1924,15 @@ class ScientBridge:
         language = info.get("language_info", {})
         if not isinstance(language, dict):
             language = {}
+        package_evidence = (
+            await self._python_package_evidence()
+            if str(language.get("name", "")).lower() == "python" and "SCIENT_RESULTS_DIR" in kernel_environment
+            else None
+        )
         self._send(
             "kernel-ready",
             {
+                **({"packageEvidence": package_evidence} if package_evidence is not None else {}),
                 "kernelPid": self._kernel_pid,
                 "languageId": language.get("name", "python"),
                 "languageVersion": language.get("version", "unknown"),
@@ -1553,6 +1947,31 @@ class ScientBridge:
             },
         )
         self._ensure_kernel_monitor()
+
+    async def _python_package_evidence(self) -> Optional[dict[str, Any]]:
+        try:
+            reply = await self._evaluate_silently("packages", PACKAGE_EVIDENCE_EXPRESSION, 2.0)
+            records = self._expression_value(reply) if reply.get("status") == "ok" else None
+        except Exception:  # an unavailable inventory does not stop a run
+            return None
+        if not isinstance(records, list):
+            return None
+        packages = []
+        remaining = min(self._peer_frame_limit // 2, 512 * 1024)
+        for record in records:
+            if len(packages) >= PACKAGE_EVIDENCE_LIMIT:
+                break
+            if not isinstance(record, list) or len(record) != 2 or not all(
+                isinstance(value, str) and 0 < len(value) <= 2048 for value in record
+            ):
+                continue
+            entry = {"name": record[0], "version": record[1]}
+            remaining -= len(json.dumps(entry, ensure_ascii=True)) + 1
+            if remaining < 0:
+                break
+            packages.append(entry)
+        packages.sort(key=lambda entry: (entry["name"].lower(), entry["version"]))
+        return {"packages": packages, "packagesTruncated": len(packages) < len(records)}
 
     def _resolve_source_path(
         self, source_context: dict[str, Any], require_file: bool = True
@@ -1619,18 +2038,20 @@ class ScientBridge:
         source_context: Optional[dict[str, Any]],
     ) -> str:
         """Submit exact source bytes with optional native Jupyter metadata."""
+        expressions = {"writes": WRITE_RECORD_EXPRESSION} if self._records_writes and not silent else {}
         if source_context is None:
             return self._kernel_client.execute(
                 code,
                 silent=silent,
                 store_history=store_history,
+                user_expressions=expressions,
                 allow_stdin=False,
             )
         content = {
             "code": code,
             "silent": silent,
             "store_history": store_history,
-            "user_expressions": {},
+            "user_expressions": expressions,
             "allow_stdin": False,
             "stop_on_error": True,
         }
@@ -1673,6 +2094,7 @@ class ScientBridge:
         try:
             cancelled_request_id = await self._cancel_execution_task(emit_completion=False)
             self._recent_msg_ids.clear()
+            self._julia_inputs.clear()
             if self._kernel_client is not None:
                 with contextlib.suppress(Exception):
                     self._kernel_client.stop_channels()
@@ -1796,6 +2218,10 @@ class ScientBridge:
             await self._flush()
             return
 
+        if self._r and native_saved_file:
+            code = r_saved_file_code(code, source_context["filePath"])
+            source_context = None
+
         # Submitted before it is recorded as active: a submit that raises must
         # leave the session able to run the next cell, not holding its only
         # execution slot for work that never started.
@@ -1807,6 +2233,7 @@ class ScientBridge:
         )
         self._mapping.active_request_id = request_id
         self._mapping.active_msg_id = msg_id
+        self._julia_document_request = request_id if source_context is not None else None
         self._recent_msg_ids[msg_id] = request_id
         while len(self._recent_msg_ids) > 64:
             del self._recent_msg_ids[next(iter(self._recent_msg_ids))]
@@ -1831,14 +2258,20 @@ class ScientBridge:
             user_expressions={key: expression},
             allow_stdin=False,
         )
-        deadline = time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = started + timeout
         while time.monotonic() < deadline:
             try:
                 message = await self._kernel_client.get_shell_msg(timeout=0)
             except queue.Empty:
                 if not await self._kernel_alive():
                     raise RuntimeError("The kernel process exited during inspection.")
-                await asyncio.sleep(IDLE_POLL_INTERVAL)
+                interval = (
+                    QUICK_REPLY_POLL_INTERVAL
+                    if time.monotonic() - started < QUICK_REPLY_WINDOW
+                    else IDLE_POLL_INTERVAL
+                )
+                await asyncio.sleep(interval)
                 continue
             if message.get("parent_header", {}).get("msg_id") != msg_id:
                 continue
@@ -1926,7 +2359,7 @@ class ScientBridge:
             name, query = payload.get("name"), payload.get("query")
             if not isinstance(name, str) or not name or not isinstance(query, dict):
                 raise ProtocolViolation("inspect-table requires a name and a query.")
-            request = json.dumps({**query, "name": name})
+            request = json.dumps({**query, "name": name, "profile": payload.get("profile") is True})
             expression = await self._evaluate_silently(
                 "scient_table",
                 f"(lambda _ns: (exec({TABLE_PAGE_SOURCE!r}, _ns), "
@@ -1962,7 +2395,7 @@ class ScientBridge:
         cell may legitimately run for hours, so there is no honest timeout, but a
         kernel that has exited will never send the reply this loop waits for.
         """
-        last_liveness = time.monotonic()
+        started = last_liveness = time.monotonic()
         try:
             while not self._mapping.is_complete():
                 progressed = await self._drain_iopub(request_id, msg_id)
@@ -1977,7 +2410,12 @@ class ScientBridge:
                     if not await self._kernel_alive():
                         await self._fail_fatal("The kernel process exited while running code.")
                         return
-                await asyncio.sleep(IDLE_POLL_INTERVAL)
+                interval = (
+                    QUICK_REPLY_POLL_INTERVAL
+                    if now - started < QUICK_REPLY_WINDOW
+                    else IDLE_POLL_INTERVAL
+                )
+                await asyncio.sleep(interval)
 
             completion: dict[str, Any] = {
                 "outcome": self._mapping.outcome(),
@@ -2000,9 +2438,13 @@ class ScientBridge:
         if not self._records_writes:
             return None
         try:
-            result = await self._evaluate_silently(
-                "writes", WRITE_RECORD_EXPRESSION, WRITE_RECORD_TIMEOUT
-            )
+            expressions = (self._mapping.shell_reply or {}).get("user_expressions")
+            result = expressions.get("writes") if isinstance(expressions, dict) else None
+            # Jupyter omits user expressions on an exception, even when the cell wrote files.
+            if not isinstance(result, dict):
+                result = await self._evaluate_silently(
+                    "writes", WRITE_RECORD_EXPRESSION, WRITE_RECORD_TIMEOUT
+                )
             record = self._expression_value(result) if result.get("status") == "ok" else None
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
@@ -2030,8 +2472,38 @@ class ScientBridge:
             ]
             report["reads"] = usable[:MAX_READ_RECORD_PATHS]
             report["readsTruncated"] = (
-                record.get("readsTruncated") is True or len(usable) > MAX_READ_RECORD_PATHS
+                record.get("readsTruncated") is True or len(usable) != len(reads) or len(usable) > MAX_READ_RECORD_PATHS
             )
+            input_writes = record.get("inputWrites")
+            if isinstance(input_writes, list):
+                kept_writes = [
+                    path for path in input_writes[:MAX_READ_RECORD_PATHS]
+                    if isinstance(path, str) and len(path) <= MAX_WRITE_RECORD_PATH
+                ]
+                report["inputWrites"] = kept_writes
+                report["readsTruncated"] = report["readsTruncated"] or len(kept_writes) != len(input_writes)
+            outside = record.get("readsOutsideProject")
+            if type(outside) is int and 0 <= outside <= MAX_READ_RECORD_PATHS:
+                report["readsOutsideProject"] = outside
+            outside_paths = record.get("outsideDataPaths")
+            if isinstance(outside_paths, list):
+                kept_outside = [
+                    path for path in outside_paths[:64]
+                    if isinstance(path, str) and 0 < len(path) <= MAX_WRITE_RECORD_PATH
+                ]
+                report["outsideDataPaths"] = kept_outside
+                report["readsTruncated"] = report["readsTruncated"] or len(kept_outside) != len(outside_paths)
+            directories = record.get("directoryReads")
+            if isinstance(directories, list):
+                valid = [
+                    {"path": pair[0], "sha256": pair[1]}
+                    for pair in directories[:128]
+                    if isinstance(pair, list) and len(pair) == 2
+                    and isinstance(pair[0], str) and len(pair[0]) <= MAX_WRITE_RECORD_PATH
+                    and isinstance(pair[1], str) and re.fullmatch("[0-9a-f]{64}", pair[1])
+                ]
+                report["directoryReads"] = valid
+                report["readsTruncated"] = report["readsTruncated"] or len(valid) != len(directories)
         return report
 
     async def _drain_iopub(self, request_id: str, msg_id: str) -> bool:
@@ -2126,6 +2598,15 @@ class ScientBridge:
                 {"kind": "clear-output", "wait": content.get("wait") is True},
                 request_id,
             )
+        elif (
+            msg_type == "execute_input" and self._julia and request_id is not None
+            and request_id == self._julia_document_request
+        ):
+            number = content.get("execution_count")
+            if type(number) is int:
+                self._julia_inputs[number] = request_id
+                if len(self._julia_inputs) > 256:
+                    del self._julia_inputs[next(iter(self._julia_inputs))]
         elif msg_type == "error":
             self._map_error(content, request_id)
         elif msg_type == "status" and request_id == self._mapping.active_request_id:
@@ -2283,12 +2764,30 @@ class ScientBridge:
 
     def _map_error(self, content: dict[str, Any], request_id: Optional[str]) -> None:
         name, _ = truncate_utf8(content.get("ename", "UnknownError"), MAX_ERROR_NAME)
-        value, _ = truncate_utf8(content.get("evalue", ""), MAX_ERROR_VALUE)
+        raw_value = content.get("evalue", "")
+        wrapped_r_error = self._r and isinstance(raw_value, str) and R_SAVED_ERROR_MARKER in raw_value
+        if wrapped_r_error:
+            raw_value = raw_value.replace(R_SAVED_ERROR_MARKER, "", 1)
+        value, _ = truncate_utf8(raw_value, MAX_ERROR_VALUE)
+        if self._mapping.interrupt_requested and request_id == self._mapping.active_request_id and (
+            name in INTERRUPT_ERROR_NAMES or value.startswith(INTERRUPT_ERROR_NAMES)
+        ):
+            return
         raw_traceback = content.get("traceback", [])
         traceback: list[str] = []
-        if isinstance(raw_traceback, list):
+
+        def julia_frame(match: re.Match[str]) -> str:
+            execution = self._julia_inputs.get(int(match[2]))
+            if execution is None:
+                return match[0]
+            return match[1] + "<scient-compute-source:" + execution.encode("utf-8").hex() + ":1>:"
+
+        if not wrapped_r_error and isinstance(raw_traceback, list):
             for line in raw_traceback[:MAX_TRACEBACK_LINES]:
                 bounded, _ = truncate_utf8(line, MAX_TRACEBACK_LINE)
+                if self._julia:
+                    bounded = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", bounded)
+                    bounded = re.sub(r"(@ (?:[\w.]+ )?)(?:\./)?In\[([0-9]{1,12})\]:(?=[0-9])", julia_frame, bounded)
                 traceback.append(bounded)
         self._send("error", {"name": name, "value": value, "traceback": traceback}, request_id)
         if name == "StdinNotImplementedError":

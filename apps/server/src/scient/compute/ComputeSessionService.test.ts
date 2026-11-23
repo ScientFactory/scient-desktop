@@ -3775,7 +3775,8 @@ describe("compute session execution", () => {
   it.effect("stops every later cell of a run submitted together", () =>
     Effect.gen(function* () {
       const test = yield* harness();
-      const cell = (id: string, code: string) => ({
+      const batchId = ComputeExecutionId.make("one");
+      const cell = (id: string, code: string, index: number) => ({
         projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         executionId: ComputeExecutionId.make(id),
@@ -3789,6 +3790,7 @@ describe("compute session execution", () => {
           revision: null,
           range: null,
           cell: id,
+          notebookBatch: { id: batchId, mode: "all" as const, index, count: 3 },
         },
       });
 
@@ -3799,12 +3801,39 @@ describe("compute session execution", () => {
           const records = yield* service.submitExecutions({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,
-            submissions: [cell("one", "boom"), cell("two", "print(1)"), cell("three", "print(1)")],
+            submissions: [
+              cell("one", "boom", 0),
+              cell("two", "print(1)", 1),
+              cell("three", "print(1)", 2),
+            ],
           });
           expect(records).toHaveLength(3);
+          const journal = yield* service.listJournal({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+          });
+          const submissions = journal.filter((entry) => entry.event === "execution-submitted");
+          expect(submissions.map((entry) => entry.executionId)).toEqual(["one", "two", "three"]);
+          expect(submissions.map((entry) => entry.sequence)).toEqual([
+            submissions[0]!.sequence,
+            submissions[0]!.sequence + 1,
+            submissions[0]!.sequence + 2,
+          ]);
           yield* waitForExecution(ComputeExecutionId.make("one"), "failed");
           yield* waitForExecution(ComputeExecutionId.make("two"), "cancelled");
           yield* waitForExecution(ComputeExecutionId.make("three"), "cancelled");
+          const session = yield* service.getSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+          });
+          expect(session?.lastNotebookBatch).toEqual({
+            id: batchId,
+            mode: "all",
+            status: "failed",
+            failedCell: 1,
+            count: 3,
+            notRun: 2,
+          });
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

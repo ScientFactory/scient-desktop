@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- diagnostic normalization is a synchronous adapter contract.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -29,6 +30,10 @@ const ANSI_PATTERN =
 const STANDARD_FRAME_PATTERN = /^\s*File\s+"([^"]+)",\s+line\s+(\d+)(?:,\s+in\s+(.+))?\s*$/;
 const IPYTHON_FILE_FRAME_PATTERN = /^\s*File\s+(.+):(\d+)(?:,\s+in\s+(.+))?\s*$/;
 const IPYTHON_CELL_FRAME_PATTERN = /^\s*Cell\s+In\[[^\]]*\],\s+line\s+(\d+)(?:,\s+in\s+(.+))?\s*$/;
+const JULIA_FRAME_PATTERN = /^\s*.*?@ (?:[\p{L}\p{N}_.]+ )?(.+):(\d+)\s*$/u;
+const R_FRAME_PATTERN =
+  /^\s*(?:!\s+)?(?:at\s+|Error in [^:]+ : |Error:\s*)?(.+?\.[rR]):(\d+)(?::(\d+))?(?::.*)?\s*$/;
+const R_STACK_LOCATION = /^\s*(?:!\s+)?at\s+.+\.[rR]:\d+(?::\d+)?\s*$/;
 const SYNTHETIC_PYTHON_PATH_PATTERN = /^<[^>]+>$/;
 const SCIENT_SOURCE_PATTERN = /^<scient-compute-source:([0-9a-f]+):[0-9]+>$/;
 
@@ -81,6 +86,20 @@ function projectRelativePath(projectRoot: string, reportedPath: string): string 
   return encoder.encode(normalized).byteLength <= MAX_TRACEBACK_LINE_BYTES ? normalized : null;
 }
 
+function existingProjectFile(projectRoot: string, path: string): string | null {
+  const relative = projectRelativePath(projectRoot, path);
+  if (relative === null) return null;
+  try {
+    const root = NodeFS.realpathSync(projectRoot);
+    const file = NodeFS.realpathSync(NodePath.resolve(projectRoot, relative));
+    return projectRelativePath(root, file) !== null && NodeFS.statSync(file).isFile()
+      ? relative
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function positiveLine(value: string, offset = 0): number | null {
   const parsed = Number(value);
   const line = parsed + offset;
@@ -114,17 +133,23 @@ function submittedFrame(
   };
 }
 
+function matchFrame(line: string, language: string) {
+  if (language === "julia") return JULIA_FRAME_PATTERN.exec(line);
+  if (language === "r") return R_FRAME_PATTERN.exec(line);
+  return STANDARD_FRAME_PATTERN.exec(line) ?? IPYTHON_FILE_FRAME_PATTERN.exec(line);
+}
+
 function parseFrame(
   line: string,
   context: ComputeDiagnosticContext,
+  language: string,
 ): ComputeDiagnosticFrame | null {
   const cellMatch = IPYTHON_CELL_FRAME_PATTERN.exec(line);
   // Cell numbers and arbitrary synthetic filenames do not identify the current
   // submission: they may belong to retained functions or user-created code.
   if (cellMatch) return null;
 
-  const standardMatch = STANDARD_FRAME_PATTERN.exec(line);
-  const fileMatch = standardMatch ?? IPYTHON_FILE_FRAME_PATTERN.exec(line);
+  const fileMatch = matchFrame(line, language);
   if (!fileMatch) return null;
   const reportedPath = fileMatch[1]!.trim();
   const sourceMatch = SCIENT_SOURCE_PATTERN.exec(reportedPath);
@@ -132,25 +157,36 @@ function parseFrame(
     const encodedId = sourceMatch[1]!;
     if (encodedId.length % 2 !== 0) return null;
     const executionId = Buffer.from(encodedId, "hex").toString("utf8");
-    return submittedFrame(context, executionId, fileMatch[2]!, fileMatch[3]);
+    const frame = submittedFrame(context, executionId, fileMatch[2]!, fileMatch[3]);
+    if (
+      frame !== null &&
+      language === "julia" &&
+      existingProjectFile(context.projectRoot, frame.relativePath) === null
+    )
+      return null;
+    return frame;
   }
-  if (SYNTHETIC_PYTHON_PATH_PATTERN.test(reportedPath)) {
+  if (SYNTHETIC_PYTHON_PATH_PATTERN.test(reportedPath)) return null;
+  if (language === "julia" && !NodePath.isAbsolute(reportedPath) && !reportedPath.startsWith("~/"))
     return null;
-  }
-  const relativePath = projectRelativePath(context.projectRoot, reportedPath);
+  const relativePath =
+    language === "julia" || language === "r"
+      ? existingProjectFile(context.projectRoot, reportedPath)
+      : projectRelativePath(context.projectRoot, reportedPath);
   const frameLine = positiveLine(fileMatch[2]!);
   if (relativePath === null || frameLine === null) return null;
   return {
     relativePath,
     line: frameLine,
-    column: null,
-    functionName: frameFunctionName(fileMatch[3]),
+    column: language === "r" ? positiveLine(fileMatch[3] ?? "") : null,
+    functionName: language === "r" ? null : frameFunctionName(fileMatch[3]),
   };
 }
 
 function extractFrames(
   traceback: ReadonlyArray<string>,
   context: ComputeDiagnosticContext,
+  language: string,
 ): ReadonlyArray<ComputeDiagnosticFrame> {
   const frames: ComputeDiagnosticFrame[] = [];
   const seen = new Set<string>();
@@ -159,7 +195,7 @@ function extractFrames(
     // physical lines preserves the retained traceback while still recognizing
     // the same frame grammar as CPython's one-line entries.
     for (const line of tracebackEntry.split(/\r?\n/u)) {
-      const frame = parseFrame(line, context);
+      const frame = parseFrame(line, context, language);
       if (frame === null) continue;
       const key = `${frame.relativePath}:${String(frame.line)}:${frame.functionName ?? ""}`;
       if (seen.has(key)) continue;
@@ -195,10 +231,66 @@ export function normalizeDiagnosticText(
   return { errorName, message, traceback };
 }
 
+function normalizeRDiagnostic(
+  text: Omit<ComputeDiagnostic, "frames">,
+  context: ComputeDiagnosticContext,
+): ComputeDiagnostic {
+  const messageLines = text.message.split("\n");
+  const frames = extractFrames([text.message, ...text.traceback], context, "r");
+  const relativeLocation = (line: string) => {
+    const match = R_FRAME_PATTERN.exec(line);
+    const frame = match === null ? null : parseFrame(line, context, "r");
+    return frame === null ? line : line.replace(match![1]!, frame.relativePath);
+  };
+  const locations = messageLines
+    .filter((line) => R_STACK_LOCATION.test(line) && parseFrame(line, context, "r") !== null)
+    .map(relativeLocation);
+  return {
+    errorName: text.errorName.trim(),
+    message: messageLines
+      .filter((line) => !R_STACK_LOCATION.test(line))
+      .map(relativeLocation)
+      .join("\n")
+      .replace(/^(?:Error:\s*)?![ \t]*/u, "")
+      .replace(/(\n)[ \t]*![ \t]+/gu, "$1"),
+    traceback: [...locations, ...text.traceback.map(relativeLocation)],
+    frames,
+  };
+}
+
+export function normalizeKernelDiagnostic(
+  report: ComputeRuntimeErrorReport,
+  context: ComputeDiagnosticContext,
+  language: string,
+): ReadonlyArray<ComputeDiagnostic> {
+  const text = normalizeDiagnosticText(report);
+  if (language === "r") return [normalizeRDiagnostic(text, context)];
+  const frames = extractFrames(text.traceback, context, language);
+  const traceback = text.traceback.map((entry) =>
+    entry
+      .split("\n")
+      .map((line) => {
+        const match = matchFrame(line, language);
+        const path = match?.[1];
+        if (path === undefined || !SCIENT_SOURCE_PATTERN.test(path)) return line;
+        const frame = parseFrame(line, context, language);
+        if (frame === null) return line;
+        const location = line.indexOf(path);
+        const tail = line.slice(location + path.length);
+        return (
+          line.slice(0, location) +
+          frame.relativePath +
+          tail.replace(/^(:|",\s+line\s+)\d+/, (_line, separator: string) => separator + frame.line)
+        );
+      })
+      .join("\n"),
+  );
+  return [{ ...text, frames, traceback }];
+}
+
 export function normalizePythonDiagnostic(
   report: ComputeRuntimeErrorReport,
   context: ComputeDiagnosticContext,
 ): ReadonlyArray<ComputeDiagnostic> {
-  const text = normalizeDiagnosticText(report);
-  return [{ ...text, frames: extractFrames(text.traceback, context) }];
+  return normalizeKernelDiagnostic(report, context, "python");
 }

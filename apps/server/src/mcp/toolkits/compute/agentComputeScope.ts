@@ -40,18 +40,23 @@ export type AgentScope = Effect.Success<ReturnType<typeof agentScope>>;
 export const isLive = (session: ComputeSessionRecord) =>
   !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status);
 
+export function agentComputeLanguageId(requestedLanguage = "python") {
+  const normalized = requestedLanguage.trim().toLowerCase();
+  return ComputeLanguageId.make(LANGUAGE_ALIASES[normalized] ?? normalized);
+}
+
 /** The live session this owner holds for the language, started on first use. */
 export const ownedSession = Effect.fn("ScientComputeToolkit.ownedSession")(function* (
   scope: AgentScope,
   requestedLanguage: string | undefined,
   owner: ComputeSessionOwner,
 ) {
-  const normalized = (requestedLanguage ?? "python").trim().toLowerCase();
-  const languageId = ComputeLanguageId.make(LANGUAGE_ALIASES[normalized] ?? normalized);
+  const languageId = agentComputeLanguageId(requestedLanguage);
   const sessions = yield* scope.gateway.listSessions({ cwd: scope.cwd });
   const existing = sessions.find(
     (session) =>
       isLive(session) &&
+      session.lifetime !== "fresh" &&
       session.languageId === languageId &&
       session.owner !== undefined &&
       JSON.stringify(session.owner) === JSON.stringify(owner),

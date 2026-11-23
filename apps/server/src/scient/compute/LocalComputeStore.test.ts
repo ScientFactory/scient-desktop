@@ -327,6 +327,43 @@ describe("LocalComputeStore durability", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("recovers a queued receipt from the request until a later result is written", () =>
+    Effect.gen(function* () {
+      const { use } = yield* harness("scient-compute-store-admission-");
+      const queued = decodeResult({ ...runningResult, status: "queued", startedAt: null });
+
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          yield* store.writeSession(session);
+          yield* store.writeExecutionRequest(PROJECT_ID, request, queued);
+        }),
+      );
+
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          expect(yield* store.loadExecution(PROJECT_ID, SESSION_ID, EXECUTION_ID)).toEqual({
+            request,
+            result: queued,
+          });
+          expect(yield* store.loadExecutions(PROJECT_ID, SESSION_ID)).toEqual([
+            { request, result: queued },
+          ]);
+
+          yield* store.writeExecutionResult(PROJECT_ID, SESSION_ID, succeededResult);
+          expect(yield* store.loadExecution(PROJECT_ID, SESSION_ID, EXECUTION_ID)).toEqual({
+            request,
+            result: succeededResult,
+          });
+          expect(yield* store.loadExecutions(PROJECT_ID, SESSION_ID)).toEqual([
+            { request, result: succeededResult },
+          ]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("refuses to rewrite an immutable execution request", () =>
     Effect.gen(function* () {
       const { use } = yield* harness("scient-compute-store-immutable-request-");

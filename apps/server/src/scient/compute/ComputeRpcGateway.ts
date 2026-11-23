@@ -3,11 +3,15 @@ import * as NodeOS from "node:os";
 
 import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import {
+  computeNotebookBatchActivity,
+  computeNotebookCellNotRun,
   ComputeProjectId,
   ComputeOperationError,
   TERMINAL_COMPUTE_SESSION_STATUSES,
   type ComputeLanguageId,
+  type ComputeExecutionRecord,
   type ComputeSourceRange,
+  type ComputeStartSessionInput,
 } from "@scientfactory/compute";
 import {
   ComputeGatewayError,
@@ -26,6 +30,9 @@ import {
   type ComputeSubmitProjectExecutionInput,
   type ComputeTableInput,
   type ComputeRuntimeInventoryInput,
+  type ComputeRunHistoryInput,
+  type ComputeRunHistoryResult,
+  type AnalysisRunSummary,
   type ComputeVerifyRuntimeInput,
   resolveScientificComputingLanguageSettings,
   type ServerSettings as ServerSettingsValue,
@@ -34,6 +41,8 @@ import * as Effect from "effect/Effect";
 
 import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { COMPUTE_LANGUAGE_CATALOG, type ServerSettingsError } from "@t3tools/contracts";
+import { analysisRunHistoryCursor } from "../analysis/AnalysisRunIndex.ts";
+import type { AnalysisService } from "../analysis/AnalysisService.ts";
 import type { LocalAnalysisStoreError } from "../analysis/LocalAnalysisStore.ts";
 import type { ComputeSessionService } from "./ComputeSessionService.ts";
 import type { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
@@ -63,6 +72,8 @@ type ComputeGatewayService = Pick<
   | "inspectVariables"
   | "readTable"
   | "subscribeSessions"
+  | "settledRuns"
+  | "settledRunRecorded"
 >;
 type ComputeGatewaySettings = {
   readonly getSettings: Effect.Effect<
@@ -376,7 +387,8 @@ export function makeComputeRpcGateway(input: {
   });
 
   const startSession = Effect.fn("ComputeRpcGateway.startSession")(function* (
-    request: ComputeStartProjectSessionInput,
+    request: ComputeStartProjectSessionInput &
+      Pick<ComputeStartSessionInput, "notebookRun"> & { readonly publishResults?: false },
   ) {
     const project = yield* projectFor("start", request.cwd);
     const { descriptor, preference: hostPreference } = yield* requireLanguage(
@@ -393,11 +405,21 @@ export function makeComputeRpcGateway(input: {
     const savedFile =
       request.runOnce === undefined ? null : yield* validateSource(project.root, request.runOnce);
     // Only the whole saved file run from scratch is a recipe someone can rerun.
-    const publishResults =
+    const wholeSavedFile =
       savedFile !== null &&
       request.runOnce?.source._tag === "document" &&
       request.runOnce.source.origin === "file" &&
       request.runOnce.code === savedFile;
+    if (
+      !wholeSavedFile &&
+      (request.runOnce?.inputs !== undefined || request.runOnce?.parameters !== undefined)
+    ) {
+      return yield* gatewayError(
+        "start",
+        "source-invalid",
+        "Save the whole script before running it with parameters or declared inputs.",
+      );
+    }
     return yield* input.compute.startSession({
       projectId: project.projectId,
       sessionId: request.sessionId,
@@ -408,9 +430,17 @@ export function makeComputeRpcGateway(input: {
       configuredExecutable: preference.executable.length === 0 ? null : preference.executable,
       ...(projectChoice === undefined ? {} : { chosenForProject: true }),
       ...(request.executable === null ? {} : { requestedExecutable: request.executable }),
+      ...(request.notebookRun === undefined ? {} : { notebookRun: request.notebookRun }),
       ...(request.runOnce === undefined
         ? {}
-        : { runOnce: { ...request.runOnce, ...(publishResults ? { publishResults } : {}) } }),
+        : {
+            runOnce: {
+              ...request.runOnce,
+              ...(wholeSavedFile && request.publishResults !== false
+                ? { publishResults: true }
+                : {}),
+            },
+          }),
     });
   });
 
@@ -454,6 +484,200 @@ export function makeComputeRpcGateway(input: {
   ) {
     const executions = yield* listAllExecutions(request);
     return executions.slice(-request.limit);
+  });
+
+  const runHistory = Effect.fn("ComputeRpcGateway.runHistory")(function* (
+    request: ComputeRunHistoryInput,
+    listFileRuns?: AnalysisService["Service"]["listRuns"],
+  ) {
+    const project = yield* projectFor("list", request.cwd);
+    const sessions = yield* input.compute.listSessions({ projectId: project.projectId });
+    const historyPosition = (execution: ComputeExecutionRecord) => {
+      const { source, submittedAt, executionId } = execution.request;
+      const cellIndex =
+        request.notebookBatchId !== undefined && source._tag === "document"
+          ? source.notebookBatch?.index
+          : undefined;
+      return { submittedAt, executionId, ...(cellIndex === undefined ? {} : { cellIndex }) };
+    };
+    interface HistoryPosition {
+      readonly submittedAt: string;
+      readonly executionId: string;
+      readonly cellIndex?: number;
+    }
+    const compare = (left: HistoryPosition, right: HistoryPosition) =>
+      (left.cellIndex !== undefined && right.cellIndex !== undefined
+        ? left.cellIndex - right.cellIndex
+        : 0) ||
+      right.submittedAt.localeCompare(left.submittedAt) ||
+      (right.executionId > left.executionId ? 1 : right.executionId < left.executionId ? -1 : 0);
+    const filter = request.filter?.trim().toLowerCase();
+    const before = request.before;
+    const bySession = yield* Effect.forEach(
+      sessions.filter(
+        (session) => request.sessionId === undefined || request.sessionId === session.sessionId,
+      ),
+      (session) =>
+        input.compute
+          .listExecutions({ projectId: project.projectId, sessionId: session.sessionId })
+          .pipe(
+            Effect.map((executions) => {
+              const rows: ComputeRunHistoryResult["runs"][number][] = [];
+              const groups = new Map<string, ComputeExecutionRecord[]>();
+              for (const execution of executions) {
+                const { source, executionId } = execution.request;
+                const path = source._tag === "document" ? source.path : undefined;
+                const batch = source._tag === "document" ? source.notebookBatch : undefined;
+                if (
+                  (request.executionId !== undefined && executionId !== request.executionId) ||
+                  (request.notebookBatchId !== undefined &&
+                    batch?.id !== request.notebookBatchId) ||
+                  (request.path !== undefined && path !== request.path) ||
+                  (filter && path?.toLowerCase().includes(filter) !== true)
+                )
+                  continue;
+                if (
+                  batch &&
+                  request.notebookBatchId === undefined &&
+                  request.executionId === undefined &&
+                  request.path === undefined
+                ) {
+                  const group = groups.get(batch.id);
+                  if (group === undefined) groups.set(batch.id, [execution]);
+                  else group.push(execution);
+                } else rows.push({ session, execution });
+              }
+              for (const [batchId, cells] of groups) {
+                const execution =
+                  cells.find((cell) => cell.request.executionId === batchId) ?? cells[0]!;
+                const source = execution.request.source;
+                if (source._tag !== "document" || source.notebookBatch === undefined) continue;
+                const { id, mode, count } = source.notebookBatch;
+                const settled = session.lastNotebookBatch;
+                if (settled?.id === id) {
+                  rows.push({ session, execution, notebookBatch: settled });
+                  continue;
+                }
+                const { currentCell, active } = computeNotebookBatchActivity(cells, id);
+                const statuses = new Set(cells.map((cell) => cell.result?.status ?? "queued"));
+                const failedCell = cells.reduce<number | undefined>((first, cell) => {
+                  const source = cell.request.source;
+                  const index =
+                    source._tag === "document" ? source.notebookBatch?.index : undefined;
+                  return cell.result?.status === "failed" && index !== undefined
+                    ? Math.min(first ?? Infinity, index + 1)
+                    : first;
+                }, undefined);
+                const notRun = cells.filter(computeNotebookCellNotRun).length;
+                const cellStatus =
+                  (
+                    [
+                      "interrupting",
+                      "running",
+                      "submitting",
+                      "queued",
+                      "failed",
+                      "lost",
+                      "cancelled",
+                      "succeeded",
+                    ] as const
+                  ).find((candidate) => statuses.has(candidate)) ?? "queued";
+                const status =
+                  mode === "all" &&
+                  currentCell > 0 &&
+                  (cellStatus === "queued" ||
+                    cellStatus === "submitting" ||
+                    cellStatus === "running")
+                    ? "running"
+                    : cellStatus;
+                rows.push({
+                  session,
+                  execution,
+                  notebookBatch: {
+                    id,
+                    mode,
+                    count,
+                    status,
+                    ...(currentCell > 0 && (status === "running" || status === "interrupting")
+                      ? { currentCell }
+                      : {}),
+                    ...(failedCell === undefined ? {} : { failedCell }),
+                    ...(notRun === 0 ? {} : { notRun }),
+                    ...(active === undefined ? {} : { active }),
+                  },
+                });
+              }
+              const previousCell =
+                request.notebookBatchId === undefined || before === undefined
+                  ? undefined
+                  : executions.find(({ request }) => request.executionId === before.executionId);
+              const boundary = previousCell === undefined ? before : historyPosition(previousCell);
+              return rows
+                .filter(
+                  ({ execution }) =>
+                    boundary === undefined || compare(historyPosition(execution), boundary) > 0,
+                )
+                .toSorted((left, right) =>
+                  compare(historyPosition(left.execution), historyPosition(right.execution)),
+                )
+                .slice(0, request.limit + 1);
+            }),
+          ),
+      { concurrency: 4 },
+    );
+    const fileRuns: AnalysisRunSummary[] = [];
+    if (
+      listFileRuns !== undefined &&
+      request.path === undefined &&
+      request.sessionId === undefined &&
+      request.executionId === undefined &&
+      request.notebookBatchId === undefined
+    ) {
+      let cursor =
+        before === undefined
+          ? undefined
+          : analysisRunHistoryCursor(before.submittedAt, before.executionId);
+      do {
+        const page = yield* listFileRuns({
+          cwd: project.root,
+          limit: Math.min(request.limit + 1, 100),
+          ...(cursor === undefined ? {} : { cursor }),
+        }).pipe(
+          Effect.mapError((cause) =>
+            gatewayError("list", "operation-failed", cause.message, cause),
+          ),
+        );
+        fileRuns.push(
+          ...page.runs.filter(
+            (run) => !filter || run.source.relativePath.toLowerCase().includes(filter),
+          ),
+        );
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor !== undefined && fileRuns.length <= request.limit);
+    }
+    const matches = [
+      ...bySession.flat().map((row) => ({
+        ...historyPosition(row.execution),
+        row,
+        kind: "session" as const,
+      })),
+      ...fileRuns.map((row) => ({
+        submittedAt: row.receipt.startedAt,
+        executionId: row.receipt.runId,
+        row,
+        kind: "file" as const,
+      })),
+    ].toSorted(compare);
+    const page = matches.slice(0, request.limit);
+    const last = page.at(-1);
+    return {
+      runs: page.flatMap((entry) => (entry.kind === "session" ? [entry.row] : [])),
+      fileRuns: page.flatMap((entry) => (entry.kind === "file" ? [entry.row] : [])),
+      next:
+        matches.length > page.length && last !== undefined
+          ? { submittedAt: last.submittedAt, executionId: last.executionId }
+          : null,
+    };
   });
 
   const listOutputs = Effect.fn("ComputeRpcGateway.listOutputs")(function* (
@@ -531,7 +755,9 @@ export function makeComputeRpcGateway(input: {
   });
 
   const submitCells = Effect.fn("ComputeRpcGateway.submitCells")(function* (
-    request: ComputeSubmitProjectCellsInput,
+    request: ComputeSubmitProjectCellsInput & {
+      readonly notebookRun?: ComputeSubmitProjectCellsInput["cells"][number]["executionId"];
+    },
   ) {
     const project = yield* projectFor("submit", request.cwd);
     const session = yield* input.compute.getSession({
@@ -539,10 +765,24 @@ export function makeComputeRpcGateway(input: {
       sessionId: request.sessionId,
     });
     if (session !== null) yield* requireLanguage("submit", session.languageId);
+    const first = request.cells[0];
+    const batch =
+      first !== undefined &&
+      (request.runAll || request.notebookRun !== undefined || request.cells.length > 1)
+        ? {
+            id: first.executionId,
+            mode:
+              request.runAll || request.notebookRun !== undefined
+                ? ("all" as const)
+                : ("selection" as const),
+            count: request.cells.length,
+          }
+        : undefined;
     return yield* input.compute.submitExecutions({
       projectId: project.projectId,
       sessionId: request.sessionId,
-      submissions: request.cells.map((cell) => ({
+      ...(request.notebookRun === undefined ? {} : { notebookRun: request.notebookRun }),
+      submissions: request.cells.map((cell, index) => ({
         projectId: project.projectId,
         sessionId: request.sessionId,
         executionId: cell.executionId,
@@ -557,6 +797,7 @@ export function makeComputeRpcGateway(input: {
           revision: null,
           range: null,
           cell: cell.cellId,
+          ...(batch === undefined ? {} : { notebookBatch: { ...batch, index } }),
         },
       })),
     });
@@ -595,7 +836,7 @@ export function makeComputeRpcGateway(input: {
   });
 
   const readTable = Effect.fn("ComputeRpcGateway.readTable")(function* (
-    request: ComputeTableInput,
+    request: ComputeTableInput & { readonly profile?: boolean },
   ) {
     const project = yield* projectFor("table", request.cwd);
     return yield* input.compute.readTable({ ...request, projectId: project.projectId });
@@ -604,6 +845,8 @@ export function makeComputeRpcGateway(input: {
   return {
     runtimeInventory,
     activeWork: input.compute.activeWork,
+    settledRuns: input.compute.settledRuns,
+    settledRunRecorded: input.compute.settledRunRecorded,
     inspectRuntimes: inWorkspace("inspect", inspectRuntimes),
     verifyRuntime: inWorkspace("verify", verifyRuntime),
     managedRuntimeStatus,
@@ -614,6 +857,13 @@ export function makeComputeRpcGateway(input: {
     getSession: inWorkspace("get", getSession),
     listExecutions: inWorkspace("list", listExecutions),
     listAllExecutions: inWorkspace("list", listAllExecutions),
+    runHistory: (
+      request: ComputeRunHistoryInput,
+      listFileRuns?: AnalysisService["Service"]["listRuns"],
+    ) =>
+      inWorkspace("list", (request: ComputeRunHistoryInput) => runHistory(request, listFileRuns))(
+        request,
+      ),
     listOutputs: inWorkspace("outputs", listOutputs),
     submitExecution: inWorkspace("submit", submitExecution),
     submitCells: inWorkspace("submit", submitCells),

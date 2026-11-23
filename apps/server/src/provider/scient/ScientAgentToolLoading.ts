@@ -4,9 +4,14 @@ import type { OmpExecutableIdentity, OmpTarget } from "../omp/OmpTarget.ts";
 
 export const SCIENT_CONNECTOR_LOAD_MODE_ENV = "SCIENT_AGENT_CONNECTOR_LOAD_MODE";
 
+export const SCIENT_EAGER_COMPUTE_TOOLS = [
+  "scient_compute_run",
+  "scient_compute_run_file",
+] as const;
+
 /** The small core used before service/tool discovery; everything else stays callable via xd://. */
 export const SCIENT_ALWAYS_LOADED_TOOLS: ReadonlyArray<string> = [
-  "scient_compute_run",
+  ...SCIENT_EAGER_COMPUTE_TOOLS,
   "scient_paper_get",
   "send_to_user",
   "html_render",

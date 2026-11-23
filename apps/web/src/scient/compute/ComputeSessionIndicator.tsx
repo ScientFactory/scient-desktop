@@ -6,11 +6,17 @@ import {
 import { useGT } from "gt-react";
 import { ChevronDown, LoaderCircle } from "lucide-react";
 
+import { RelativeTime } from "~/components/RelativeTime";
 import { Button } from "~/components/ui/button";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
-import { useClientSettings } from "~/hooks/useSettings";
+import {
+  Menu,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
-import { formatReceiptDateTime } from "~/timestampFormat";
 
 import { computeSessionOwnerLabel } from "./computeContextStore";
 import { computeRuntimeVersionLabel } from "./computeFileSurfaceModel";
@@ -31,7 +37,6 @@ export function ComputeSessionIndicator(props: {
   readonly onChoose: (sessionId: string) => void;
 }) {
   const gt = useGT();
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const { selected } = props;
   const content = (
     <>
@@ -72,8 +77,17 @@ export function ComputeSessionIndicator(props: {
         <MenuRadioGroup value={selected.sessionId} onValueChange={props.onChoose}>
           {props.sessions.map((session) => (
             <MenuRadioItem key={session.sessionId} value={session.sessionId} size="compact">
-              {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
-              {formatReceiptDateTime(session.createdAt, timestampFormat)}
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="size-3.5 shrink-0">
+                  <MenuRadioItemIndicator />
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  {computeSessionOwnerLabel(session, props.environmentId, props.cwd)}
+                </span>
+                <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+                  <RelativeTime timestamp={session.createdAt} />
+                </span>
+              </span>
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>

@@ -9,6 +9,7 @@ import {
   ComputeDisplayId,
   ComputeExecutionOutcome,
   ComputeRuntimeWriteReport,
+  ComputeRuntimePackageEvidence,
   ComputeLanguageId,
   ComputeMediaType,
   ComputeOutputStream,
@@ -212,6 +213,7 @@ export const KernelReadyPayload = Schema.Struct({
   languageVersion: Label,
   protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   capabilities: Schema.Array(ComputeCapability),
+  packageEvidence: Schema.optional(ComputeRuntimePackageEvidence),
 });
 
 export const ExecutePayload = Schema.Struct({
@@ -361,6 +363,7 @@ export type VariablesPayload = typeof VariablesPayload.Type;
 export const InspectTablePayload = Schema.Struct({
   name: Label,
   query: DataTableQuery,
+  profile: Schema.optional(Schema.Boolean),
 });
 export type InspectTablePayload = typeof InspectTablePayload.Type;
 

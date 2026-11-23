@@ -1,3 +1,5 @@
+import "../../index.css";
+
 import { render as _fixtureRender, act } from "../../../test/render";
 import {
   ComputeLanguageId,
@@ -26,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   refresh: vi.fn(),
   runRequested: vi.fn(),
+  resultsSetup: vi.fn(),
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
@@ -51,13 +54,15 @@ vi.mock("~/state/query", async (original) => ({
 vi.mock("~/state/use-atom-command", async (original) => ({
   ...(await original<typeof import("~/state/use-atom-command")>()),
   useAtomCommand: (command: unknown) =>
-    command === computeEnvironment.startSession
-      ? mocks.start
-      : command === computeEnvironment.stopSession
-        ? mocks.stop
-        : command === computeEnvironment.submitExecution
-          ? mocks.submit
-          : mocks.refresh,
+    command === computeEnvironment.resultsSetup
+      ? mocks.resultsSetup
+      : command === computeEnvironment.startSession
+        ? mocks.start
+        : command === computeEnvironment.stopSession
+          ? mocks.stop
+          : command === computeEnvironment.submitExecution
+            ? mocks.submit
+            : mocks.refresh,
 }));
 vi.mock("~/components/ui/button", { spy: true });
 vi.mock("~/components/ui/contextual-confirmation", { spy: true });
@@ -464,6 +469,88 @@ describe("Python file run actions", () => {
     expect(mocks.submit).not.toHaveBeenCalled();
     expect(useComputeContextStore.getState().bindings[testContextId]?.sessionId).toBe(persistent);
   });
+
+  it.each([false, true])(
+    "submits setup edits and declares a suggestion only when accepted (%s)",
+    async (accept) => {
+      await using _fixture = _createFixture();
+      await _setupFixture0(_fixture);
+      mocks.resultsSetup.mockResolvedValue({
+        _tag: "Success",
+        value: {
+          parameters: [{ name: "threshold", value: "0.5", source: "override" }],
+          inputs: ["views/threshold.sql"],
+          suggestedInputs: ["data/cohort.csv"],
+        },
+      });
+      mocks.start.mockImplementation(async ({ input }) => ({
+        _tag: "Success",
+        value: { sessionId: input.sessionId, generation: 1, status: "starting" },
+      }));
+      await render(_fixture, undefined, testContextId);
+
+      await page.getByRole("button", { name: "Choose Python code to run" }).click();
+      await page.getByRole("menuitem", { name: "Run with setup…" }).click();
+      const setup = page.getByRole("dialog", { name: "Run setup" });
+      const value = setup.getByRole("textbox", { name: "Value" });
+      await expect.element(value).toHaveValue("0.5");
+      const name = setup.getByRole("textbox", { name: "Name", exact: true });
+      await expect.element(name).toHaveValue("threshold");
+      for (const [label, input] of [
+        ["Name", name],
+        ["Value", value],
+      ] as const) {
+        const visibleLabel = setup.getByText(label, { exact: true });
+        await expect.element(visibleLabel).toBeVisible();
+        expect((visibleLabel.element() as HTMLLabelElement).control).toBe(input.element());
+        await visibleLabel.click();
+        await expect.element(input).toHaveFocus();
+      }
+      const runFresh = setup.getByRole("button", { name: "Run fresh", exact: true });
+      const prior = { width: innerWidth, height: innerHeight };
+      const dark = document.documentElement.classList.contains("dark");
+      _fixture.stack.defer(async () => {
+        document.documentElement.classList.toggle("dark", dark);
+        await page.viewport(prior.width, prior.height);
+      });
+      document.documentElement.classList.toggle("dark", accept);
+      await value.fill("0.65");
+      await page.viewport(360, 660);
+      await expect.element(value).toHaveValue("0.65");
+      await expect
+        .poll(() => {
+          const first = name.element().getBoundingClientRect();
+          const second = value.element().getBoundingClientRect();
+          return second.top >= first.bottom;
+        })
+        .toBe(true);
+      await value.fill("invalid JSON");
+      await runFresh.click();
+      await expect.element(value).toHaveFocus();
+      await expect
+        .element(setup.getByText("Enter valid JSON. Put text in double quotes."))
+        .toBeVisible();
+      expect(mocks.start).not.toHaveBeenCalled();
+      await value.fill("0.7");
+      await setup.getByRole("button", { name: "Remove input views/threshold.sql" }).click();
+      const suggestion = setup.getByRole("button", { name: "Declare data/cohort.csv" });
+      await expect.element(suggestion).toBeEnabled();
+      if (accept) {
+        await suggestion.click();
+        await expect
+          .element(setup.getByRole("button", { name: "Remove input data/cohort.csv" }))
+          .toBeVisible();
+        await expect.element(suggestion).not.toBeInTheDocument();
+      }
+      await runFresh.click();
+
+      await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledOnce());
+      expect(mocks.start.mock.calls[0]?.[0].input.runOnce).toMatchObject({
+        parameters: { threshold: "0.7" },
+        inputs: accept ? ["data/cohort.csv"] : [],
+      });
+    },
+  );
 
   it.each([
     "success",

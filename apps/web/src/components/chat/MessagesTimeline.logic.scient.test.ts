@@ -1461,3 +1461,55 @@ describe("steer refusals", () => {
     expect(rowIds.at(-1)).toBe("final");
   });
 });
+
+it("shows one Compute receipt directly and groups adjacent receipts without provider narration", () => {
+  const fixture = makeStreamingTimelineFixture();
+  const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+  if (source.item.type !== "dynamic_tool") throw new Error("Expected a tool fixture");
+  const tool = source.item;
+  const history = (names: string[]) => {
+    const visibleTurnItems = names.map((toolName, position) => {
+      const id = TurnItemId.make(`compute-receipt-${position}`);
+      return {
+        ...source,
+        position,
+        sourceItemId: id,
+        item: {
+          ...tool,
+          id,
+          status: "completed" as const,
+          toolName,
+          title: toolName,
+          input: { code: "print(42)" },
+        },
+      };
+    });
+    return deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems,
+        optimisticMessages: [],
+      }),
+      isWorking: false,
+      runningRunId: fixture.runId,
+      activeTurnStartedAt: fixture.time(0),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+  };
+  const single = history(["scient_compute_run", "other_tool"]);
+  const standalone = single.find(
+    (row) =>
+      row.kind === "work" && row.groupedEntries[0]?.projectedItem?.item.id === "compute-receipt-0",
+  );
+  expect(standalone, single.map((row) => row.kind + " " + row.id).join(", ")).toMatchObject({
+    kind: "work",
+    isExpandedToolGroup: false,
+  });
+  expect(single.some((row) => row.kind === "work-toggle" && row.computeGroup)).toBe(false);
+  const multiple = history(["scient_compute_run", "scient_compute_run_file", "other_tool"]);
+  expect(multiple.find((row) => row.kind === "work-toggle" && row.computeGroup)).toMatchObject({
+    hiddenCount: 2,
+    expanded: false,
+    summary: "2 Compute runs",
+  });
+});

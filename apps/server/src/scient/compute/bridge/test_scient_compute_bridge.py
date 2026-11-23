@@ -11,9 +11,11 @@ import asyncio
 import contextlib
 import hashlib
 import io
+import importlib.metadata
 import json
 import linecache
 import os
+import pathlib
 import queue
 import re
 import signal
@@ -24,6 +26,7 @@ import tempfile
 import traceback
 import types
 import unittest
+from unittest.mock import patch
 
 # Add the bridge directory to the path so we can import the module.
 sys.path.insert(0, os.path.dirname(__file__))
@@ -673,6 +676,37 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         self.assertEqual(representation["encoding"], "text")
 
 
+class TestDiagnosticCorrelation(unittest.TestCase):
+    def test_julia_stack_lines_keep_the_jupyter_input_identity(self):
+        instance, _ = make_bridge()
+        instance._julia = True
+        instance._julia_document_request = "file"
+        instance._handle_iopub("execute_input", {"execution_count": 2}, "file")
+        instance._handle_iopub("execute_input", {"execution_count": 3}, "console")
+        instance._handle_iopub(
+            "error",
+            {"ename": "ErrorException", "evalue": "boom", "traceback": [" \x1b[90m@\x1b[39m \x1b[4mIn[2]:3\x1b[24m", " @ Main ./In[2]:1", " @ In[3]:1"]},
+            "file",
+        )
+        error = queued(instance)[0]
+        self.assertEqual(
+            error["payload"]["traceback"],
+            [" @ <scient-compute-source:66696c65:1>:3", " @ Main <scient-compute-source:66696c65:1>:1", " @ In[3]:1"],
+        )
+
+    def test_only_an_acknowledged_user_interrupt_skips_its_diagnostic(self):
+        instance, _ = make_bridge()
+        instance._mapping.active_request_id = "run"
+        interrupted = {"ename": "KeyboardInterrupt"}
+        instance._handle_iopub("error", interrupted, "run")
+        self.assertEqual(queued(instance)[0]["payload"]["name"], "KeyboardInterrupt")
+        instance._mapping.interrupt_requested = True
+        instance._handle_iopub("error", interrupted, "run")
+        self.assertEqual(queued(instance), [])
+        instance._handle_iopub("error", {"ename": "ValueError", "evalue": "bad input"}, "run")
+        self.assertEqual(queued(instance)[0]["payload"]["name"], "ValueError")
+
+
 class TestSourceCache(unittest.TestCase):
     def setUp(self):
         self.shell = types.SimpleNamespace(
@@ -758,32 +792,39 @@ class TestSourceCache(unittest.TestCase):
 class TestWriteRecorder(unittest.TestCase):
     """The in-kernel record of the figure and table files a cell writes."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.events = {}
+    @staticmethod
+    def install_recorder(project, staging, python):
+        events = {}
         shell = types.SimpleNamespace(
             events=types.SimpleNamespace(
-                register=lambda name, callback: cls.events.setdefault(name, []).append(callback)
+                register=lambda name, callback: events.setdefault(name, []).append(callback)
             )
         )
-        # Audit hooks cannot be removed; this one stays inert outside the cells run below.
+        # Audit hooks cannot be removed; each stays inert outside its cells.
         recorder = bridge.PYTHON_RICH_DISPLAY_SETUP.split("# Note which figure and table", 1)[1]
-        # The kernel starts in the project folder, which is where reads are recorded.
-        cls.project = tempfile.TemporaryDirectory()
         previous = os.getcwd()
-        os.chdir(cls.project.name)
+        os.chdir(project)
         try:
-            exec(
-                "# Note which figure and table" + recorder,
-                {"_scient_shell": shell, "os": os, "sys": sys, "json": json},
-            )
+            with patch.dict(os.environ, {"SCIENT_RESULTS_DIR": staging}):
+                exec(
+                    "# Note which figure and table" + recorder,
+                    {"_scient_shell": shell, "os": os, "sys": python, "json": json},
+                )
         finally:
             os.chdir(previous)
-        cls.take = staticmethod(sys.modules["_scient_compute_writes"].take)
+        return events, python.modules["_scient_compute_writes"].take
+
+    @classmethod
+    def setUpClass(cls):
+        cls.project = tempfile.TemporaryDirectory()
+        cls.staging = tempfile.TemporaryDirectory()
+        cls.events, take = cls.install_recorder(cls.project.name, cls.staging.name, sys)
+        cls.take = staticmethod(take)
 
     @classmethod
     def tearDownClass(cls):
         cls.project.cleanup()
+        cls.staging.cleanup()
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(dir=self.project.name)
@@ -848,28 +889,250 @@ class TestWriteRecorder(unittest.TestCase):
             ]),
         )
 
-    def test_records_project_files_read_with_their_state_when_opened(self):
+    def test_records_read_state_and_excludes_writes_and_outside_paths(self):
         with open(self.path("cohort.csv"), "w") as file:
             file.write("id\n1\n")
         opened = os.stat(self.path("cohort.csv"))
-        with tempfile.NamedTemporaryFile("w", delete=False) as outside:
+        with open(self.path("generated.txt"), "w") as file:
+            file.write("before")
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as outside:
             outside.write("not in the project")
         self.addCleanup(os.remove, outside.name)
+        staged = os.path.join(self.staging.name, "output.csv")
+        with open(staged, "w") as file:
+            file.write("output")
 
         def body():
+            with open(staged) as file:
+                file.read()
             for _ in range(2):
                 with open(self.path("cohort.csv")) as file:
                     file.read()
             with open(outside.name) as file:
                 file.read()
-            with open(self.path("cohort.csv"), "a") as file:
-                file.write("2\n")
+            with open(self.path("generated.txt")) as file:
+                file.read()
+            with open(self.path("generated.txt"), "a") as file:
+                file.write("after")
+            with open(self.path("generated.txt")) as file:
+                file.read()
 
         record = self.cell(body)
         self.assertEqual(
             record["reads"],
             [[self.path("cohort.csv"), opened.st_size, str(opened.st_mtime_ns), str(opened.st_ctime_ns)]],
         )
+        self.assertFalse(record["readsTruncated"])
+        self.assertEqual(record["readsOutsideProject"], 0)
+        self.assertEqual(record["outsideDataPaths"], [])
+        self.assertNotIn(outside.name, json.dumps(record))
+
+    def test_names_outside_data_but_skips_configuration_fonts_and_caches(self):
+        home = pathlib.Path(self.root)
+        project = home / "project"
+        project.mkdir()
+        data = ("Data/cohort.csv",)
+        noise = (".cache/cache.json", ".config/fontconfig/settings.json",
+                 "Library/Caches/fontlist.json", "Library/Fonts/face.ttf",
+                 "scratch/cached.csv", "Data/tool.conf")
+        for name in data + noise:
+            target = home / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("fixture")
+        with (patch("os.path.expanduser", return_value=str(home)),
+              patch("tempfile.gettempdir", return_value=str(home / "scratch")),
+              patch.dict(os.environ, {"TMPDIR": str(home / "scratch")})):
+            events, take = self.install_recorder(str(project), self.staging.name, sys)
+        info = types.SimpleNamespace(raw_cell="read files")
+        for callback in events["pre_run_cell"]:
+            callback(info)
+        for name in data + noise:
+            (home / name).read_text()
+        for callback in events["post_run_cell"]:
+            callback(types.SimpleNamespace(info=info))
+        record = json.loads(take())
+        self.assertEqual(record["outsideDataPaths"], ["~/Data/cohort.csv"])
+        self.assertEqual(record["readsOutsideProject"], 1)
+        self.assertFalse(record["readsTruncated"])
+
+    def test_pipe_descriptors_do_not_mark_file_coverage_incomplete(self):
+        def body():
+            subprocess.check_output([sys.executable, "-c", "print(42)"], stderr=subprocess.PIPE)
+
+        self.assertFalse(self.cell(body)["readsTruncated"])
+
+        path = self.path("cohort.csv")
+        pathlib.Path(path).write_text("id\n1\n")
+        fd = os.open(path, os.O_RDONLY)
+        self.addCleanup(os.close, fd)
+        def read_unidentified_file():
+            with open(fd, closefd=False) as stream:
+                stream.read()
+        self.assertTrue(self.cell(read_unidentified_file)["readsTruncated"])
+
+    def test_output_overflow_keeps_reads_and_evicts_files_written_after_reading(self):
+        import pathlib
+
+        early, late, generated = map(lambda name: pathlib.Path(self.path(name)), (
+            "early.csv", "late.csv", "edited.txt",
+        ))
+        for path in (early, late, generated):
+            path.write_text("id\n1\n")
+
+        def body():
+            early.read_bytes()
+            generated.read_bytes()
+            for idx in range(4098):
+                output = pathlib.Path(self.path(str(idx) + ".txt"))
+                output.write_text("generated")
+                if idx < 4096:
+                    output.read_bytes()
+            generated.write_text("replacement")
+            late.read_bytes()
+
+        result = self.cell(body)
+        self.assertTrue(result["readsTruncated"])
+        self.assertEqual([row[0] for row in result["reads"]], [str(early), str(late)])
+
+    def test_records_linked_dataset_by_the_path_the_script_read(self):
+        with tempfile.TemporaryDirectory() as external:
+            with open(os.path.join(external, "cohort.csv"), "w") as file:
+                file.write("id\n1\n")
+            linked = self.path("linked")
+            os.symlink(external, linked, target_is_directory=True)
+            path = os.path.join(linked, "cohort.csv")
+
+            def body():
+                os.listdir(linked)
+                with open(path) as file:
+                    file.read()
+
+            record = self.cell(body)
+        self.assertEqual([row[0] for row in record["reads"]], [path])
+        self.assertEqual([row[0] for row in record["directoryReads"]], [linked])
+        self.assertEqual(record["readsOutsideProject"], 0)
+
+    def test_environment_reads_do_not_fill_input_evidence(self):
+        import pathlib
+
+        data = [pathlib.Path(self.path(name)) for name in (".venv/real.csv", "predictions.csv")]
+        environment = [
+            pathlib.Path(self.path(name))
+            for name in (
+                "env-one/lib/font.txt", "vendor/site-packages/table.csv",
+                "vendor/dist-packages/table.csv", "__pycache__/module.pyc",
+            )
+        ]
+        for file in data + environment:
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text("contents")
+        pathlib.Path(self.path("env-one/pyvenv.cfg")).write_text("home = test")
+        # The base interpreter is normally outside the project, where these reads
+        # would otherwise inflate the count of external files.
+        interpreter_file = pathlib.Path(os.__file__).resolve()
+        interpreter_file.relative_to(pathlib.Path(sys.base_prefix).resolve())
+
+        def body():
+            for file in data + environment + [interpreter_file]:
+                file.read_bytes()
+            for file in environment:
+                os.listdir(file.parent)
+            os.listdir(data[0].parent)
+
+        record = self.cell(body)
+        self.assertEqual([row[0] for row in record["reads"]], list(map(str, data)))
+        self.assertEqual([row[0] for row in record["directoryReads"]], [str(data[0].parent)])
+        self.assertEqual(record["readsOutsideProject"], 0)
+        self.assertFalse(record["readsTruncated"])
+
+    def test_interpreter_prefix_can_cover_the_project_without_hiding_data(self):
+        import pathlib
+
+        data = pathlib.Path(self.path("predictions.csv"))
+        data.write_text("id\n1\n")
+        pathlib.Path(self.path("pyvenv.cfg")).write_text("home = test")
+        package = pathlib.Path(self.path("lib/site-packages/package.txt"))
+        package.parent.mkdir(parents=True)
+        package.write_text("package")
+
+        for prefix in (self.root, self.project.name):
+            with self.subTest(prefix=prefix):
+                python = types.SimpleNamespace(
+                    prefix=prefix, base_prefix=prefix, exec_prefix=prefix, base_exec_prefix=prefix,
+                    version_info=sys.version_info, modules={}, _getframe=sys._getframe,
+                    addaudithook=sys.addaudithook,
+                )
+                events, take = self.install_recorder(self.root, self.staging.name, python)
+                with patch.object(self, "events", events), patch.object(self, "take", take):
+                    record = self.cell(lambda: (data.read_bytes(), package.read_bytes()))
+                self.assertEqual([row[0] for row in record["reads"]], [str(data)])
+
+    def test_ignores_import_lookup_but_keeps_an_explicit_listing_of_the_same_folder(self):
+        import importlib
+        import pathlib
+        import py_compile
+
+        module_name = "_scient_recorder_test_module"
+        library = self.path("library")
+        os.mkdir(library)
+        source = pathlib.Path(library, module_name + ".py")
+        source.write_text("value = 42\n")
+        py_compile.compile(str(source), doraise=True)
+        self.addCleanup(sys.modules.pop, module_name, None)
+        self.addCleanup(sys.path_importer_cache.pop, library, None)
+        with patch.object(sys, "path", [library, *sys.path]):
+            imported = self.cell(lambda: importlib.import_module(module_name))
+            listed = self.cell(lambda: os.listdir(library))
+        self.assertEqual(imported["directoryReads"], [])
+        self.assertEqual([row[0] for row in imported["reads"]], [str(source)])
+        self.assertEqual([row[0] for row in listed["directoryReads"]], [library])
+
+    def test_project_listing_excludes_scient_placements_and_literal_globs(self):
+        from glob import glob
+
+        root = os.path.realpath(self.project.name)
+        for name in ("assets", "results", ".scient", "data"):
+            directory = os.path.join(root, name)
+            os.mkdir(directory)
+            self.addCleanup(os.rmdir, directory)
+        literal = self.cell(lambda: glob(os.path.join(root, "missing.csv")))
+        self.assertEqual(literal["directoryReads"], [])
+        finder = importlib.metadata.MetadataPathFinder
+        context = finder.Context(path=[root])
+        discovery = self.cell(lambda: list(finder.find_distributions(context)))
+        self.assertEqual(discovery["directoryReads"], [])
+        tooling = self.cell(lambda: os.listdir(root))
+        self.assertEqual(tooling["directoryReads"], [])
+        names = json.dumps(sorted(["data", os.path.basename(self.root)]), separators=(",", ":"))
+        digest = hashlib.sha256(names.encode()).hexdigest()
+        for expression in ("os.listdir(root)", 'glob("*", root_dir=root)', "list(Path(root).iterdir())"):
+            code = compile(expression, self.path("script.py"), "exec")
+            listed = self.cell(lambda: exec(code, {"os": os, "glob": glob, "Path": pathlib.Path, "root": root}))
+            self.assertEqual(listed["directoryReads"], [[root, digest]], expression)
+
+    def test_records_sorted_directory_snapshots_from_listdir_scandir_and_glob(self):
+        from glob import glob
+
+        for names in ("direct", "scan", "glob"):
+            os.mkdir(self.path(names))
+        with open(self.path("direct", "é.csv"), "w") as file:
+            file.write("x")
+        with open(self.path("direct", "A.csv"), "w") as file:
+            file.write("x")
+
+        def body():
+            os.listdir(self.path("direct"))
+            with os.scandir(self.path("scan")) as entries:
+                list(entries)
+            glob("missing*.csv", root_dir=self.path("glob"))
+
+        record = self.cell(body)
+        direct = hashlib.sha256('["A.csv","é.csv"]'.encode()).hexdigest()
+        empty = hashlib.sha256(b"[]").hexdigest()
+        self.assertEqual(record["directoryReads"], [
+            [self.path("direct"), direct], [self.path("scan"), empty], [self.path("glob"), empty],
+        ])
+        self.assertEqual(record["reads"], [])
         self.assertFalse(record["readsTruncated"])
 
     def test_a_cell_that_raises_after_saving_still_reports_the_save(self):
@@ -1217,6 +1480,23 @@ class TestBridgeVariables(unittest.IsolatedAsyncioTestCase):
         self.manager = FakeKernelManager()
         self.b._kernel_manager = self.manager
 
+    async def test_reports_the_kernel_package_inventory_without_entering_history(self):
+        distributions = [
+            types.SimpleNamespace(metadata={"Name": f"package-{i:04d}", "Version": "2.1"})
+            for i in range(4002)
+        ]
+        with patch.object(importlib.metadata, "distributions", return_value=iter(distributions)):
+            encoded = eval(bridge.PACKAGE_EVIDENCE_EXPRESSION)
+        self.b._kernel_client = FakeKernelClient(shell=[shell_reply({
+            "status": "ok",
+            "user_expressions": {"packages": {"status": "ok", "data": {"text/plain": repr(encoded)}}},
+        })])
+        evidence = await self.b._python_package_evidence()
+        self.assertEqual(len(evidence["packages"]), 4000)
+        self.assertEqual(evidence["packages"][0], {"name": "package-0000", "version": "2.1"})
+        self.assertTrue(evidence["packagesTruncated"])
+        self.assertFalse(self.b._kernel_client.execute_requests[0]["store_history"])
+
     async def test_returns_a_bounded_snapshot_from_a_hidden_expression(self):
         encoded = json.dumps(
             {
@@ -1380,6 +1660,28 @@ class TestBridgeCorrelation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(query["silent"])
         self.assertFalse(query["store_history"])
         self.assertEqual(query["user_expressions"], {"writes": bridge.WRITE_RECORD_EXPRESSION})
+
+    async def test_success_carries_writes_without_a_second_kernel_request(self):
+        record = {"paths": ["/project/out/a.png"]}
+        client = FakeKernelClient(
+            iopub=[iopub("status", {"execution_state": "idle"})],
+            shell=[shell_reply({
+                "status": "ok",
+                "user_expressions": {
+                    "writes": {"status": "ok", "data": {"text/plain": repr(json.dumps(record))}}
+                },
+            })],
+        )
+        self.b._kernel_client = client
+        self.b._records_writes = True
+        self.b._mapping.active_request_id = "req-1"
+        self.b._execute_kernel("the cell", False, True, None)
+        await self.b._correlate("req-1", "msg-1")
+        self.assertEqual(self._messages()[-1]["payload"]["writes"], record)
+        self.assertEqual(len(client.execute_requests), 1)
+        self.assertEqual(client.execute_requests[0]["user_expressions"], {
+            "writes": bridge.WRITE_RECORD_EXPRESSION,
+        })
 
     async def test_completion_without_a_readable_record_leaves_it_out(self):
         client = FakeKernelClient(
@@ -1941,7 +2243,10 @@ class TestKernelSpecValidation(unittest.TestCase):
             bridge.validate_kernel_spec(self.spec(argv=["evcxr_jupyter"]))
 
     def test_keeps_the_installed_spec_environment_and_resource_directory(self):
-        spec = self.spec(env={"RUST_LOG": "warn"}, resourceDir="/k/rust")
+        spec = self.spec(
+            env={"RUST_LOG": "warn", "SCIENT_RESULTS_DIR": "wrong", "scient_parameters": "wrong"},
+            resourceDir="/k/rust",
+        )
         self.assertEqual(bridge.validate_kernel_spec(spec)["env"], {"RUST_LOG": "warn"})
         with self.assertRaises(bridge.ProtocolViolation):
             bridge.validate_kernel_spec(self.spec(env={"N": 1}))

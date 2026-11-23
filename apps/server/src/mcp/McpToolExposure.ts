@@ -1,6 +1,10 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
+// SCIENT-FORK:START — Use the shared Compute tools in clients that defer MCP.
+import { SCIENT_EAGER_COMPUTE_TOOLS } from "../provider/scient/ScientAgentToolLoading.ts";
+// SCIENT-FORK:END
+
 export const TOOL_SEARCH = "tool_search";
 
 /** What a deferring client lists before it searches. Pi's extension declares the same three. */
@@ -8,6 +12,9 @@ const DIRECT_TOOLS: ReadonlySet<string> = new Set([
   "orchestrator_capabilities",
   "delegate_task",
   "task_status",
+  // SCIENT-FORK:START — Expose project execution before discovery.
+  ...SCIENT_EAGER_COMPUTE_TOOLS,
+  // SCIENT-FORK:END
   TOOL_SEARCH,
 ]);
 

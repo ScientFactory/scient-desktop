@@ -1,4 +1,9 @@
-import type { ComputeExecutionRecord, ComputeSessionRecord } from "@t3tools/contracts";
+import type {
+  AnalysisRunSummary,
+  ComputeExecutionRecord,
+  ComputeRunHistoryResult,
+  ComputeSessionRecord,
+} from "@t3tools/contracts";
 
 export type ComputeFeedEntry =
   | {
@@ -6,9 +11,11 @@ export type ComputeFeedEntry =
       readonly key: string;
       readonly session: ComputeSessionRecord;
       readonly execution: ComputeExecutionRecord;
+      readonly notebookBatch?: ComputeRunHistoryResult["runs"][number]["notebookBatch"];
     }
   /** A Run fresh session; its own executions are read where it is shown. */
   | { readonly kind: "fresh"; readonly key: string; readonly session: ComputeSessionRecord }
+  | { readonly kind: "batch"; readonly key: string; readonly run: AnalysisRunSummary }
   | { readonly kind: "restart"; readonly key: string };
 
 function byTime(left: { at: string; id: string }, right: { at: string; id: string }) {
@@ -40,11 +47,13 @@ export function computeFeedEntries(input: {
         }));
   const items = [
     ...runs,
-    ...input.freshSessions.map((fresh) => ({
-      at: fresh.createdAt,
-      id: fresh.sessionId,
-      entry: { kind: "fresh", key: fresh.sessionId, session: fresh } satisfies ComputeFeedEntry,
-    })),
+    ...input.freshSessions
+      .filter((fresh) => fresh.sessionId !== session?.sessionId)
+      .map((fresh) => ({
+        at: fresh.createdAt,
+        id: fresh.sessionId,
+        entry: { kind: "fresh", key: fresh.sessionId, session: fresh } satisfies ComputeFeedEntry,
+      })),
   ].toSorted(byTime);
 
   const entries: ComputeFeedEntry[] = [];

@@ -19,7 +19,7 @@ import {
   type AnalysisListRunsResult,
   type AnalysisPromoteRunInput,
   type AnalysisPromoteRunResult,
-  type AnalysisRunSnapshot,
+  AnalysisRunSnapshot,
   type AnalysisRunSummary,
   type AnalysisRunStreamEvent,
   type AnalysisRuntimeAdapter,
@@ -77,6 +77,8 @@ import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
 import { isComputeCaptureReason } from "../compute/ComputeCaptureStatus.ts";
 import { ComputeProjectOutputObserver } from "../compute/ComputeProjectOutputObserver.ts";
 import { makeRunTableAdapters } from "./RunTableAdapter.ts";
+import { RESULTS_PARAMETERS_VARIABLE } from "@t3tools/shared/computeResults";
+import { captureDeclaredInputs, scriptParametersJson } from "../results/resultRevisions.ts";
 
 const RUN_HISTORY_DEFAULT_LIMIT = 20;
 const OUTPUT_COALESCE_MAX_CHUNK = 64;
@@ -141,6 +143,18 @@ function eventProjectId(event: AnalysisRunStreamEvent): string {
   return event._tag === "run-output" ? event.projectId : event.run.projectId;
 }
 
+const sameRunSetup = Schema.toEquivalence(
+  Schema.Struct({
+    parameters: AnalysisRunSnapshot.fields.parameters,
+    inputs: AnalysisRunSnapshot.fields.inputs,
+  }),
+);
+
+type AttributedAnalysisStartRun = AnalysisStartRunInput &
+  Pick<AnalysisRunSnapshot, "parameters" | "inputs"> & {
+    readonly agentThreadId?: string;
+  };
+
 export class AnalysisService extends Context.Service<
   AnalysisService,
   {
@@ -148,7 +162,7 @@ export class AnalysisService extends Context.Service<
       input: AnalysisInspectRuntimesInput,
     ) => Effect.Effect<AnalysisRuntimeInspection, AnalysisOperationError>;
     readonly startRun: (
-      input: AnalysisStartRunInput,
+      input: AttributedAnalysisStartRun,
     ) => Effect.Effect<AnalysisRunSnapshot, AnalysisOperationError>;
     readonly cancelRun: (
       input: AnalysisCancelRunInput,
@@ -979,6 +993,9 @@ const make = Effect.gen(function* () {
                   cause,
                 ),
         });
+        const parameterJson = scriptParametersJson(
+          Object.entries(startingRun.parameters ?? {}).map(([name, value]) => ({ name, value })),
+        );
         let exitCode: number | null = 0;
         for (const [index, step] of [...(prepared.before ?? []), prepared].entries()) {
           // Stop between steps must not start the next one, such as a program just built.
@@ -989,7 +1006,10 @@ const make = Effect.gen(function* () {
             executable: step.executable,
             args: step.args,
             cwd: step.cwd,
-            environment: step.environment,
+            environment:
+              parameterJson === undefined
+                ? step.environment
+                : { ...step.environment, [RESULTS_PARAMETERS_VARIABLE]: parameterJson },
           });
           yield* Ref.update(handlesRef, (handles) => new Map(handles).set(runId, handle));
           const running =
@@ -1305,7 +1325,7 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const startRun = (input: AnalysisStartRunInput) =>
+  const startRun = (input: AttributedAnalysisStartRun) =>
     startLock.withPermits(1)(
       Effect.gen(function* () {
         const adapter = runtimeAdapters.find((candidate) => candidate.id === input.runtimeId);
@@ -1357,6 +1377,7 @@ const make = Effect.gen(function* () {
               existing.source.relativePath !== input.relativePath ||
               existing.source.revision !== input.sourceRevision ||
               existing.runtime.id !== input.runtimeId ||
+              !sameRunSetup(existing, input) ||
               (input.executablePath !== undefined &&
                 existing.runtime.executablePath !== input.executablePath)
             ) {
@@ -1451,6 +1472,20 @@ const make = Effect.gen(function* () {
               analysisError("start", "invalid-source", "The source path is invalid.", cause),
             ),
           );
+        yield* Effect.tryPromise({
+          try: async () => {
+            scriptParametersJson(
+              Object.entries(input.parameters ?? {}).map(([name, value]) => ({ name, value })),
+            );
+            if (input.inputs?.length) await captureDeclaredInputs(input.cwd, input.inputs);
+          },
+          catch: (cause) =>
+            analysisError(
+              "start",
+              "invalid-source",
+              cause instanceof Error ? cause.message : "Could not read the run setup.",
+            ),
+        });
         const runId = input.runId ?? ExecutionRunId.make(yield* random.uuidV4());
         const startedAt = yield* nowIso;
         const queuedRunCount = (yield* Ref.get(runtimeQueuesRef)).get(adapter.id)?.length ?? 0;
@@ -1466,6 +1501,9 @@ const make = Effect.gen(function* () {
           contractVersion: 1,
           projectId: identity.projectId,
           action: "run-file",
+          ...(input.agentThreadId === undefined ? {} : { agentThreadId: input.agentThreadId }),
+          ...(input.parameters === undefined ? {} : { parameters: input.parameters }),
+          ...(input.inputs === undefined ? {} : { inputs: input.inputs }),
           runtime: profile,
           source: {
             cwd: input.cwd,

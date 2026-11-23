@@ -19,6 +19,7 @@ import {
   type ComputeOutput,
   type ComputeRequestId,
   type ComputeRuntimeIdentity,
+  type ComputeRuntimePackageEvidence,
   type ComputeRuntimeWriteReport,
   type ComputeTransport,
   type ComputeTransportEvent,
@@ -1137,6 +1138,7 @@ export function makeComputeBridgeTransport(
               languageVersion: string;
               protocolVersion: number;
               capabilities: ComputeCapability[];
+              packageEvidence?: ComputeRuntimePackageEvidence;
             };
             if (payload.protocolVersion !== COMPUTE_PROTOCOL_VERSION) {
               return yield* transportError("handshake", "Kernel protocol version mismatch.");
@@ -1162,7 +1164,14 @@ export function makeComputeBridgeTransport(
               runtimeProcessId: payload.kernelPid,
             };
             MutableRef.set(runtimeIdentity, runtime);
-            yield* emit({ _tag: "ready", runtime, capabilities: payload.capabilities });
+            yield* emit({
+              _tag: "ready",
+              runtime,
+              capabilities: payload.capabilities,
+              ...(payload.packageEvidence === undefined
+                ? {}
+                : { packageEvidence: payload.packageEvidence }),
+            });
           }),
         )
         .pipe(Effect.tapError(() => cleanupOwnedProcess("handshake").pipe(Effect.ignore)));
@@ -1344,7 +1353,13 @@ export function makeComputeBridgeTransport(
                   "table",
                   {
                     type: "inspect-table",
-                    payload: { name: tableRequest.name, query: tableRequest.query },
+                    payload: {
+                      name: tableRequest.name,
+                      query: tableRequest.query,
+                      ...(tableRequest.profile === undefined
+                        ? {}
+                        : { profile: tableRequest.profile }),
+                    },
                     generation: tableRequest.expectedGeneration,
                     requestId: tableRequest.requestId,
                   },

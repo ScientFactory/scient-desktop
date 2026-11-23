@@ -19,6 +19,7 @@ import { ComputeFigure } from "./ComputeFigure";
 import { computeOutputBlocks, type ComputeOutputBlock as Block } from "./computeOutputBlocks";
 import { ComputeOutputBlock } from "./ComputeOutputBlock";
 import {
+  computeDiagnosticSummary,
   computeSystemEventLabel,
   type ComputeStaticImageOutput,
 } from "./computeResultPresentation";
@@ -161,9 +162,10 @@ function ComputeDiagnostic(props: {
           session: props.session,
           inspection: props.runtimeInspection,
         });
-  const summary = `${diagnostic.errorName}: ${diagnostic.message}`;
+  const { summary, traceback } = computeDiagnosticSummary(diagnostic);
+  const fullText = [summary, traceback].filter(Boolean).join("\n");
   return (
-    <ComputeOutputBlock copy={() => ({ text: [summary, ...diagnostic.traceback].join("\n") })}>
+    <ComputeOutputBlock copy={() => ({ text: fullText })}>
       <div className="rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs">
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
@@ -171,11 +173,7 @@ function ComputeDiagnostic(props: {
             <div className="flex items-start gap-2">
               <p className="min-w-0 flex-1 font-medium break-words text-destructive">{summary}</p>
               {props.onAskAgent === undefined ? null : (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => props.onAskAgent?.([summary, ...diagnostic.traceback].join("\n"))}
-                >
+                <Button size="xs" variant="outline" onClick={() => props.onAskAgent?.(fullText)}>
                   <T>Ask agent</T>
                 </Button>
               )}
@@ -208,13 +206,13 @@ function ComputeDiagnostic(props: {
               </div>
             ) : null}
             <ComputeDiagnosticFrames frames={diagnostic.frames} threadRef={props.threadRef} />
-            {diagnostic.traceback.length > 0 ? (
+            {traceback.length > 0 ? (
               <details className="mt-1 text-muted-foreground">
                 <summary className="cursor-pointer">
                   <T>Traceback</T>
                 </summary>
                 <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px]">
-                  {diagnostic.traceback.join("\n")}
+                  {traceback}
                 </pre>
               </details>
             ) : null}

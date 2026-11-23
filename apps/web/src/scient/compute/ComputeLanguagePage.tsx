@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import {
   COMPUTE_ADDED_LOCATION,
   COMPUTE_RUN_TABLE,
+  ComputeLanguageId,
   computeRunnableTools,
   type ComputeLanguageRuntimeInventory,
   type EnvironmentId,
@@ -28,6 +29,12 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
+import { computeEnvironment } from "~/state/compute";
+import { useEnvironmentQuery } from "~/state/query";
+import {
+  computeRuntimeDisplayLabel,
+  SCIENTIFIC_PYTHON_TOOLKIT_ID,
+} from "./computeFileSurfaceModel";
 import { computeRuntimeText } from "./computeContractCopy";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
 import {
@@ -376,12 +383,63 @@ function LanguageSpecifics({
   );
 }
 
+function ProjectRuntimeDetails(props: {
+  readonly cwd: string;
+  readonly executable: string;
+  readonly environmentId: EnvironmentId;
+  readonly languageId: string;
+  readonly languageName: string;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const query = useEnvironmentQuery(
+    computeEnvironment.runtimes({
+      environmentId: props.environmentId,
+      input: {
+        cwd: props.cwd,
+        refresh: false,
+        languageIds: [ComputeLanguageId.make(props.languageId)],
+      },
+    }),
+  );
+  const runtime = query.data?.languages[0]?.runtimes.find(
+    (candidate) => candidate.profile.executable === props.executable,
+  );
+  const missing =
+    runtime?.toolkits.find((toolkit) => toolkit.toolkitId === SCIENTIFIC_PYTHON_TOOLKIT_ID)
+      ?.missingRequirements ?? [];
+  return (
+    <SettingsSection title={gt("Runtime for this file")}>
+      <SettingsRow
+        title={
+          runtime === undefined
+            ? props.languageName
+            : computeRuntimeDisplayLabel(runtime.profile, props.languageName, messages)
+        }
+        description={
+          <span className="break-all" dir="ltr">
+            {props.executable}
+          </span>
+        }
+      >
+        {missing.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {gt("Missing packages: {packages}", { packages: missing.join(", ") })}
+          </p>
+        ) : null}
+      </SettingsRow>
+    </SettingsSection>
+  );
+}
+
 function LanguageDetail({
   environmentId,
   languageId,
+  focus,
 }: {
   environmentId: EnvironmentId;
   languageId: string;
+  focus: { readonly cwd: string; readonly executable: string } | undefined;
 }) {
   const gt = useGT();
   const inventory = useComputeLanguages(environmentId);
@@ -404,6 +462,15 @@ function LanguageDetail({
       </Button>
     </div>
   );
+  const projectRuntime =
+    focus === undefined ? null : (
+      <ProjectRuntimeDetails
+        {...focus}
+        environmentId={environmentId}
+        languageId={languageId}
+        languageName={name}
+      />
+    );
   if (language === undefined || computeLanguageAbsent(language)) {
     const status =
       language === undefined
@@ -423,6 +490,7 @@ function LanguageDetail({
             checking={inventory.pending}
             comingSoon={!inventory.pending && (status?.comingSoon ?? true)}
           />
+          {projectRuntime}
           {inventory.pending || language === undefined ? null : (
             <FoundPrograms
               language={language}
@@ -449,6 +517,7 @@ function LanguageDetail({
           <div className="grid gap-6">
             {back}
             <LanguageHeader languageId={languageId} name={name} checking={inventory.pending} />
+            {projectRuntime}
             <SettingsSourcePanel id={`scientific-computing-${languageId}`} data-compute-settings="">
               <ComputeLanguagePanel
                 language={language}
@@ -484,13 +553,20 @@ function LanguageDetail({
 export function ComputeLanguagePage({
   languageId,
   environmentId: requested,
+  focus,
 }: {
   languageId: string;
   environmentId?: EnvironmentId | undefined;
+  focus?: { readonly cwd: string; readonly executable: string };
 }) {
   const environmentId = useComputeSettingsEnvironment(requested);
   if (environmentId === null) return <ComputeSettingsUnavailable />;
   return (
-    <LanguageDetail key={environmentId} environmentId={environmentId} languageId={languageId} />
+    <LanguageDetail
+      key={environmentId}
+      environmentId={environmentId}
+      languageId={languageId}
+      focus={focus}
+    />
   );
 }

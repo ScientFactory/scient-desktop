@@ -100,6 +100,8 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
   };
   return {
     activeWork: Effect.succeed(0),
+    settledRuns: Stream.empty,
+    settledRunRecorded: () => Effect.void,
     runtimeDescriptors: [DESCRIPTOR],
     runtimeInventory: () =>
       Effect.succeed({
@@ -195,6 +197,97 @@ const project = Effect.gen(function* () {
 });
 
 describe("compute RPC gateway", () => {
+  it.effect("keeps a 400-cell Run All on one page and reads individual cells separately", () =>
+    Effect.gen(function* () {
+      const { root, identity } = yield* project;
+      if (identity === null) return yield* Effect.die("Expected project identity.");
+      const sessionId = ComputeSessionId.make("notebook-session");
+      const session = record(ComputeProjectId.make(identity.projectId), sessionId);
+      const executions: ComputeExecutionRecord[] = [];
+      const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
+        compute: computeStub({
+          getSession: () => Effect.succeed(session),
+          listSessions: () => Effect.succeed([session]),
+          listExecutions: () => Effect.succeed(executions),
+          submitExecutions: ({ submissions }) => {
+            const accepted = submissions.map(acceptedExecution);
+            executions.push(...accepted);
+            return Effect.succeed(accepted);
+          },
+        }),
+        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        workspaceFileSystem: workspace(),
+      });
+      const path = "analysis.ipynb";
+      const cells = Array.from({ length: 400 }, (_, index) => ({
+        cellId: `cell-${index}`,
+        executionId: ComputeExecutionId.make(`batch-${String(index).padStart(3, "0")}`),
+        code: `print(${index})`,
+      }));
+      const input = { cwd: root, sessionId, path, expectedGeneration: session.generation };
+      yield* gateway.submitCells({ ...input, runAll: true, cells });
+      const single = { ...cells[0]!, executionId: ComputeExecutionId.make("single") };
+      yield* gateway.submitCells({ ...input, cells: [single] });
+      const page = yield* gateway.runHistory({ cwd: root, filter: path, limit: 1 });
+      expect(page.runs[0]?.execution.request.executionId).toBe(single.executionId);
+      expect(page.runs[0]?.notebookBatch).toBeUndefined();
+      if (!page.next) return yield* Effect.die("Expected a cursor to the grouped run.");
+      const older = yield* gateway.runHistory({
+        cwd: root,
+        filter: path,
+        limit: 1,
+        before: page.next,
+      });
+      expect(older.runs[0]?.notebookBatch).toMatchObject({
+        count: 400,
+        mode: "all",
+        status: "queued",
+      });
+      expect(older.next).toBeNull();
+      const details = yield* gateway.runHistory({
+        cwd: root,
+        sessionId,
+        notebookBatchId: cells[0]!.executionId,
+        limit: 1,
+      });
+      expect(details.runs[0]?.execution.request.executionId).toBe(cells[0]?.executionId);
+      expect(details.runs[0]?.notebookBatch).toBeUndefined();
+      expect(details.next).not.toBeNull();
+      if (!details.next) return yield* Effect.die("Expected a cursor to the next cell.");
+      const secondCell = yield* gateway.runHistory({
+        cwd: root,
+        sessionId,
+        notebookBatchId: cells[0]!.executionId,
+        limit: 1,
+        before: details.next,
+      });
+      expect(secondCell.runs[0]?.execution.request.executionId).toBe(cells[1]?.executionId);
+
+      // Only two receipts are visible while the rest of the batch is being admitted.
+      executions.splice(2);
+      const first = executions[0]!;
+      executions[0] = {
+        ...first,
+        result: { ...first.result!, status: "succeeded", startedAt: first.request.submittedAt },
+      };
+      let running = yield* gateway.runHistory({ cwd: root, filter: path, limit: 1 });
+      expect(running.runs[0]?.notebookBatch).toMatchObject({
+        count: 400,
+        status: "running",
+        currentCell: 1,
+      });
+      const second = executions[1]!;
+      executions[1] = { ...second, result: { ...second.result!, status: "submitting" } };
+      running = yield* gateway.runHistory({ cwd: root, filter: path, limit: 1 });
+      expect(running.runs[0]?.notebookBatch).toMatchObject({
+        count: 400,
+        status: "running",
+        currentCell: 2,
+      });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("preserves idle-only stop admission through the workspace gateway", () =>
     Effect.gen(function* () {
       const initialized = yield* project;
