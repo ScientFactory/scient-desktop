@@ -193,8 +193,10 @@ export const disabled = Workflows.of({
 });
 export const layerDisabled = Layer.succeed(Workflows, disabled);
 
+// SCIENT-FORK:START — Scient has no Workflows switch in Settings, and its home is ~/.scient-next.
 export const OFF =
-  'Workflows are off on this server. Turn them on in its Settings → Labs → Workflows, or without a desktop, set "workflowsEnabled": true in userdata/settings.json in its T3 home (~/.t3 by default).';
+  'Workflows are off on this server. To turn them on, set "workflowsEnabled": true in userdata/settings.json in its Scient home (~/.scient-next by default).';
+// SCIENT-FORK:END
 
 const refuseOff = Effect.fn("Workflows.off")(function* () {
   return yield* new WorkflowInputError({ problem: OFF });

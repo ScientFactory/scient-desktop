@@ -306,9 +306,11 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
         AgentTurn,
         start(
           `${round}/correct/${correction}`,
+          // SCIENT-FORK:START — Scient registers the output tool as scient_submit_output.
           misfit === undefined
-            ? "Your turn ended without an accepted result. Do not redo the work: call `t3_submit_output` now with the result of what you did."
-            : `The result you submitted does not fit: ${misfit}\nDo not redo the work: call \`t3_submit_output\` again with a corrected result.`,
+            ? "Your turn ended without an accepted result. Do not redo the work: call `scient_submit_output` now with the result of what you did."
+            : `The result you submitted does not fit: ${misfit}\nDo not redo the work: call \`scient_submit_output\` again with a corrected result.`,
+          // SCIENT-FORK:END
           threadOf(turn),
         ),
       );
