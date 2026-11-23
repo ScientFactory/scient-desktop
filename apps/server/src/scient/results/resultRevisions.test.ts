@@ -4,7 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { it as effectIt } from "@effect/vitest";
 import { ComputeExecutionId, ComputeProjectId, ComputeSessionId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { makeNotebookReader } from "../notebook/notebookReader.ts";
 import { compareResultRevisions } from "./resultComparison.ts";
 import {
   beginResultAttempt,
@@ -164,6 +167,48 @@ describe("linked result revisions", () => {
     ).toMatchObject({ value: "0.5", newer: null });
     expect(sweep.revision.script.codeSha256).toBe(published.revision.script.codeSha256);
   });
+
+  effectIt.effect(
+    "opens Reader outputs outside preview limits only while the revision files exist",
+    () =>
+      Effect.gen(function* () {
+        const { place, path, folder } = yield* Effect.promise(async () => {
+          const place = await project();
+          const staged = await run(place, '{"n":1}', {
+            kind: "notebook",
+            scriptPath: "analysis.ipynb",
+            code: { language: "python", cells: [] },
+          });
+          await NodeFSP.truncate(NodePath.join(staged.stagingFolder, "km.png"), 512 * 1024 + 1);
+          for (const name of ["curve.pdf", "missing.pdf"]) {
+            await NodeFSP.writeFile(NodePath.join(staged.stagingFolder, name), "%PDF-1.4\n");
+          }
+          const published = await publishScriptRun(place.layout, staged);
+          if (published._tag !== "published") throw new Error(published.message);
+          const folder = NodePath.join(
+            place.computeDir,
+            "results",
+            "p",
+            "revisions",
+            published.revision.revision,
+            "outputs",
+          );
+          await NodeFSP.unlink(NodePath.join(folder, "missing.pdf"));
+          return { place, path: staged.scriptPath, folder };
+        });
+        const read = makeNotebookReader(place.computeDir, {
+          project: () =>
+            Effect.succeed({ projectId: ComputeProjectId.make("p"), root: place.root }),
+          listAllExecutions: () => Effect.succeed([]),
+        });
+        const alternatives = yield* read({ cwd: place.root, path });
+        expect(alternatives.runs[0]?.outputs).toEqual([
+          { name: "curve.pdf", preview: null, retainedPath: NodePath.join(folder, "curve.pdf") },
+          { name: "km.png", preview: null, retainedPath: NodePath.join(folder, "km.png") },
+          { name: "missing.pdf", preview: null },
+        ]);
+      }),
+  );
 
   it("offers the newest current revision for insertion when the project's inputs are restored", async () => {
     const place = await project();

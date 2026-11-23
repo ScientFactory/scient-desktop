@@ -6,6 +6,7 @@ import {
   ComputeLanguageId,
   ComputeResultRevisionId,
   ComputeSessionId,
+  EnvironmentFilePath,
   EnvironmentId,
   ThreadId,
   type ComputeExecutionRecord,
@@ -23,10 +24,12 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { scientEnvironmentFileSurface } from "~/scient/rightPanel/surfaces";
 import { computeEnvironment } from "~/state/compute";
 import { computeFileContextId, useComputeContextStore } from "../compute/computeContextStore";
 import ScientNotebookSurface from "./ScientNotebookSurface";
 import { useNotebookRunDrafts } from "./notebookRunDrafts";
+import { NotebookReader } from "./reader/NotebookReader";
 
 const {
   freshStart,
@@ -98,7 +101,13 @@ vi.mock("~/state/use-atom-command", async (original) => ({
     if (command === computeEnvironment.submitCells) return submitCells;
     if (command === computeEnvironment.notebookRead)
       return async ({ input }: { input: { path: string } }) =>
-        AsyncResult.success(input.path === "missing-setup.ipynb" ? recoveryNotebook : notebook);
+        AsyncResult.success(
+          input.path === "saved-artifacts.ipynb"
+            ? savedArtifactsNotebook
+            : input.path === "missing-setup.ipynb"
+              ? recoveryNotebook
+              : notebook,
+        );
     if (command === computeEnvironment.notebookEdit)
       return async () => AsyncResult.success({ revision: "1.1", refused: [] });
     if (command === computeEnvironment.resultsSetup) return async () => AsyncResult.success(setup);
@@ -241,6 +250,29 @@ const notebook: NotebookView = {
     publishedRevision: published.revision,
     runs: [alternate, published],
     prunedRuns: 0,
+  },
+};
+
+const retainedPdf = EnvironmentFilePath.make(
+  `/compute/results/p/revisions/${alternate.revision}/outputs/curve.pdf`,
+);
+const savedArtifactsNotebook: NotebookView = {
+  revision: "1.0",
+  language: "python",
+  cells: [],
+  alternatives: {
+    publishedRevision: null,
+    currentSourceSha256: sourceSha256,
+    prunedRuns: 0,
+    runs: [
+      {
+        ...alternate,
+        outputs: [
+          { name: "curve.pdf", preview: null, retainedPath: retainedPdf },
+          { name: "missing.pdf", preview: null },
+        ],
+      },
+    ],
   },
 };
 
@@ -565,6 +597,29 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
     expect(freshStart).toHaveBeenCalledTimes(1);
   },
 );
+
+it("opens the retained saved artifact in the file viewer from Reader", async () => {
+  const open = vi.fn();
+  using _open = vi.spyOn(useRightPanelStore.getState(), "openScient").mockImplementation(open);
+  const screen = await render(
+    <NotebookReader
+      environmentId={environmentId}
+      threadRef={threadRef}
+      cwd="/project"
+      relativePath="saved-artifacts.ipynb"
+      settledRunId={null}
+      fileRevision="1.0"
+    />,
+  );
+  await expect.element(screen.getByText("missing.pdf")).toBeVisible();
+  const action = screen.getByRole("button", { name: "Open in file viewer", exact: true });
+  await expect.element(action).toBeVisible();
+  await action.click();
+  expect(open).toHaveBeenCalledExactlyOnceWith(
+    threadRef,
+    scientEnvironmentFileSurface({ path: retainedPdf }),
+  );
+});
 
 it("receives a server-started job while idle and stops that job", async () => {
   const job: NotebookFreshRun = {

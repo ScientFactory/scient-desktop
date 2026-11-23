@@ -646,6 +646,7 @@ export default function ScientNotebookSurface(props: {
         {runStatus}
         <NotebookReader
           environmentId={props.environmentId}
+          threadRef={props.threadRef}
           cwd={props.cwd}
           relativePath={props.relativePath}
           settledRunId={settledFreshRun}

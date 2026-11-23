@@ -669,7 +669,8 @@ proposes values from the parameter's control hint. Edit them, up to 20, one per 
 starting. Scient reports which settings it saved and which failed.
 Open **Reader view** to choose among the saved settings and see their
 values, tables and figures. Inline result values linked from the notebook's Markdown follow the
-selected revision.
+selected revision. If Reader cannot preview a file, choose **Open in file viewer** while the
+saved file is still available.
 
 **Reset** returns to the published run or, if none exists, the newest saved setting that matches
 the current notebook. Reader uses saved linked results. View ordinary cell outputs in the notebook

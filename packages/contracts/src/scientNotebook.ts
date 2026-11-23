@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { FilePathString, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentFilePath } from "./fileOpening.ts";
 import { ComputeExecutionId, ComputeSessionId } from "./scientCompute.ts";
 import {
   ComputeResultCounts,
@@ -142,6 +143,7 @@ export type NotebookRevisionSource = typeof NotebookRevisionSource.Type;
 
 const NotebookSavedOutput = Schema.Struct({
   name: Schema.String,
+  retainedPath: Schema.optional(EnvironmentFilePath),
   preview: Schema.NullOr(
     Schema.Union([
       Schema.TaggedStruct("figure", {

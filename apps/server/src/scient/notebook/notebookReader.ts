@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 
 import {
   ComputeSessionId,
+  EnvironmentFilePath,
   NotebookError,
   type NotebookAlternatives,
   type NotebookReadInput,
@@ -69,18 +70,16 @@ export function makeNotebookReader(
           const values = [];
           for (const output of revision.outputs) {
             if (!["values", "figure", "table"].includes(output.kind)) continue;
+            const figure = output.kind === "figure" ? previewFigure(output.mediaType) : null;
             const file =
-              output.size > Math.min(PREVIEW_BYTES, budget)
+              output.size > Math.min(PREVIEW_BYTES, budget) ||
+              (output.kind === "figure" && figure === null)
                 ? null
                 : await reader.outputFile(revision, output.name);
             const bytes =
               file === null ? null : await NodeFSP.readFile(file.path).catch(() => null);
             if (bytes !== null) budget -= bytes.byteLength;
-            if (output.kind === "values") {
-              if (bytes === null) {
-                outputs.push({ name: output.name, preview: null });
-                continue;
-              }
+            if (output.kind === "values" && bytes !== null) {
               const leaves = readResultValues(bytes.toString("utf8")) ?? [];
               values.push(
                 ...leaves.map((leaf) => ({
@@ -93,7 +92,6 @@ export function makeNotebookReader(
             }
             const rows =
               output.kind === "table" && bytes !== null ? parseCsv(bytes.toString("utf8")) : null;
-            const figure = previewFigure(output.mediaType);
             const preview =
               rows !== null
                 ? {
@@ -104,7 +102,17 @@ export function makeNotebookReader(
                 : bytes !== null && figure !== null
                   ? { _tag: "figure" as const, mediaType: figure, data: bytes.toString("base64") }
                   : null;
-            outputs.push({ name: output.name, preview });
+            const retained =
+              preview === null
+                ? await reader.checkedOutputFile(revision.revision, output.name)
+                : null;
+            outputs.push({
+              name: output.name,
+              preview,
+              ...(retained?._tag === "file"
+                ? { retainedPath: EnvironmentFilePath.make(retained.path) }
+                : {}),
+            });
           }
           const source = await reader.notebookSource(revision);
           runs.push({

@@ -1,6 +1,11 @@
-import type { EnvironmentId, NotebookAlternatives, NotebookView } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  NotebookAlternatives,
+  NotebookView,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { notebookParameters } from "@t3tools/shared/notebookParameters";
-import { T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -18,6 +23,8 @@ import {
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "~/rightPanelStore";
+import { scientEnvironmentFileSurface } from "~/scient/rightPanel/surfaces";
 import { resultTime } from "~/scient/results/resultState";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -43,8 +50,12 @@ function distinctRows<A>(rows: ReadonlyArray<A>) {
   });
 }
 
-function SavedOutputs(props: { readonly alternative: Alternative }) {
+function SavedOutputs(props: {
+  readonly alternative: Alternative;
+  readonly threadRef: ScopedThreadRef;
+}) {
   const { alternative } = props;
+  const messages = useMessages();
   if (alternative.outputs.length === 0 && alternative.values.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -54,7 +65,7 @@ function SavedOutputs(props: { readonly alternative: Alternative }) {
   }
   return (
     <div className="grid gap-4">
-      {alternative.outputs.map(({ name, preview }) => (
+      {alternative.outputs.map(({ name, preview, retainedPath }) => (
         <figure key={name} className="grid min-w-0 gap-1">
           <figcaption className="wrap-anywhere text-xs text-muted-foreground" dir="auto">
             {name}
@@ -94,9 +105,28 @@ function SavedOutputs(props: { readonly alternative: Alternative }) {
               ) : null}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              <T>Preview unavailable</T>
-            </p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <p className="text-sm text-muted-foreground">
+                <T>Preview unavailable</T>
+              </p>
+              {retainedPath === undefined ? null : (
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  focus="edge"
+                  onClick={() =>
+                    useRightPanelStore
+                      .getState()
+                      .openScient(
+                        props.threadRef,
+                        scientEnvironmentFileSurface({ path: retainedPath }),
+                      )
+                  }
+                >
+                  {messages(msg("Open in file viewer"))}
+                </Button>
+              )}
+            </div>
           )}
         </figure>
       ))}
@@ -149,6 +179,7 @@ function ReaderCode({ source, language }: { readonly source: string; readonly la
 
 export function NotebookReader(props: {
   readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
   readonly cwd: string;
   readonly relativePath: string;
   readonly settledRunId: string | null;
@@ -352,7 +383,9 @@ export function NotebookReader(props: {
               <T>Showing recent saved runs.</T>
             </p>
           ) : null}
-          {selected === null ? null : <SavedOutputs alternative={selected} />}
+          {selected === null ? null : (
+            <SavedOutputs alternative={selected} threadRef={props.threadRef} />
+          )}
         </article>
       </div>
     </div>
