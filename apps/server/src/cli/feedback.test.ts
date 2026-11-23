@@ -51,7 +51,11 @@ const listedPaths = (command: Command.Command.Any, path: string): ReadonlyArray<
   ),
 ];
 
-it("feedback subjects name every listed t3 command", () => {
+// SCIENT-FORK:START — agent feedback is held in Scient (scient/ScientAgentFeedbackGate.ts).
+
+// quarantine: #1078 the `feedback` command is unregistered and every mode reads off.
+it.skip("feedback subjects name every listed t3 command", () => {
+  // SCIENT-FORK:END
   expect([...T3_CLI_COMMANDS].sort()).toEqual(
     [...listedPaths(makeCli({ cloudEnabled: true }), "t3")].sort(),
   );
@@ -81,7 +85,11 @@ const expectOneLine = (args: ReadonlyArray<string>, baseDir: string, stderr: str
     );
   });
 
-it.effect("points to Labs only when the server hides the feedback tool", () =>
+// SCIENT-FORK:START — held with agent feedback.
+
+// quarantine: #1078 every mode reads off, so the turned-on listing cannot run.
+it.effect.skip("points to Labs only when the server hides the feedback tool", () =>
+  // SCIENT-FORK:END
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
