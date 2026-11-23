@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Idempotent Scient source operation IDs use the existing synchronous content fingerprint.
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -1003,6 +1004,34 @@ const requestLibraryRestore = Effect.fn("ScientSourcesToolkit.requestLibraryRest
   };
 });
 
+/** Agents often write the home folder as "~"; the runners take absolute folders only. */
+export const libraryCopyFolder = (folder: string, home = NodeOS.homedir()): string =>
+  folder === "~"
+    ? home
+    : folder.startsWith("~/") || folder.startsWith("~\\")
+      ? NodePath.join(home, folder.slice(2))
+      : folder;
+
+/** What the agent tells the user after starting one: these runs end later, or at the next start. */
+const LIBRARY_COPY_MESSAGES = {
+  "backup-started":
+    "The backup runs on. scient_sources_list libraryCopies shows backup.state done with its path and counts, or failed with a reason.",
+  "restore-requested":
+    "Nothing changes now: Scient swaps in this Library when it next starts. Until then cancel-restore with libraryCopies.restore.restoreId stops it. Tell the user.",
+  "restore-preparing":
+    "A restore copy is still being made; libraryCopies.restore shows when it is ready. It applies when Scient next starts.",
+  "join-started":
+    "Adding runs on. scient_sources_list libraryCopies shows join.state, and undo-join with its joinId takes it back.",
+} as const;
+
+const withMessage = <A extends { readonly outcome: string }>(changed: A) =>
+  changed.outcome in LIBRARY_COPY_MESSAGES
+    ? {
+        ...changed,
+        message: LIBRARY_COPY_MESSAGES[changed.outcome as keyof typeof LIBRARY_COPY_MESSAGES],
+      }
+    : changed;
+
 /**
  * The whole Library's backup, restore and additions from another Library, by the runners the
  * panel uses. A restore never touches the Library or moves a project in: the swap waits for the
@@ -1011,9 +1040,12 @@ const requestLibraryRestore = Effect.fn("ScientSourcesToolkit.requestLibraryRest
 const changeLibraryCopies = Effect.fn("ScientSourcesToolkit.libraryCopies")(function* (
   change: LibraryCopyChange,
 ) {
-  const answer = <A extends object>(library: ScientLibraryLocation, changed: A) =>
+  const answer = <A extends { readonly outcome: string }>(
+    library: ScientLibraryLocation,
+    changed: A,
+  ) =>
     attempt(() => readLibraryCopies(library.root)).pipe(
-      Effect.map((libraryCopies) => ({ ...changed, libraryCopies })),
+      Effect.map((libraryCopies) => ({ ...withMessage(changed), libraryCopies })),
     );
   switch (change.action) {
     case "restore-library":
@@ -1021,20 +1053,26 @@ const changeLibraryCopies = Effect.fn("ScientSourcesToolkit.libraryCopies")(func
     case "cancel-restore": {
       const { library, outcome } = yield* requestLibraryRestore(
         change.action === "restore-library"
-          ? { action: "prepare", fromFolder: change.fromFolder }
+          ? { action: "prepare", fromFolder: libraryCopyFolder(change.fromFolder) }
           : change.action === "put-back-library"
-            ? { action: "put-back", folder: change.folder }
+            ? { action: "put-back", folder: libraryCopyFolder(change.folder) }
             : { action: "cancel", restoreId: change.restoreId },
       );
       return yield* answer(library, { outcome });
     }
     case "back-up-library": {
       const { library } = yield* resolveWholeLibrary("write");
-      return yield* answer(library, startLibraryBackup(library, change.inFolder));
+      return yield* answer(
+        library,
+        startLibraryBackup(library, libraryCopyFolder(change.inFolder)),
+      );
     }
     case "add-from-library": {
       const { library } = yield* resolveWholeLibrary("write");
-      return yield* answer(library, startLibraryJoin(library, change.fromFolder, "agent"));
+      return yield* answer(
+        library,
+        startLibraryJoin(library, libraryCopyFolder(change.fromFolder), "agent"),
+      );
     }
     case "undo-join": {
       const { library } = yield* resolveWholeLibrary("write");

@@ -82,6 +82,7 @@ import {
   checkScientSourceQuotesForInvocation,
   citeScientSourcesForInvocation,
   getScientSourceForInvocation,
+  libraryCopyFolder,
   listScientSourcesForInvocation,
   removeScientSourceForInvocation,
   organizeLibrarySourcesForInvocation,
@@ -2020,6 +2021,14 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
+  it("reads an agent's ~ folder from the home folder and leaves other folders alone", () => {
+    const home = NodePath.join(NodePath.sep, "home", "ada");
+    expect(libraryCopyFolder("~", home)).toBe(home);
+    expect(libraryCopyFolder("~/Backups", home)).toBe(NodePath.join(home, "Backups"));
+    expect(libraryCopyFolder("/srv/~/Backups", home)).toBe("/srv/~/Backups");
+    expect(libraryCopyFolder("~ada/Backups", home)).toBe("~ada/Backups");
+  });
+
   it.effect(
     "an agent's backup is restored the panel's way, and an older restore ID cancels nothing",
     () =>
@@ -2037,7 +2046,11 @@ describe("Sources tools on the library backend", () => {
           }),
           fixture,
         );
-        expect(started.outcome).toBe("backup-started");
+        // The run ends later, so the answer says where to watch it.
+        expect(started).toMatchObject({
+          outcome: "backup-started",
+          message: expect.stringContaining("libraryCopies"),
+        });
         const backup = yield* Effect.promise(() =>
           vi.waitFor(async () => {
             const { backup } = await copies();
@@ -2051,12 +2064,17 @@ describe("Sources tools on the library backend", () => {
         ).toMatchObject({ state: "done", path: backup, sources: 1 });
         yield* Effect.promise(() => libraryRecord(fixture, "added-later"));
 
-        yield* run(
+        const requested = yield* run(
           organizeLibrarySourcesForInvocation({
             change: { action: "restore-library", fromFolder: backup },
           }),
           fixture,
         );
+        // Nothing is swapped now; the agent is told so, to tell the user.
+        expect(requested).toMatchObject({
+          outcome: "restore-requested",
+          message: expect.stringContaining("next starts"),
+        });
         const ready = () =>
           vi.waitFor(async () => {
             const { restore } = await copies();
