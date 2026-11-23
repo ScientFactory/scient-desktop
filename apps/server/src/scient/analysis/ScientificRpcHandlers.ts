@@ -12,7 +12,10 @@ import * as Stream from "effect/Stream";
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 import type { makeComputeConsoleNotebook } from "../compute/ComputeConsoleNotebook.ts";
 import type { makeComputeNotebookOutputs } from "../compute/ComputeNotebookOutputs.ts";
-import { makeNotebookReader, readNotebookWithAlternatives } from "../notebook/notebookReader.ts";
+import {
+  type makeNotebookReader,
+  readNotebookWithAlternatives,
+} from "../notebook/notebookReader.ts";
 import type { makeNotebookRuns } from "../notebook/notebookRuns.ts";
 import type * as NotebookStore from "../notebook/NotebookStore.ts";
 import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
@@ -33,7 +36,7 @@ export const makeScientificRpcHandlers = ({
   computeGateway,
   saveComputeOutput,
   notebooks,
-  computeDir,
+  notebookReader,
   notebookRuns,
   saveConsoleNotebook,
   computeNotebookOutputs,
@@ -45,7 +48,7 @@ export const makeScientificRpcHandlers = ({
   readonly analysis: AnalysisService.AnalysisService["Service"];
   readonly computeGateway: ComputeRpcGateway;
   readonly saveComputeOutput: ReturnType<typeof makeComputeOutputSave>;
-  readonly computeDir: string;
+  readonly notebookReader: ReturnType<typeof makeNotebookReader>;
   readonly notebookRuns: Pick<
     ReturnType<typeof makeNotebookRuns>,
     "start" | "status" | "watch" | "stop"
@@ -58,7 +61,6 @@ export const makeScientificRpcHandlers = ({
   readonly results: ResultOperations;
   readonly resultHandoff: ResultHandoff;
 }) => {
-  const notebookReader = makeNotebookReader(computeDir, computeGateway);
   return WsScientificRpcGroup.of({
     [WS_METHODS.analysisStartRun]: (input) =>
       observeRpcEffect(WS_METHODS.analysisStartRun, analysis.startRun(input), {

@@ -366,28 +366,16 @@ import * as DataTables from "./scient/data/DataTables.ts";
 // SCIENT-FORK:START — saved data view RPCs use the shared data service.
 import * as DataViews from "./scient/data/DataViews.ts";
 // SCIENT-FORK:END
-import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
-// SCIENT-FORK:START — linked results: what fresh script runs published, for manuscripts.
-import * as ComputeResults from "./scient/results/ComputeResults.ts";
-import { makeNotebookRuns } from "./scient/notebook/notebookRuns.ts";
-import { makeResultOperations } from "./scient/results/resultOperations.ts";
-// SCIENT-FORK:END
-// SCIENT-FORK:START — result packages verify in an owned process.
-import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
-import { makeResultHandoff } from "./scient/results/handoff/ResultHandoff.ts";
+// SCIENT-FORK:START — shared scientific runs and result handoff.
+import { ScientificRunServices } from "./scient/analysis/ScientificRunServices.ts";
 // SCIENT-FORK:END
 import { makeComputeConsoleNotebook } from "./scient/compute/ComputeConsoleNotebook.ts";
-import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
 import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
-// SCIENT-FORK:START — fresh notebook jobs survive a connection.
-import { NotebookRunJobs } from "./scient/notebook/NotebookRunJobs.ts";
-// SCIENT-FORK:END
 import {
   makeAnalysisRuntimeInspectionHandlers,
   makeScientificRpcHandlers,
 } from "./scient/analysis/ScientificRpcHandlers.ts";
-import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { captureScientWsServices } from "./scient/ScientWsServices.ts";
 // SCIENT-FORK:START — a guest link needs Connect to reach this server.
@@ -398,7 +386,6 @@ import { BrowserHistory } from "./scient/browserHistory/BrowserHistory.ts";
 import { searchSuggestions } from "./scient/browserHistory/searchSuggestions.ts";
 import { FetchHttpClient } from "effect/http";
 // SCIENT-FORK:END
-import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
@@ -2072,21 +2059,14 @@ export const layerWsRpc = (
       const analysis = yield* AnalysisService.AnalysisService;
       const dataTables = yield* DataTables.DataTables;
       const compute = yield* ComputeSessionService.ComputeSessionService;
-      const computeGateway = makeComputeRpcGateway({
-        workspaceResolver: yield* WorkspaceBindingResolver,
-        compute,
-        serverSettings: yield* ScientificRuntimePreferences,
-        workspaceFileSystem,
-      });
+      // SCIENT-FORK:START — use the same scientific services as MCP.
+      const scientificRuns = yield* ScientificRunServices;
+      const { computeGateway, computeNotebookOutputs } = scientificRuns;
+      // SCIENT-FORK:END
       const saveComputeOutput = makeComputeOutputSave({
         gateway: computeGateway,
         compute,
         workspaceFileSystem,
-        fileSystem: yield* FileSystem.FileSystem,
-      });
-      const computeNotebookOutputs = makeComputeNotebookOutputs({
-        gateway: computeGateway,
-        compute,
         fileSystem: yield* FileSystem.FileSystem,
       });
       const saveConsoleNotebook = makeComputeConsoleNotebook({
@@ -4412,16 +4392,8 @@ export const layerWsRpc = (
             ),
           ),
       });
-      // SCIENT-FORK:START — linked results use the saved notebook runner.
+      // SCIENT-FORK:START — share the notebook store across connections.
       const notebooks = yield* NotebookStore.NotebookStore;
-      const notebookRuns = makeNotebookRuns({
-        computeDir: config.computeDir,
-        jobs: yield* NotebookRunJobs,
-        workspacePaths: yield* WorkspacePaths.WorkspacePaths,
-        gateway: computeGateway,
-        notebooks,
-        notebookOutputs: computeNotebookOutputs,
-      });
       // SCIENT-FORK:END
       const handlers6 = WsScientificRpcGroup.of({
         ...makeScientificRpcHandlers({
@@ -4437,25 +4409,11 @@ export const layerWsRpc = (
           notebooks,
           saveConsoleNotebook,
           computeNotebookOutputs,
-          // SCIENT-FORK:START — mount portable result package operations.
-          resultHandoff: makeResultHandoff({
-            process: yield* Effect.service(LocalExecutionProcess.ExecutionProcess).pipe(
-              Effect.provide(LocalExecutionProcess.layer),
-            ),
-            layout: { computeDir: config.computeDir },
-            gateway: computeGateway,
-          }),
-          // SCIENT-FORK:END
-          // SCIENT-FORK:START — linked results share Compute's project resolution.
-          computeDir: config.computeDir,
-          notebookRuns,
-          results: makeResultOperations({
-            gateway: computeGateway,
-            results: yield* ComputeResults.ComputeResults,
-            runNotebookFresh: notebookRuns.run,
-            runtimeDescriptors: compute.runtimeDescriptors,
-            workspace: workspaceFileSystem,
-          }),
+          // SCIENT-FORK:START — mount shared notebook and result operations.
+          notebookReader: scientificRuns.notebookReader,
+          notebookRuns: scientificRuns.notebookRuns,
+          results: scientificRuns.results,
+          resultHandoff: scientificRuns.resultHandoff,
           // SCIENT-FORK:END
         }),
       });

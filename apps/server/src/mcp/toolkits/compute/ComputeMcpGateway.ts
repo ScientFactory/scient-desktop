@@ -6,33 +6,18 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
-import { WorkspacePaths } from "../../../workspace/WorkspacePaths.ts";
-import * as ScientificRuntimePreferences from "../../../scient/compute/ScientificRuntimePreferences.ts";
-import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
-import {
-  makeComputeRpcGateway,
-  type ComputeRpcGateway,
-} from "../../../scient/compute/ComputeRpcGateway.ts";
-import { makeComputeNotebookOutputs } from "../../../scient/compute/ComputeNotebookOutputs.ts";
+import { ScientificRunServices } from "../../../scient/analysis/ScientificRunServices.ts";
+import type { ComputeRpcGateway } from "../../../scient/compute/ComputeRpcGateway.ts";
+import type { makeComputeNotebookOutputs } from "../../../scient/compute/ComputeNotebookOutputs.ts";
 import * as ComputeSessionService from "../../../scient/compute/ComputeSessionService.ts";
-import { ServerConfig } from "../../../config.ts";
-import { makeNotebookReader } from "../../../scient/notebook/notebookReader.ts";
-import { NotebookRunJobs } from "../../../scient/notebook/NotebookRunJobs.ts";
-import { makeNotebookRuns } from "../../../scient/notebook/notebookRuns.ts";
+import type { makeNotebookReader } from "../../../scient/notebook/notebookReader.ts";
+import type { makeNotebookRuns } from "../../../scient/notebook/notebookRuns.ts";
 import * as NotebookStore from "../../../scient/notebook/NotebookStore.ts";
 import { AnalysisService } from "../../../scient/analysis/AnalysisService.ts";
 import type { ComputeOutputResourceRef } from "@scientfactory/compute";
 import { DataViews } from "../../../scient/data/DataViews.ts";
-import * as LocalExecutionProcess from "../../../scient/execution/LocalExecutionProcess.ts";
-import {
-  makeResultHandoff,
-  type ResultHandoff,
-} from "../../../scient/results/handoff/ResultHandoff.ts";
-import { ComputeResults } from "../../../scient/results/ComputeResults.ts";
-import {
-  makeResultOperations,
-  type ResultOperations,
-} from "../../../scient/results/resultOperations.ts";
+import type { ResultHandoff } from "../../../scient/results/handoff/ResultHandoff.ts";
+import type { ResultOperations } from "../../../scient/results/resultOperations.ts";
 
 export interface ComputeOutputBytes {
   readonly mediaType: string;
@@ -94,12 +79,14 @@ export const ComputeMcpGatewayLive = Layer.effect(
   Effect.gen(function* () {
     const compute = yield* ComputeSessionService.ComputeSessionService;
     const fileSystem = yield* FileSystem.FileSystem;
-    const rpc = makeComputeRpcGateway({
-      compute,
-      workspaceResolver: yield* WorkspaceBindingResolver,
-      serverSettings: yield* ScientificRuntimePreferences.ScientificRuntimePreferences,
-      workspaceFileSystem: yield* WorkspaceFileSystem.WorkspaceFileSystem,
-    });
+    const {
+      computeGateway: rpc,
+      computeNotebookOutputs: notebookOutputs,
+      notebookReader,
+      notebookRuns,
+      results: resultOperations,
+      resultHandoff,
+    } = yield* ScientificRunServices;
     const readOutput = Effect.fn("ComputeMcpGateway.readOutput")(function* (
       ref: ComputeOutputResourceRef,
       kind: "image" | "resource",
@@ -116,28 +103,6 @@ export const ComputeMcpGatewayLive = Layer.effect(
     const notebooks = yield* NotebookStore.NotebookStore;
     const fileRuns = yield* AnalysisService;
     const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-    const notebookOutputs = makeComputeNotebookOutputs({ gateway: rpc, compute, fileSystem });
-    const { computeDir } = yield* ServerConfig;
-    const notebookRuns = makeNotebookRuns({
-      computeDir,
-      jobs: yield* NotebookRunJobs,
-      workspacePaths: yield* WorkspacePaths,
-      gateway: rpc,
-      notebooks,
-      notebookOutputs,
-    });
-    const resultOperations = makeResultOperations({
-      gateway: rpc,
-      results: yield* ComputeResults,
-      runNotebookFresh: notebookRuns.run,
-      runtimeDescriptors: compute.runtimeDescriptors,
-      workspace: workspaceFiles,
-    });
-    const resultHandoff = makeResultHandoff({
-      layout: { computeDir },
-      gateway: rpc,
-      process: yield* LocalExecutionProcess.ExecutionProcess,
-    });
     return ComputeMcpGateway.of({
       resultHandoffChoices: resultHandoff.choices,
       exportResultPackage: resultHandoff.exportPackage,
@@ -152,7 +117,7 @@ export const ComputeMcpGatewayLive = Layer.effect(
       notebookFreshStatus: notebookRuns.status,
       stopNotebookFresh: notebookRuns.stop,
       waitNotebookFresh: notebookRuns.wait,
-      notebookAlternatives: makeNotebookReader(computeDir, rpc),
+      notebookAlternatives: notebookReader,
       readNotebook: notebooks.read,
       readNotebookOutput: notebooks.readOutput,
       editNotebook: notebooks.edit,

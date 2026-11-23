@@ -22,6 +22,7 @@ import * as ProviderModelFreshness from "./providerLifecycle/ProviderModelFreshn
 import * as ScientAgentBackgroundRuntime from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
+import * as ScientificRunServices from "./analysis/ScientificRunServices.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
 import * as DataViews from "./data/DataViews.ts";
@@ -251,7 +252,13 @@ export function makeScientRouteServices<
       Layer.provide(ConversationImportStagingLive),
       Layer.provide(ScientCloudLive),
       Layer.provide(WordFileExportLive),
-      Layer.provide(ComputeMcpGatewayLive.pipe(Layer.provide(LocalExecutionProcess.layer))),
+      Layer.provide(
+        ComputeMcpGatewayLive.pipe(
+          Layer.provideMerge(
+            ScientificRunServices.layer.pipe(Layer.provide(LocalExecutionProcess.layer)),
+          ),
+        ),
+      ),
       Layer.provide(AnalysisServiceLive),
       Layer.provide(NotebookRunRecorder.layer),
       Layer.provide(ComputeResults.layer),
