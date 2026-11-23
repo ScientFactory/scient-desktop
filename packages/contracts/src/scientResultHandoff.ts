@@ -36,6 +36,7 @@ export const ResultHandoffManifest = Schema.Struct({
     kind: ComputeResultSourceKind,
     language: Text,
     sha256: Sha256,
+    notebookDigestVersion: Schema.optional(Schema.Literal(1)),
     fileSha256: Sha256,
     size: Size,
   }),

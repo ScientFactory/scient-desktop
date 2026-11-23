@@ -116,7 +116,6 @@ describe("linked result revisions", () => {
     const base = {
       scriptPath,
       kind: "notebook" as const,
-      codeSha256: "a".repeat(64),
     };
     const published = await publishScriptRun(
       place.layout,
@@ -715,14 +714,24 @@ describe("linked result revisions", () => {
   it("tracks notebook override changes separately from edits to code cells", async () => {
     const place = await project();
     const scriptPath = "analysis.ipynb";
-    const authored = ["cutoff = 50", "print(cutoff)"];
-    const codeSha256 = NodeCrypto.createHash("sha256").update(authored.join("\n")).digest("hex");
+    const authored = ["cutoff = 50", "print(cutoff)"] as const;
     const publish = (cutoff: number) =>
       run(place, JSON.stringify({ cutoff }), {
         kind: "notebook",
         scriptPath,
-        code: [authored[0], `cutoff = ${cutoff}`, authored[1]].join("\n"),
-        codeSha256,
+        code: {
+          language: "python",
+          cells: [
+            { id: "defaults", cellType: "code", source: authored[0], parameterCell: true },
+            {
+              id: "injected",
+              cellType: "code",
+              source: `cutoff = ${cutoff}`,
+              injectedParameters: true,
+            },
+            { id: "analysis", cellType: "code", source: authored[1] },
+          ],
+        },
         reads: undefined,
         parameters: [{ name: "cutoff", value: String(cutoff), source: "override" }],
       }).then((settled) => publishScriptRun(place.layout, settled));
@@ -732,19 +741,19 @@ describe("linked result revisions", () => {
       throw new Error("Missing test revision");
 
     const path = NodePath.join(place.root, scriptPath);
-    const saveNotebook = (lastCell: string) =>
+    const saveNotebook = (lastCell: string | null, parameterCell = true, language = "python") =>
       NodeFSP.writeFile(
         path,
         JSON.stringify({
           nbformat: 4,
           nbformat_minor: 5,
-          metadata: {},
+          metadata: { language_info: { name: language } },
           cells: [
             {
               id: "defaults",
               cell_type: "code",
-              metadata: { tags: ["parameters"] },
-              source: authored[0],
+              metadata: { tags: parameterCell ? ["parameters"] : [] },
+              source: lastCell === null ? authored.join("\n") : authored[0],
             },
             {
               id: "injected",
@@ -752,7 +761,9 @@ describe("linked result revisions", () => {
               metadata: { tags: ["injected-parameters"] },
               source: "cutoff = 70",
             },
-            { id: "analysis", cell_type: "code", metadata: {}, source: lastCell },
+            ...(lastCell === null
+              ? []
+              : [{ id: "analysis", cell_type: "code", metadata: {}, source: lastCell }]),
           ],
         }),
       );
@@ -769,10 +780,55 @@ describe("linked result revisions", () => {
       to: { causes: [] },
       parameters: [{ name: "cutoff", from: "60", to: "70" }],
     });
-    await saveNotebook("print(cutoff + 1)");
+    for (const change of [
+      () => saveNotebook(null),
+      () => saveNotebook(authored[1], false),
+      () => saveNotebook(authored[1], true, "julia"),
+    ]) {
+      await change();
+      expect(
+        (await makeResultsReader(place.layout, "p", place.root).list())[0]?.latest.causes,
+      ).toContainEqual({ kind: "script-changed", path: scriptPath });
+    }
+    const missingIdentity = await publishScriptRun(
+      place.layout,
+      await run(place, "{}", {
+        kind: "notebook",
+        scriptPath,
+        code: authored.join("\n"),
+        reads: undefined,
+      }),
+    );
+    if (missingIdentity._tag !== "published") throw new Error(missingIdentity.message);
+    const reader = makeResultsReader(place.layout, "p", place.root);
+    expect(
+      (await compareResultRevisions(reader, first.revision, missingIdentity.revision)).codeChanged,
+    ).toBeNull();
     expect(
       (await makeResultsReader(place.layout, "p", place.root).list())[0]?.latest.causes,
-    ).toContainEqual({ kind: "script-changed", path: scriptPath });
+    ).toEqual([{ kind: "script-unconfirmed", path: scriptPath }]);
+  });
+
+  it("keeps the last published notebook revision when every new output exceeds retention", async () => {
+    const place = await project();
+    const source = { kind: "notebook" as const, scriptPath: "analysis.ipynb" };
+    const baseline = await publishScriptRun(place.layout, await run(place, '{"n":1}', source));
+    if (baseline._tag !== "published") throw new Error(baseline.message);
+    const oversized = await run(place, '{"n":2}', source);
+    for (const name of ["values.json", "km.png"]) {
+      await NodeFSP.truncate(NodePath.join(oversized.stagingFolder, name), 65 * 1024 * 1024);
+    }
+    expect(await publishScriptRun(place.layout, oversized)).toMatchObject({
+      _tag: "failed",
+      empty: "nothing-retained",
+    });
+    const reader = makeResultsReader(place.layout, "p", place.root);
+    expect((await reader.revisions()).map(({ revision }) => revision)).toEqual([
+      baseline.revision.revision,
+    ]);
+    expect((await reader.latestPublished(source.scriptPath))?.revision).toBe(
+      baseline.revision.revision,
+    );
   });
 
   it("reads only a named published output and signals the byte cap", async () => {

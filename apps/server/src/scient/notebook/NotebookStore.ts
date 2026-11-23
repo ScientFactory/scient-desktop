@@ -39,9 +39,11 @@ import {
   notebookText,
   notebookWithMetadata,
   notebookCellTags,
+  notebookSourceCell,
   type NotebookCellRecord,
   type NotebookIndex,
 } from "./notebookIndex.ts";
+import { NOTEBOOK_DIGEST_VERSION } from "./notebookRevisionSource.ts";
 
 /** Typing settles for this long before the file is written. */
 const SAVE_DELAY = Duration.millis(400);
@@ -107,23 +109,15 @@ function cellFolds(fields: NotebookCellRecord["fields"]): NotebookFold[] {
 
 function cellView(cell: NotebookCellRecord, budget: { left: number }): NotebookCellView {
   const { fields } = cell;
-  const tags = notebookCellTags(fields);
-  const parameterCell = fields.cell_type === "code" && tags.includes("parameters");
+  const source = notebookSourceCell(cell);
   const scient = isRecord(fields.metadata) ? fields.metadata.scient : undefined;
-  const hints = parameterCell && isRecord(scient) ? scient.parameters : undefined;
+  const hints = source.parameterCell && isRecord(scient) ? scient.parameters : undefined;
   return {
-    id: cell.id,
-    cellType:
-      fields.cell_type === "markdown" || fields.cell_type === "raw" ? fields.cell_type : "code",
-    source: notebookText(fields.source),
+    ...source,
     executionCount: typeof fields.execution_count === "number" ? fields.execution_count : null,
     run: cellRun(fields),
     pendingExecution: pendingExecution(fields),
     folded: cellFolds(fields),
-    ...(parameterCell ? { parameterCell } : {}),
-    ...(fields.cell_type === "code" && tags.includes("injected-parameters")
-      ? { injectedParameters: true }
-      : {}),
     ...(isRecord(hints) ? { parameterHints: hints } : {}),
     outputs: cell.outputIndex.map((output) => {
       const bytes = output.range.end - output.range.start;
@@ -939,6 +933,7 @@ export const makeNotebookStore = Effect.gen(function* () {
               notebookRun: {
                 executionId: request.executionId,
                 codeSha256: request.codeSha256,
+                notebookDigestVersion: NOTEBOOK_DIGEST_VERSION,
                 parameterCellId: request.parameterCellId ?? null,
                 injectionSha256:
                   request.injection === undefined

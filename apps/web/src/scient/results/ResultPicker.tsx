@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   resultEnvironmentMayDiffer,
-  resultInputCoverageIncomplete,
+  resultFreshnessIncomplete,
   resultSourceChanged,
 } from "@t3tools/shared/computeResults";
 import { ResultAttemptStatus } from "./ResultAttemptStatus";
@@ -325,7 +325,7 @@ export function ResultPicker(props: {
                       <p className="text-xs text-muted-foreground">
                         {stale
                           ? gt("From an out-of-date run · {time}", { time: runTime })
-                          : resultInputCoverageIncomplete(script.latest)
+                          : resultFreshnessIncomplete(script.latest)
                             ? gt("Freshness partly unknown · {time}", { time: runTime })
                             : gt("Run {time}", { time: runTime })}
                       </p>

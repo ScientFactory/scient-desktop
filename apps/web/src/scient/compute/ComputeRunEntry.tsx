@@ -41,10 +41,10 @@ import {
   computeSourceLabel,
   mergeComputeOutputs,
 } from "./computeResultPresentation";
+import { PublishedResultText } from "./PublishedResultText";
 import { reportComputeFailure } from "./ComputeSessionControls";
 
 function RunPublication({ result }: { readonly result: ComputeResultsPublicationResult }) {
-  const gt = useGT();
   if (result._tag === "unavailable") return null;
   if (result._tag === "failed")
     return (
@@ -52,35 +52,9 @@ function RunPublication({ result }: { readonly result: ComputeResultsPublication
         {result.message}
       </p>
     );
-  const counts = result.counts;
-  const items =
-    counts === undefined
-      ? []
-      : [
-          counts.values > 0
-            ? gt("{count, plural, one {# value} other {# values}}", { count: counts.values })
-            : null,
-          counts.tables > 0
-            ? gt("{count, plural, one {# table} other {# tables}}", { count: counts.tables })
-            : null,
-          counts.figures > 0
-            ? gt("{count, plural, one {# figure} other {# figures}}", { count: counts.figures })
-            : null,
-          counts.files > 0
-            ? gt("{count, plural, one {# other file} other {# other files}}", {
-                count: counts.files,
-              })
-            : null,
-        ].filter((item) => item !== null);
   return (
     <p role="status" className="mt-1 text-xs text-muted-foreground">
-      {items.length === 0
-        ? gt("Results saved.")
-        : gt("Saved {items}.", {
-            items: new Intl.ListFormat(undefined, { style: "long", type: "conjunction" }).format(
-              items,
-            ),
-          })}
+      <PublishedResultText counts={result.counts} />
     </p>
   );
 }

@@ -28,6 +28,8 @@ const AttemptReceipt = Schema.Struct({
   ...ComputeResultLastAttempt.fields,
   /** Startup failures have only session output. */
   hasExecution: Schema.Boolean,
+  cellId: Schema.optional(Schema.String),
+  cellExecutionId: Schema.optional(ComputeExecutionId),
   parameters: Schema.optional(Schema.Array(ComputeResultParameter).check(Schema.isMaxLength(200))),
 });
 
@@ -107,11 +109,25 @@ export async function recordFailedResultAttempt(
   const name = `${failure.finishedAt.replace(/[^0-9]/gu, "")}-${key(run.sessionId, run.executionId)}.json`;
   await writeJson(NodePath.join(folder, name), { ...run, ...failure });
   await forgetResultAttempt(layout, run);
-  // Concurrent writers only remove receipts that finished earlier than theirs.
+  await pruneEarlierFailures(folder, name);
+}
+
+export async function clearResultFailuresThrough(
+  layout: ResultsLayout,
+  run: RunIdentity,
+  finishedAt: string,
+) {
+  await pruneEarlierFailures(
+    failuresFolder(layout, run.projectId, run.scriptPath),
+    `${finishedAt.replace(/[^0-9]/gu, "")}.`,
+  );
+}
+
+async function pruneEarlierFailures(folder: string, cutoff: string) {
   const names = await NodeFSP.readdir(folder).catch(() => []);
   await Promise.all(
     names
-      .filter((candidate) => candidate.endsWith(".json") && candidate < name)
+      .filter((candidate) => candidate.endsWith(".json") && candidate < cutoff)
       .map((older) =>
         NodeFSP.rm(NodePath.join(folder, older), { force: true }).catch(() => undefined),
       ),

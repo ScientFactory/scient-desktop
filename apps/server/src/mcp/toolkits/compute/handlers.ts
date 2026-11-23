@@ -49,7 +49,12 @@ import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { computeTranscript } from "./computeTranscript.ts";
 import { fileSessionLanguage, matchSavedScript } from "./savedScriptMatch.ts";
 import { exportScientResults, verifyScientResults } from "./handoffHandlers.ts";
-import { editScientNotebook, readScientNotebook, runScientNotebook } from "./notebookHandlers.ts";
+import {
+  editScientNotebook,
+  readScientNotebook,
+  runScientNotebook,
+  stopScientNotebook,
+} from "./notebookHandlers.ts";
 import {
   checkScientResults,
   compareScientResults,
@@ -820,6 +825,7 @@ const handlers = {
   scient_notebook_read: readScientNotebook,
   scient_notebook_edit: editScientNotebook,
   scient_notebook_run: runScientNotebook,
+  scient_notebook_stop: stopScientNotebook,
   scient_compute_run: runScientCompute,
   scient_compute_run_file: runScientComputeFile,
   scient_compute_output: readScientComputeOutput,

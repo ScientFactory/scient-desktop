@@ -29,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { notebookSourceDigest } from "../../../scient/notebook/notebookRevisionSource.ts";
 import { agentScope, ownedSession, toolError, type AgentScope } from "./agentComputeScope.ts";
 import type { ComputeToolImage, ComputeToolNotebookCell } from "./tools.ts";
 
@@ -262,8 +263,10 @@ export const readScientNotebook = Effect.fn("ScientComputeToolkit.notebookRead")
     return { ...describeNotebook(yield* requireNotebook(scope, input.path)), freshRun };
   }
   if (input.includeAlternatives || input.savedRevision !== undefined) {
+    const notebook = yield* requireNotebook(scope, input.path);
+    const sourceSha256 = notebookSourceDigest(notebook);
     const alternatives = yield* scope.gateway
-      .notebookAlternatives({ cwd: scope.cwd, path: input.path })
+      .notebookAlternatives({ cwd: scope.cwd, path: input.path }, sourceSha256)
       .pipe(Effect.mapError(notebookFailed));
     const selected = alternatives.runs.find((entry) => entry.revision === input.savedRevision);
     if (input.savedRevision !== undefined && selected === undefined) {
@@ -277,14 +280,32 @@ export const readScientNotebook = Effect.fn("ScientComputeToolkit.notebookRead")
           : [],
       )
       .slice(0, MAXIMUM_IMAGES);
+    const source = selected?.source;
+    const view =
+      source === undefined || selected === undefined
+        ? notebook
+        : {
+            revision: selected.revision,
+            language: source.language,
+            cells: source.cells.map((cell) => ({
+              ...cell,
+              executionCount: null,
+              run: null,
+              pendingExecution: null,
+              outputs: [],
+            })),
+          };
     return {
-      ...describeNotebook(
-        yield* requireNotebook(scope, input.path),
-        input.cells === undefined ? undefined : new Set(input.cells),
-      ),
+      ...describeNotebook(view, input.cells === undefined ? undefined : new Set(input.cells)),
       alternatives: (selected === undefined ? alternatives.runs : [selected]).map((run) => ({
         revision: run.revision,
         ...(run.codeSha256 === undefined ? {} : { codeSha256: run.codeSha256 }),
+        sourceStatus:
+          run.notebookDigestVersion === undefined
+            ? ("unconfirmed" as const)
+            : run.codeSha256 === sourceSha256
+              ? ("current" as const)
+              : ("earlier" as const),
         parameters: run.parameters,
         outputs: run.outputs.map(({ name, preview }) => ({
           name,
@@ -398,6 +419,32 @@ function normalizeAgentNotebookParameters(
   );
 }
 
+export const stopScientNotebook = Effect.fn("ScientComputeToolkit.notebookStop")(function* (input: {
+  readonly path: string;
+  readonly runId: ComputeSessionId;
+}) {
+  const scope = yield* agentScope();
+  const job = yield* scope.gateway
+    .stopNotebookFresh({ cwd: scope.cwd, scriptPath: input.path, runId: input.runId })
+    .pipe(Effect.mapError(notebookFailed));
+  if (job === null) return yield* toolError("compute-failed", "That notebook run is unavailable.");
+  const stopped = job.progress?.phase === "stopping" && job.outcome !== undefined;
+  return {
+    status: stopped
+      ? ("stopped" as const)
+      : job.outcome === undefined
+        ? ("saving" as const)
+        : ("finished" as const),
+    completedSettings:
+      job.sweepSummary === undefined
+        ? job.outcome === undefined || stopped
+          ? 0
+          : 1
+        : job.sweepSummary.saved + job.sweepSummary.failures.length,
+    freshRun: job,
+  };
+});
+
 export const runScientNotebook = Effect.fn("ScientComputeToolkit.notebookRun")(function* (input: {
   readonly path: string;
   readonly cells?: ReadonlyArray<string> | undefined;
@@ -464,7 +511,9 @@ export const runScientNotebook = Effect.fn("ScientComputeToolkit.notebookRun")(f
     return {
       ...describeNotebook(yield* requireNotebook(scope, input.path)),
       freshRun: current ?? { ...freshRun, ...(outcome === undefined ? {} : { outcome }) },
-      ...(outcome === undefined || input.sweep !== undefined ? {} : { publication: outcome }),
+      ...(outcome === undefined || outcome._tag === "completed" || input.sweep !== undefined
+        ? {}
+        : { publication: outcome }),
     };
   }
   const view = yield* requireNotebook(scope, input.path);

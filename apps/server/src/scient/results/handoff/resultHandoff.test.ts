@@ -24,6 +24,7 @@ import { exportResultPackage } from "./exportResultPackage.ts";
 import { hashBytes } from "./handoffFiles.ts";
 import { handoffLockfileChoices } from "./handoffEnvironment.ts";
 import { exportHandoffInputs } from "./handoffInputs.ts";
+import { notebookCode, portableNotebook } from "./notebookSource.ts";
 import { makeResultHandoff } from "./ResultHandoff.ts";
 import { verifyResultPackage } from "./verifyResultPackage.ts";
 
@@ -37,6 +38,19 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const decodeManifest = Schema.decodeUnknownSync(ResultHandoffManifest);
+
+it("uses retained cells for a legacy notebook even when joined source matches the current file", () => {
+  const executed = ["x = 1", "from __future__ import annotations"];
+  const joined = executed.join("\n");
+  const current = JSON.stringify({ cells: [{ cell_type: "code", source: joined }] });
+  const digest = hashBytes(joined);
+  expect(notebookCode(portableNotebook(digest, executed, undefined, undefined, current))).toEqual(
+    executed,
+  );
+  expect(() => portableNotebook(digest, undefined, undefined, undefined, current)).toThrow(
+    "could not be confirmed",
+  );
+});
 
 it.effect(
   "copies the exact older script, checks omitted inputs and refuses corrupt bytes before running",

@@ -242,6 +242,7 @@ export const SCIENT_ACTION_TOOLS: ReadonlySet<string> = new Set([
   "scient_compute_control",
   "scient_notebook_edit",
   "scient_notebook_run",
+  "scient_notebook_stop",
   "scient_results_run",
   "scient_results_markdown",
   "scient_latex_build",

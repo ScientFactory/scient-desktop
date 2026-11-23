@@ -114,11 +114,12 @@ export const ComputeResultRevision = Schema.Struct({
     language: Text,
     /**
      * Of the code that ran, which is the saved file unless it was run with unsaved changes. For a
-     * notebook: of its code cells in order, joined by a newline, with the injected parameters.
+     * notebook: the executed cell array with injected parameters (legacy: joined by a newline).
      */
     sha256: Sha256,
-    /** Notebook code cells in order joined by "\n", excluding injected-parameters cells. */
+    /** Notebook source identity, excluding generated parameter injections. */
     codeSha256: Schema.optional(Sha256),
+    notebookDigestVersion: Schema.optional(Schema.Literal(1)),
     /** Absent means a script. */
     kind: Schema.optional(ComputeResultSourceKind),
   }),
@@ -170,6 +171,7 @@ export const ComputeResultCause = Schema.Struct({
   kind: Schema.Literals([
     "script-changed",
     "script-missing",
+    "script-unconfirmed",
     "input-changed",
     "input-missing",
     "input-changed-during-run",
@@ -307,17 +309,18 @@ export const ComputeResultsPublicationInput = Schema.Struct({
 });
 export type ComputeResultsPublicationInput = typeof ComputeResultsPublicationInput.Type;
 
+export const ComputeResultCounts = Schema.Struct({
+  values: Schema.Int,
+  tables: Schema.Int,
+  figures: Schema.Int,
+  files: Schema.Int,
+});
+export type ComputeResultCounts = typeof ComputeResultCounts.Type;
+
 export const ComputeResultsPublicationResult = Schema.Union([
   Schema.TaggedStruct("published", {
     count: Schema.Int,
-    counts: Schema.optional(
-      Schema.Struct({
-        values: Schema.Int,
-        tables: Schema.Int,
-        figures: Schema.Int,
-        files: Schema.Int,
-      }),
-    ),
+    counts: Schema.optional(ComputeResultCounts),
   }),
   Schema.TaggedStruct("failed", { message: Text }),
   Schema.TaggedStruct("unavailable", {}),
@@ -335,6 +338,7 @@ export const ComputeResultsAttemptOutputResult = Schema.Struct({
   output: ComputeExecutionOutputs,
   session: Schema.NullOr(ComputeSessionRecord),
   executionId: Schema.NullOr(ComputeExecutionId),
+  cellId: Schema.optional(Text),
   parameters: Schema.optional(Schema.Array(ComputeResultParameter).check(Schema.isMaxLength(200))),
 });
 export type ComputeResultsAttemptOutputResult = typeof ComputeResultsAttemptOutputResult.Type;
@@ -392,7 +396,13 @@ export type ComputeResultsRerunInput = typeof ComputeResultsRerunInput.Type;
 export const ComputeResultsRerunResult = Schema.Union([
   Schema.TaggedStruct("published", {
     summary: ComputeResultSummary,
+    notebookSaved: Schema.optional(Schema.Boolean),
     notebookMessage: Schema.optional(Text),
+  }),
+  Schema.TaggedStruct("completed", {
+    notebookSaved: Schema.Boolean,
+    notebookMessage: Schema.optional(Text),
+    message: Schema.optional(Text),
   }),
   Schema.TaggedStruct("failed", { message: Text }),
 ]);
@@ -468,8 +478,8 @@ const ComparedInputEvidence = Schema.Struct({
 export const ComputeResultsCompareResult = Schema.Struct({
   from: ComputeResultSummary,
   to: ComputeResultSummary,
-  /** The code that ran differs. */
-  codeChanged: Schema.Boolean,
+  /** Null when the recorded notebook digests cannot establish a comparison. */
+  codeChanged: Schema.NullOr(Schema.Boolean),
   parameters: Schema.Array(
     Schema.Struct({ name: ParameterName, from: Schema.NullOr(Text), to: Schema.NullOr(Text) }),
   ),

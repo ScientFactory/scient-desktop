@@ -631,6 +631,10 @@ function ResultCard(props: {
         message: result.value.message,
         previousAttempt: resolution.summary.lastAttempt?.finishedAt,
       });
+    } else if (result.value._tag === "completed") {
+      setMessage(
+        result.value.message ?? result.value.notebookMessage ?? gt("No linked results published."),
+      );
     }
     props.onChanged();
   };

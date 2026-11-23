@@ -1,6 +1,7 @@
 import type { NotebookFreshRun } from "@t3tools/contracts";
 import { T, Var } from "gt-react";
 import { Button } from "~/components/ui/button";
+import { PublishedResultText } from "../compute/PublishedResultText";
 
 export function NotebookFreshRunStatus(props: {
   readonly job: NotebookFreshRun | null;
@@ -8,12 +9,26 @@ export function NotebookFreshRunStatus(props: {
   readonly message: string | null;
   readonly onStop?: () => void;
 }) {
-  const { job, message, running } = props;
+  const { job, running } = props;
+  const outcome = job?.outcome;
+  const message =
+    props.message ??
+    (outcome?._tag === "failed" ? outcome.message : (outcome?.notebookMessage ?? null));
+  const publicationMessage = outcome?._tag === "completed" ? outcome.message : undefined;
+  const notebookSaved = outcome?._tag === "completed" && outcome.notebookSaved;
   const progress = job?.progress;
   const sweep = job?.outcome === undefined ? undefined : job.sweepSummary;
   const published =
     job?.outcome?._tag === "published" && sweep === undefined ? job.publishedResults : undefined;
-  if (!running && message === null && sweep === undefined && published === undefined) return null;
+  if (
+    !running &&
+    message === null &&
+    publicationMessage === undefined &&
+    !notebookSaved &&
+    sweep === undefined &&
+    published === undefined
+  )
+    return null;
   return (
     <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
       <div role="status" className="min-w-0 tabular-nums">
@@ -39,15 +54,15 @@ export function NotebookFreshRunStatus(props: {
         ) : null}
         {published !== undefined ? (
           <p>
-            {published === 1 ? (
-              <T>Published 1 result</T>
-            ) : (
-              <T>
-                Published <Var>{published}</Var> results
-              </T>
-            )}
+            <PublishedResultText counts={published} />
           </p>
         ) : null}
+        {notebookSaved ? (
+          <p>
+            <T>Notebook saved</T>
+          </p>
+        ) : null}
+        {publicationMessage === undefined ? null : <p>{publicationMessage}</p>}
         {sweep === undefined ? null : (
           <>
             <p>

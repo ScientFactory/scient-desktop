@@ -161,6 +161,8 @@ const setup = {
   parameters: [{ name: "threshold", value: "0.5", source: "default" }],
   suggestedInputs: [],
 } as const;
+const sourceSha256 = "f".repeat(64);
+
 function savedRun(
   id: string,
   threshold: string,
@@ -168,7 +170,8 @@ function savedRun(
 ): NotebookAlternatives["runs"][number] {
   return {
     revision: ComputeResultRevisionId.make(id),
-    codeSha256: "f".repeat(64),
+    notebookDigestVersion: 1,
+    codeSha256: sourceSha256,
     finishedAt: "2026-11-23T14:10:00.000Z",
     parameters: [{ name: "threshold", value: threshold, source: "override" }],
     values: [],
@@ -234,6 +237,7 @@ const notebook: NotebookView = {
     cell("after", "code", "print('later')"),
   ],
   alternatives: {
+    currentSourceSha256: sourceSha256,
     publishedRevision: published.revision,
     runs: [alternate, published],
     prunedRuns: 0,

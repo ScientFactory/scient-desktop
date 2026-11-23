@@ -1,4 +1,8 @@
-import type { ComputeResultParameter, NotebookView } from "@t3tools/contracts";
+import type {
+  ComputeResultParameter,
+  NotebookRevisionSource,
+  NotebookView,
+} from "@t3tools/contracts";
 import {
   notebookOverrideAllowed,
   notebookParameterJson,
@@ -28,11 +32,8 @@ export function planNotebookRun(
   overrides: Readonly<Record<string, string>>,
   injectionId: string,
 ) {
-  const cells = notebook.cells.filter(
-    (cell) => cell.cellType === "code" && !cell.injectedParameters,
-  );
-  const parameterCells = cells.filter((cell) => cell.parameterCell);
-  const parameterCell = parameterCells[0];
+  const cells = notebook.cells.filter((cell) => !cell.injectedParameters);
+  const parameterCell = cells.find((cell) => cell.cellType === "code" && cell.parameterCell);
   const language = notebookParameterLanguage(notebook.language);
   const defaults =
     parameterCell === undefined
@@ -79,14 +80,22 @@ export function planNotebookRun(
     lines.length === 0
       ? undefined
       : { id: injectionId, source: ["# Parameters", ...lines].join("\n") };
-  const code = cells.flatMap(({ id, source }) => [
-    { id, source },
-    ...(injection !== undefined && id === parameterCell?.id ? [injection] : []),
-  ]);
+  const notebookSource: NotebookRevisionSource = {
+    language: notebook.language,
+    cells: cells.flatMap(({ id, cellType, source, parameterCell: parameters }) => [
+      { id, cellType, source, ...(parameters ? { parameterCell: true } : {}) },
+      ...(injection !== undefined && id === parameterCell?.id
+        ? [{ ...injection, cellType: "code" as const, injectedParameters: true }]
+        : []),
+    ]),
+  };
   const overrideValues = Object.fromEntries([...values].map(([name, { value }]) => [name, value]));
   const parameterEnvironment = `{${[...values].map(([name, { json }]) => `${JSON.stringify(name)}:${json}`).join(",")}}`;
   return {
-    cells: code,
+    cells: notebookSource.cells
+      .filter(({ cellType }) => cellType === "code")
+      .map(({ id, source }) => ({ id, source })),
+    notebookSource,
     injection,
     parameterCellId: parameterCell?.id,
     parameters,

@@ -4,7 +4,10 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import type { ComputeExecutionResultRecord } from "@scientfactory/compute";
+import type {
+  ComputeExecutionResultRecord,
+  ComputeRuntimePackageEvidence,
+} from "@scientfactory/compute";
 import type {
   ComputeResultCause,
   ComputeResultInput,
@@ -19,20 +22,30 @@ import type {
   ComputeResultRevision,
   ComputeResultScript,
   ComputeResultSummary,
+  NotebookRevisionSource,
   ComputeResultValue,
   ComputeResultsPublicationInput,
 } from "@t3tools/contracts";
-import { ComputeResultRevision as ComputeResultRevisionSchema } from "@t3tools/contracts";
+import {
+  ComputeResultRevision as ComputeResultRevisionSchema,
+  NotebookRevisionSource as NotebookRevisionSourceSchema,
+} from "@t3tools/contracts";
 import {
   readResultValues,
-  resultInputCoverageIncomplete,
+  resultFreshnessIncomplete,
   resultSourceChanged,
   resultValueAt,
 } from "@t3tools/shared/computeResults";
 import { isSavedDataView, savedViewReferences } from "@t3tools/shared/savedDataView";
 import * as Schema from "effect/Schema";
 
-import { indexNotebook, notebookCellTags, notebookText } from "../notebook/notebookIndex.ts";
+import { indexNotebook, notebookSourceCell } from "../notebook/notebookIndex.ts";
+import {
+  executedNotebookCells,
+  NOTEBOOK_DIGEST_VERSION,
+  notebookExecutionDigest,
+  notebookSourceDigest,
+} from "../notebook/notebookRevisionSource.ts";
 import { parseCsv } from "./latexOutputs.ts";
 import { isResultAttemptPending, readLastResultAttempt } from "./resultAttempts.ts";
 
@@ -44,6 +57,7 @@ const MAXIMUM_HASHED_INPUT_BYTES = 256 * 1024 * 1024;
 const RETAINED_FIGURE_REVISIONS = 20;
 
 const decodeRevision = Schema.decodeUnknownSync(ComputeResultRevisionSchema);
+const decodeNotebookSource = Schema.decodeUnknownSync(NotebookRevisionSourceSchema);
 
 export interface ResultsLayout {
   readonly computeDir: string;
@@ -140,8 +154,7 @@ export interface SettledScriptRun {
   readonly unresolvedViewInputs?: ReadonlyArray<UnresolvedViewInput>;
   readonly scriptPath: string;
   readonly language: string;
-  readonly code: string;
-  readonly codeSha256?: string;
+  readonly code: string | NotebookRevisionSource;
   readonly publication?: ComputeResultRevision["publication"];
   readonly sessionId: string;
   readonly executionId: string;
@@ -154,7 +167,11 @@ export interface SettledScriptRun {
 
 export type PublishOutcome =
   | { readonly _tag: "published"; readonly revision: ComputeResultRevision }
-  | { readonly _tag: "failed"; readonly message: string };
+  | {
+      readonly _tag: "failed";
+      readonly message: string;
+      readonly empty?: "nothing-written" | "nothing-retained";
+    };
 
 type DirectoryInput = NonNullable<ComputeResultRevision["inputs"]["directories"]>[number];
 
@@ -460,6 +477,15 @@ type ResultRunSetup = {
   readonly environment?: ComputeResultEnvironment;
 };
 
+export function mergeResultEnvironment(
+  environment: ComputeResultEnvironment | undefined,
+  packages: ComputeRuntimePackageEvidence | undefined,
+): ComputeResultEnvironment | undefined {
+  return packages === undefined
+    ? environment
+    : { ...environment, lockfiles: environment?.lockfiles ?? [], ...packages };
+}
+
 export function scriptParametersJson(
   parameters: ReadonlyArray<{ readonly name: string; readonly value: string }>,
 ): string | undefined {
@@ -556,14 +582,6 @@ export async function publishScriptRun(
   try {
     if (!run.succeeded) return { _tag: "failed", message: "The run did not succeed." };
     const files = await listFiles(run.stagingFolder);
-    if (files.length === 0)
-      return {
-        _tag: "failed",
-        message:
-          run.kind === "notebook"
-            ? "The notebook did not save any results to publish."
-            : "The script wrote nothing to SCIENT_RESULTS_DIR, so no results were published.",
-      };
     const outputs: ComputeResultOutput[] = [];
     let bytes = 0;
     for (const name of files) {
@@ -594,6 +612,25 @@ export async function publishScriptRun(
         sha256: await sha256File(target),
         size,
       });
+    }
+    if (outputs.length === 0) {
+      return {
+        _tag: "failed",
+        empty: files.length > 0 ? "nothing-retained" : "nothing-written",
+        message:
+          files.length > 0
+            ? "The results exceeded the size limit."
+            : run.kind === "notebook"
+              ? "The notebook did not save any results to publish."
+              : "The script wrote nothing to SCIENT_RESULTS_DIR, so no results were published.",
+      };
+    }
+    const source = typeof run.code === "string" ? undefined : run.code;
+    if (source !== undefined) {
+      await NodeFSP.writeFile(
+        NodePath.join(pending, "notebook-source.json"),
+        JSON.stringify(source),
+      );
     }
     const inputs = new Map<string, ComputeResultInput>();
     const declared =
@@ -650,8 +687,16 @@ export async function publishScriptRun(
       script: {
         path: run.scriptPath,
         language: run.language,
-        sha256: sha256Text(run.code),
-        ...(run.codeSha256 === undefined ? {} : { codeSha256: run.codeSha256 }),
+        sha256:
+          typeof run.code === "string"
+            ? sha256Text(run.code)
+            : notebookExecutionDigest(executedNotebookCells(run.code)),
+        ...(source === undefined
+          ? {}
+          : {
+              codeSha256: notebookSourceDigest(source),
+              notebookDigestVersion: NOTEBOOK_DIGEST_VERSION,
+            }),
         ...(run.kind === undefined ? {} : { kind: run.kind }),
       },
       run: {
@@ -730,7 +775,7 @@ async function readRevisions(
 }
 
 export const isPublishedResultRevision = (revision: ComputeResultRevision): boolean =>
-  revision.publication !== "alternative";
+  revision.publication !== "alternative" && revision.outputs.length > 0;
 
 async function pruneFigureBytes(layout: ResultsLayout, projectId: string, scriptPath: string) {
   const forScript = (await readRevisions(layout, projectId)).filter(
@@ -772,6 +817,27 @@ async function fileChanged(root: string, input: ComputeResultInput): Promise<boo
   return (await sha256File(path)) !== input.sha256;
 }
 
+function notebookSourceCause(script: Buffer, saved: ComputeResultRevision["script"]) {
+  try {
+    const index = indexNotebook(script);
+    const cells = index.cells.map(notebookSourceCell);
+    if (saved.notebookDigestVersion === NOTEBOOK_DIGEST_VERSION) {
+      return notebookSourceDigest({ language: index.language, cells }) === saved.codeSha256
+        ? null
+        : "script-changed";
+    }
+    const legacyCode = cells
+      .filter((cell) => cell.cellType === "code" && !cell.injectedParameters)
+      .map((cell) => cell.source)
+      .join("\n");
+    return saved.codeSha256 !== undefined && sha256Text(legacyCode) !== saved.codeSha256
+      ? "script-changed"
+      : "script-unconfirmed";
+  } catch {
+    return "script-unconfirmed";
+  }
+}
+
 /** What changed since the revision ran, among what Scient records. */
 async function revisionCauses(
   root: string,
@@ -788,27 +854,13 @@ async function revisionCauses(
   ).catch(() => null);
   if (script === null) causes.push({ kind: "script-missing", path: revision.script.path });
   else {
-    let code: string | null = null;
-    if (revision.script.kind === "notebook") {
-      try {
-        code = indexNotebook(script)
-          .cells.filter(
-            ({ fields }) =>
-              fields.cell_type === "code" &&
-              (revision.script.codeSha256 === undefined ||
-                !notebookCellTags(fields).includes("injected-parameters")),
-          )
-          .map((cell) => notebookText(cell.fields.source))
-          .join("\n");
-      } catch {
-        // An unreadable notebook cannot match the recorded code.
-      }
-    } else code = script.toString("utf8");
-    if (
-      code === null ||
-      sha256Text(code) !== (revision.script.codeSha256 ?? revision.script.sha256)
-    )
-      causes.push({ kind: "script-changed", path: revision.script.path });
+    const kind =
+      revision.script.kind === "notebook"
+        ? notebookSourceCause(script, revision.script)
+        : sha256Text(script.toString("utf8")) === revision.script.sha256
+          ? null
+          : "script-changed";
+    if (kind !== null) causes.push({ kind, path: revision.script.path });
   }
   const realRoot = await NodeFSP.realpath(root).catch(() => root);
   for (const input of revision.inputs.files) {
@@ -1058,13 +1110,15 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
       (entry) =>
         entry.script.path === run.scriptPath &&
         entry.run.sessionId === run.sessionId &&
-        entry.run.executionId === run.executionId,
+        entry.run.executionId === run.executionId &&
+        entry.outputs.length > 0,
     );
     if (revision !== undefined) {
       return published(revision);
     }
     const attempt = await readLastResultAttempt(layout, projectId, run.scriptPath, undefined);
-    return attempt?.sessionId === run.sessionId && attempt.executionId === run.executionId
+    return attempt?.sessionId === run.sessionId &&
+      (attempt.executionId === run.executionId || attempt.cellExecutionId === run.executionId)
       ? { _tag: "failed" as const, message: attempt.message ?? "This run did not publish results." }
       : { _tag: "unavailable" as const };
   };
@@ -1087,11 +1141,11 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
       if (
         revisionId === undefined &&
         preferCurrent &&
-        (resultSourceChanged(selectedSummary) || resultInputCoverageIncomplete(selectedSummary))
+        (resultSourceChanged(selectedSummary) || resultFreshnessIncomplete(selectedSummary))
       ) {
         for (const revision of published.slice(1)) {
           const candidate = await summary(revision);
-          if (resultSourceChanged(candidate) || resultInputCoverageIncomplete(candidate)) continue;
+          if (resultSourceChanged(candidate) || resultFreshnessIncomplete(candidate)) continue;
           selected = revision;
           selectedSummary = candidate;
           break;
@@ -1106,7 +1160,9 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
             : {
                 ...selectedSummary.lastAttempt,
                 sessionId: failure.sessionId,
-                ...(failure.hasExecution ? { executionId: failure.executionId } : {}),
+                ...(failure.hasExecution
+                  ? { executionId: failure.cellExecutionId ?? failure.executionId }
+                  : {}),
               },
         values: await valuesOf(selected),
         figures: selected.outputs
@@ -1212,6 +1268,23 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
     return { parameters: runOverrides(latest), inputs: declaredPaths(latest) };
   };
 
+  const notebookSource = async (revision: ComputeResultRevision) => {
+    if (revision.script.notebookDigestVersion !== NOTEBOOK_DIGEST_VERSION) return undefined;
+    const folder = revisionFolder(layout, projectId, revision.revision);
+    try {
+      const data: unknown = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(folder, "notebook-source.json"), "utf8"),
+      );
+      const source = decodeNotebookSource(data);
+      return notebookSourceDigest(source) === revision.script.codeSha256 &&
+        notebookExecutionDigest(executedNotebookCells(source)) === revision.script.sha256
+        ? source
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   return {
     resolve,
     list,
@@ -1219,6 +1292,7 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
     figure,
     revisions: all,
     latestPublished,
+    notebookSource,
     summary,
     outputFile,
     checkedOutputFile,

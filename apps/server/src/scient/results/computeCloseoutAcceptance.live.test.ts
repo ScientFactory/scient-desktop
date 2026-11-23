@@ -18,10 +18,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { ComputeMcpGateway } from "../../mcp/toolkits/compute/ComputeMcpGateway.ts";
+import { stopScientNotebook } from "../../mcp/toolkits/compute/notebookHandlers.ts";
 import { listScientResults, runScientResults } from "../../mcp/toolkits/compute/resultHandlers.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
@@ -42,6 +44,7 @@ import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts"
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 import { ComputeResults, layer as resultsLayer } from "./ComputeResults.ts";
+import { notebookCode } from "./handoff/notebookSource.ts";
 import { makeResultHandoff } from "./handoff/ResultHandoff.ts";
 import { makeResultOperations } from "./resultOperations.ts";
 import { makeResultsReader } from "./resultRevisions.ts";
@@ -294,7 +297,8 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
             ...notebookAddress,
             parameters: { threshold: "0.5" },
           });
-          if (baseline._tag !== "published") return yield* Effect.die(baseline.message);
+          if (baseline._tag !== "published")
+            return yield* Effect.die(baseline.message ?? "No linked results were published.");
           const savedNotebook = yield* fs.readFile(notebookFile);
 
           const { runId } = yield* notebooks.start({
@@ -302,7 +306,8 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
             sweep: [{ threshold: "0.3" }, { threshold: "1.1" }, { threshold: "0.7" }],
           });
           const sweepOutcome = yield* notebooks.wait({ ...notebookAddress, runId });
-          if (sweepOutcome._tag !== "published") return yield* Effect.die(sweepOutcome.message);
+          if (sweepOutcome._tag !== "published")
+            return yield* Effect.die(sweepOutcome.message ?? "No linked results were published.");
           const sweepJob = yield* notebooks.status({ ...notebookAddress, runId });
           expect(sweepJob?.sweepSummary).toMatchObject({
             total: 3,
@@ -336,6 +341,11 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
             gateway,
           });
           const selectedRevision = sweepOutcome.summary.revision;
+          expect(
+            (yield* Effect.promise(() => reader().revisions())).find(
+              ({ revision }) => revision === selectedRevision,
+            )?.environment?.packages,
+          ).toContainEqual(expect.objectContaining({ name: "ipython" }));
           const exported = yield* handoff.exportPackage({
             cwd,
             destination: instance,
@@ -361,13 +371,113 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
             ["roc.png", "matched"],
           ]);
 
+          const failure = yield* notebooks.run({
+            ...notebookAddress,
+            parameters: { threshold: "1.1" },
+          });
+          expect(failure._tag).toBe("failed");
+          const attempt = yield* Effect.promise(() =>
+            reader().lastAttempt(notebookAddress.scriptPath),
+          );
+          expect(attempt).toMatchObject({
+            status: "failed",
+            cellId: expect.any(String),
+            cellExecutionId: expect.any(String),
+          });
+          expect(attempt?.cellExecutionId).not.toBe(attempt?.executionId);
+          const failedOutput = yield* operations.attemptOutput({
+            ...notebookAddress,
+            finishedAt: attempt!.finishedAt,
+          });
+          expect(failedOutput).toMatchObject({
+            cellId: attempt?.cellId,
+            executionId: attempt?.cellExecutionId,
+            output: {
+              outputs: expect.arrayContaining([expect.objectContaining({ _tag: "diagnostic" })]),
+            },
+          });
+          expect(
+            (yield* Effect.promise(() => reader().latestPublished(notebookAddress.scriptPath)))
+              ?.revision,
+          ).toBe(baseline.summary.revision);
+
+          const defaults = { cwd, scriptPath: "defaults.ipynb" };
+          const defaultsPath = NodePath.join(cwd, defaults.scriptPath);
+          const sourceCells = [
+            "import json, os\nfrom pathlib import Path\nassert json.loads(os.environ['SCIENT_PARAMETERS']) == {}",
+            "from __future__ import annotations\nPath(os.environ['SCIENT_RESULTS_DIR'], 'counts.json').write_text(json.dumps({'n': 1}))",
+          ];
+          const writeNotebook = (path: string, cells: ReadonlyArray<string>, parameters = false) =>
+            fs.writeFileString(
+              path,
+              JSON.stringify({
+                nbformat: 4,
+                nbformat_minor: 5,
+                metadata: {},
+                cells: cells.map((source, index) => ({
+                  id: `cell-${index}`,
+                  cell_type: "code",
+                  metadata: parameters && index === 0 ? { tags: ["parameters"] } : {},
+                  source,
+                  execution_count: null,
+                  outputs: [],
+                })),
+              }),
+            );
+          yield* writeNotebook(defaultsPath, sourceCells);
+          const defaultRun = yield* notebooks.start(defaults);
+          const defaultOutcome = yield* notebooks.wait({ ...defaults, runId: defaultRun.runId });
+          if (defaultOutcome._tag !== "published")
+            return yield* Effect.die(defaultOutcome.message ?? "Expected publication.");
+          expect(
+            (yield* notebooks.status({ ...defaults, runId: defaultRun.runId }))?.publishedResults,
+          ).toEqual({ values: 1, tables: 0, figures: 0, files: 0 });
+          yield* writeNotebook(defaultsPath, [sourceCells.join("\n")]);
+          const defaultAlternatives = yield* notebookReader({ cwd, path: defaults.scriptPath });
+          expect(defaultAlternatives.runs[0]?.source?.cells.map(({ source }) => source)).toEqual(
+            sourceCells,
+          );
+          const defaultExport = yield* handoff.exportPackage({
+            cwd,
+            destination: instance,
+            revision: defaultOutcome.summary.revision,
+            includeInputs: [],
+          });
+          const readme = yield* fs.readFileString(NodePath.join(defaultExport.folder, "README.md"));
+          expect(readme).toContain("Set `SCIENT_PARAMETERS` to this JSON.\n\n       {}");
+          expect(readme.indexOf("SCIENT_PARAMETERS")).toBeLessThan(
+            readme.indexOf("Open the notebook"),
+          );
+          expect(
+            notebookCode(
+              yield* fs.readFileString(
+                NodePath.join(defaultExport.folder, "source", defaults.scriptPath),
+              ),
+            ),
+          ).toEqual(sourceCells);
+          const defaultVerify = yield* handoff.verify({
+            packageFolder: defaultExport.folder,
+            executable: recipientPython!,
+            allowExecution: true,
+          });
+          expect(defaultVerify.report).toMatchObject({ status: "verified" });
+          yield* writeNotebook(defaultsPath, ["print('inline output')"]);
+          expect(yield* notebooks.run(defaults)).toEqual({
+            _tag: "completed",
+            notebookSaved: true,
+          });
+          expect(
+            (yield* Effect.promise(() => reader().latestPublished(defaults.scriptPath)))?.revision,
+          ).toBe(defaultOutcome.summary.revision);
+
           // 3. Threshold script publish 0.5 -> fail 1.1 retains 0.5 -> parameterized agent run 0.7 records actual History -> compare 0.5 vs 0.7
           const rev05Run = yield* operations.rerun({
             cwd,
             scriptPath: "threshold.py",
             parameters: { threshold: "0.5" },
           });
-          if (rev05Run._tag !== "published") return yield* Effect.die(rev05Run.message);
+          if (rev05Run._tag !== "published")
+            return yield* Effect.die(rev05Run.message ?? "No linked results were published.");
           const rev05 = rev05Run.summary.revision;
 
           const failedRun = yield* operations.rerun({
@@ -394,6 +504,7 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
             resultSetup: (request) => operations.setup(request),
             rerunResults: (request) => operations.rerun(request),
             resultOutputContent: (request) => operations.outputContent(request),
+            stopNotebookFresh: notebooks.stop,
           });
           const runAsAgent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
             effect.pipe(
@@ -409,6 +520,74 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
                 workspace: workspaceBinding,
               }),
             );
+
+          const cancelAddress = { cwd, scriptPath: "stop.ipynb" };
+          yield* writeNotebook(
+            NodePath.join(cwd, cancelAddress.scriptPath),
+            [
+              "step = 0",
+              [
+                "import json, os, time",
+                "from pathlib import Path",
+                "if step == 2: time.sleep(90)",
+                "Path(os.environ['SCIENT_RESULTS_DIR'], 'counts.json').write_text(json.dumps({'step': step}))",
+              ].join("\n"),
+            ],
+            true,
+          );
+          const cancelRun = yield* notebooks.start({
+            ...cancelAddress,
+            sweep: [{ step: "1" }, { step: "2" }, { step: "3" }],
+          });
+          const updates = yield* notebooks.watch(cancelAddress);
+          yield* updates.pipe(
+            Stream.filter(
+              ({ job }) =>
+                job?.runId === cancelRun.runId &&
+                job.parameters?.step === "2" &&
+                job.progress?.phase === "running",
+            ),
+            Stream.runHead,
+          );
+          expect(
+            yield* runAsAgent(
+              stopScientNotebook({
+                path: cancelAddress.scriptPath,
+                runId: cancelRun.runId,
+              }),
+            ),
+          ).toMatchObject({
+            status: "stopped",
+            completedSettings: 1,
+            freshRun: { outcome: { _tag: "failed" }, sweepSummary: { saved: 1, failures: [] } },
+          });
+          expect(
+            (yield* notebookReader({ cwd, path: cancelAddress.scriptPath })).runs.map(
+              ({ parameters }) => parameters[0]?.value,
+            ),
+          ).toEqual(["1"]);
+          expect(
+            yield* Effect.promise(() => reader().lastAttempt(cancelAddress.scriptPath)),
+          ).toBeNull();
+
+          const stopFresh = yield* notebooks.start({ ...cancelAddress, parameters: { step: "2" } });
+          yield* updates.pipe(
+            Stream.filter(
+              ({ job }) => job?.runId === stopFresh.runId && job.progress?.phase === "running",
+            ),
+            Stream.runHead,
+          );
+          expect(
+            yield* runAsAgent(
+              stopScientNotebook({
+                path: cancelAddress.scriptPath,
+                runId: stopFresh.runId,
+              }),
+            ),
+          ).toMatchObject({ status: "stopped", completedSettings: 0 });
+          expect(
+            yield* Effect.promise(() => reader().lastAttempt(cancelAddress.scriptPath)),
+          ).toMatchObject({ status: "cancelled" });
 
           const agentRun = yield* runAsAgent(
             runScientResults({

@@ -126,6 +126,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
         "scient_notebook_read",
         "scient_notebook_edit",
         "scient_notebook_run",
+        "scient_notebook_stop",
         "scient_results_run",
         "scient_results_list",
         "scient_results_compare",

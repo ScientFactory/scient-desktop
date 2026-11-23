@@ -5,6 +5,7 @@ import {
   ComputeResultsRerunInput,
   NotebookFreshRun,
   NotebookFreshRunStatusInput,
+  NotebookFreshRunStopInput,
   ComputeRunHistoryInput,
   ComputeRunHistoryResult,
   ComputeResultsRerunResult,
@@ -438,6 +439,7 @@ const NotebookResult = Schema.Struct({
       Schema.Struct({
         revision: Schema.String,
         codeSha256: Schema.optional(Schema.String),
+        sourceStatus: Schema.Literals(["current", "earlier", "unconfirmed"]),
         parameters: Schema.Array(ComputeResultParameter),
         outputs: Schema.Array(
           Schema.Struct({
@@ -535,7 +537,7 @@ const AgentNotebookParameters = Schema.Record(ComputeResultParameterValues.key, 
 
 const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
   description:
-    'Run cells in the notebook session. By default run all code cells in order, stopping at the first failure. Returns each cell\'s output and figures for interactive runs. Set fresh to run the entire saved notebook in a new kernel and publish results. Pass ordinary JSON overrides such as {"threshold": 0.7, "plot": true}; inputs are project-relative. Omit cells for a fresh run. It continues after waitSeconds and returns a run ID for scient_notebook_read. Use sweep with one to twenty override objects to save alternatives while keeping the published setting.',
+    'Run cells in the notebook session. By default run all code cells in order, stopping at the first failure. Returns each cell\'s output and figures for interactive runs. Set fresh to run the entire saved notebook in a new kernel and publish results. Pass ordinary JSON overrides such as {"threshold": 0.7, "plot": true}; inputs are project-relative. Omit cells for a fresh run. It continues after waitSeconds and returns a run ID for scient_notebook_read or scient_notebook_stop. Use sweep with one to twenty override objects to save alternatives while keeping the published setting.',
   parameters: Schema.Struct({
     path: NotebookPath,
     cells: Schema.optional(Schema.Array(NotebookCellId)),
@@ -559,6 +561,28 @@ const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, operation("notebook.run"));
 
+const ScientNotebookStopTool = Tool.make("scient_notebook_stop", {
+  description:
+    "Stop a fresh notebook run or sweep by its path and run ID. Completed sweep settings stay saved.",
+  parameters: Schema.Struct({
+    path: NotebookPath,
+    runId: NotebookFreshRunStopInput.fields.runId,
+  }),
+  success: Schema.Struct({
+    status: Schema.Literals(["stopped", "saving", "finished"]),
+    completedSettings: Schema.Int,
+    freshRun: NotebookFreshRun,
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Stop a fresh notebook run")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("notebook.stop"));
+
 const ResultPath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096));
 
 export const ComputeToolResultSummary = Schema.Struct({
@@ -577,6 +601,7 @@ export const ComputeToolResultSummary = Schema.Struct({
   kind: ComputeResultSourceKind,
   /** What changed since this revision ran, e.g. `input changed: data/cohort.csv`. Empty if nothing Scient checks has. */
   outOfDate: Schema.Array(Schema.String),
+  sourceUnconfirmed: Schema.optional(Schema.Boolean),
   environmentMayDiffer: Schema.optional(Schema.Array(Schema.String)),
 });
 
@@ -616,8 +641,9 @@ const ScientResultsRunTool = Tool.make("scient_results_run", {
     waitSeconds: Schema.optional(WaitSeconds),
   }),
   success: Schema.Struct({
-    status: Schema.Literals(["published", "failed", "running"]),
+    status: Schema.Literals(["published", "completed", "failed", "running"]),
     message: Schema.optional(Schema.String),
+    notebookSaved: Schema.optional(Schema.Boolean),
     revision: Schema.optional(ComputeToolResultSummary),
     values: Schema.optional(Schema.Array(ComputeToolResultValue)),
     figures: Schema.optional(Schema.Array(Schema.String)),
@@ -857,6 +883,7 @@ export const ScientComputeToolkit = Toolkit.make(
   ScientNotebookReadTool,
   ScientNotebookEditTool,
   ScientNotebookRunTool,
+  ScientNotebookStopTool,
   ScientResultsRunTool,
   ScientResultsListTool,
   ScientResultsCompareTool,

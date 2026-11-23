@@ -23,7 +23,7 @@ import {
   regularPackageFile,
   relativePackagePath,
 } from "./handoffFiles.ts";
-import { notebookCode } from "./notebookSource.ts";
+import { notebookCode, notebookPackageDigest } from "./notebookSource.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(ResultHandoffManifest);
 const ignoredMetadataFiles = new Set([".ds_store", "thumbs.db", "desktop.ini"]);
@@ -176,7 +176,10 @@ export async function stageVerificationFiles(
     const hash =
       manifest.source.kind === "script"
         ? hashBytes(contents)
-        : hashBytes(notebookCode(contents.toString("utf8")).join("\n"));
+        : notebookPackageDigest(
+            notebookCode(contents.toString("utf8")),
+            manifest.source.notebookDigestVersion,
+          );
     if (hash !== manifest.source.sha256) {
       files.push({
         path,

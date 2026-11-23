@@ -39,7 +39,7 @@ import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
 import { ExportResultPackageButton } from "./handoff/ExportResultPackageButton";
 import { ResultComparisonOutputs } from "./ResultComparisonOutputs";
-import { resultParameters, resultTime } from "./resultState";
+import { resultCauseText, resultParameters, resultTime } from "./resultState";
 
 type ResultScope = { readonly environmentId: EnvironmentId; readonly cwd: string };
 type CompareTarget = ResultScope & {
@@ -402,6 +402,7 @@ function ComparisonDetails(
   },
 ) {
   const gt = useGT();
+  const messages = useMessages();
   const { data, showUnchanged } = props;
   const formatDelta = new Intl.NumberFormat(undefined, {
     maximumSignificantDigits: 5,
@@ -460,7 +461,7 @@ function ComparisonDetails(
   const valueCell = (value: string | null, compact?: string) =>
     value === null ? null : <ComparisonValue value={value} compact={compact} />;
   const hasChanges =
-    data.codeChanged ||
+    data.codeChanged !== false ||
     data.runtime.changed ||
     parameters.length > 0 ||
     inputs.length > 0 ||
@@ -474,13 +475,17 @@ function ComparisonDetails(
           <T>No differences found in the records shown.</T>
         </p>
       ) : null}
-      {showUnchanged || data.codeChanged ? (
+      {showUnchanged || data.codeChanged !== false ? (
         <p>
           <strong>
             <T>Code</T>
           </strong>
           {" · "}
-          {data.codeChanged ? gt("Changed") : gt("Same")}
+          {data.codeChanged === null
+            ? resultCauseText({ kind: "script-unconfirmed", path: data.to.scriptPath }, messages)
+            : data.codeChanged
+              ? gt("Changed")
+              : gt("Same")}
         </p>
       ) : null}
       <ComparisonTable

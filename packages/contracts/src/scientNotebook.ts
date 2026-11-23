@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { FilePathString, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ComputeExecutionId, ComputeSessionId } from "./scientCompute.ts";
 import {
+  ComputeResultCounts,
   ComputeResultParameter,
   ComputeResultParameterValues,
   ComputeResultRevision,
@@ -57,7 +58,7 @@ export const NotebookFreshRun = Schema.Struct({
       total: Schema.Int,
     }),
   ),
-  publishedResults: Schema.optional(Schema.Int),
+  publishedResults: Schema.optional(ComputeResultCounts),
   sweepSummary: Schema.optional(
     Schema.Struct({
       total: Schema.Int,
@@ -125,6 +126,20 @@ export const NotebookCellView = Schema.Struct({
 });
 export type NotebookCellView = typeof NotebookCellView.Type;
 
+export const NotebookRevisionSource = Schema.Struct({
+  language: Schema.String,
+  cells: Schema.Array(
+    Schema.Struct({
+      id: NotebookCellView.fields.id,
+      cellType: NotebookCellType,
+      source: Schema.String,
+      parameterCell: NotebookCellView.fields.parameterCell,
+      injectedParameters: NotebookCellView.fields.injectedParameters,
+    }),
+  ),
+});
+export type NotebookRevisionSource = typeof NotebookRevisionSource.Type;
+
 const NotebookSavedOutput = Schema.Struct({
   name: Schema.String,
   preview: Schema.NullOr(
@@ -143,10 +158,13 @@ const NotebookSavedOutput = Schema.Struct({
 
 const NotebookAlternatives = Schema.Struct({
   publishedRevision: Schema.NullOr(ComputeResultRevisionId),
+  currentSourceSha256: ComputeResultRevision.fields.script.fields.codeSha256,
   runs: Schema.Array(
     Schema.Struct({
       revision: ComputeResultRevisionId,
       codeSha256: ComputeResultRevision.fields.script.fields.codeSha256,
+      notebookDigestVersion: ComputeResultRevision.fields.script.fields.notebookDigestVersion,
+      source: Schema.optional(NotebookRevisionSource),
       finishedAt: Schema.optional(ComputeResultRevision.fields.run.fields.finishedAt),
       parameters: Schema.Array(ComputeResultParameter),
       values: Schema.Array(ComputeResultValue),

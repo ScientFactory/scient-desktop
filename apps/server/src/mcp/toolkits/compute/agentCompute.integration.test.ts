@@ -92,6 +92,7 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
               notebookOutputs: () => Effect.die("not used"),
               runNotebookFresh: () => Effect.die("not used"),
               notebookFreshStatus: () => Effect.die("not used"),
+              stopNotebookFresh: () => Effect.die("not used"),
               waitNotebookFresh: () => Effect.die("not used"),
               notebookAlternatives: () => Effect.die("not used"),
               readNotebook: () => Effect.die("not used"),

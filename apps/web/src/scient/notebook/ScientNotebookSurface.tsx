@@ -216,15 +216,11 @@ export default function ScientNotebookSurface(props: {
     Record<string, string>
   > | null>(null);
   const runningFresh = preparingFresh || fresh.running;
-  const outcome = fresh.job?.outcome;
-  const runMessage =
-    fresh.error ??
-    (outcome?._tag === "failed" ? outcome.message : (outcome?.notebookMessage ?? null));
   const runStatus = (
     <NotebookFreshRunStatus
       job={fresh.job}
       running={runningFresh}
-      message={runMessage}
+      message={fresh.error}
       {...(canStopFresh ? { onStop: () => void fresh.stop() } : {})}
     />
   );
@@ -653,6 +649,7 @@ export default function ScientNotebookSurface(props: {
           cwd={props.cwd}
           relativePath={props.relativePath}
           settledRunId={settledFreshRun}
+          fileRevision={props.fileRevision}
           running={runningFresh}
           {...(canRerun && inputs !== undefined
             ? {
@@ -818,7 +815,7 @@ export default function ScientNotebookSurface(props: {
                     disabled={freshRunDisabled}
                     onClick={() => setFreshConfirmation(validOverrides)}
                   >
-                    <T>Run fresh and publish</T>
+                    <T>Run fresh</T>
                   </MenuItem>
                   <MenuItem
                     disabled={!canRerun || runningFresh}

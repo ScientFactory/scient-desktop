@@ -42,6 +42,7 @@ import {
 } from "./resultAttempts.ts";
 import {
   makeResultsReader,
+  mergeResultEnvironment,
   publishScriptRun,
   readResultRunSetup,
   summarizeRevision,
@@ -193,10 +194,7 @@ const make = Effect.gen(function* () {
     const { outcome, parameters } = yield* Effect.tryPromise({
       try: async () => {
         const setup = await readResultRunSetup(stagingFolder);
-        const environment =
-          settled.packageEvidence === undefined
-            ? setup?.environment
-            : { lockfiles: setup?.environment?.lockfiles ?? [], ...settled.packageEvidence };
+        const environment = mergeResultEnvironment(setup?.environment, settled.packageEvidence);
         const outcome = await publishScriptRun(layout, {
           ...setup,
           ...(environment === undefined ? {} : { environment }),

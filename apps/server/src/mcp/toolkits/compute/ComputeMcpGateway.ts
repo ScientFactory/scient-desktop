@@ -56,6 +56,7 @@ export interface ComputeMcpGatewayShape extends ComputeRpcGateway {
   readonly notebookAlternatives: ReturnType<typeof makeNotebookReader>;
   readonly runNotebookFresh: ReturnType<typeof makeNotebookRuns>["start"];
   readonly notebookFreshStatus: ReturnType<typeof makeNotebookRuns>["status"];
+  readonly stopNotebookFresh: ReturnType<typeof makeNotebookRuns>["stop"];
   readonly waitNotebookFresh: ReturnType<typeof makeNotebookRuns>["wait"];
   readonly flushNotebook: NotebookStore.NotebookStore["Service"]["flush"];
   /** The same runs the app's Run button starts, for files in languages without a session. */
@@ -149,6 +150,7 @@ export const ComputeMcpGatewayLive = Layer.effect(
       notebookOutputs,
       runNotebookFresh: notebookRuns.start,
       notebookFreshStatus: notebookRuns.status,
+      stopNotebookFresh: notebookRuns.stop,
       waitNotebookFresh: notebookRuns.wait,
       notebookAlternatives: makeNotebookReader(computeDir, rpc),
       readNotebook: notebooks.read,

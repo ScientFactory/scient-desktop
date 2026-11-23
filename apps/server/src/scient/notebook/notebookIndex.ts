@@ -1,4 +1,5 @@
 import { computeLanguageIdFromName } from "@scientfactory/compute";
+import type { NotebookRevisionSource } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const QUOTE = 0x22;
@@ -143,6 +144,24 @@ export function notebookCellTags(fields: NotebookCellRecord["fields"]): Readonly
 }
 
 /** nbformat stores multiline text as a string or as a list of lines. */
+export function notebookSourceCell({
+  id,
+  fields,
+}: NotebookCellRecord): NotebookRevisionSource["cells"][number] {
+  const tags = notebookCellTags(fields);
+  const cellType =
+    fields.cell_type === "markdown" || fields.cell_type === "raw" ? fields.cell_type : "code";
+  return {
+    id,
+    cellType,
+    source: notebookText(fields.source),
+    ...(cellType === "code" && tags.includes("parameters") ? { parameterCell: true } : {}),
+    ...(cellType === "code" && tags.includes("injected-parameters")
+      ? { injectedParameters: true }
+      : {}),
+  };
+}
+
 export function notebookText(value: unknown): string {
   if (typeof value === "string") return value;
   return Array.isArray(value) ? value.filter((line) => typeof line === "string").join("") : "";

@@ -651,10 +651,10 @@ The fresh run shows the current cell and a **Stop** action. Before replacing the
 Scient keeps the current notebook in **Retained file versions**. Choose **Restore…** there to
 restore its source and outputs together.
 
-To publish a result revision, write the intended figures, CSV tables and JSON values to the
-folder in `SCIENT_RESULTS_DIR`. The kernel receives the overrides as JSON in
-`SCIENT_PARAMETERS`. The **Run fresh and publish** menu action also works for notebooks without
-parameters.
+**Run fresh** saves the notebook outputs, including for notebooks without parameters.
+To publish a linked result revision as well, write figures, CSV tables or JSON values to
+`SCIENT_RESULTS_DIR`. If there are no outputs to retain there, the last linked revision stays
+published. The kernel receives the overrides as JSON in `SCIENT_PARAMETERS`.
 
 Notebook authors can set control hints in the parameters cell's `metadata.scient.parameters`.
 Use `{"threshold":{"min":0.3,"max":0.7,"step":0.1}}` for a slider or
@@ -667,10 +667,14 @@ proposes values from the parameter's control hint. Edit them, up to 20, one per 
 starting. Scient reports which settings it saved and which failed.
 Open **Reader view** to choose among the saved settings and see their
 values, tables and figures. Inline result values linked from the notebook's Markdown follow the
-selected revision. Code starts folded; click a cell's language label to show it.
+selected revision.
 
-**Reset** returns to the published run. The line under the parameters shows the time of the
-selected saved run or tells you when no saved run matches. When a setting was made with earlier
+**Reset** returns to the published run or, if none exists, the newest saved setting that matches
+the current notebook. Reader uses saved linked results. View ordinary cell outputs in the notebook
+editor. Code starts folded; click a cell's language label to see the source saved with that run
+when it is available. The line
+under the parameters shows the saved run's time or tells you when no saved run matches.
+When a setting was made with earlier
 code, **Run for this value** saves an alternative while keeping the published setting and notebook
 file in place. Browsing settings uses saved results.
 

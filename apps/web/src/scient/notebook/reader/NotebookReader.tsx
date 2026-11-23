@@ -24,7 +24,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { NotebookCodeHeader, NotebookCodeSource, notebookCodeCardSurface } from "../NotebookCode";
 import { NotebookParameterControls } from "../NotebookParameters";
 import { NOTEBOOK_MARKDOWN } from "../NotebookOutputs";
-import { alternativeAt, parameterValues, renderAlternativeProse } from "./notebookReaderModel";
+import {
+  alternativeAt,
+  parameterValues,
+  readerBaseline,
+  renderAlternativeProse,
+} from "./notebookReaderModel";
 
 type Alternative = NotebookAlternatives["runs"][number];
 
@@ -147,6 +152,7 @@ export function NotebookReader(props: {
   readonly cwd: string;
   readonly relativePath: string;
   readonly settledRunId: string | null;
+  readonly fileRevision: string;
   readonly onRunForValue?: (values: Readonly<Record<string, string>>) => void;
   readonly running?: boolean;
 }) {
@@ -170,6 +176,7 @@ export function NotebookReader(props: {
       props.cwd,
       props.relativePath,
       props.settledRunId,
+      props.fileRevision,
     ]);
     if (loadedKey.current === key) return;
     let active = true;
@@ -181,7 +188,14 @@ export function NotebookReader(props: {
     return () => {
       active = false;
     };
-  }, [readSaved, props.environmentId, props.cwd, props.relativePath, props.settledRunId]);
+  }, [
+    readSaved,
+    props.environmentId,
+    props.cwd,
+    props.relativePath,
+    props.settledRunId,
+    props.fileRevision,
+  ]);
 
   if (notebook === null || notebook === "failed") {
     return (
@@ -200,11 +214,21 @@ export function NotebookReader(props: {
     notebook.language,
   );
   const alternatives = notebook.alternatives?.runs ?? [];
-  const published = alternatives.find(
-    (run) => run.revision === notebook.alternatives?.publishedRevision,
+  const sourceSha256 = notebook.alternatives?.currentSourceSha256;
+  const baseline = readerBaseline(
+    alternatives,
+    notebook.alternatives?.publishedRevision,
+    sourceSha256,
   );
-  const { current: selected, earlier } = alternativeAt(alternatives, published, pending);
-  const setting = published === undefined ? {} : parameterValues(published.parameters);
+  const { current: selected, sourceStatus } = alternativeAt(
+    alternatives,
+    baseline,
+    pending,
+    sourceSha256,
+  );
+  const setting = baseline === undefined ? {} : parameterValues(baseline.parameters);
+  const source = selected?.source ?? notebook;
+
   const shownParameters = parameters.filter((parameter) => Object.hasOwn(setting, parameter.name));
   const revisionIds = new Set(alternatives.map((run) => run.revision));
   const missing = gt("Value unavailable");
@@ -227,7 +251,7 @@ export function NotebookReader(props: {
             <span className="text-sm font-medium">
               {selected !== null ? (
                 <T>Saved run</T>
-              ) : published !== undefined ? (
+              ) : alternatives.length > 0 ? (
                 <T>No saved run at these values</T>
               ) : (
                 <T>No published run</T>
@@ -240,13 +264,18 @@ export function NotebookReader(props: {
               >
                 {resultTime(selected.finishedAt)}
               </time>
-            ) : earlier ? (
+            ) : null}
+            {sourceStatus === "unconfirmed" ? (
+              <span className="text-xs text-muted-foreground">
+                <T>Notebook source unconfirmed</T>
+              </span>
+            ) : sourceStatus === "earlier" ? (
               <span className="text-xs text-muted-foreground">
                 <T>Made with earlier code</T>
               </span>
             ) : null}
           </div>
-          {earlier && props.onRunForValue ? (
+          {(sourceStatus === "earlier" || sourceStatus === "unconfirmed") && props.onRunForValue ? (
             <Button
               size="xs"
               variant="outline"
@@ -262,7 +291,7 @@ export function NotebookReader(props: {
               size="xs"
               variant="ghost-muted"
               focus="edge"
-              disabled={selected === published}
+              disabled={Object.keys(pending).length === 0}
               onClick={() => setPending({})}
             >
               <T>Reset</T>
@@ -272,47 +301,52 @@ export function NotebookReader(props: {
       </div>
       <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
         <article className="mx-auto grid max-w-4xl grid-cols-[minmax(0,1fr)] gap-4 px-5 py-4">
-          {notebook.cells.map((cell) =>
-            cell.cellType === "markdown" ? (
-              <ChatMarkdown
-                key={cell.id}
-                text={renderAlternativeProse(cell.source, revisionIds, selected, missing)}
-                cwd={props.cwd}
-                parseRawHtml={false}
-                extensions={NOTEBOOK_MARKDOWN}
-              />
-            ) : cell.source === "" ? null : cell.cellType === "code" ? (
-              <ReaderCode key={cell.id} source={cell.source} language={notebook.language} />
-            ) : (
-              <Collapsible key={cell.id}>
-                <CollapsibleTrigger
-                  className="group"
-                  render={(trigger, state) => (
-                    <Button
-                      {...trigger}
-                      size="row"
-                      variant={state.open ? "selected" : "ghost-muted"}
-                      focus="edge"
-                    />
-                  )}
-                >
-                  <ChevronRight
-                    aria-hidden
-                    className="rtl:rotate-180 group-aria-expanded:rotate-90 rtl:group-aria-expanded:rotate-90"
-                  />
-                  <T>Raw cell</T>
-                </CollapsibleTrigger>
-                <CollapsiblePanel animate={false}>
-                  <pre
-                    className="scient-content-scrollbar mt-1 overflow-x-auto rounded-lg bg-muted/40 p-2 text-sm"
-                    dir="auto"
+          {source.cells
+            .filter(
+              (cell) =>
+                selected === null || selected.source !== undefined || !cell.injectedParameters,
+            )
+            .map((cell) =>
+              cell.cellType === "markdown" ? (
+                <ChatMarkdown
+                  key={cell.id}
+                  text={renderAlternativeProse(cell.source, revisionIds, selected, missing)}
+                  cwd={props.cwd}
+                  parseRawHtml={false}
+                  extensions={NOTEBOOK_MARKDOWN}
+                />
+              ) : cell.source === "" ? null : cell.cellType === "code" ? (
+                <ReaderCode key={cell.id} source={cell.source} language={source.language} />
+              ) : (
+                <Collapsible key={cell.id}>
+                  <CollapsibleTrigger
+                    className="group"
+                    render={(trigger, state) => (
+                      <Button
+                        {...trigger}
+                        size="row"
+                        variant={state.open ? "selected" : "ghost-muted"}
+                        focus="edge"
+                      />
+                    )}
                   >
-                    {cell.source}
-                  </pre>
-                </CollapsiblePanel>
-              </Collapsible>
-            ),
-          )}
+                    <ChevronRight
+                      aria-hidden
+                      className="rtl:rotate-180 group-aria-expanded:rotate-90 rtl:group-aria-expanded:rotate-90"
+                    />
+                    <T>Raw cell</T>
+                  </CollapsibleTrigger>
+                  <CollapsiblePanel animate={false}>
+                    <pre
+                      className="scient-content-scrollbar mt-1 overflow-x-auto rounded-lg bg-muted/40 p-2 text-sm"
+                      dir="auto"
+                    >
+                      {cell.source}
+                    </pre>
+                  </CollapsiblePanel>
+                </Collapsible>
+              ),
+            )}
           {(notebook.alternatives?.prunedRuns ?? 0) > 0 ? (
             <p className="text-xs text-muted-foreground">
               <T>Showing recent saved runs.</T>

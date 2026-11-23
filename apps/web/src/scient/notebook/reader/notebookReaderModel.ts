@@ -40,25 +40,50 @@ function settingKey(parameters: Readonly<Record<string, string>>): string | null
   return JSON.stringify(entries);
 }
 
+export function readerBaseline(
+  alternatives: ReadonlyArray<Alternative>,
+  publishedRevision: string | null | undefined,
+  sourceSha256: string | undefined,
+): Alternative | undefined {
+  return (
+    alternatives.find((run) => run.revision === publishedRevision) ??
+    alternatives.find((run) => savedSourceStatus(run, sourceSha256) === "current")
+  );
+}
+
+function savedSourceStatus(run: Alternative, sourceSha256: string | undefined) {
+  if (run.notebookDigestVersion === undefined || sourceSha256 === undefined) return "unconfirmed";
+  return run.codeSha256 === sourceSha256 ? "current" : "earlier";
+}
+
 export function alternativeAt(
   alternatives: ReadonlyArray<Alternative>,
-  published: Alternative | undefined,
+  baseline: Alternative | undefined,
   pending: Readonly<Record<string, string>>,
-): { readonly current: Alternative | null; readonly earlier: boolean } {
-  if (published === undefined) return { current: null, earlier: false };
-  const setting = parameterValues(published.parameters);
+  sourceSha256: string | undefined,
+): {
+  readonly current: Alternative | null;
+  readonly sourceStatus: ReturnType<typeof savedSourceStatus> | null;
+} {
+  if (baseline === undefined) return { current: null, sourceStatus: null };
+  const setting = parameterValues(baseline.parameters);
   const key = settingKey({ ...setting, ...pending });
-  if (key === null) return { current: null, earlier: false };
-  if (key === settingKey(setting)) return { current: published, earlier: false };
-  let earlier = false;
+  if (key === null) return { current: null, sourceStatus: null };
+  const sameSetting = key === settingKey(setting);
+  const baselineStatus = savedSourceStatus(baseline, sourceSha256);
+  if (sameSetting && baselineStatus === "current") {
+    return { current: baseline, sourceStatus: "current" };
+  }
+  let sourceStatus: ReturnType<typeof savedSourceStatus> | null = null;
   for (const run of alternatives) {
     if (settingKey(parameterValues(run.parameters)) !== key) continue;
-    if (published.codeSha256 !== undefined && run.codeSha256 === published.codeSha256) {
-      return { current: run, earlier: false };
-    }
-    earlier = true;
+    const status = savedSourceStatus(run, sourceSha256);
+    if (status === "current") return { current: run, sourceStatus: status };
+    if (sourceStatus !== "earlier") sourceStatus = status;
   }
-  return { current: null, earlier };
+  return sameSetting
+    ? { current: baseline, sourceStatus: baselineStatus }
+    : { current: null, sourceStatus };
 }
 
 export function renderAlternativeProse(

@@ -65,7 +65,9 @@ function packageRuntime(manifest: ResultHandoffManifest, source: string, platfor
   );
 }
 
-function overrideJson(manifest: Pick<ResultHandoffManifest, "parameters">): string | undefined {
+function overrideJson(
+  manifest: Pick<ResultHandoffManifest, "parameters" | "source">,
+): string | undefined {
   const pairs = new Map<string, string>();
   for (const parameter of manifest.parameters ?? []) {
     if (parameter.source !== "override") continue;
@@ -73,7 +75,7 @@ function overrideJson(manifest: Pick<ResultHandoffManifest, "parameters">): stri
     if (validated === undefined) throw handoffRefusal("A recorded parameter is invalid.");
     pairs.set(parameter.name, parameter.value);
   }
-  return pairs.size === 0
+  return pairs.size === 0 && manifest.source.kind !== "notebook"
     ? undefined
     : `{${Array.from(pairs, ([key, value]) => `${JSON.stringify(key)}:${value}`).join(",")}}`;
 }

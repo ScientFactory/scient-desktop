@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 
 import {
+  ComputeSessionId,
   NotebookError,
   type NotebookAlternatives,
   type NotebookReadInput,
@@ -9,6 +10,7 @@ import {
 import { readResultValues } from "@t3tools/shared/computeResults";
 import * as Effect from "effect/Effect";
 
+import { notebookSourceDigest, recordedNotebookCells } from "./notebookRevisionSource.ts";
 import type { NotebookStore } from "./NotebookStore.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import { parseCsv } from "../results/latexOutputs.ts";
@@ -24,31 +26,42 @@ const previewFigure = (mediaType: string): "image/png" | "image/jpeg" | "image/s
 
 export function makeNotebookReader(
   computeDir: string,
-  gateway: Pick<ComputeRpcGateway, "project">,
+  gateway: Pick<ComputeRpcGateway, "project" | "listAllExecutions">,
 ) {
-  return Effect.fn("NotebookReader.alternatives")(function* (request: NotebookReadInput) {
+  return Effect.fn("NotebookReader.alternatives")(function* (
+    request: NotebookReadInput,
+    currentSourceSha256?: string,
+  ) {
     const project = yield* gateway
       .project({ cwd: request.cwd })
       .pipe(
         Effect.mapError(() => new NotebookError({ message: "The project could not be opened." })),
       );
     const reader = makeResultsReader({ computeDir }, project.projectId, project.root);
-    return yield* Effect.tryPromise({
+    const alternatives = yield* Effect.tryPromise({
       try: async (): Promise<NotebookAlternatives> => {
         const revisions = (await reader.revisions()).filter(
           (revision) =>
-            revision.script.path === request.path && revision.script.kind === "notebook",
+            revision.script.path === request.path &&
+            revision.script.kind === "notebook" &&
+            revision.outputs.length > 0,
         );
         const published = revisions.find(isPublishedResultRevision);
-        const retained =
-          published === undefined
-            ? revisions.slice(0, RETAINED_ALTERNATIVES)
-            : [
-                published,
-                ...revisions
-                  .filter((entry) => entry !== published)
-                  .slice(0, RETAINED_ALTERNATIVES - 1),
-              ];
+        const compatible =
+          currentSourceSha256 === undefined
+            ? undefined
+            : revisions.find(
+                ({ script }) =>
+                  script.notebookDigestVersion !== undefined &&
+                  script.codeSha256 === currentSourceSha256,
+              );
+        const preferred = [...new Set([published, compatible])].filter(
+          (entry) => entry !== undefined,
+        );
+        const retained = [
+          ...preferred,
+          ...revisions.filter((entry) => !preferred.includes(entry)),
+        ].slice(0, RETAINED_ALTERNATIVES);
         let budget = TOTAL_PREVIEW_BYTES;
         const runs = [];
         for (const revision of retained) {
@@ -93,12 +106,17 @@ export function makeNotebookReader(
                   : null;
             outputs.push({ name: output.name, preview });
           }
+          const source = await reader.notebookSource(revision);
           runs.push({
             revision: revision.revision,
             finishedAt: revision.run.finishedAt,
             ...(revision.script.codeSha256 === undefined
               ? {}
               : { codeSha256: revision.script.codeSha256 }),
+            ...(revision.script.notebookDigestVersion === undefined
+              ? {}
+              : { notebookDigestVersion: revision.script.notebookDigestVersion }),
+            ...(source === undefined ? {} : { source }),
             parameters: revision.parameters ?? [],
             values,
             outputs,
@@ -113,8 +131,43 @@ export function makeNotebookReader(
       catch: () =>
         new NotebookError({ message: "The notebook's saved results could not be read." }),
     });
+    const runs = yield* Effect.forEach(alternatives.runs, (run) => {
+      if (run.source !== undefined) {
+        return Effect.succeed(run);
+      }
+      return retainedReaderSource(reader, gateway, project.root, run.revision).pipe(
+        Effect.map((source) => (source === undefined ? run : { ...run, source })),
+      );
+    });
+    return { ...alternatives, runs };
   });
 }
+
+const retainedReaderSource = Effect.fn("NotebookReader.retainedSource")(function* (
+  reader: ReturnType<typeof makeResultsReader>,
+  gateway: Pick<ComputeRpcGateway, "listAllExecutions">,
+  cwd: string,
+  id: string,
+) {
+  const revision = (yield* Effect.promise(() => reader.revisions())).find(
+    (entry) => entry.revision === id,
+  );
+  if (revision === undefined) return undefined;
+  const history = yield* gateway
+    .listAllExecutions({ cwd, sessionId: ComputeSessionId.make(revision.run.sessionId) })
+    .pipe(Effect.orElseSucceed(() => []));
+  const cells = recordedNotebookCells(revision, history);
+  return cells === undefined
+    ? undefined
+    : {
+        language: revision.script.language,
+        cells: cells.map((source, index) => ({
+          id: String(index),
+          cellType: "code" as const,
+          source,
+        })),
+      };
+});
 
 export const readNotebookWithAlternatives = Effect.fn(
   "NotebookReader.readNotebookWithAlternatives",
@@ -125,5 +178,9 @@ export const readNotebookWithAlternatives = Effect.fn(
 ) {
   const notebook = yield* read(request);
   if (notebook === null || !request.includeAlternatives) return notebook;
-  return { ...notebook, alternatives: yield* alternatives(request) };
+  const currentSourceSha256 = notebookSourceDigest(notebook);
+  return {
+    ...notebook,
+    alternatives: { ...(yield* alternatives(request, currentSourceSha256)), currentSourceSha256 },
+  };
 });

@@ -27,6 +27,7 @@ import {
 } from "./handoffFiles.ts";
 import { containsHomePath, exportHandoffLockfiles } from "./handoffEnvironment.ts";
 import { exportHandoffCode, exportHandoffInputs, listHandoffInputs } from "./handoffInputs.ts";
+import { executedNotebookCells } from "../../notebook/notebookRevisionSource.ts";
 import { portableNotebook } from "./notebookSource.ts";
 
 const VERSION = /^[\w.+ -]{1,120}$/u;
@@ -63,6 +64,7 @@ function readme(manifest: Omit<ResultHandoffManifest, "documentation">): string 
   const runtime = [manifest.source.language, manifest.runtime.version].filter(Boolean).join(" ");
   const parameters =
     manifest.parameters?.filter((parameter) => parameter.source === "override") ?? [];
+  const needsParameters = manifest.source.kind === "notebook" || parameters.length > 0;
   const parameterJson = `{${parameters.map(({ name, value }) => `${JSON.stringify(name)}:${value}`).join(",")}}`;
   const elapsed =
     manifest.run.startedAt === null
@@ -111,11 +113,16 @@ function readme(manifest: Omit<ResultHandoffManifest, "documentation">): string 
     "2. Supply any missing data at the paths listed below and check its SHA-256 against the manifest.",
     "3. Set up the runtime and dependencies. See `environment/` and the manifest for the evidence available from the original run.",
     "4. Set `SCIENT_RESULTS_DIR` to a new empty output folder. Never use the package's saved outputs folder.",
+    ...(needsParameters
+      ? [
+          "   Set `SCIENT_PARAMETERS` to this JSON.",
+          "",
+          `       ${parameterJson.replaceAll("\n", "\n       ")}`,
+          "",
+        ]
+      : []),
     `5. ${runInstructions}`,
     "",
-    ...(parameters.length === 0
-      ? []
-      : ["Set `SCIENT_PARAMETERS` to this JSON before running:", "", `    ${parameterJson}`, ""]),
     "## Source files",
     "",
     ...[manifest.source, ...(manifest.code ?? [])].map(({ path }) => `- source/${path}`),
@@ -181,16 +188,24 @@ export async function exportResultPackage(options: {
   const sourceError = handoffRefusal(
     "The saved source does not match this run. Restore the exact source or run the saved file again.",
   );
+  const notebook = sourceKind === "notebook" ? await reader.notebookSource(revision) : undefined;
   const saved =
-    source === null || (await NodeFSP.stat(source)).size > MAXIMUM_SOURCE_BYTES
+    (sourceKind === "notebook" &&
+      (revision.script.notebookDigestVersion === undefined ||
+        notebook !== undefined ||
+        options.recordedCells !== undefined)) ||
+    source === null ||
+    (await NodeFSP.stat(source)).size > MAXIMUM_SOURCE_BYTES
       ? null
       : await NodeFSP.readFile(source);
   const sourceBytes =
     sourceKind === "notebook"
       ? portableNotebook(
-          saved?.toString("utf8") ?? null,
           revision.script.sha256,
           options.recordedCells,
+          revision.script.notebookDigestVersion,
+          notebook === undefined ? undefined : executedNotebookCells(notebook),
+          saved?.toString("utf8"),
         )
       : saved !== null && hashBytes(saved) === revision.script.sha256
         ? saved
@@ -298,6 +313,9 @@ export async function exportResultPackage(options: {
         kind: sourceKind,
         language: revision.script.language,
         sha256: revision.script.sha256,
+        ...(revision.script.notebookDigestVersion === undefined
+          ? {}
+          : { notebookDigestVersion: revision.script.notebookDigestVersion }),
         fileSha256: sourceHash,
         size: Buffer.byteLength(sourceBytes),
       },

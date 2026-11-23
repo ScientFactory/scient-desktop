@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   resultEnvironmentMayDiffer,
-  resultInputCoverageIncomplete,
+  resultFreshnessIncomplete,
   resultSourceChanged,
 } from "@t3tools/shared/computeResults";
 import { useAtomValue } from "@effect/atom-react";
@@ -54,7 +54,7 @@ function scriptAttention(script: ComputeResultPlacedScript): string | null {
   if (script.newer !== null) return "newer run";
   if (used.some((file) => file.state === "edited")) return "edited";
   if (used.some((file) => file.differsFromBuild)) return "rebuild";
-  if (resultInputCoverageIncomplete(script.summary)) return "incomplete";
+  if (resultFreshnessIncomplete(script.summary)) return "incomplete";
   if (resultEnvironmentMayDiffer(script.summary)) return "environment";
   return null;
 }
@@ -279,6 +279,13 @@ function ScriptResults(props: {
     if (response._tag !== "Success")
       setMessage(resultErrorMessage(response, gt("The script could not run.")));
     else if (response.value._tag === "failed") setMessage(response.value.message);
+    else if (response.value._tag === "completed") {
+      setMessage(
+        response.value.message ??
+          response.value.notebookMessage ??
+          gt("No linked results published."),
+      );
+    }
   };
 
   const applyUpdate = async (

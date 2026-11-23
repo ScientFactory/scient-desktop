@@ -1,3 +1,7 @@
+import {
+  NOTEBOOK_DIGEST_VERSION,
+  notebookExecutionDigest,
+} from "../../notebook/notebookRevisionSource.ts";
 import { handoffRefusal, hashBytes, jsonText } from "./handoffFiles.ts";
 
 export function notebookCode(document: string): ReadonlyArray<string> {
@@ -27,26 +31,33 @@ export function notebookCode(document: string): ReadonlyArray<string> {
   });
 }
 
-function savedNotebookCode(contents: string | null) {
-  try {
-    return contents === null ? null : notebookCode(contents);
-  } catch {
-    return null;
-  }
+export function notebookPackageDigest(cells: ReadonlyArray<string>, version?: number): string {
+  return version === NOTEBOOK_DIGEST_VERSION
+    ? notebookExecutionDigest(cells)
+    : hashBytes(cells.join("\n"));
 }
 
 export function portableNotebook(
-  contents: string | null,
   sha256: string,
   recordedCells: ReadonlyArray<string> | undefined,
+  version?: number,
+  snapshot?: ReadonlyArray<string>,
+  saved?: string,
 ): string {
-  const saved = savedNotebookCode(contents);
-  const code = [saved, recordedCells, saved?.filter((cell) => cell.trim() !== "")].find(
-    (cells) => cells != null && hashBytes(cells.join("\n")) === sha256,
-  );
+  const matches = (cells: ReadonlyArray<string> | undefined) =>
+    cells !== undefined && notebookPackageDigest(cells, version) === sha256;
+  let code = [snapshot, recordedCells].find(matches);
+  if (code === undefined && saved !== undefined && version === NOTEBOOK_DIGEST_VERSION) {
+    try {
+      const cells = notebookCode(saved).filter((cell) => cell.trim() !== "");
+      if (matches(cells)) code = cells;
+    } catch {
+      // Unreadable source cannot establish a match.
+    }
+  }
   if (code == null) {
     throw handoffRefusal(
-      "The saved notebook cells do not match this run. Run the saved notebook again or restore the exact cells that ran.",
+      "The cells that ran could not be confirmed. Run the saved notebook again to export its results.",
     );
   }
   // Outputs, author metadata and markdown are separate from the fingerprint of executed cells.

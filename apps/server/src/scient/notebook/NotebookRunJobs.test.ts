@@ -57,10 +57,9 @@ it.effect("exposes running values and stops only the addressed notebook job", ()
       progress: { phase: "running", cell: 2, total: 10 },
     });
     expect(yield* jobs.stop("other/notebook", job.runId)).toBeNull();
-    yield* jobs.stop("project/notebook", job.runId);
-    expect(yield* jobs.wait("project/notebook", job.runId)).toEqual({
-      _tag: "failed",
-      message: "The notebook run was stopped.",
+    expect(yield* jobs.stop("project/notebook", job.runId)).toMatchObject({
+      progress: { phase: "stopping" },
+      outcome: { _tag: "failed", message: "The notebook run was stopped." },
     });
   }).pipe(Effect.scoped),
 );

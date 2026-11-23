@@ -62,10 +62,12 @@ describe.runIf(Boolean(CORPUS && BASELINE && RECIPIENT))(
           await NodeFSP.cp(CORPUS!, root, { recursive: true });
           const source = await NodeFSP.readFile(NodePath.join(root, scriptPath), "utf8");
           let code = source;
+          let recordedCells: ReadonlyArray<string> | undefined;
           if (kind === "notebook") {
             const cells = notebookCode(source);
             const effective = [cells[0] ?? "", "threshold = 0.7", ...cells.slice(1)];
             code = effective.join("\n");
+            recordedCells = effective;
             const cleanNotebook = {
               nbformat: 4,
               nbformat_minor: 4,
@@ -147,6 +149,7 @@ describe.runIf(Boolean(CORPUS && BASELINE && RECIPIENT))(
             projectRoot: root,
             destination: temp,
             includeInputs: [dataPath],
+            ...(recordedCells === undefined ? {} : { recordedCells }),
             createdAt: "2026-11-23T00:01:00Z",
             scientVersion: "0.0.0-test",
           });

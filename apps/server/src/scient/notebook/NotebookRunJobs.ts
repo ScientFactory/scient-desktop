@@ -158,6 +158,7 @@ export const makeNotebookRunJobs = Effect.gen(function* () {
         };
         publish(key);
         yield* Deferred.succeed(job.cancel, undefined);
+        yield* Deferred.await(job.done);
       }
       return status(job);
     }),

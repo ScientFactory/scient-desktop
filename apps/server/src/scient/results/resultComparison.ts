@@ -147,6 +147,16 @@ async function compareValues(
   };
 }
 
+function codeChanged(from: ComputeResultRevision["script"], to: ComputeResultRevision["script"]) {
+  if (from.kind !== "notebook" || to.kind !== "notebook") return from.sha256 !== to.sha256;
+  if (from.notebookDigestVersion !== to.notebookDigestVersion) return null;
+  if (from.codeSha256 === undefined || to.codeSha256 === undefined) {
+    return from.sha256 !== to.sha256 ? true : null;
+  }
+  if (from.codeSha256 !== to.codeSha256) return true;
+  return from.notebookDigestVersion === undefined ? null : false;
+}
+
 export async function compareResultRevisions(
   reader: ResultsReader,
   from: ComputeResultRevision,
@@ -179,13 +189,7 @@ export async function compareResultRevisions(
   return {
     from: fromSummary,
     to: toSummary,
-    codeChanged:
-      from.script.kind === "notebook" &&
-      to.script.kind === "notebook" &&
-      from.script.codeSha256 !== undefined &&
-      to.script.codeSha256 !== undefined
-        ? from.script.codeSha256 !== to.script.codeSha256
-        : from.script.sha256 !== to.script.sha256,
+    codeChanged: codeChanged(from.script, to.script),
     parameters: keys(fromParameters, toParameters).map((name) => ({
       name,
       from: fromParameters.get(name) ?? null,

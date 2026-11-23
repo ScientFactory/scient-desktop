@@ -1,7 +1,14 @@
 import { expect, it } from "vitest";
 import { ComputeResultRevisionId, type NotebookAlternatives } from "@t3tools/contracts";
 
-import { alternativeAt, renderAlternativeProse, sweepValues } from "./notebookReaderModel";
+import {
+  alternativeAt,
+  readerBaseline,
+  renderAlternativeProse,
+  sweepValues,
+} from "./notebookReaderModel";
+
+const currentSource = "a".repeat(64);
 
 it("matches normalized settings and changes only values from this notebook", () => {
   const published = {
@@ -10,7 +17,8 @@ it("matches normalized settings and changes only values from this notebook", () 
       { name: "x", source: "default", value: "1" },
       { name: "flag", source: "default", value: "true" },
     ],
-    codeSha256: "a".repeat(64),
+    notebookDigestVersion: 1,
+    codeSha256: currentSource,
     outputs: [],
     values: [{ output: "metrics.json", pointer: "/n", value: "10" }],
   } satisfies NotebookAlternatives["runs"][number];
@@ -24,23 +32,44 @@ it("matches normalized settings and changes only values from this notebook", () 
     values: [{ output: "metrics.json", pointer: "/n", value: "20" }],
   } satisfies NotebookAlternatives["runs"][number];
   const runs: NotebookAlternatives["runs"] = [published, alternative];
-  expect(alternativeAt(runs, published, { x: "2" })).toEqual({
+  expect(alternativeAt(runs, published, { x: "2" }, currentSource)).toEqual({
     current: alternative,
-    earlier: false,
+    sourceStatus: "current",
   });
-  expect(alternativeAt(runs, published, { x: "3" })).toEqual({ current: null, earlier: false });
+  expect(alternativeAt(runs, published, { x: "3" }, currentSource)).toEqual({
+    current: null,
+    sourceStatus: null,
+  });
   expect(
-    alternativeAt([published, { ...alternative, codeSha256: "b".repeat(64) }], published, {
-      x: "2",
-    }),
-  ).toEqual({ current: null, earlier: true });
-  expect(
-    alternativeAt([published, alternative], { ...published, codeSha256: undefined }, { x: "2" }),
-  ).toEqual({ current: null, earlier: true });
-  const sameSetting = { ...alternative, parameters: published.parameters };
-  expect(alternativeAt([sameSetting, published], published, {})).toEqual({
+    alternativeAt(
+      [published, { ...alternative, codeSha256: "b".repeat(64) }],
+      published,
+      {
+        x: "2",
+      },
+      currentSource,
+    ),
+  ).toEqual({ current: null, sourceStatus: "earlier" });
+  expect(alternativeAt(runs, published, {}, undefined)).toEqual({
     current: published,
-    earlier: false,
+    sourceStatus: "unconfirmed",
+  });
+  const sameSetting = { ...alternative, parameters: published.parameters };
+  expect(alternativeAt([sameSetting, published], published, {}, currentSource)).toEqual({
+    current: published,
+    sourceStatus: "current",
+  });
+  const old = { ...alternative, codeSha256: "b".repeat(64) };
+  const legacy = { ...alternative, notebookDigestVersion: undefined };
+  expect(readerBaseline([old, legacy, alternative], null, currentSource)).toBe(alternative);
+  expect(readerBaseline([old, legacy], null, currentSource)).toBeUndefined();
+  expect(alternativeAt([published, legacy], published, { x: "2" }, currentSource)).toEqual({
+    current: null,
+    sourceStatus: "unconfirmed",
+  });
+  expect(alternativeAt([old, sameSetting], old, { x: "1" }, currentSource)).toEqual({
+    current: sameSetting,
+    sourceStatus: "current",
   });
   const prose =
     "[10](scient-result:r000000000001/metrics.json#/n), [6](scient-result:r000000000003/metrics.json#/n)";

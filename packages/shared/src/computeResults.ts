@@ -344,11 +344,20 @@ const sameRows = (
   );
 
 export function resultSourceChanged(summary: ComputeResultSummary): boolean {
-  return summary.causes.some(({ kind }) => kind !== "lockfile-changed");
+  return summary.causes.some(
+    ({ kind }) => kind !== "lockfile-changed" && kind !== "script-unconfirmed",
+  );
 }
 
 export function resultInputCoverageIncomplete(summary: ComputeResultSummary): boolean {
   return summary.inputsTruncated || summary.inputCoverageIncomplete === true;
+}
+
+export function resultFreshnessIncomplete(summary: ComputeResultSummary): boolean {
+  return (
+    resultInputCoverageIncomplete(summary) ||
+    summary.causes.some(({ kind }) => kind === "script-unconfirmed")
+  );
 }
 
 export function resultEnvironmentMayDiffer(summary: ComputeResultSummary): boolean {
@@ -381,7 +390,7 @@ export function resultReferenceState(
   )
     return "edited";
   if (resultHasNewer(reference, resolution)) return "newer";
-  return resultInputCoverageIncomplete(resolution.summary) ? "incomplete" : "current";
+  return resultFreshnessIncomplete(resolution.summary) ? "incomplete" : "current";
 }
 
 export function resultHasNewer(

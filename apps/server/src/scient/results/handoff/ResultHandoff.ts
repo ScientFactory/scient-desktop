@@ -18,6 +18,7 @@ import packageJson from "../../../../package.json" with { type: "json" };
 import type { ComputeRpcGateway } from "../../compute/ComputeRpcGateway.ts";
 import type { ExecutionProcess } from "../../execution/LocalExecutionProcess.ts";
 import { makeResultsReader, type ResultsLayout } from "../resultRevisions.ts";
+import { recordedNotebookCells } from "../../notebook/notebookRevisionSource.ts";
 import { exportResultPackage } from "./exportResultPackage.ts";
 import { handoffLockfileChoices } from "./handoffEnvironment.ts";
 import { handoffInputChoices } from "./handoffInputs.ts";
@@ -108,34 +109,8 @@ export function makeResultHandoff(options: {
     );
     const recorded = history[end];
     const recordedScript = revision.script.kind === "notebook" ? undefined : recorded?.request.code;
-    // Fresh notebook revisions use their first cell as the batch ID.
-    const recordedSource = recorded?.request.source;
-    const batchId =
-      recordedSource?._tag === "document" ? recordedSource.notebookBatch?.id : undefined;
     const recordedCells =
-      recorded === undefined || revision.script.kind !== "notebook"
-        ? undefined
-        : (batchId === undefined ? history.slice(0, end + 1) : history)
-            .flatMap(({ request, result }, index) => {
-              const { source } = request;
-              if (
-                request.generation !== recorded.request.generation ||
-                result?.status !== "succeeded" ||
-                source._tag !== "document" ||
-                source.origin !== "cell" ||
-                source.path !== revision.script.path ||
-                (batchId !== undefined && source.notebookBatch?.id !== batchId)
-              )
-                return [];
-              return [
-                {
-                  index: batchId === undefined ? index : (source.notebookBatch?.index ?? index),
-                  code: request.code,
-                },
-              ];
-            })
-            .toSorted((first, second) => first.index - second.index)
-            .map(({ code }) => code);
+      revision.script.kind === "notebook" ? recordedNotebookCells(revision, history) : undefined;
     const createdAt = DateTime.formatIso(yield* DateTime.now);
     const entry: { current: ResultHandoffExportProgress | null } = { current: null };
     const id = input.progressId;

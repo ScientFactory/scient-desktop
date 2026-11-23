@@ -10,6 +10,7 @@ import {
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,
   type ComputeExecutionRecord,
+  type ComputeResultParameter,
   type ComputeResultsRerunResult,
   type NotebookFreshRunInput,
   type NotebookFreshRun,
@@ -18,7 +19,10 @@ import {
   type NotebookFreshRunSubscribeInput,
 } from "@t3tools/contracts";
 import { notebookCellRun } from "@t3tools/shared/notebookStaleness";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -28,14 +32,24 @@ import type { makeComputeNotebookOutputs } from "../compute/ComputeNotebookOutpu
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import { computeResultsStagingFolder } from "../compute/LocalComputeStore.ts";
 import {
+  makeResultsReader,
+  mergeResultEnvironment,
   prepareResultRun,
   publishScriptRun,
   summarizeRevision,
   type SettledScriptRun,
 } from "../results/resultRevisions.ts";
+import {
+  beginResultAttempt,
+  clearResultFailuresThrough,
+  forgetResultAttempt,
+  recordFailedResultAttempt,
+} from "../results/resultAttempts.ts";
+import type { ComputeSettledRun } from "../compute/ComputeSessionService.ts";
 import type { NotebookRunJobs, ReportNotebookJob } from "./NotebookRunJobs.ts";
 import type { NotebookStore } from "./NotebookStore.ts";
 import type { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
+import { executedNotebookCells, notebookExecutionDigest } from "./notebookRevisionSource.ts";
 import { planNotebookRun } from "./notebookRunPlan.ts";
 
 const isComputeResultsError = Schema.is(ComputeResultsError);
@@ -138,6 +152,13 @@ export function makeNotebookRuns(deps: {
   type Request = NotebookFreshRunInput & { readonly threadId?: string };
   type Project = Effect.Success<ReturnType<typeof gateway.projectWithAdmission>>;
   type Snapshot = Effect.Success<ReturnType<typeof notebooks.freshSnapshot>>;
+  type Attempt = {
+    readonly sessionId: ComputeSessionId;
+    readonly executionId: ComputeExecutionId;
+    parameters?: ReadonlyArray<ComputeResultParameter>;
+    failedCell?: ComputeExecutionRecord;
+    cancelledCell?: ComputeExecutionRecord;
+  };
   const projectForRun = (cwd: string) =>
     gateway
       .projectWithAdmission({ cwd })
@@ -176,9 +197,10 @@ export function makeNotebookRuns(deps: {
     project: Project,
     receipt: Snapshot,
     report: ReportNotebookJob,
-    alternative = false,
+    attempt?: Attempt,
   ) {
     const address = { cwd: project.root, path: request.scriptPath };
+    const alternative = attempt === undefined;
     const setup = yield* Effect.tryPromise({
       try: () =>
         prepareResultRun(layout, {
@@ -207,7 +229,8 @@ export function makeNotebookRuns(deps: {
           cause,
         }),
     });
-    const { parameterEnvironment } = plan;
+    const { parameterEnvironment, notebookSource } = plan;
+    if (attempt !== undefined) attempt.parameters = plan.parameters;
     if (Buffer.byteLength(parameterEnvironment) > 30_000) {
       return {
         _tag: "failed" as const,
@@ -216,9 +239,12 @@ export function makeNotebookRuns(deps: {
     }
     const cells = plan.cells
       .filter((cell) => cell.source.trim() !== "")
-      .map((cell) => ({
+      .map((cell, index) => ({
         cellId: cell.id,
-        executionId: ComputeExecutionId.make(NodeCrypto.randomUUID()),
+        executionId:
+          index === 0 && attempt !== undefined
+            ? attempt.executionId
+            : ComputeExecutionId.make(NodeCrypto.randomUUID()),
         code: cell.source,
       }));
     const firstCell = cells[0];
@@ -233,7 +259,7 @@ export function makeNotebookRuns(deps: {
       parameters: plannedParameters,
       progress: { phase: "starting", cell: 0, total: cells.length },
     });
-    const sessionId = ComputeSessionId.make(NodeCrypto.randomUUID());
+    const sessionId = attempt?.sessionId ?? ComputeSessionId.make(NodeCrypto.randomUUID());
     const executionId = firstCell.executionId;
     const sessionAddress = { cwd: project.root, sessionId };
     const stagingFolder = computeResultsStagingFolder(
@@ -256,10 +282,12 @@ export function makeNotebookRuns(deps: {
       });
       const cellIds = new Map(cells.map(({ executionId, cellId }) => [executionId, cellId]));
       let completed = 0;
+      let packages: ComputeSettledRun["packageEvidence"];
       const captured = yield* gateway.settledRuns.pipe(
         Stream.filter((run) => run.execution.request.sessionId === sessionId),
         Stream.take(cells.length),
-        Stream.mapEffect(({ execution }) => {
+        Stream.mapEffect(({ execution, packageEvidence }) => {
+          packages = packageEvidence ?? packages;
           const { executionId } = execution.request;
           completed += 1;
           report({
@@ -332,6 +360,15 @@ export function makeNotebookRuns(deps: {
         ran.some((entry) => entry.result?.status !== "succeeded")
       ) {
         const failure = ran.find((entry) => entry.result?.status === "failed");
+        if (attempt !== undefined) {
+          if (failure !== undefined) attempt.failedCell = failure;
+          else {
+            const cancelled = ran.find(
+              (entry) => entry.result?.status === "cancelled" && entry.result.startedAt !== null,
+            );
+            if (cancelled !== undefined) attempt.cancelledCell = cancelled;
+          }
+        }
         return {
           _tag: "failed" as const,
           message:
@@ -347,7 +384,7 @@ export function makeNotebookRuns(deps: {
         return { _tag: "failed" as const, message: "The notebook run was stopped." };
       }
       const finish = ran.at(-1)?.result?.finishedAt ?? ran[0]!.request.submittedAt;
-      const code = cells.map(({ code }) => code).join("\n");
+      const environment = mergeResultEnvironment(setup.environment, packages);
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {
           yield* project.admission?.assertCurrent ?? Effect.void;
@@ -366,19 +403,12 @@ export function makeNotebookRuns(deps: {
                 scriptPath: request.scriptPath,
                 kind: "notebook",
                 ...(alternative ? { publication: "alternative" as const } : {}),
-                codeSha256: NodeCrypto.createHash("sha256")
-                  .update(
-                    receipt.cells
-                      .filter((cell) => cell.cellType === "code" && !cell.injectedParameters)
-                      .map((cell) => cell.source)
-                      .join("\n"),
-                  )
-                  .digest("hex"),
                 ...setup,
+                ...(environment === undefined ? {} : { environment }),
                 parameters: plan.parameters,
                 succeeded: true,
                 language: session.label,
-                code,
+                code: notebookSource,
                 sessionId,
                 executionId,
                 startedAt: ran[0]?.result?.startedAt ?? null,
@@ -397,7 +427,13 @@ export function makeNotebookRuns(deps: {
                 message: "The notebook ran, but its results could not be published.",
                 cause,
               }),
-          });
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Notebook results could not be published", {
+                cause: error.cause,
+              }).pipe(Effect.as({ _tag: "failed" as const, message: error.message })),
+            ),
+          );
           if (alternative && revision._tag === "failed") return revision;
           const notebookMessage = alternative
             ? undefined
@@ -409,7 +445,7 @@ export function makeNotebookRuns(deps: {
                   parameterCellId: plan.parameterCellId,
                   parameters: plannedParameters,
                   overrides: plan.overrides,
-                  codeSha256: NodeCrypto.createHash("sha256").update(code).digest("hex"),
+                  codeSha256: notebookExecutionDigest(executedNotebookCells(notebookSource)),
                   executionId,
                   results,
                 })
@@ -417,11 +453,23 @@ export function makeNotebookRuns(deps: {
                   Effect.match({ onSuccess: () => undefined, onFailure: (cause) => cause.message }),
                 );
           if (revision._tag === "failed") {
-            const status =
-              notebookMessage === undefined ? "The notebook was saved." : notebookMessage;
-            return { ...revision, message: `${status} ${revision.message}` };
+            return {
+              _tag: "completed" as const,
+              notebookSaved: notebookMessage === undefined,
+              ...(notebookMessage === undefined ? {} : { notebookMessage }),
+              ...("empty" in revision && revision.empty === "nothing-written"
+                ? {}
+                : { message: revision.message }),
+            };
           }
-          if (!alternative) report({ publishedResults: revision.revision.outputs.length });
+          if (!alternative) {
+            const { counts } = yield* Effect.promise(() =>
+              makeResultsReader(layout, project.projectId, project.root).published(
+                revision.revision,
+              ),
+            );
+            report({ publishedResults: counts });
+          }
           const summary = summarizeRevision(
             revision.revision,
             [...revision.revision.inputs.files, ...(revision.revision.inputs.globs ?? [])].flatMap(
@@ -434,6 +482,7 @@ export function makeNotebookRuns(deps: {
           return {
             _tag: "published" as const,
             summary,
+            ...(alternative ? {} : { notebookSaved: notebookMessage === undefined }),
             ...(notebookMessage === undefined ? {} : { notebookMessage }),
           };
         }),
@@ -467,6 +516,105 @@ export function makeNotebookRuns(deps: {
     return yield* operation;
   });
 
+  const runFresh = Effect.fn("NotebookRuns.runFresh")(function* (
+    request: Request,
+    project: Project,
+    report: ReportNotebookJob,
+  ) {
+    const attempt: Attempt = {
+      sessionId: ComputeSessionId.make(NodeCrypto.randomUUID()),
+      executionId: ComputeExecutionId.make(NodeCrypto.randomUUID()),
+    };
+    const run = {
+      projectId: project.projectId,
+      scriptPath: request.scriptPath,
+      sessionId: attempt.sessionId,
+      executionId: attempt.executionId,
+    };
+    const address = { cwd: project.root, path: request.scriptPath };
+    yield* project.admission?.assertCurrent ?? Effect.void;
+    return yield* Effect.acquireUseRelease(
+      Effect.tryPromise({
+        try: () => beginResultAttempt(layout, run),
+        catch: (cause) =>
+          new ComputeResultsError({
+            message: "The notebook run could not be recorded.",
+            cause,
+          }),
+      }),
+      () =>
+        Effect.gen(function* () {
+          yield* notebooks.reserveFreshRun(address);
+          const receipt = yield* notebooks.freshSnapshot(address);
+          return yield* execute(request, project, receipt, report, attempt);
+        }),
+      (_, exit) =>
+        Effect.gen(function* () {
+          const finishedAt = DateTime.formatIso(yield* DateTime.now);
+          const outcome = Exit.isSuccess(exit) ? exit.value : undefined;
+          if (outcome !== undefined && outcome._tag !== "failed") {
+            yield* Effect.tryPromise({
+              try: async () => {
+                if (outcome._tag === "completed" && outcome.notebookSaved) {
+                  await clearResultFailuresThrough(layout, run, finishedAt);
+                }
+                await forgetResultAttempt(layout, run);
+              },
+              catch: (cause) =>
+                new ComputeResultsError({
+                  message: "The completed notebook attempt could not be cleared.",
+                  cause,
+                }),
+            }).pipe(Effect.ignore({ log: true }));
+            return;
+          }
+          const interrupted =
+            attempt.cancelledCell !== undefined ||
+            (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+          const history =
+            interrupted && attempt.failedCell === undefined && attempt.cancelledCell === undefined
+              ? yield* gateway
+                  .listAllExecutions({ cwd: project.root, sessionId: run.sessionId })
+                  .pipe(Effect.orElseSucceed(() => []))
+              : [];
+          const execution =
+            attempt.failedCell ??
+            attempt.cancelledCell ??
+            history.find(
+              (entry) => entry.result?.status === "cancelled" && entry.result.startedAt !== null,
+            );
+          const source = execution?.request.source;
+          const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+          const message = interrupted
+            ? "The notebook run was stopped."
+            : execution?.result?.failureReason ||
+              outcome?.message ||
+              (error instanceof Error ? error.message : "The notebook could not run.");
+          yield* Effect.tryPromise({
+            try: () =>
+              recordFailedResultAttempt(layout, run, {
+                status: interrupted ? "cancelled" : "failed",
+                finishedAt: execution?.result?.finishedAt ?? finishedAt,
+                message,
+                hasExecution: execution !== undefined,
+                ...(source?._tag === "document" && source.cell !== undefined
+                  ? { cellId: source.cell }
+                  : {}),
+                ...(execution === undefined
+                  ? {}
+                  : { cellExecutionId: execution.request.executionId }),
+                ...(attempt.parameters === undefined ? {} : { parameters: attempt.parameters }),
+              }),
+            catch: (cause) =>
+              new ComputeResultsError({
+                message: "The notebook attempt could not be recorded.",
+                cause,
+              }),
+          }).pipe(Effect.ignore({ log: true }));
+        }),
+    );
+  });
+
   const start = Effect.fn("NotebookRuns.start")(function* (input: Request) {
     const project = yield* projectForRun(input.cwd);
     const scriptPath = yield* notebookPath(project, input.scriptPath);
@@ -481,23 +629,23 @@ export function makeNotebookRuns(deps: {
     }
     const job = Effect.fn("NotebookRuns.job")(
       function* (report: ReportNotebookJob) {
+        if (request.sweep === undefined) return yield* runFresh(request, project, report);
         yield* project.admission?.assertCurrent ?? Effect.void;
         const address = { cwd: project.root, path: request.scriptPath };
         yield* notebooks.reserveFreshRun(address);
         const receipt = yield* notebooks.freshSnapshot(address);
-        if (request.sweep === undefined) return yield* execute(request, project, receipt, report);
         let last: ComputeResultsRerunResult = { _tag: "failed", message: "No settings were run." };
         let saved = 0;
         const failures: NonNullable<NotebookFreshRun["sweepSummary"]>["failures"][number][] = [];
         for (const [index, parameters] of request.sweep.entries()) {
-          report({ parameters, progress: { phase: "starting", cell: 0, total: 0 } });
-          const result = yield* execute(
-            { ...request, parameters },
-            project,
-            receipt,
-            report,
-            true,
-          ).pipe(
+          if (
+            !report({
+              parameters,
+              progress: { phase: "starting", cell: 0, total: 0 },
+            })
+          )
+            break;
+          const result = yield* execute({ ...request, parameters }, project, receipt, report).pipe(
             Effect.catch((cause) =>
               Effect.succeed({ _tag: "failed" as const, message: cause.message }),
             ),
@@ -506,7 +654,11 @@ export function makeNotebookRuns(deps: {
             last = result;
             saved += 1;
           } else {
-            failures.push({ index, parameters, message: result.message });
+            failures.push({
+              index,
+              parameters,
+              message: result.message ?? "The notebook did not publish results.",
+            });
             if (saved === 0) last = result;
           }
           report({ sweepSummary: { total: request.sweep.length, saved, failures: [...failures] } });
@@ -552,6 +704,17 @@ export function makeNotebookRuns(deps: {
   const stop = Effect.fn("NotebookRuns.stop")(function* (request: NotebookFreshRunStopInput) {
     const project = yield* projectForRun(request.cwd);
     const scriptPath = yield* notebookPath(project, request.scriptPath);
+    yield* (
+      project.admission?.assertCurrent.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ComputeResultsError({
+              message: "The project changed before the notebook run could be stopped.",
+              cause,
+            }),
+        ),
+      ) ?? Effect.void
+    );
     return yield* deps.jobs.stop(jobKey(project, scriptPath), request.runId);
   });
   const wait = Effect.fn("NotebookRuns.wait")(function* (

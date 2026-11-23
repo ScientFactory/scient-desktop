@@ -8,6 +8,7 @@ import { m, type MessageResolver } from "~/i18n/messages";
 const CAUSE_TEXT: Record<ComputeResultCause["kind"], string> = {
   "script-changed": msg("{path} changed since this run"),
   "script-missing": msg("{path} is missing"),
+  "script-unconfirmed": msg("Notebook source unconfirmed"),
   "input-changed": msg("{path} changed since this run"),
   "input-missing": msg("{path} is missing"),
   "input-changed-during-run": msg("{path} changed while the script was running"),

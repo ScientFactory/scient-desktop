@@ -24,6 +24,7 @@ const DEFAULT_WAIT_SECONDS = 120;
 
 const CAUSE_LABELS: Record<ComputeResultCause["kind"], string> = {
   "script-changed": "script changed",
+  "script-unconfirmed": "Notebook source unconfirmed",
   "script-missing": "script missing",
   "input-changed": "input changed",
   "input-missing": "input missing",
@@ -44,7 +45,7 @@ const STATE_FOR_AGENT: Record<ResultReferenceState, string> = {
 
 const describeCauses = (causes: ReadonlyArray<ComputeResultCause>) =>
   causes
-    .filter((cause) => cause.kind !== "lockfile-changed")
+    .filter((cause) => cause.kind !== "lockfile-changed" && cause.kind !== "script-unconfirmed")
     .map((cause) => `${CAUSE_LABELS[cause.kind]}: ${cause.path}`);
 
 const environmentMayDiffer = (causes: ReadonlyArray<ComputeResultCause>) =>
@@ -64,6 +65,9 @@ const summaryForAgent = (summary: ComputeResultSummary) => ({
   inputCoverageIncomplete: resultInputCoverageIncomplete(summary),
   kind: summary.kind ?? ("script" as const),
   outOfDate: describeCauses(summary.causes),
+  ...(summary.causes.some(({ kind }) => kind === "script-unconfirmed")
+    ? { sourceUnconfirmed: true }
+    : {}),
   environmentMayDiffer: environmentMayDiffer(summary.causes),
 });
 
@@ -117,6 +121,15 @@ export const runScientResults = Effect.fn("ScientResultsTools.run")(function* (i
     };
   if (outcome.value._tag === "failed")
     return { status: "failed" as const, message: outcome.value.message };
+  if (outcome.value._tag === "completed") {
+    const { notebookSaved, notebookMessage, message } = outcome.value;
+    const detail = [notebookMessage, message].filter(Boolean).join(" ");
+    return {
+      status: "completed" as const,
+      notebookSaved,
+      ...(detail === "" ? {} : { message: detail }),
+    };
+  }
   const revision = outcome.value.summary.revision;
   const { scripts } = yield* scope.gateway
     .listResults({ cwd: scope.cwd })
@@ -124,6 +137,12 @@ export const runScientResults = Effect.fn("ScientResultsTools.run")(function* (i
   const script = scripts.find((candidate) => candidate.latest.revision === revision);
   return {
     status: "published" as const,
+    ...(outcome.value.notebookSaved === undefined
+      ? {}
+      : { notebookSaved: outcome.value.notebookSaved }),
+    ...(outcome.value.notebookMessage === undefined
+      ? {}
+      : { message: outcome.value.notebookMessage }),
     revision: summaryForAgent(outcome.value.summary),
     ...(script === undefined
       ? {}

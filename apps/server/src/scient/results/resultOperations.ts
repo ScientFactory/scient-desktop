@@ -234,7 +234,9 @@ export function makeResultOperations(input: {
         message: "The last run has changed. Open its output again.",
       });
     const sessionTarget = { cwd: resultsProject.root, sessionId: attempt.sessionId };
-    const executionId = attempt.hasExecution ? attempt.executionId : null;
+    const executionId = attempt.hasExecution
+      ? (attempt.cellExecutionId ?? attempt.executionId)
+      : null;
     const { output, session } = yield* Effect.all(
       {
         output: input.gateway.listOutputs({ ...sessionTarget, executionId }),
@@ -246,6 +248,7 @@ export function makeResultOperations(input: {
       output,
       session,
       executionId,
+      ...(attempt.cellId === undefined ? {} : { cellId: attempt.cellId }),
       ...(attempt.parameters === undefined ? {} : { parameters: attempt.parameters }),
     };
   });
@@ -301,7 +304,7 @@ export function makeResultOperations(input: {
     request: ComputeResultsRerunInput & {
       readonly threadId?: string;
     },
-  ) {
+  ): Effect.fn.Return<ComputeResultsRerunResult, ComputeResultsError> {
     const extension = NodePath.posix.extname(request.scriptPath).toLowerCase();
     if (extension === ".ipynb") return yield* input.runNotebookFresh(request);
     const descriptor = input.runtimeDescriptors.find((candidate) =>
