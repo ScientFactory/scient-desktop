@@ -539,7 +539,7 @@ const AgentNotebookParameters = Schema.Record(ComputeResultParameterValues.key, 
 
 const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
   description:
-    'Run cells in the notebook session. By default run all code cells in order, stopping at the first failure. Returns each cell\'s output and figures for interactive runs. Set fresh to run the entire saved notebook in a new kernel and publish results. Pass ordinary JSON overrides such as {"threshold": 0.7, "plot": true}; inputs are project-relative. Omit cells for a fresh run. It continues after waitSeconds and returns a run ID for scient_notebook_read or scient_notebook_stop. Use sweep with one to twenty override objects to save alternatives while keeping the published setting.',
+    'Run cells in the notebook session. By default run all code cells in order, stopping at the first failure. Returns each cell\'s output and figures for interactive runs. Set fresh to run the entire saved notebook in a new kernel; it publishes the outputs written to SCIENT_RESULTS_DIR. Pass ordinary JSON overrides such as {"threshold": 0.7, "plot": true}; inputs are project-relative. Omit cells for a fresh run. It continues after waitSeconds and returns a run ID for scient_notebook_read or scient_notebook_stop. Use sweep with one to twenty override objects to save alternatives while keeping the published setting.',
   parameters: Schema.Struct({
     path: NotebookPath,
     cells: Schema.optional(Schema.Array(NotebookCellId)),

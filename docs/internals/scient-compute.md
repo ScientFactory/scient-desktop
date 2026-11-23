@@ -140,7 +140,8 @@ The `compute` grant gives every provider session these MCP tools
 | `scient_compute_inventory` | Lists languages, runtimes and Toolkits.                                                                                                                                                                            |
 | `scient_notebook_read`     | Reads headings, parameter defaults, cells, and saved alternatives.                                                                                                                                                 |
 | `scient_notebook_edit`     | Edits and folds cells, tags a parameters cell, or clears outputs.                                                                                                                                                  |
-| `scient_notebook_run`      | Runs cells in the live session or publishes a whole notebook run in a fresh kernel.                                                                                                                                |
+| `scient_notebook_run`      | Runs cells in the live session, or the whole notebook in a fresh kernel; that run publishes a linked revision when it writes to `SCIENT_RESULTS_DIR`.                                                              |
+| `scient_notebook_stop`     | Stops a fresh notebook run or sweep by path and run ID; completed sweep settings stay saved.                                                                                                                       |
 
 Both execution tools are exposed before discovery on providers that defer tools. File runs
 with parameters or declared inputs use an isolated runtime lifetime and record that setup. The

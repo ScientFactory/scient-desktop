@@ -190,6 +190,8 @@ export function ResultDeclaredInputs(
     readonly suggestedInputs?: ReadonlyArray<string>;
     readonly onChange: (inputs: ReadonlyArray<string>) => void;
     readonly disabled?: boolean;
+    /** When a dialog already titles the list, the legend stays for assistive technology only. */
+    readonly titled?: boolean;
   },
 ) {
   const gt = useGT();
@@ -220,7 +222,7 @@ export function ResultDeclaredInputs(
   return (
     <>
       <fieldset className="flex min-w-0 flex-col gap-2" disabled={props.disabled}>
-        <legend className="text-sm font-medium">
+        <legend className={props.titled ? "sr-only" : "text-sm font-medium"}>
           <T>Input files</T>
         </legend>
         <p className="text-xs text-muted-foreground">

@@ -639,7 +639,8 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
 1. Put simple assignments in a Python, R or Julia code cell. Open **Cell actions** and select
    **Tag as parameters**.
 2. Change values in the parameters bar. These changes stay pending when you switch files and
-   apply when you choose **Run fresh with input** from a data file. The bar can show the values
+   apply when you choose **Run fresh with input** or **Run with input and saved values** from a
+   data file. The bar can show the values
    the last clean run used. Expressions in the parameters cell run before the overrides apply,
    so move calculations that depend on changed values to a later cell.
 3. To record data files with the run, choose **Input files…** from the Run menu. The list starts
@@ -682,8 +683,9 @@ code, **Run for this value** saves an alternative while keeping the published se
 file in place. Browsing settings uses saved results.
 
 Agents can read headings, parameter defaults and saved alternatives with `scient_notebook_read`.
-They can tag or fold cells with `scient_notebook_edit` and publish a fresh run with
-`scient_notebook_run` using `fresh: true` and JSON overrides such as `{"threshold": 0.7}`.
+They can tag or fold cells with `scient_notebook_edit` and start a fresh run with
+`scient_notebook_run` using `fresh: true` and JSON overrides such as `{"threshold": 0.7}`. A long
+run or sweep returns a run ID; ask the agent to stop it and it uses `scient_notebook_stop`.
 
 ## Working with agents
 

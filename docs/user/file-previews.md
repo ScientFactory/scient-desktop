@@ -57,7 +57,8 @@ shown in its summary. Use **Cancel** to stop a profile in progress.
 Open **Actions** in the dataset or view and choose **Use in analysis…**. Pick a saved script or
 notebook. The example starts in the notebook’s language when Scient supports it.
 Use the language selector to change it. Copy the example into the analysis and save the code.
-Choose **Run fresh with input** to record the file as an input file for that run.
+Choose **Run fresh with input** to record the file as an input file for that run. For a notebook
+whose parameters you have not changed, the button reads **Run with input and saved values**.
 The Python, R and Julia examples for SQL views use DuckDB in the selected
 analysis environment. Run them from the project root.
 

@@ -1057,6 +1057,7 @@ export default function ScientNotebookSurface(props: {
                 inputs={inputs}
                 suggestedInputs={savedSetup?.suggestedInputs ?? []}
                 disabled={!canRerun || runningFresh}
+                titled
                 onChange={(next) =>
                   useNotebookRunDrafts.getState().update(draftKey, { inputs: next })
                 }
