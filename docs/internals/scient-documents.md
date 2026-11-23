@@ -133,3 +133,25 @@ actual mounted paths, including negative cases. Broader product priorities and
 proposed editor changes belong in Scient's product/planning repository; they
 must not be presented as implementation merely because this map links the
 relevant source.
+
+## Document Lab desktop preview
+
+The macOS development candidate can offer built-in skills for Word, Excel,
+PowerPoint, existing PDFs, Google Workspace, document review and reusable
+templates. From the candidate worktree, run `node scripts/setup-document-lab.mjs`
+with the repository's Node version and `uv`, LibreOffice, Pandoc, Poppler, qpdf
+and FriBidi available. The setup installs the locked Python and Node
+dependencies into a separate generation inside the candidate's
+`.scient-next/document-lab` folder and publishes it after the capability
+probe. Start the candidate afterwards so the skill catalog picks up the
+generation. When the preview catalog is available in a turn, its note tells
+agents to load the matching Scient skill before choosing a workflow. The
+note names the Scient loader so agents can distinguish it from a provider's
+own loader when skill names or coverage overlap.
+
+Agents use `scient_document_runtime` to locate the staged tools on the
+candidate's server. It reports paths and runs no document operations. Use the
+preview with trusted fixtures. The native tools come from the host, and the
+runtime does not isolate their filesystem or network access. Shipping requires
+patched, pinned native tools and isolation for document jobs. Google writes
+use the active Drive connector and require its edit scopes.

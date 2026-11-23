@@ -162,6 +162,7 @@ import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
+import * as DocumentLabRuntime from "../scient/documents/DocumentLabRuntime.ts";
 // SCIENT-FORK:START — Overleaf agent tools.
 import { ScientOverleafToolkitHandlersLive } from "./toolkits/overleaf/handlers.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
@@ -1794,6 +1795,7 @@ export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientS
 
 const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(ScientDocumentsToolkit).pipe(
   Layer.provide(ScientDocumentsToolkitHandlersLive),
+  Layer.provide(DocumentLabRuntime.layer),
 );
 
 // SCIENT-FORK:START — Overleaf agent tools.

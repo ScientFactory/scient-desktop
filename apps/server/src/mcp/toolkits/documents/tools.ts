@@ -31,6 +31,7 @@ import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
+import * as DocumentLabRuntime from "../../../scient/documents/DocumentLabRuntime.ts";
 
 const NonEmptyMessage = Schema.String.check(
   Schema.isTrimmed(),
@@ -202,8 +203,22 @@ const ScientDocumentExportTool = Tool.make("scient_document_export", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, documentOperation("documents.export"));
 
+const ScientDocumentRuntimeTool = Tool.make("scient_document_runtime", {
+  description:
+    "Find the Document Lab desktop preview's Python, document helpers and native tool paths. Call before using a built-in Word, Excel, PowerPoint or PDF processing skill. The runtime is available in opted-in development apps for trusted fixtures.",
+  parameters: Schema.Record(Schema.String, Schema.Never),
+  success: DocumentLabRuntime.DocumentLabRuntimeStatus,
+  dependencies: [DocumentLabRuntime.DocumentLabRuntime],
+})
+  .annotate(Tool.Title, "Find the Document Lab preview runtime")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, documentOperation("documents.runtime"));
+
 export const ScientDocumentsToolkit = Toolkit.make(
   ScientPdfBuildTool,
   ScientLatexBuildTool,
   ScientDocumentExportTool,
+  ScientDocumentRuntimeTool,
 );
