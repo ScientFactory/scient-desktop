@@ -228,6 +228,11 @@
       "path": "apps/server/src/telemetry/FailureAttribution.ts",
       "anchor": "ScientLatexBuildFailureClass",
       "purpose": "Map each bounded LaTeX failure class to who owns the failure (document, environment or Scient) without reading compiler output."
+    },
+    {
+      "path": "apps/web/src/scient/markdownEditor/ui/MarkdownDocumentSettings.tsx",
+      "anchor": "LatexSelect",
+      "purpose": "Reuse the LaTeX select in the Markdown Document settings card so both editors' cards look and behave the same."
     }
   ]
 }
