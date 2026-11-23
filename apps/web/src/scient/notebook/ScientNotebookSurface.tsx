@@ -182,7 +182,7 @@ export default function ScientNotebookSurface(props: {
     cwd: props.cwd,
     scriptPath: props.relativePath,
   });
-  const settledFreshRun = fresh.job?.outcome === undefined ? null : fresh.job.runId;
+  const settledFreshRun = fresh.settledRunId;
   const canRerun = useAtomValue(
     computeEnvironment.notebookFreshStart.permissionAtom(props.environmentId),
   );

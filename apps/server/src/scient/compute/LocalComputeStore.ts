@@ -20,12 +20,15 @@ import {
   type ComputeSessionStorage,
 } from "@scientfactory/compute";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
@@ -85,6 +88,22 @@ function isSafeSegment(value: string): boolean {
   // because a deny list of dangerous characters is a list someone has to keep
   // complete.
   return SAFE_SEGMENT_PATTERN.test(value);
+}
+
+export type ComputeHistoryExecutionRef = Pick<
+  ComputeExecutionRequestRecord,
+  "executionId" | "source" | "submittedAt"
+>;
+
+const historyRef = ({ executionId, source, submittedAt }: ComputeHistoryExecutionRef) => ({
+  executionId,
+  source,
+  submittedAt,
+});
+
+interface SessionHistoryIndex {
+  readonly ready: Deferred.Deferred<void, LocalComputeStoreError>;
+  readonly refs: Map<ComputeExecutionId, ComputeHistoryExecutionRef>;
 }
 
 export interface ResolvedComputeOutputResource {
@@ -187,7 +206,12 @@ export class LocalComputeStore extends Context.Service<
       projectId: ComputeProjectId,
       sessionId: ComputeSessionId,
       executionId: ComputeExecutionId,
+      tolerateCorruption?: boolean,
     ) => Effect.Effect<ComputeExecutionRecord | null, LocalComputeStoreError>;
+    readonly loadHistoryRefs: (
+      projectId: ComputeProjectId,
+      sessionId: ComputeSessionId,
+    ) => Effect.Effect<ReadonlyArray<ComputeHistoryExecutionRef>, LocalComputeStoreError>;
     readonly loadOutputs: (
       projectId: ComputeProjectId,
       sessionId: ComputeSessionId,
@@ -295,6 +319,7 @@ async function fileByteLength(filePath: string): Promise<number> {
 }
 
 const make = Effect.gen(function* () {
+  const scope = yield* Scope.Scope;
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -302,6 +327,7 @@ const make = Effect.gen(function* () {
   // append, and both are safe against a reader; what they are not safe against
   // is another writer appending between this one's encode and its write.
   const writeLock = yield* Semaphore.make(1);
+  const historyIndexes = new Map<ComputeProjectId, Map<ComputeSessionId, SessionHistoryIndex>>();
   const sessionsRoot = path.join(config.computeDir, "sessions");
 
   const storeError = (operation: string, operationPath: string, cause: unknown) =>
@@ -455,7 +481,17 @@ const make = Effect.gen(function* () {
           ...request,
           ...(initialResult === undefined ? {} : { initialResult }),
         }).pipe(mapStoreError("encode-execution-request", filePath));
-        yield* atomicWrite(filePath, contents);
+        yield* atomicWrite(filePath, contents).pipe(
+          Effect.tap(() =>
+            Effect.sync(() =>
+              historyIndexes
+                .get(projectId)
+                ?.get(request.sessionId)
+                ?.refs.set(request.executionId, historyRef(request)),
+            ),
+          ),
+          Effect.uninterruptible,
+        );
       }),
     );
 
@@ -672,6 +708,38 @@ const make = Effect.gen(function* () {
     return sessions.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
   });
 
+  const readExecutionRequest = Effect.fnUntraced(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+    executionsRoot: string,
+    executionId: string,
+  ) {
+    if (!isSafeSegment(executionId)) return null;
+    const requestPath = path.join(executionsRoot, executionId, "request.json");
+    if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath)))) return null;
+    const request = decodeRequest(
+      yield* fs
+        .readFileString(requestPath)
+        .pipe(mapStoreError("read-execution-request", requestPath)),
+    );
+    if (
+      Option.isNone(request) ||
+      request.value.sessionId !== sessionId ||
+      request.value.executionId !== executionId
+    ) {
+      yield* Effect.logWarning(
+        "compute execution request skipped as unreadable or at the wrong path",
+        {
+          projectId,
+          sessionId,
+          executionId,
+        },
+      );
+      return null;
+    }
+    return request.value;
+  });
+
   const loadExecutions = Effect.fn("LocalComputeStore.loadExecutions")(function* (
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
@@ -688,35 +756,9 @@ const make = Effect.gen(function* () {
     const executions = yield* Effect.forEach(
       entries,
       Effect.fnUntraced(function* (entry) {
-        if (!isSafeSegment(entry)) return null;
-        const requestPath = path.join(executionsRoot, entry, "request.json");
-        if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath))))
-          return null;
-        const requestText = yield* fs
-          .readFileString(requestPath)
-          .pipe(mapStoreError("read-execution-request", requestPath));
-        const request = decodeRequest(requestText);
-        if (Option.isNone(request)) {
-          // Skipped, not fatal, for the same reason as `loadSessions`: one
-          // unreadable request must not make a whole session's history
-          // unreadable, and there is nothing else to be done with a request
-          // that cannot be decoded -- it cannot even be marked lost.
-          yield* Effect.logWarning("compute execution request skipped as unreadable", {
-            projectId,
-            sessionId,
-            executionId: entry,
-          });
-          return null;
-        }
-        if (request.value.sessionId !== sessionId || request.value.executionId !== entry) {
-          yield* Effect.logWarning("compute execution request identity did not match its path", {
-            projectId,
-            sessionId,
-            executionId: entry,
-          });
-          return null;
-        }
-        const { initialResult, ...requestRecord } = request.value;
+        const request = yield* readExecutionRequest(projectId, sessionId, executionsRoot, entry);
+        if (request === null) return null;
+        const { initialResult, ...requestRecord } = request;
         const resultPath = path.join(executionsRoot, entry, "result.json");
         const hasResult = yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath));
         // A missing result can still have an admission receipt. An unreadable
@@ -729,7 +771,7 @@ const make = Effect.gen(function* () {
             )
           : Option.fromNullOr(queuedReceipt(requestRecord.executionId, initialResult));
         const decodedResult = Option.getOrNull(result);
-        if (decodedResult !== null && decodedResult.executionId !== request.value.executionId) {
+        if (decodedResult !== null && decodedResult.executionId !== request.executionId) {
           yield* Effect.logWarning("compute execution result identity did not match its path", {
             projectId,
             sessionId,
@@ -750,7 +792,9 @@ const make = Effect.gen(function* () {
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
+    tolerateCorruption = false,
   ) {
+    if (tolerateCorruption && !isSafeSegment(executionId)) return null;
     const directory = yield* executionDirectory(projectId, sessionId, executionId);
     const requestPath = path.join(directory, "request.json");
     if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath)))) return null;
@@ -763,6 +807,7 @@ const make = Effect.gen(function* () {
       request.value.sessionId !== sessionId ||
       request.value.executionId !== executionId
     ) {
+      if (tolerateCorruption) return null;
       return yield* storeError(
         "decode-execution-request",
         requestPath,
@@ -779,6 +824,7 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(result)) return { request: requestRecord, result: null };
     if (result.value.executionId !== executionId) {
+      if (tolerateCorruption) return { request: requestRecord, result: null };
       return yield* storeError(
         "decode-execution-result",
         resultPath,
@@ -786,6 +832,54 @@ const make = Effect.gen(function* () {
       );
     }
     return { request: requestRecord, result: result.value };
+  });
+
+  const loadHistoryRefs = Effect.fn("LocalComputeStore.loadHistoryRefs")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+  ) {
+    const directory = yield* sessionDirectory(projectId, sessionId);
+    const root = path.join(directory, "executions");
+    const project =
+      historyIndexes.get(projectId) ?? new Map<ComputeSessionId, SessionHistoryIndex>();
+    historyIndexes.delete(projectId);
+    historyIndexes.set(projectId, project);
+    if (historyIndexes.size > 4) {
+      const oldest = historyIndexes.keys().next().value;
+      if (oldest !== undefined) historyIndexes.delete(oldest);
+    }
+    const index: SessionHistoryIndex = { ready: Deferred.makeUnsafe(), refs: new Map() };
+    const read = Effect.gen(function* () {
+      if (!(yield* fs.exists(root).pipe(mapStoreError("exists", root)))) return;
+      const entries = yield* fs.readDirectory(root).pipe(mapStoreError("read-executions", root));
+      yield* Effect.forEach(
+        entries,
+        Effect.fnUntraced(function* (id) {
+          const request = yield* readExecutionRequest(projectId, sessionId, root, id);
+          if (request !== null) index.refs.set(request.executionId, historyRef(request));
+        }),
+        { concurrency: 8, discard: true },
+      );
+    });
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        let active = project.get(sessionId);
+        if (active === undefined) {
+          active = index;
+          project.set(sessionId, index);
+          yield* read.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (Exit.isFailure(exit)) project.delete(sessionId);
+              }).pipe(Effect.andThen(Deferred.done(index.ready, exit))),
+            ),
+            Effect.forkIn(scope, { uninterruptible: false }),
+          );
+        }
+        yield* restore(Deferred.await(active.ready));
+        return Array.from(active.refs.values());
+      }),
+    );
   });
 
   const loadOutputs = Effect.fn("LocalComputeStore.loadOutputs")(function* (
@@ -1093,6 +1187,7 @@ const make = Effect.gen(function* () {
     loadSession,
     loadExecutions,
     loadExecution,
+    loadHistoryRefs,
     loadOutputs,
     loadJournal,
     resolveOutputImage,

@@ -46,7 +46,10 @@ export const makeScientificRpcHandlers = ({
   readonly computeGateway: ComputeRpcGateway;
   readonly saveComputeOutput: ReturnType<typeof makeComputeOutputSave>;
   readonly computeDir: string;
-  readonly notebookRuns: Pick<ReturnType<typeof makeNotebookRuns>, "start" | "status" | "stop">;
+  readonly notebookRuns: Pick<
+    ReturnType<typeof makeNotebookRuns>,
+    "start" | "status" | "watch" | "stop"
+  >;
   readonly notebooks: NotebookStore.NotebookStore["Service"];
   readonly saveConsoleNotebook: ReturnType<typeof makeComputeConsoleNotebook>;
   readonly computeNotebookOutputs: ReturnType<typeof makeComputeNotebookOutputs>;
@@ -339,6 +342,10 @@ export const makeScientificRpcHandlers = ({
       }),
     [WS_METHODS.notebookFreshStop]: (input) =>
       observeRpcEffect(WS_METHODS.notebookFreshStop, notebookRuns.stop(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.subscribeNotebookFreshRun]: (input) =>
+      observeRpcStreamEffect(WS_METHODS.subscribeNotebookFreshRun, notebookRuns.watch(input), {
         "rpc.aggregate": "compute",
       }),
     [WS_METHODS.notebookRead]: (input) =>

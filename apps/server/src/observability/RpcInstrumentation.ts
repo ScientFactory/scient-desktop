@@ -374,6 +374,7 @@ const RPC_AGGREGATES = {
   // SCIENT-FORK:START — fresh notebooks submit work and read its status.
   [WS_METHODS.notebookFreshStart]: "compute",
   [WS_METHODS.notebookFreshStatus]: "compute",
+  [WS_METHODS.subscribeNotebookFreshRun]: "compute",
   [WS_METHODS.notebookFreshStop]: "compute",
   // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: "subscribe",

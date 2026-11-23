@@ -399,6 +399,7 @@ export const RPC_REQUIRED_SCOPES = {
   // SCIENT-FORK:START — fresh notebooks submit work and read its status.
   [WS_METHODS.notebookFreshStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.notebookFreshStatus]: AuthFilesystemReadScope,
+  [WS_METHODS.subscribeNotebookFreshRun]: AuthFilesystemReadScope,
   [WS_METHODS.notebookFreshStop]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,

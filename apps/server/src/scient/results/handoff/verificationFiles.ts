@@ -89,7 +89,9 @@ export async function stageVerificationFiles(
   scratch: string,
   manifest: ResultHandoffManifest,
   input: ResultHandoffVerifyInput,
+  signal: AbortSignal,
 ): Promise<VerifiedPackageFiles> {
+  signal.throwIfAborted();
   const suppliedFolder =
     input.inputsFolder === undefined
       ? null
@@ -111,6 +113,7 @@ export async function stageVerificationFiles(
     readonly kind?: "input";
     readonly matchedMessage?: string;
   }) => {
+    signal.throwIfAborted();
     const path = file.label ?? file.path;
     const original =
       file.root === null ? null : await regularPackageFile(file.root, file.path, file.kind);
@@ -133,7 +136,7 @@ export async function stageVerificationFiles(
     }
     const matched =
       file.copyTo === undefined
-        ? await matchesFile(original, file.sha256, file.size)
+        ? await matchesFile(original, file.sha256, file.size, signal)
         : await copyPackageFile(
             original,
             file.copyTo.root,
@@ -141,6 +144,7 @@ export async function stageVerificationFiles(
             file.sha256,
             file.size,
             file.copyTo.kind,
+            signal,
           );
     files.push(
       matched
@@ -168,7 +172,7 @@ export async function stageVerificationFiles(
     copyTo: source,
   });
   if (files.at(-1)?.status === "matched") {
-    const contents = await NodeFSP.readFile(packagePath(workspace, source.path));
+    const contents = await NodeFSP.readFile(packagePath(workspace, source.path), { signal });
     const hash =
       manifest.source.kind === "script"
         ? hashBytes(contents)
@@ -256,7 +260,10 @@ export async function stageVerificationFiles(
       copyTo: { root: scratch, path: "packages.json" },
     });
     if (files.at(-1)?.status === "matched") {
-      const recorded = await NodeFSP.readFile(NodePath.join(scratch, "packages.json"), "utf8");
+      const recorded = await NodeFSP.readFile(NodePath.join(scratch, "packages.json"), {
+        encoding: "utf8",
+        signal,
+      });
       packages = Schema.decodeUnknownSync(
         Schema.Array(
           Schema.Struct({
@@ -291,8 +298,10 @@ export async function stageVerificationFiles(
       .map((file) => `environment/lockfiles/${file.path}`),
     ...(manifest.environment.packageListSha256 === undefined ? [] : ["environment/packages.json"]),
   ]);
-  const entries = await NodeFSP.readdir(folder, { recursive: true, withFileTypes: true });
-  for (const entry of entries) {
+  signal.throwIfAborted();
+  const entries = await NodeFSP.opendir(folder, { recursive: true });
+  for await (const entry of entries) {
+    signal.throwIfAborted();
     const name = NodePath.relative(folder, NodePath.join(entry.parentPath, entry.name))
       .split(NodePath.sep)
       .join("/");

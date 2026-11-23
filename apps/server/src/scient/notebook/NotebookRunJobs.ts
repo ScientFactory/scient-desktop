@@ -6,14 +6,17 @@ import {
   ComputeSessionId,
   type ComputeResultsRerunResult,
   type NotebookFreshRun,
+  type NotebookFreshRunUpdate,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 const RETAINED_RUNS = 128;
 const isResultsError = Schema.is(ComputeResultsError);
@@ -35,6 +38,7 @@ interface Job {
 export const makeNotebookRunJobs = Effect.gen(function* () {
   const scope = yield* Scope.Scope;
   const jobs = new Map<ComputeSessionId, Job>();
+  const subscribers = new Map<string, Set<Queue.Queue<NotebookFreshRunUpdate>>>();
 
   const find = (key: string, runId?: ComputeSessionId) => {
     const job =
@@ -50,7 +54,43 @@ export const makeNotebookRunJobs = Effect.gen(function* () {
     ...job.details,
   });
 
+  const snapshot = (key: string): NotebookFreshRunUpdate => {
+    const job = find(key);
+    const settled = [...jobs.values()].findLast(
+      (entry) => entry.key === key && entry.outcome !== undefined,
+    );
+    return { job: job === undefined ? null : status(job), settledRunId: settled?.runId ?? null };
+  };
+
+  const publish = (key: string) => {
+    const queues = subscribers.get(key);
+    if (queues === undefined) return;
+    const update = snapshot(key);
+    for (const queue of queues) Queue.offerUnsafe(queue, update);
+  };
+
   return {
+    watch: (key: string) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const queue = yield* Queue.sliding<NotebookFreshRunUpdate>(1);
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              const queues = subscribers.get(key) ?? new Set();
+              queues.add(queue);
+              subscribers.set(key, queues);
+              Queue.offerUnsafe(queue, snapshot(key));
+              return queues;
+            }),
+            (queues) =>
+              Effect.sync(() => {
+                queues.delete(queue);
+                if (queues.size === 0) subscribers.delete(key);
+              }),
+          );
+          return Stream.fromQueue(queue);
+        }),
+      ),
     start: Effect.fn("NotebookRunJobs.start")(function* (
       key: string,
       execute: (
@@ -72,9 +112,11 @@ export const makeNotebookRunJobs = Effect.gen(function* () {
         cancel: Deferred.makeUnsafe(),
       };
       jobs.set(runId, job);
+      publish(key);
       const work = execute((update) => {
         if (job.details.progress?.phase === "stopping") return false;
         job.details = { ...job.details, ...update };
+        publish(key);
         return true;
       });
       yield* Effect.raceFirst(work, Deferred.await(job.cancel).pipe(Effect.as(stopped))).pipe(
@@ -93,6 +135,7 @@ export const makeNotebookRunJobs = Effect.gen(function* () {
         Effect.flatMap((outcome) =>
           Effect.gen(function* () {
             job.outcome = outcome;
+            publish(key);
             yield* Deferred.succeed(job.done, outcome);
             for (const entry of jobs.values()) {
               if (jobs.size <= RETAINED_RUNS) break;
@@ -113,6 +156,7 @@ export const makeNotebookRunJobs = Effect.gen(function* () {
           ...job.details,
           progress: { cell: 0, total: 0, ...job.details.progress, phase: "stopping" },
         };
+        publish(key);
         yield* Deferred.succeed(job.cancel, undefined);
       }
       return status(job);

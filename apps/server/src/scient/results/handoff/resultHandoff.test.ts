@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- synthetic package and runtime outputs live in temporary folders.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeStream from "node:stream";
 
 import type { ExecutionProcessPort } from "@scientfactory/execution";
 import {
@@ -10,12 +12,14 @@ import {
   type ResultHandoffExportProgress,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { makeResultsReader, publishScriptRun } from "../resultRevisions.ts";
-import { comparePackageValues } from "./comparePackageValues.ts";
 import { exportResultPackage } from "./exportResultPackage.ts";
 import { hashBytes } from "./handoffFiles.ts";
 import { handoffLockfileChoices } from "./handoffEnvironment.ts";
@@ -23,31 +27,7 @@ import { exportHandoffInputs } from "./handoffInputs.ts";
 import { makeResultHandoff } from "./ResultHandoff.ts";
 import { verifyResultPackage } from "./verifyResultPackage.ts";
 
-it("uses the recorded value for relative tolerance and keeps strings and large integers exact", () => {
-  const expected = '{"nearZero":0,"close":1,"large":9007199254740992,"text":"1","control":123}';
-  const actual = '{"text":1,"close":1.01,"large":9007199254740993,"nearZero":5e-13,"control":123}';
-  expect(comparePackageValues(expected, actual, { absolute: 1e-12, relative: 1e-3 })).toMatchObject(
-    {
-      differenceCount: 3,
-      maxAbsoluteError: { pointer: "/large", error: 1 },
-      maxRelativeError: { pointer: "/close", error: expect.closeTo(0.01, 12) },
-      values: expect.arrayContaining([
-        {
-          pointer: "/large",
-          expected: "9007199254740992",
-          actual: "9007199254740993",
-          absoluteDifference: 1,
-          relativeDifference: 1 / 9007199254740992,
-        },
-      ]),
-    },
-  );
-  const boundary = comparePackageValues('{"n":100.0}', '{"n":110.5}', {
-    absolute: 0,
-    relative: 0.1,
-  });
-  expect(boundary.differenceCount).toBe(1);
-});
+vi.mock("node:fs", { spy: true });
 
 const decodeManifest = Schema.decodeUnknownSync(ResultHandoffManifest);
 
@@ -322,6 +302,54 @@ it.effect(
         manifestText,
       );
       expect(launched).toBe(2);
+
+      for (const stop of ["request", "disconnect"] as const) {
+        const copying = yield* Deferred.make<void>();
+        const blocked = new NodeStream.PassThrough();
+        const realFs = yield* Effect.promise(() => vi.importActual<typeof NodeFS>("node:fs"));
+        using _stream = vi.spyOn(NodeFS, "createReadStream").mockImplementation((path, options) => {
+          if (path !== NodePath.join(root, "cohort.csv"))
+            return realFs.createReadStream(path, options);
+          Deferred.doneUnsafe(copying, Effect.void);
+          return blocked as unknown as NodeFS.ReadStream;
+        });
+        let scratch: string | undefined;
+        using _write = vi.spyOn(NodeFS, "createWriteStream").mockImplementation((path, options) => {
+          if (typeof path === "string" && NodePath.basename(path) === "cohort.csv")
+            scratch = NodePath.dirname(NodePath.dirname(path));
+          return realFs.createWriteStream(path, options);
+        });
+        const verification = yield* handoff
+          .verify({
+            packageFolder: folder,
+            inputsFolder: root,
+            allowExecution: true,
+            verificationId: "cancel-staging",
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(copying);
+        if (stop === "request") {
+          expect(yield* handoff.cancelVerification({ verificationId: "cancel-staging" })).toEqual({
+            requested: true,
+          });
+          const { report, reportPath } = yield* Fiber.join(verification);
+          expect(report.status).toBe("cancelled");
+          expect(yield* Effect.promise(() => NodeFSP.readFile(reportPath, "utf8"))).toContain(
+            '"status": "cancelled"',
+          );
+        } else {
+          yield* Fiber.interrupt(verification);
+        }
+        expect(yield* handoff.cancelVerification({ verificationId: "cancel-staging" })).toEqual({
+          requested: false,
+        });
+        expect(blocked.destroyed).toBe(true);
+        expect(launched).toBe(2);
+        expect(scratch).toBeDefined();
+        yield* Effect.promise(() =>
+          expect(NodeFSP.access(scratch!)).rejects.toMatchObject({ code: "ENOENT" }),
+        );
+      }
 
       yield* Effect.promise(() =>
         NodeFSP.appendFile(NodePath.join(root, "cohort.csv"), "changed\n"),

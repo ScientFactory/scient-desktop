@@ -127,6 +127,8 @@ import {
   NotebookFreshRunInput,
   NotebookFreshRunStatusInput,
   NotebookFreshRunStopInput,
+  NotebookFreshRunSubscribeInput,
+  NotebookFreshRunUpdate,
   NotebookOutputJson,
   NotebookReadInput,
   NotebookReadOutputInput,
@@ -197,6 +199,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   notebookFreshStart: "notebook.freshStart",
   notebookFreshStatus: "notebook.freshStatus",
   notebookFreshStop: "notebook.freshStop",
+  subscribeNotebookFreshRun: "subscribe.notebookFreshRun",
   subscribeComputeSessions: "subscribe.computeSessions",
   subscribeComputeActiveWork: "subscribe.computeActiveWork",
 
@@ -668,6 +671,16 @@ const WsNotebookFreshStopRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookFre
   error: Schema.Union([ComputeResultsError, EnvironmentAuthorizationError]),
 });
 
+const WsSubscribeNotebookFreshRunRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.subscribeNotebookFreshRun,
+  {
+    payload: NotebookFreshRunSubscribeInput,
+    success: NotebookFreshRunUpdate,
+    error: Schema.Union([ComputeResultsError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 const WsNotebookReadRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookRead, {
   payload: NotebookReadInput,
   success: Schema.NullOr(NotebookView),
@@ -768,5 +781,6 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsNotebookFreshStartRpc,
   WsNotebookFreshStatusRpc,
   WsNotebookFreshStopRpc,
+  WsSubscribeNotebookFreshRunRpc,
   WsSubscribeComputeSessionsRpc,
 );

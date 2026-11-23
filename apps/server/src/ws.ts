@@ -4417,6 +4417,7 @@ export const layerWsRpc = (
       const notebookRuns = makeNotebookRuns({
         computeDir: config.computeDir,
         jobs: yield* NotebookRunJobs,
+        workspacePaths: yield* WorkspacePaths.WorkspacePaths,
         gateway: computeGateway,
         notebooks,
         notebookOutputs: computeNotebookOutputs,

@@ -10,21 +10,29 @@ import {
   ComputeLanguageId,
   type ComputeManagedRuntimeStatus,
   type EnvironmentId,
+  type NotebookFreshRunSubscribeInput,
+  ComputeResultsError,
   type ScientificComputingSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { subscribe } from "../rpc/client.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
+
+const isComputeResultsError = Schema.is(ComputeResultsError);
 
 /** Progress polling belongs to shared state, not to whichever screen started setup. */
 export function withManagedRuntimePolling<A extends ComputeManagedRuntimeStatus | null, E>(
@@ -676,9 +684,19 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.notebookFreshStart,
       scheduler: executionScheduler,
     }),
-    notebookFreshStatus: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:notebook:fresh-status",
-      tag: WS_METHODS.notebookFreshStatus,
+    notebookFreshRun: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:notebook:fresh-run",
+      subscribe: (input: NotebookFreshRunSubscribeInput) =>
+        subscribe(WS_METHODS.subscribeNotebookFreshRun, input, {
+          resubscribeOnCompleteAfter: "1 second",
+        }).pipe(
+          Stream.retry(
+            Schedule.spaced("2 seconds").pipe(
+              Schedule.while(({ input }) => isComputeResultsError(input)),
+            ),
+          ),
+        ),
+      idleTtlMs: 0,
     }),
     notebookFreshStop: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:notebook:fresh-stop",

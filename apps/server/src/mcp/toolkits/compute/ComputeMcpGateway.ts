@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import { WorkspacePaths } from "../../../workspace/WorkspacePaths.ts";
 import * as ScientificRuntimePreferences from "../../../scient/compute/ScientificRuntimePreferences.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
@@ -119,6 +120,7 @@ export const ComputeMcpGatewayLive = Layer.effect(
     const notebookRuns = makeNotebookRuns({
       computeDir,
       jobs: yield* NotebookRunJobs,
+      workspacePaths: yield* WorkspacePaths,
       gateway: rpc,
       notebooks,
       notebookOutputs,

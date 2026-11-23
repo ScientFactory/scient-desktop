@@ -1,5 +1,6 @@
 import "~/index.css";
 
+import { RegistryContext } from "@effect/atom-react";
 import {
   ComputeLanguageId,
   ComputeResultRevisionId,
@@ -10,27 +11,40 @@ import {
   type NotebookAlternatives,
   type NotebookCellView,
   type NotebookFreshRun,
+  type NotebookFreshRunUpdate,
   type NotebookView,
 } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { computeEnvironment } from "~/state/compute";
 import ScientNotebookSurface from "./ScientNotebookSurface";
 import { useNotebookRunDrafts } from "./notebookRunDrafts";
 
-const { freshStart, freshStatus, freshStop, runtimeQuery } = vi.hoisted(() => ({
+const { freshStart, freshStop, runtimeQuery } = vi.hoisted(() => ({
   freshStart: vi.fn(),
-  freshStatus: vi.fn(),
   freshStop: vi.fn(),
   runtimeQuery: "test-notebook-runtime",
 }));
 
+const freshRunAtom = Atom.make(
+  AsyncResult.success<NotebookFreshRunUpdate>({
+    job: null,
+    settledRunId: null,
+  }),
+);
+
 vi.mock("~/state/compute", async (original) => {
   const actual = await original<typeof import("~/state/compute")>();
-  return { computeEnvironment: { ...actual.computeEnvironment, runtimes: () => runtimeQuery } };
+  return {
+    computeEnvironment: {
+      ...actual.computeEnvironment,
+      runtimes: () => runtimeQuery,
+      notebookFreshRun: () => freshRunAtom,
+    },
+  };
 });
 
 vi.mock("~/state/query", async (original) => ({
@@ -48,7 +62,6 @@ vi.mock("~/state/use-atom-command", async (original) => ({
   ...(await original<typeof import("~/state/use-atom-command")>()),
   useAtomCommand: (command: unknown) => {
     if (command === computeEnvironment.notebookFreshStart) return freshStart;
-    if (command === computeEnvironment.notebookFreshStatus) return freshStatus;
     if (command === computeEnvironment.notebookFreshStop) return freshStop;
     if (command === computeEnvironment.notebookRead)
       return async () => AsyncResult.success(notebook);
@@ -192,8 +205,12 @@ const screenshots = import.meta.env.VITE_NOTEBOOK_DESIGN_SCREENSHOTS as string |
 it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
   "returns keyboard focus from the outline and previews saved parameter settings in %s",
   async (theme) => {
-    freshStart.mockReset().mockResolvedValue(AsyncResult.success({ runId: "fixture-run" }));
-    freshStatus.mockReset().mockResolvedValue(AsyncResult.success(null));
+    freshStart.mockReset().mockResolvedValue(
+      AsyncResult.success({
+        runId: ComputeSessionId.make("fixture-run"),
+        outcome: { _tag: "failed", message: "Test run completed." },
+      }),
+    );
     useNotebookRunDrafts.setState({ drafts: {} });
     using _permission = vi
       .spyOn(computeEnvironment.notebookFreshStart, "permissionAtom")
@@ -308,35 +325,40 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
   },
 );
 
-it("reopens on the server job's running values and stops that job", async () => {
+it("receives a server-started job while idle and stops that job", async () => {
   const job: NotebookFreshRun = {
     runId: ComputeSessionId.make("reopened-job"),
     parameters: { threshold: "0.7" },
     progress: { phase: "running", cell: 2, total: 4 },
   };
   useNotebookRunDrafts.setState({ drafts: {} });
-  freshStatus.mockReset().mockResolvedValue(AsyncResult.success(job));
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
   freshStop.mockReset().mockImplementation(async () => {
-    const stopped = AsyncResult.success({
+    const stopped: NotebookFreshRun = {
       ...job,
       outcome: { _tag: "failed", message: "The notebook run was stopped." },
-    });
-    freshStatus.mockResolvedValue(stopped);
-    return stopped;
+    };
+    registry.set(freshRunAtom, AsyncResult.success({ job: stopped, settledRunId: job.runId }));
+    return AsyncResult.success(stopped);
   });
   using _permission = vi
     .spyOn(computeEnvironment.notebookFreshStop, "permissionAtom")
     .mockReturnValue(Atom.make(true));
   await using screen = await render(
-    <ScientNotebookSurface
-      environmentId={environmentId}
-      cwd="/project"
-      relativePath="threshold.ipynb"
-      threadRef={threadRef}
-      fileRevision="1.0"
-    />,
+    <RegistryContext.Provider value={registry}>
+      <ScientNotebookSurface
+        environmentId={environmentId}
+        cwd="/project"
+        relativePath="threshold.ipynb"
+        threadRef={threadRef}
+        fileRevision="1.0"
+      />
+    </RegistryContext.Provider>,
   );
   const slider = screen.getByRole("slider", { name: "threshold" });
+  await expect.element(slider).toBeEnabled();
+  await act(() => registry.set(freshRunAtom, AsyncResult.success({ job, settledRunId: null })));
   await expect.element(slider).toHaveValue("0.7");
   await expect.element(slider).toBeDisabled();
   await expect.element(screen.getByText("Cell 2 of 4", { exact: true })).toBeVisible();
@@ -359,19 +381,27 @@ it("lets the author choose sweep values and shows the failed settings", async ()
     },
   };
   useNotebookRunDrafts.setState({ drafts: {} });
-  freshStatus.mockReset().mockResolvedValue(AsyncResult.success(null));
-  freshStart.mockReset().mockResolvedValue(AsyncResult.success(job));
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  freshStart.mockReset().mockResolvedValue(
+    AsyncResult.success({
+      runId: job.runId,
+      progress: { phase: "running", cell: 1, total: 2 },
+    } satisfies NotebookFreshRun),
+  );
   using _permission = vi
     .spyOn(computeEnvironment.notebookFreshStart, "permissionAtom")
     .mockReturnValue(Atom.make(true));
   await using screen = await render(
-    <ScientNotebookSurface
-      environmentId={environmentId}
-      cwd="/project"
-      relativePath="threshold.ipynb"
-      threadRef={threadRef}
-      fileRevision="1.0"
-    />,
+    <RegistryContext.Provider value={registry}>
+      <ScientNotebookSurface
+        environmentId={environmentId}
+        cwd="/project"
+        relativePath="threshold.ipynb"
+        threadRef={threadRef}
+        fileRevision="1.0"
+      />
+    </RegistryContext.Provider>,
   );
   await screen.getByRole("button", { name: "Choose Python code to run" }).click();
   await page.getByRole("menuitem", { name: "Run for each threshold value" }).click();
@@ -380,6 +410,14 @@ it("lets the author choose sweep values and shows the failed settings", async ()
   await dialog.getByRole("textbox", { name: "Values" }).fill("0.3\n0.7");
   expect(freshStart).not.toHaveBeenCalled();
   await dialog.getByRole("button", { name: "Start 2 runs" }).click();
+  // Admission resolves before the subscription delivers this job.
+  await expect.element(screen.getByText("Cell 1 of 2", { exact: true })).toBeVisible();
+  const slider = screen.getByRole("slider", { name: "threshold" });
+  await expect.element(slider).toBeDisabled();
+  await act(() =>
+    registry.set(freshRunAtom, AsyncResult.success({ job, settledRunId: job.runId })),
+  );
+  await expect.element(slider).toBeEnabled();
   await expect.element(screen.getByText("1 of 2 runs saved", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("threshold = 0.3 · A cell failed.")).toBeVisible();
   expect(freshStart).toHaveBeenCalledExactlyOnceWith({

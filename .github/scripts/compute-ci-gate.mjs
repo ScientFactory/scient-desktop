@@ -22,12 +22,13 @@ export function computeQualificationSuites(paths) {
   // The product case runs in the Linux 3.12 leg of the kernel job, which every real-kernel
   // run includes; changing only it needs only that leg.
   const productOnly = "apps/server/src/scient/compute/ComputeProduct.integration.test.ts";
+  const managedLock = "apps/server/src/scient/compute/managed-python/uv.lock";
   const managedOnly = new Set([
     "apps/server/src/scient/compute/ManagedPythonProduct.live.test.ts",
     "apps/server/src/scient/compute/ManagedPythonProduct.bench.ts",
     "apps/server/src/scient/compute/ComputeRecipe.live.test.ts",
     "apps/server/src/scient/compute/managed-python/pyproject.toml",
-    "apps/server/src/scient/compute/managed-python/uv.lock",
+    managedLock,
   ]);
   const exact = new Set([
     ".github/workflows/scient-compute-python-kernel.yml",
@@ -67,13 +68,19 @@ export function computeQualificationSuites(paths) {
   let allPlatforms = false;
   for (const path of paths) {
     if (ordinaryTest(path)) continue;
-    if (path === productOnly) {
+    if (
+      path === productOnly ||
+      path === "packages/shared/src/savedDataView.ts" ||
+      (path.startsWith("apps/server/src/scient/data/") && !path.endsWith(".scale.live.test.ts"))
+    ) {
       pythonProduct = true;
     } else if (kernelOnly.has(path) || path.startsWith("apps/server/src/preview/PortScanner")) {
       realKernel = true;
       allPlatforms = true;
     } else if (managedOnly.has(path)) {
       managedPython = true;
+      // The Linux data view tests install their DuckDB version from this lock.
+      if (path === managedLock) pythonProduct = true;
       allPlatforms = true;
     } else if (exact.has(path) || prefixes.some((prefix) => path.startsWith(prefix))) {
       realKernel = true;

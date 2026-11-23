@@ -113,6 +113,9 @@ describe("RPC authorization scopes", () => {
   });
 
   it("keeps compute inspection and history read-only while lifecycle changes require operate", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.subscribeNotebookFreshRun)).toBe(
+      AuthFilesystemReadScope,
+    );
     for (const method of [
       WS_METHODS.computeInspectRuntimes,
       WS_METHODS.computeRuntimeInventory,

@@ -38,7 +38,6 @@ NodeTest.test("known suite-specific inputs select only their consumer", () => {
     "apps/server/src/scient/compute/ManagedPythonProduct.bench.ts",
     "apps/server/src/scient/compute/ComputeRecipe.live.test.ts",
     "apps/server/src/scient/compute/managed-python/pyproject.toml",
-    "apps/server/src/scient/compute/managed-python/uv.lock",
   ])
     NodeAssert.deepEqual(computeQualificationSuites([path]), managed, path);
 });
@@ -51,11 +50,19 @@ NodeTest.test(
       suites(false, false, true, "linux"),
     );
     NodeAssert.equal(needsComputeQualification([product]), true);
+    for (const path of [
+      "apps/server/src/scient/data/DataViews.ts",
+      "apps/server/src/scient/data/DataViews.live.test.ts",
+      "packages/shared/src/savedDataView.ts",
+    ]) {
+      NodeAssert.deepEqual(computeQualificationSuites([path]), suites(false, false, true, "linux"));
+    }
+    NodeAssert.equal(
+      needsComputeQualification(["apps/server/src/scient/data/DataViews.scale.live.test.ts"]),
+      false,
+    );
     NodeAssert.deepEqual(
-      computeQualificationSuites([
-        product,
-        "apps/server/src/scient/compute/managed-python/uv.lock",
-      ]),
+      computeQualificationSuites(["apps/server/src/scient/compute/managed-python/uv.lock"]),
       suites(false, true, true, "all"),
     );
     NodeAssert.deepEqual(
@@ -296,7 +303,7 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
       changed: "true",
       real_kernel: "false",
       managed_python: "true",
-      python_product: "false",
+      python_product: "true",
       platforms: "all",
     };
     NodeAssert.deepEqual(detect({ before: scannerHead }, recipeHead), recipe);
@@ -305,7 +312,7 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
       recipe,
     );
     // Both changes in the same PR must retain both suites.
-    NodeAssert.deepEqual(detect({ pull_request: { base: { sha: head } } }, recipeHead), all);
+    NodeAssert.deepEqual(detect({ pull_request: { base: { sha: head } } }, recipeHead), failOpen);
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }

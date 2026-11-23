@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off -- verification uses an isolated scratch directory and publishes a report beside the package.
-import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -20,6 +19,7 @@ import type { ExecutionProcess } from "../../execution/LocalExecutionProcess.ts"
 import { sha256File } from "../resultRevisions.ts";
 import { comparePackageValues } from "./comparePackageValues.ts";
 import {
+  copyFileExclusively,
   handoffRefusal,
   isHandoffRefusal,
   packagePath,
@@ -52,10 +52,12 @@ async function compareOutputs(
   manifest: ResultHandoffManifest,
   files: VerifiedPackageFiles,
   tolerance: { readonly absolute: number; readonly relative: number },
+  signal: AbortSignal,
 ) {
   const outputs: ResultHandoffOutputFinding[] = [];
   const figures: Figure[] = [];
   for (const output of manifest.outputs) {
+    signal.throwIfAborted();
     const path = output.name;
     if (output.pruned) {
       outputs.push({
@@ -80,7 +82,7 @@ async function compareOutputs(
       });
       continue;
     }
-    const sha256 = await sha256File(rerun);
+    const sha256 = await sha256File(rerun, signal);
     if (output.kind !== "values" && sha256 === output.sha256) {
       outputs.push({ path, status: "matched", sha256 });
       continue;
@@ -91,10 +93,8 @@ async function compareOutputs(
       output.size <= MAX_VALUES_BYTES
     ) {
       try {
-        const [before, after] = await Promise.all([
-          NodeFSP.readFile(original, "utf8"),
-          NodeFSP.readFile(rerun, "utf8"),
-        ]);
+        const before = await NodeFSP.readFile(original, { encoding: "utf8", signal });
+        const after = await NodeFSP.readFile(rerun, { encoding: "utf8", signal });
         const comparison = comparePackageValues(before, after, tolerance);
         outputs.push({
           path,
@@ -103,6 +103,7 @@ async function compareOutputs(
           ...comparison,
         });
       } catch {
+        signal.throwIfAborted();
         outputs.push({
           path,
           status: "differs",
@@ -133,7 +134,9 @@ async function writeVerification(
   folder: string,
   report: ResultHandoffVerification,
   differences: ReadonlyArray<Figure>,
+  signal: AbortSignal,
 ): Promise<ResultHandoffVerifyResult> {
+  signal.throwIfAborted();
   const destination = await NodeFSP.mkdtemp(
     NodePath.join(NodePath.dirname(folder), "result-verification-"),
   );
@@ -147,7 +150,7 @@ async function writeVerification(
         [difference.rerun, rerunPath],
       ] as const) {
         await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
-        await NodeFSP.copyFile(source, target, NodeFS.constants.COPYFILE_EXCL);
+        await copyFileExclusively(source, target, signal);
       }
       const canPreview =
         figures.length < MAX_INLINE_PAIRS &&
@@ -156,8 +159,8 @@ async function writeVerification(
         (await NodeFSP.stat(rerunPath)).size <= MAX_PREVIEW_BYTES;
       const previews = canPreview
         ? {
-            originalPreview: (await NodeFSP.readFile(originalPath)).toString("base64"),
-            rerunPreview: (await NodeFSP.readFile(rerunPath)).toString("base64"),
+            originalPreview: (await NodeFSP.readFile(originalPath, { signal })).toString("base64"),
+            rerunPreview: (await NodeFSP.readFile(rerunPath, { signal })).toString("base64"),
           }
         : {};
       figures.push({
@@ -169,7 +172,7 @@ async function writeVerification(
       });
     }
     const reportPath = NodePath.join(destination, "verification.json");
-    await publishJson(reportPath, report);
+    await publishJson(reportPath, report, signal);
     return { report, reportPath, figures };
   } catch (error) {
     await NodeFSP.rm(destination, { recursive: true, force: true }).catch(() => undefined);
@@ -215,6 +218,18 @@ function environmentDifferences(
 
 const refuse = (message: string) => (cause: unknown) =>
   isHandoffRefusal(cause) ? cause : handoffRefusal(message);
+
+const verifyFiles = Effect.fn("ResultHandoff.verifyFiles")(
+  <A>(work: (signal: AbortSignal) => Promise<A>, message: string) =>
+    Effect.callback<A, ReturnType<typeof handoffRefusal>>((resume, signal) => {
+      const pending = work(signal).then(
+        (value) => resume(Effect.succeed(value)),
+        (cause: unknown) => resume(Effect.fail(refuse(message)(cause))),
+      );
+      // The runtime aborts the signal before joining the file operation and removing scratch.
+      return Effect.promise(() => pending);
+    }),
+);
 
 export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(function* (
   process: ExecutionProcess["Service"],
@@ -267,6 +282,13 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
   const cancellation = controls?.cancellation;
   const didCancel =
     cancellation === undefined ? Effect.succeed(false) : Deferred.isDone(cancellation);
+  const untilCancelled = <A, E>(effect: Effect.Effect<A, E>) =>
+    cancellation === undefined
+      ? effect.pipe(Effect.result)
+      : Effect.raceFirst(
+          effect.pipe(Effect.result),
+          Deferred.await(cancellation).pipe(Effect.as(null)),
+        );
   const verifiedAt = DateTime.formatIso(yield* DateTime.now);
   const verifierName = input.verifierName?.trim();
   const base = {
@@ -325,10 +347,13 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
     const cancelled = (files: VerifiedPackageFiles["files"] = []) =>
       couldNotRun("Verification was cancelled.", files, null, "cancelled");
     if (yield* didCancel) return cancelled();
-    const staged = yield* Effect.tryPromise({
-      try: () => stageVerificationFiles(folder, scratch, manifest, input),
-      catch: refuse("The package files could not be copied or checked."),
-    }).pipe(Effect.result);
+    const staged = yield* untilCancelled(
+      verifyFiles(
+        (signal) => stageVerificationFiles(folder, scratch, manifest, input, signal),
+        "The package files could not be copied or checked.",
+      ),
+    );
+    if (staged === null) return cancelled();
     if (yield* didCancel) return cancelled(Result.isSuccess(staged) ? staged.success.files : []);
     if (Result.isFailure(staged)) {
       return couldNotRun(staged.failure.message);
@@ -345,19 +370,19 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
         input.executable ??
         (yield* selectExecutable?.(manifest.source.language) ?? Effect.undefined);
       return yield* runPackage(process, manifest, files, executable, timeoutMinutes);
-    }).pipe(Effect.result);
-    const ran = yield* cancellation === undefined
-      ? rerun
-      : Effect.raceFirst(rerun, Deferred.await(cancellation).pipe(Effect.as(null)));
+    });
+    const ran = yield* untilCancelled(rerun);
     if (ran === null || (yield* didCancel)) return cancelled(files.files);
     if (Result.isFailure(ran)) return couldNotRun(ran.failure.message, files.files);
     const { environment, problem } = ran.success;
     if (problem !== null) return couldNotRun(problem, files.files, environment);
-    const comparison = yield* Effect.tryPromise({
-      try: () => compareOutputs(manifest, files, tolerance),
-      catch: refuse("The rerun finished, but its files could not be compared."),
-    }).pipe(Effect.result);
-    if (yield* didCancel) return cancelled(files.files);
+    const comparison = yield* untilCancelled(
+      verifyFiles(
+        (signal) => compareOutputs(manifest, files, tolerance, signal),
+        "The rerun finished, but its files could not be compared.",
+      ),
+    );
+    if (comparison === null || (yield* didCancel)) return cancelled(files.files);
     if (Result.isFailure(comparison)) {
       return couldNotRun(comparison.failure.message, files.files, environment);
     }
@@ -393,8 +418,8 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
     };
   });
   if (controls !== undefined) yield* controls.finish;
-  return yield* Effect.tryPromise({
-    try: () => writeVerification(folder, result.report, result.figures),
-    catch: refuse("The verification report could not be saved beside the package."),
-  });
+  return yield* verifyFiles(
+    (signal) => writeVerification(folder, result.report, result.figures, signal),
+    "The verification report could not be saved beside the package.",
+  );
 }, Effect.scoped);

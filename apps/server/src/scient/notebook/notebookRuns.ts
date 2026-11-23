@@ -15,6 +15,7 @@ import {
   type NotebookFreshRun,
   type NotebookFreshRunStatusInput,
   type NotebookFreshRunStopInput,
+  type NotebookFreshRunSubscribeInput,
 } from "@t3tools/contracts";
 import { notebookCellRun } from "@t3tools/shared/notebookStaleness";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,7 @@ import {
 } from "../results/resultRevisions.ts";
 import type { NotebookRunJobs, ReportNotebookJob } from "./NotebookRunJobs.ts";
 import type { NotebookStore } from "./NotebookStore.ts";
+import type { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
 import { planNotebookRun } from "./notebookRunPlan.ts";
 
 const isComputeResultsError = Schema.is(ComputeResultsError);
@@ -111,9 +113,11 @@ async function mergedReads(
 export function makeNotebookRuns(deps: {
   readonly computeDir: string;
   readonly jobs: NotebookRunJobs["Service"];
+  readonly workspacePaths: WorkspacePaths["Service"];
   readonly gateway: Pick<
     ComputeRpcGateway,
-    | "project"
+    | "projectWithAdmission"
+    | "watchProject"
     | "startSession"
     | "stopSession"
     | "getSession"
@@ -132,19 +136,40 @@ export function makeNotebookRuns(deps: {
   const layout = { computeDir: deps.computeDir };
 
   type Request = NotebookFreshRunInput & { readonly threadId?: string };
-  type Project = Effect.Success<ReturnType<typeof gateway.project>>;
+  type Project = Effect.Success<ReturnType<typeof gateway.projectWithAdmission>>;
   type Snapshot = Effect.Success<ReturnType<typeof notebooks.freshSnapshot>>;
   const projectForRun = (cwd: string) =>
     gateway
-      .project({ cwd })
+      .projectWithAdmission({ cwd })
       .pipe(
         Effect.mapError(
           (cause) =>
             new ComputeResultsError({ message: "The project could not be opened.", cause }),
         ),
       );
-  const jobKey = (project: Project, path: string) =>
-    JSON.stringify([project.projectId, project.root, path]);
+  const jobKey = (project: Project, path: string) => {
+    const scope = project.admission?.scope;
+    return JSON.stringify([
+      project.projectId,
+      project.root,
+      scope?.bindingId,
+      scope?.authorityGeneration,
+      path,
+    ]);
+  };
+  const notebookPath = (project: Project, path: string) =>
+    deps.workspacePaths
+      .resolveRelativePathWithinRoot({ workspaceRoot: project.root, relativePath: path })
+      .pipe(
+        Effect.map(({ relativePath }) => relativePath),
+        Effect.mapError(
+          (cause) =>
+            new ComputeResultsError({
+              message: "Choose a notebook inside this project.",
+              cause,
+            }),
+        ),
+      );
 
   const execute = Effect.fn("NotebookRuns.execute")(function* (
     request: Request,
@@ -221,6 +246,7 @@ export function makeNotebookRuns(deps: {
       return { _tag: "failed" as const, message: "This run could not name a results folder." };
 
     const operation = Effect.gen(function* () {
+      yield* project.admission?.assertCurrent ?? Effect.void;
       const session = yield* gateway.startSession({
         ...sessionAddress,
         languageId: ComputeLanguageId.make(receipt.language),
@@ -324,11 +350,9 @@ export function makeNotebookRuns(deps: {
       const code = plan.cells.map(({ source }) => source).join("\n");
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          const currentProject = yield* gateway.project({ cwd: request.cwd });
-          if (
-            currentProject.projectId !== project.projectId ||
-            currentProject.root !== project.root
-          ) {
+          yield* project.admission?.assertCurrent ?? Effect.void;
+          const currentProject = yield* gateway.projectWithAdmission({ cwd: request.cwd });
+          if (jobKey(currentProject, request.scriptPath) !== jobKey(project, request.scriptPath)) {
             return {
               _tag: "failed" as const,
               message: "The project changed during the notebook run.",
@@ -443,8 +467,11 @@ export function makeNotebookRuns(deps: {
     return yield* operation;
   });
 
-  const start = Effect.fn("NotebookRuns.start")(function* (request: Request) {
-    if (!request.scriptPath.toLowerCase().endsWith(".ipynb")) {
+  const start = Effect.fn("NotebookRuns.start")(function* (input: Request) {
+    const project = yield* projectForRun(input.cwd);
+    const scriptPath = yield* notebookPath(project, input.scriptPath);
+    const request = { ...input, scriptPath };
+    if (!scriptPath.toLowerCase().endsWith(".ipynb")) {
       return yield* new ComputeResultsError({ message: "Choose a saved .ipynb notebook." });
     }
     if (request.sweep !== undefined && request.parameters !== undefined) {
@@ -452,9 +479,9 @@ export function makeNotebookRuns(deps: {
         message: "Choose one parameter setting or a sweep.",
       });
     }
-    const project = yield* projectForRun(request.cwd);
     const job = Effect.fn("NotebookRuns.job")(
       function* (report: ReportNotebookJob) {
+        yield* project.admission?.assertCurrent ?? Effect.void;
         const address = { cwd: project.root, path: request.scriptPath };
         yield* notebooks.reserveFreshRun(address);
         const receipt = yield* notebooks.freshSnapshot(address);
@@ -501,22 +528,43 @@ export function makeNotebookRuns(deps: {
   });
   const status = Effect.fn("NotebookRuns.status")(function* (request: NotebookFreshRunStatusInput) {
     const project = yield* projectForRun(request.cwd);
-    return yield* deps.jobs.status(jobKey(project, request.scriptPath), request.runId);
+    const scriptPath = yield* notebookPath(project, request.scriptPath);
+    return yield* deps.jobs.status(jobKey(project, scriptPath), request.runId);
+  });
+  const watch = Effect.fn("NotebookRuns.watch")(function* (
+    request: NotebookFreshRunSubscribeInput,
+  ) {
+    return yield* gateway
+      .watchProject(request, (project) =>
+        Stream.unwrap(
+          notebookPath(project, request.scriptPath).pipe(
+            Effect.map((path) => deps.jobs.watch(jobKey(project, path))),
+          ),
+        ),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ComputeResultsError({ message: "The project could not be opened.", cause }),
+        ),
+      );
   });
   const stop = Effect.fn("NotebookRuns.stop")(function* (request: NotebookFreshRunStopInput) {
     const project = yield* projectForRun(request.cwd);
-    return yield* deps.jobs.stop(jobKey(project, request.scriptPath), request.runId);
+    const scriptPath = yield* notebookPath(project, request.scriptPath);
+    return yield* deps.jobs.stop(jobKey(project, scriptPath), request.runId);
   });
   const wait = Effect.fn("NotebookRuns.wait")(function* (
     request: NotebookFreshRunStatusInput & { readonly runId: ComputeSessionId },
   ) {
     const project = yield* projectForRun(request.cwd);
-    return yield* deps.jobs.wait(jobKey(project, request.scriptPath), request.runId);
+    const scriptPath = yield* notebookPath(project, request.scriptPath);
+    return yield* deps.jobs.wait(jobKey(project, scriptPath), request.runId);
   });
   const run = Effect.fn("NotebookRuns.run")(function* (request: Request) {
     const { runId, outcome } = yield* start(request);
     return outcome ?? (yield* wait({ ...request, runId }));
   });
 
-  return { start, status, stop, wait, run };
+  return { start, status, watch, stop, wait, run };
 }

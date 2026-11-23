@@ -67,9 +67,9 @@ function revisionOutputPath(
   return resolved.startsWith(`${outputs}${NodePath.sep}`) ? resolved : null;
 }
 
-export async function sha256File(path: string): Promise<string> {
+export async function sha256File(path: string, signal?: AbortSignal): Promise<string> {
   const hash = NodeCrypto.createHash("sha256");
-  for await (const chunk of NodeFS.createReadStream(path)) hash.update(chunk as Buffer);
+  for await (const chunk of NodeFS.createReadStream(path, { signal })) hash.update(chunk as Buffer);
   return hash.digest("hex");
 }
 

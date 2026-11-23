@@ -26,9 +26,14 @@ export const NotebookFreshRunInput = Schema.Struct({
 });
 export type NotebookFreshRunInput = typeof NotebookFreshRunInput.Type;
 
-export const NotebookFreshRunStatusInput = Schema.Struct({
+export const NotebookFreshRunSubscribeInput = Schema.Struct({
   cwd: ComputeResultsRerunInput.fields.cwd,
   scriptPath: ComputeResultsRerunInput.fields.scriptPath,
+});
+export type NotebookFreshRunSubscribeInput = typeof NotebookFreshRunSubscribeInput.Type;
+
+export const NotebookFreshRunStatusInput = Schema.Struct({
+  ...NotebookFreshRunSubscribeInput.fields,
   /** Omit to find the latest job for this notebook. */
   runId: Schema.optional(ComputeSessionId),
 });
@@ -68,6 +73,12 @@ export const NotebookFreshRun = Schema.Struct({
   ),
 });
 export type NotebookFreshRun = typeof NotebookFreshRun.Type;
+
+export const NotebookFreshRunUpdate = Schema.Struct({
+  job: Schema.NullOr(NotebookFreshRun),
+  settledRunId: Schema.NullOr(ComputeSessionId),
+});
+export type NotebookFreshRunUpdate = typeof NotebookFreshRunUpdate.Type;
 
 const CellId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
 

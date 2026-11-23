@@ -526,13 +526,22 @@ export class ComputeSessionService extends Context.Service<
       },
     ) => Effect.Effect<DataTablePage, ComputeOperationError>;
     readonly listSessions: (
-      input: ComputeListSessionsInput,
+      input: ComputeListSessionsInput & { readonly sessionId?: ComputeSessionId },
     ) => Effect.Effect<ReadonlyArray<ComputeSessionRecord>, ComputeOperationError>;
     readonly getSession: (
       input: ComputeGetSessionInput,
     ) => Effect.Effect<ComputeSessionRecord | null, ComputeOperationError>;
     readonly listExecutions: (
       input: ComputeListExecutionsInput,
+    ) => Effect.Effect<ReadonlyArray<ComputeExecutionRecord>, ComputeOperationError>;
+    readonly historyExecutionRefs: (
+      input: ComputeGetSessionInput,
+    ) => Effect.Effect<
+      ReadonlyArray<LocalComputeStore.ComputeHistoryExecutionRef>,
+      ComputeOperationError
+    >;
+    readonly historyExecutions: (
+      input: ComputeGetSessionInput & { readonly executionIds: ReadonlyArray<ComputeExecutionId> },
     ) => Effect.Effect<ReadonlyArray<ComputeExecutionRecord>, ComputeOperationError>;
     readonly listOutputs: (
       input: ComputeListOutputsInput,
@@ -4030,6 +4039,29 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(persistenceError("outputs", "Unable to read the transcript.")));
   });
 
+  const historyExecutionRefs = (input: ComputeGetSessionInput) =>
+    store
+      .loadHistoryRefs(input.projectId, input.sessionId)
+      .pipe(Effect.mapError(persistenceError("list", "Unable to read the session history.")));
+
+  const historyExecutions = Effect.fn("ComputeSessionService.historyExecutions")(function* (
+    input: ComputeGetSessionInput & { readonly executionIds: ReadonlyArray<ComputeExecutionId> },
+  ) {
+    const live = (yield* Ref.get(sessionsRef)).get(sessionKey(input.projectId, input.sessionId));
+    const pending = live === undefined ? undefined : yield* Ref.get(live.pendingRef);
+    const executions = yield* Effect.forEach(
+      input.executionIds,
+      (id) => {
+        const active = pending?.get(id);
+        return active === undefined
+          ? store.loadExecution(input.projectId, input.sessionId, id, true)
+          : Effect.succeed(active);
+      },
+      { concurrency: 8 },
+    ).pipe(Effect.mapError(persistenceError("list", "Unable to read the session history.")));
+    return executions.filter((execution) => execution !== null);
+  });
+
   const listJournal = Effect.fn("ComputeSessionService.listJournal")(function* (
     input: ComputeGetSessionInput,
   ) {
@@ -4239,10 +4271,14 @@ const make = Effect.gen(function* () {
     return count;
   });
   const scopedList = Effect.fn("ComputeSessionService.scopedList")(function* (
-    input: ComputeListSessionsInput,
+    input: ComputeListSessionsInput & { readonly sessionId?: ComputeSessionId },
   ) {
     const receipt = yield* ComputeWorkspaceAdmission;
     if (receipt) yield* receipt.assertCurrent;
+    if (input.sessionId !== undefined) {
+      const record = yield* getSession({ projectId: input.projectId, sessionId: input.sessionId });
+      return record !== null && ownsRecord(receipt, record) ? [record] : [];
+    }
     return (yield* listSessions(input)).filter((record) => ownsRecord(receipt, record));
   });
   const scopedSubscribe = Effect.fn("ComputeSessionService.scopedSubscribe")(function* (
@@ -4309,6 +4345,8 @@ const make = Effect.gen(function* () {
     listSessions: scopedList,
     getSession: guarded("get", getSession),
     listExecutions: guarded("list", listExecutions),
+    historyExecutionRefs: guarded("list", historyExecutionRefs),
+    historyExecutions: guarded("list", historyExecutions),
     listOutputs: guarded("outputs", listOutputs),
     listJournal: guarded("list", listJournal),
     resolveOutputImage,

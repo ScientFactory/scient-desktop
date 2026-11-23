@@ -153,6 +153,10 @@ receipt. Older one-shot receipts may lack attribution.
 
 `compute.runHistory` reads the workspace's retained session executions and merges them with
 one-shot receipts. The same read is available through `scient_compute_sessions` with `history`.
+The server keeps a rebuildable in-memory index of request references for recently read projects.
+It selects the page using those references and reads full receipts for the selected entries.
+A notebook batch whose settled summary is unavailable also reads its member receipts.
+Exact execution links with a session ID can read the referenced receipt directly.
 Notebook submissions store a batch ID on each cell request. Project history groups cells by that
 ID before paging. A session also emits the settled count and failure position as soon as all
 receipts in the batch are terminal. Pass `history.notebookBatchId` to page through the cells of a batch.
@@ -184,8 +188,9 @@ The outline comes from Markdown cell source. Fold edits preserve JupyterLab meta
 hidden output viewers unmounted. The index retains inter-cell whitespace and raw field values so
 saving a fold leaves the attachment and output bytes alone.
 
-A clean run starts a server-owned job. The editor and agent can read its status by run ID
-after reconnecting. The job snapshots the saved code, runs the cells in a fresh kernel and
+A clean run starts a server-owned job. The editor subscribes to a notebook's latest job, including
+jobs started by another window or an agent, and receives a current snapshot when it reconnects.
+An agent can read status by run ID. The job snapshots the saved code, runs the cells in a fresh kernel and
 copies cell outputs before allowing transcript cleanup. Source edits pause while the job
 runs. Folds remain editable.
 

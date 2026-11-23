@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeStreamPromises from "node:stream/promises";
 
 import * as Schema from "effect/Schema";
 
@@ -79,12 +80,18 @@ export async function regularPackageFile(
 export const hashBytes = (bytes: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
-export async function matchesFile(file: string, sha256: string, size?: number): Promise<boolean> {
+export async function matchesFile(
+  file: string,
+  sha256: string,
+  size?: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
   const status = await NodeFSP.lstat(file);
   return (
     status.isFile() &&
     (size === undefined || status.size === size) &&
-    (await sha256File(file)) === sha256
+    (await sha256File(file, signal)) === sha256
   );
 }
 
@@ -95,19 +102,33 @@ export async function copyPackageFile(
   sha256: string,
   size?: number,
   kind?: PathKind,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   const status = await NodeFSP.lstat(file);
   if (!status.isFile() || (size !== undefined && status.size !== size)) return false;
   const target = packagePath(root, path, kind);
   await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
-  await NodeFSP.copyFile(file, target, NodeFS.constants.COPYFILE_EXCL);
-  if (await matchesFile(target, sha256, size)) return true;
+  await copyFileExclusively(file, target, signal);
+  if (await matchesFile(target, sha256, size, signal)) return true;
   await NodeFSP.unlink(target);
   return false;
 }
 
+export async function copyFileExclusively(file: string, target: string, signal?: AbortSignal) {
+  if (signal === undefined) {
+    await NodeFSP.copyFile(file, target, NodeFS.constants.COPYFILE_EXCL);
+  } else {
+    await NodeStreamPromises.pipeline(
+      NodeFS.createReadStream(file),
+      NodeFS.createWriteStream(target, { flags: "wx" }),
+      { signal },
+    );
+  }
+}
+
 export const jsonText = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
-export function publishJson(path: string, value: unknown) {
-  return NodeFSP.writeFile(path, jsonText(value), { flag: "wx" });
+export function publishJson(path: string, value: unknown, signal?: AbortSignal) {
+  return NodeFSP.writeFile(path, jsonText(value), { flag: "wx", signal });
 }

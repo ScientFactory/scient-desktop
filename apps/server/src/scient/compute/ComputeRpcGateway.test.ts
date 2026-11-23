@@ -11,15 +11,27 @@ import {
   type ComputeSessionRecord,
 } from "@scientfactory/compute";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { WorkspaceAuthorityGeneration } from "@scientfactory/operations";
+import { DEFAULT_SERVER_SETTINGS, NotebookError } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { extractComputeSourceRange, makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
 import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts";
 import { WorkspaceBindingResolutionError } from "../projectScope/WorkspaceBinding.ts";
+import {
+  workspaceResolverForTest,
+  workspaceScopeForTest,
+} from "../projectScope/WorkspaceBindingTestUtils.ts";
+import { WorkspacePaths, layer as workspacePathsLayer } from "../../workspace/WorkspacePaths.ts";
+import { makeNotebookRunJobs } from "../notebook/NotebookRunJobs.ts";
+import { makeNotebookRuns } from "../notebook/notebookRuns.ts";
 import { PYTHON_DATA_AND_FIGURES_TOOLKIT, assessPythonToolkit } from "./PythonToolkitCatalog.ts";
 
 const PYTHON = ComputeLanguageId.make("python");
@@ -151,6 +163,8 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
     listSessions: () => Effect.succeed([]),
     getSession: () => Effect.succeed(null),
     listExecutions: () => Effect.succeed([]),
+    historyExecutionRefs: () => Effect.succeed([]),
+    historyExecutions: () => Effect.succeed([]),
     listOutputs: () => Effect.succeed({ outputs: [], corruptLineCount: 0 }),
     inspectVariables: (input) =>
       Effect.succeed({
@@ -204,12 +218,19 @@ describe("compute RPC gateway", () => {
       const sessionId = ComputeSessionId.make("notebook-session");
       const session = record(ComputeProjectId.make(identity.projectId), sessionId);
       const executions: ComputeExecutionRecord[] = [];
+      const hydrated: string[] = [];
       const gateway = makeComputeRpcGateway({
         workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           getSession: () => Effect.succeed(session),
           listSessions: () => Effect.succeed([session]),
-          listExecutions: () => Effect.succeed(executions),
+          historyExecutionRefs: () => Effect.succeed(executions.map(({ request }) => request)),
+          historyExecutions: ({ executionIds }) => {
+            hydrated.push(...executionIds);
+            return Effect.succeed(
+              executions.filter(({ request }) => executionIds.includes(request.executionId)),
+            );
+          },
           submitExecutions: ({ submissions }) => {
             const accepted = submissions.map(acceptedExecution);
             executions.push(...accepted);
@@ -232,6 +253,7 @@ describe("compute RPC gateway", () => {
       const page = yield* gateway.runHistory({ cwd: root, filter: path, limit: 1 });
       expect(page.runs[0]?.execution.request.executionId).toBe(single.executionId);
       expect(page.runs[0]?.notebookBatch).toBeUndefined();
+      expect(hydrated.splice(0)).toEqual([single.executionId]);
       if (!page.next) return yield* Effect.die("Expected a cursor to the grouped run.");
       const older = yield* gateway.runHistory({
         cwd: root,
@@ -245,6 +267,7 @@ describe("compute RPC gateway", () => {
         status: "queued",
       });
       expect(older.next).toBeNull();
+      expect(hydrated.splice(0)).toHaveLength(400);
       const details = yield* gateway.runHistory({
         cwd: root,
         sessionId,
@@ -263,6 +286,15 @@ describe("compute RPC gateway", () => {
         before: details.next,
       });
       expect(secondCell.runs[0]?.execution.request.executionId).toBe(cells[1]?.executionId);
+      expect(hydrated.splice(0)).toEqual([cells[0]!.executionId, cells[1]!.executionId]);
+      const quoted = yield* gateway.runHistory({
+        cwd: root,
+        sessionId,
+        executionId: cells[399]!.executionId,
+        limit: 1,
+      });
+      expect(quoted.runs[0]?.execution.request.executionId).toBe(cells[399]!.executionId);
+      expect(hydrated.splice(0)).toEqual([cells[399]!.executionId]);
 
       // Only two receipts are visible while the rest of the batch is being admitted.
       executions.splice(2);
@@ -347,6 +379,76 @@ describe("compute RPC gateway", () => {
       const error = yield* gateway.listSessions({ cwd: initialized.root }).pipe(Effect.flip);
       expect(error.reason).toBe("workspace-changed");
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("shares notebook run aliases only within the current workspace generation", () =>
+    Effect.gen(function* () {
+      const initialized = yield* project;
+      const cwd = initialized.root;
+      const projectId = initialized.identity.projectId;
+      const scope = workspaceScopeForTest("notebook-workspace", cwd);
+      const bindings = new Map([[cwd, { projectId, scope }]]);
+      const gateway = makeComputeRpcGateway({
+        workspaceResolver: workspaceResolverForTest(bindings),
+        compute: computeStub(),
+        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        workspaceFileSystem: workspace(),
+      });
+      const release = yield* Deferred.make<void>();
+      const dependencies = {
+        computeDir: cwd,
+        jobs: yield* makeNotebookRunJobs,
+        workspacePaths: yield* WorkspacePaths,
+        gateway,
+        notebooks: {
+          reserveFreshRun: () =>
+            Deferred.await(release).pipe(
+              Effect.andThen(Effect.fail(new NotebookError({ message: "Fixture finished." }))),
+            ),
+          freshSnapshot: () => Effect.die("fixture run should have been stopped"),
+          saveFreshRun: () => Effect.die("fixture run should have been stopped"),
+        },
+        notebookOutputs: () => Effect.die("fixture run should have been stopped"),
+      };
+      const desktop = makeNotebookRuns(dependencies);
+      const agent = makeNotebookRuns(dependencies);
+      const address = { cwd, scriptPath: "threshold.ipynb" };
+      const alias = { cwd, scriptPath: "./sub/../threshold.ipynb" };
+      const stream = yield* desktop.watch(address);
+      const idle = yield* Deferred.make<void>();
+      const seen = yield* Deferred.make<ComputeSessionId>();
+      const oldSubscription = yield* stream.pipe(
+        Stream.runForEach(({ job }) =>
+          job === null
+            ? Deferred.succeed(idle, undefined)
+            : job.outcome === undefined
+              ? Deferred.succeed(seen, job.runId)
+              : Effect.die("revoked subscription received a settled run"),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(idle);
+      const oldRun = yield* agent.start(alias);
+      expect(yield* Deferred.await(seen)).toBe(oldRun.runId);
+      expect(yield* desktop.status({ ...address, runId: oldRun.runId })).toEqual(oldRun);
+      expect(yield* desktop.start(address).pipe(Effect.flip)).toMatchObject({
+        message: "This notebook already has a fresh run.",
+      });
+
+      bindings.set(cwd, {
+        projectId,
+        scope: { ...scope, authorityGeneration: WorkspaceAuthorityGeneration.make(2) },
+      });
+      expect(yield* desktop.stop({ ...address, runId: oldRun.runId })).toBeNull();
+      expect(yield* desktop.status(address)).toBeNull();
+      const current = yield* desktop.watch(address);
+      expect(yield* current.pipe(Stream.runHead)).toEqual(
+        Option.some({ job: null, settledRunId: null }),
+      );
+      // Let the former generation settle, then confirm its stream has been fenced.
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(oldSubscription);
+    }).pipe(Effect.provide(workspacePathsLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 
   it.effect("forwards individual Toolkit intent without inventing a replacement selection", () =>

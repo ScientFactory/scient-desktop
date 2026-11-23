@@ -86,6 +86,7 @@ describe.runIf(Boolean(python && fixture))("recorded Python result freshness", (
         const notebooks = makeNotebookRuns({
           computeDir,
           jobs: yield* makeNotebookRunJobs,
+          workspacePaths: yield* WorkspacePaths.WorkspacePaths,
           gateway,
           notebooks: yield* makeNotebookStore,
           notebookOutputs: makeComputeNotebookOutputs({
