@@ -3662,21 +3662,42 @@ export async function readScientSourceZoteroSync(
   return readBoundedJson(filePath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(() => null);
 }
 
+function fitZoteroSyncToBudget(
+  state: ScientSourceZoteroSyncType,
+  maxBytes: number,
+): ScientSourceZoteroSyncType {
+  const byteLength = (value: ScientSourceZoteroSyncType) =>
+    Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  if (!state.notes || byteLength(state) <= maxBytes) return state;
+  // Drop optional retained HTML from the end until the serialized UTF-8 sync file fits the
+  // record byte budget, always preserving note digests and both text baselines.
+  const notes = state.notes.map((entry) => ({ ...entry }));
+  for (let index = notes.length - 1; index >= 0; index -= 1) {
+    const entry = notes[index];
+    if (!entry || entry.html === undefined) continue;
+    notes[index] = { itemKey: entry.itemKey, sha256: entry.sha256 };
+    const candidate: ScientSourceZoteroSyncType = { ...state, notes };
+    if (byteLength(candidate) <= maxBytes) return candidate;
+  }
+  return { ...state, notes };
+}
+
 export async function writeScientSourceZoteroSync(
   root: ScientSourceStoreLocation,
   state: ScientSourceZoteroSyncType,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
+  const bounded = fitZoteroSyncToBudget(state, MAX_RECORD_BYTES);
   // Under deletion's lock: a sync finishing after Delete for good must not bring its base back.
   await withStoreLock(paths, "source-write", async () => {
     const gone = async (path: string) => (await snapshot(path)) === "missing";
     if (
-      (await gone(sourceRecordPath(paths, state.sourceId))) &&
-      (await gone(trashEntryPath(paths, state.sourceId)))
+      (await gone(sourceRecordPath(paths, bounded.sourceId))) &&
+      (await gone(trashEntryPath(paths, bounded.sourceId)))
     ) {
       return;
     }
-    await atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES);
+    await atomicWriteJson(zoteroSyncPath(paths, bounded.sourceId), bounded, MAX_RECORD_BYTES);
   });
 }
 

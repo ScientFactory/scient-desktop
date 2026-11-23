@@ -632,6 +632,59 @@ describe("Zotero refresh", () => {
     expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("My own words");
   });
 
+  it("trims optional retained note HTML to fit the 2 MiB sync-file budget on legacy multi-byte notes", async () => {
+    const body = `<p>${"漢".repeat(1_000)}</p>`.repeat(65);
+    const children = Array.from({ length: 8 }, (_, index) =>
+      zoteroItem(`NOTE000${index + 1}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${body}`,
+      }),
+    );
+    const { root, library, zotero, record } = await importedFromZotero(original, children);
+    const { sourceId } = record;
+    const importedBase = (await readScientSourceZoteroSync(root, sourceId))!;
+    // Simulate a pre-Markdown import baseline (plain text, no `notes`) plus a local edit.
+    const legacyPlain = children
+      .map((_, index) => `Note ${index + 1}\n\n${Array(65).fill("漢".repeat(1_000)).join("\n\n")}`)
+      .join("\n\n---\n\n")
+      .slice(0, 100_000);
+    const { notes: _notes, ...earlier } = importedBase;
+    await writeScientSourceZoteroSync(root, { ...earlier, note: legacyPlain });
+    await updateScientSourceNote({
+      root,
+      sourceId,
+      expectedRevision: record.revision,
+      note: "My own words",
+    });
+
+    for (const _round of [1, 2]) {
+      const refreshed = await refreshZoteroSources({ root, actor: "user", zotero });
+      expect(refreshed.items[0]?.outcome).toBe("unchanged");
+      expect(refreshed.items[0]?.conflicts).toEqual([]);
+      expect((await readScientSourceRecord(root, sourceId))?.note).toBe("My own words");
+    }
+    const saved = await readScientSourceZoteroSync(root, sourceId);
+    expect(saved?.note).toBe(legacyPlain);
+    expect(saved?.zoteroNote).toBe(record.note);
+    expect(saved?.notes).toHaveLength(8);
+    expect(saved?.notes?.some((entry) => entry.html === undefined)).toBe(true);
+
+    // Even a note whose optional HTML was trimmed still detects a later Zotero edit via its digest.
+    library.items.set("ABCD2345", {
+      item: original,
+      children: [
+        ...children.slice(0, 7),
+        zoteroItem("NOTE0008", {
+          itemType: "note",
+          note: "<h1>A Note 8</h1><p>Edited in Zotero</p>",
+        }),
+      ],
+    });
+    const afterEdit = await refreshZoteroSources({ root, actor: "user", zotero });
+    expect(afterEdit.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("My own words");
+  });
+
   it("leaves a source alone when its item is gone from Zotero", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);
     library.items.delete("ABCD2345");
