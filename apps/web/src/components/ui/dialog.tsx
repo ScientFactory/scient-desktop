@@ -185,11 +185,9 @@ function DialogPopup({
           <DialogPrimitive.Close
             aria-label={gt("Close", { $context: "button, closes the dialog" })}
             className="absolute end-2 top-2"
-            render={
-              /* SCIENT-FORK:START — use the shared single-edge focus treatment on Close. */
-              <Button size="icon" variant="ghost" focus="edge" />
-              /* SCIENT-FORK:END */
-            }
+            // SCIENT-FORK:START — use the shared single-edge focus treatment on Close.
+            render={<Button size="icon" variant="ghost" focus="edge" />}
+            // SCIENT-FORK:END
           >
             <XIcon />
           </DialogPrimitive.Close>

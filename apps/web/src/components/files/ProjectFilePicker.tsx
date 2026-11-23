@@ -132,20 +132,19 @@ export function ProjectFilePickerForTarget(
         indices={match.nameMatchIndices}
       />
     ),
-    description:
-      // SCIENT-FORK:START — preserve the full project label for the normal file picker.
-      props.compactPaths ? (
-        duplicateNames.has(match.name) ? (
-          match.path.slice(0, match.path.lastIndexOf("/")) || gt("Project root")
-        ) : undefined
-      ) : (
-        // SCIENT-FORK:END
-        <HighlightedFuzzyText
-          active={hasMatchedQuery}
-          value={match.path}
-          indices={match.pathMatchIndices}
-        />
-      ),
+    // SCIENT-FORK:START — compact pickers name a parent folder only to tell same-named files apart.
+    description: props.compactPaths ? (
+      duplicateNames.has(match.name) ? (
+        match.path.slice(0, match.path.lastIndexOf("/")) || gt("Project root")
+      ) : undefined
+    ) : (
+      <HighlightedFuzzyText
+        active={hasMatchedQuery}
+        value={match.path}
+        indices={match.pathMatchIndices}
+      />
+    ),
+    // SCIENT-FORK:END
     icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
     run: async () => {
       // SCIENT-FORK:START — return an input to the caller or open the file in the conversation.
@@ -163,11 +162,7 @@ export function ProjectFilePickerForTarget(
       aria-label={gt("File picker")}
       autoHighlight="always"
       escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
-      footerActionLabel={
-        // SCIENT-FORK:START — use the caller's action label when selecting a file.
-        props.actionLabel ?? gt("Open file")
-        // SCIENT-FORK:END
-      }
+      footerActionLabel={props.actionLabel ?? gt("Open file")}
       inputProps={{ placeholder: gt("Search files…") }}
       mode="none"
       onItemHighlighted={(value) => {
