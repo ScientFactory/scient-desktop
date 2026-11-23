@@ -1,146 +1,58 @@
 ---
 name: google-workspace
-description: "Find or manage a file in Drive, read or edit a native Google Doc, Sheet, or Slides deck, add or embed a chart, reply to comments, or export a native file. Use for requests to create a native Google file or import a file into Drive. Route Office authoring by MIME type to word-docx, excel-xlsx, or powerpoint-pptx, including binaries stored in Drive. Use pdf-files for work on an existing PDF."
+description: "Find or manage files in Drive. Create, read, edit, comment on or export native Google Docs, Sheets or Slides, including charts. Use the matching Office skill for .docx, .xlsx or .pptx files stored in Drive."
 ---
 
 # Google Workspace
 
-Deliver the requested read, change, new file, or export and verify it at the
-destination the user asked for.
+Deliver the requested change, file or export at its intended destination. A
+native in-place edit keeps the same Drive file ID.
 
-## Steps
+1. **Confirm the file and operation.** Use the given URL or ID, including any
+   Docs tab selector. Otherwise disambiguate by title, MIME type, owner or
+   parent. Create, copy or import when the requested output calls for a new
+   file. Use Drive metadata actions for renames and moves. A replacement upload
+   changes stored bytes. Route Office binaries to their matching format skill.
+2. **Find the editor tools.** A Drive connector may be able to find or copy a
+   Sheet and provide no tool for editing its cells. Check for the needed read
+   and write actions before starting a native edit. On
+   `ACCESS_TOKEN_SCOPE_INSUFFICIENT`, stop that write and identify the action
+   that needs edit access. A connector import requires a supported uploaded
+   file reference. A workstation path by itself may be rejected.
+3. **Plan and apply the edit.** Read just enough structure to identify the
+   action and its boundaries. Use the applicable reference for editor requests
+   and keep update masks on the specific fields you intend to change.
 
-1. **Choose the operation and destination before any mutation.** Decide whether
-   the request is a read, export, metadata change, comment, suggestion, in-place
-   edit, creation, copy, or import. An edit keeps the original Drive file ID.
-   Create, copy, or import only when the requested output authorizes a new file.
-   Apply this to template copies and chart-source workbooks too. For each new
-   file, establish its type, title, and destination folder when specified.
-   `update_file` handles rename/move through metadata. Supplying `file_uri`
-   replaces stored-file bytes and requires a request to replace those bytes.
-   Done when the operation and every destination are known.
+   | Task                                 | Reference                                                          |
+   | ------------------------------------ | ------------------------------------------------------------------ |
+   | Docs text, structure, suggestions    | [Docs](references/docs.md)                                         |
+   | Sheets values, formatting, structure | [Sheets](references/sheets.md)                                     |
+   | Slides text, layout, images          | [Slides](references/slides.md)                                     |
+   | Create, embed or refresh a chart     | [Charts](references/charts.md) and the applicable editor reference |
+   | Visual review or export              | [Visual checks](references/visual-checks.md)                       |
+   - **Sheets.** Confirm the tab's numeric ID, range and requested fields.
+     Build a diff of intended writes and check it against that scope. Use
+     typed values or `RAW` for literal text such as `007`, dates spelled out
+     as text, and strings beginning with `=`. Use intentional formulas and
+     numbers as their own types. Use `USER_ENTERED` when Sheets should parse
+     the input in the spreadsheet's locale. Re-read the target just before a
+     shared-sheet write. Hidden or filtered rows still have grid coordinates.
+   - **Docs and Slides.** Get positions or object IDs from an editor read.
+     Use a fresh required revision ID when the tool supports it. Re-read and
+     recompute positions after a stale-revision response.
+   - **Comments.** Page through threads to find the exact comment. Reply or
+     resolve by ID. For a new Drive comment, include a precise text locator,
+     cell range or slide in the body. Verify a native anchor in the editor
+     before reporting that one exists.
+   - **Retry.** After a timeout, read back the original destination before
+     retrying creates, copies, appends, inserts or comments. Retry only effects
+     confirmed absent and report any ambiguous result.
 
-2. **Confirm file identity and the required tools.** Use the given URL or ID,
-   keeping any Docs tab parameter. Otherwise locate the file with
-   `google_drive.search` and disambiguate using `get_file_metadata` (MIME type,
-   title, owner, parent, or modified time). Ask if the target remains ambiguous.
-   Native Docs, Sheets and Slides have MIME types ending in
-   `vnd.google-apps.document`, `vnd.google-apps.spreadsheet`, and
-   `vnd.google-apps.presentation`. A Drive-hosted Office binary goes to the
-   matching format skill for content work. Use Drive tools for Drive operations.
-   Check only the connector actions the chosen operation needs. When an
-   in-place edit needs an unavailable editor action, report the capability gap
-   and preserve the original destination. Reads can succeed while writes fail
-   with `ACCESS_TOKEN_SCOPE_INSUFFICIENT`: treat that as "reconnect Google
-   Drive with edit access", ask the user, and stop the write path.
-   Importing a local file (`import_document`/`import_spreadsheet`/
-   `import_presentation`) needs a file the host uploaded (user attachment);
-   a workspace path is rejected (`download_url is not allowed`). Without an
-   upload, create the native file and write typed cells or requests instead.
-   Done when each existing file has a confirmed ID and type and the needed
-   actions are available, or the exact blocker is known.
-
-3. **Read at the fidelity the operation needs.** Metadata and export-only tasks
-   skip structured editor reads and runtime probes. Use bounded content reads
-   for answers and structured reads for write scope. Load the applicable
-   references before planning editor changes.
-
-   | Task                                    | References                                                                                                  |
-   | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-   | Docs text, structure, or suggestions    | [docs.md](references/docs.md)                                                                               |
-   | Sheets values, formatting, or structure | [sheets.md](references/sheets.md)                                                                           |
-   | Slides text, layout, or images          | [slides.md](references/slides.md)                                                                           |
-   | Sheets chart                            | [sheets.md](references/sheets.md) and [charts.md](references/charts.md)                                     |
-   | Embed or refresh a chart in Slides      | [sheets.md](references/sheets.md), [charts.md](references/charts.md), and [slides.md](references/slides.md) |
-
-   For comments, page through `get_file_comments` using each `nextPageToken`
-   as `page_token`. Find the target thread or read enough content to locate the
-   new comment precisely. For edits, identify the tab, segment, cell range or
-   object and take a baseline of the affected content and its neighbours.
-   In Docs verify destructive ranges against a structured read. The Docs
-   reference covers tab-wide operations and suggestion capability.
-   Done when the baseline identifies every target and its expected change.
-
-4. **Apply the scoped operation.** Use one batch per logical editor change.
-   For Docs and Slides, pass `write_control.requiredRevisionId` from a fresh
-   read under the same account. A stale revision returns HTTP 400. Re-read
-   and recompute after a conflict or before computing positions for another
-   batch. Sheets has no `writeControl`. Read the exact cells just before
-   writing and keep the write narrow. A collaborator can still change cells
-   between those calls.
-
-   Use narrow dotted leaf paths for update masks, such as
-   `userEnteredFormat.textFormat.bold`, since broad paths or wildcards can
-   clear omitted fields. A read-side partial-response `fields` selector
-   chooses returned data and can use nested selections where supported.
-
-   For local images, check the available Docs or Slides batch tool's
-   `image_uris` sidecar and match each path to its request placeholder in
-   order. For remote images use a URL Google can fetch at request time.
-   An import-based image workflow requires an authorized new destination.
-
-   Use `bulk_update_file_comments` to reply by `comment_id` or to create a
-   comment with a precise locator in its body. Include tab and exact text for
-   Docs, sheet title and A1 range for Sheets, or slide number and target text
-   or object for Slides. Drive API comments appear unanchored in editors.
-   Claim a native anchor only if an editor read confirms one. Resolve only the
-   requested threads.
-
-   After an ambiguous timeout, check whether the original operation took
-   effect before retrying. For create/copy/import look in the destination for
-   the new file and verify its identity and content. For append/insert check
-   the target and counts. For comments check thread IDs, content, and state.
-   If a response reports partial failure, inspect available per-operation
-   results, including `commentAndSuggestionUpdateStatus` where returned.
-   Retry only effects confirmed absent. If the outcome stays ambiguous,
-   report it before taking an action that could duplicate the change.
-   Done when each requested mutation is accounted for against its destination.
-
-5. **Verify the result.** Re-read the original ID for an edit or the returned
-   ID for a new file. Compare the specific tab/range/object, counts, and
-   neighbours against the baseline and intent. Revision movement alone cannot
-   establish which write landed. For comments, verify the posted text, reply,
-   or resolution under its thread ID. For metadata, read the changed fields.
-
-   For document, sheet, and deck content changes, inspect the affected pages,
-   sheets, or slides. Use slide thumbnails or a PDF export. For a requested
-   export, verify the returned file type and inspect the PDF when available.
-
-   - Call `export_file` with `mime_type: "application/pdf"`. It returns a
-     user-scoped file reference. If the host materializes it, use the returned
-     absolute path. Otherwise download the returned attachment through the
-     authenticated host file UI into the workspace and use the saved path.
-     An opaque `file_uri` by itself is insufficient for a shell command.
-     If the host offers neither route, report that the reference could not be
-     materialized locally.
-   - Drive's export endpoint limits output to 10 MB. Where supported, use
-     `fetch(url=..., download_raw_file=true, raw_export_mime_type="application/pdf", include_base64=false)`
-     to request a streamed file reference and materialize it the same way.
-   - For a local PDF, use `pdftoppm -png exported.pdf <output-prefix>` or
-     `"$PY" "$DOC" render exported.pdf --out <dir>` (also uses Poppler's
-     `pdftoppm`). Open the relevant rendered PNGs. Define `PY`, `DOC` and
-     `GW` from the runtime paths below only when using the local helpers. If no
-     visual route works, report “visual inspection not performed”, why, and
-     which read-back checks passed.
-
-   Done when each requested result has been checked and any unavailable
-   verification is identified.
-
-6. **Link and report.** Link the relevant Drive files and requested artifact.
-   State what changed by tab, range, heading, or slide, or answer the read
-   request. Include any partial updates or verification gaps.
-   Done when the user can open the exact result and tell what was verified.
-
-For local helpers on trusted fixtures, call `scient_document_runtime` in this thread. When it returns `ready`, set the shell variables below to the returned paths. Run the commands from the workspace, with local input and output paths. An unavailable runtime leaves the corresponding checks unverified.
-
-```sh
-PY='<pythonPath>'
-TOOLS='<toolsPath>'
-DOC="$TOOLS/doc.py"
-GW="$TOOLS/gw.py"
-export PATH='<nativePathPrefix>':"$PATH"
-```
-
-API references for [Docs requests](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request),
-[Sheets batches](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/batchUpdate),
-and [Drive comments](https://developers.google.com/workspace/drive/api/guides/manage-comments).
+4. **Reopen and verify.** Compare the actual change with the intent at the
+   original ID or the new file's returned ID. For Sheets, read back stored
+   values, formula definitions, calculated results and the affected format
+   fields. Check the relevant neighbors and any known dependents. Check
+   row/column metadata when height, width or hiding is in scope. Name the
+   properties and ranges checked. Use a visual check for appearance or print
+   layout. For other operations, check the changed metadata, comment state,
+   document content or export. Link the result and identify any verification gap.

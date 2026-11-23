@@ -1,132 +1,66 @@
 ---
 name: excel-xlsx
-description: "Build me an Excel workbook, update or audit an existing spreadsheet (.xlsx/.xlsm), or turn a CSV into Excel. Use for new workbook requests even without a filename. Use google-workspace for live Google Sheets and imports to Drive, and Scient Compute for analysis without a workbook deliverable."
+description: "Create, edit, audit or recalculate an Excel workbook, including .xlsx, .xlsm, chart work, and CSV-to-Excel. Use google-workspace for native Google Sheets and Scient Compute for analysis without a workbook deliverable."
 ---
 
 # Excel workbooks
 
-Deliver a workbook with formulas linked to labeled inputs and a record of
-its calculation, package, and visual checks. For a read-only audit, inspect
-the workbook and explain the results in place.
+Deliver the requested workbook at the agreed destination. Preserve the values,
+formulas, and workbook features outside the requested change.
 
-Call `scient_document_runtime` in this thread. When it returns `ready`, set the shell variables below to the returned paths. Run the commands from the workspace, with local input and output paths. An unavailable runtime leaves the corresponding checks unverified.
+## Edit an existing workbook
 
-```sh
-PY='<pythonPath>'
-TOOLS='<toolsPath>'
-DOC="$TOOLS/doc.py"
-CHART="$TOOLS/xlsx_chart_cache.py"
-export PATH='<nativePathPrefix>':"$PATH"
-```
+1. **Locate the change.** Identify the sheet, cells, and intended value types or
+   formatting. Keep the source as the recovery point and stage the edit in a
+   copy. Deliver a new file when requested. If the task calls for replacing the
+   original, check that it still matches the source you read before publishing.
+   For a locked or actively coauthored workbook, use the editor's supported
+   workflow or deliver the staged copy and report the conflict.
+2. **Preserve the workbook.** Read [Editing an existing workbook](references/editing-existing.md).
+   Use a targeted package edit or a compatible editor for files with features
+   that a library save could lose. Read formulas in formula mode. A workbook
+   loaded with `data_only=True` is for inspecting cached values.
+3. **Verify the saved copy.** Reopen it. Compare stored values and formula
+   definitions across all sheets, including hidden sheets. Expect only the
+   requested cell changes or structural moves. Compare calculated results
+   separately and check relevant formatting, package parts, and relationships.
+   A part diff alone misses unrelated changes inside the edited worksheet.
+   Preserve chart definitions and registration. Refresh affected chart caches
+   when their source data changes. See the editing reference for chart checks.
+4. **Check calculation and layout when affected.** Recalculate after a formula
+   or precedent change or a save that discards caches. Check dependent results
+   independently and report new, inherited, and uncomputed results separately.
+   The lab uses LibreOffice on a disposable copy and transfers calculated
+   results back. Read the verdict before using that copy as the deliverable.
+   Confirm Excel-sensitive calculations in Excel when available and report the
+   engine used. Inspect the affected view when the task changes layout, chart
+   appearance, or print output. Change print settings when the task calls for
+   a print-layout change.
 
-## Steps
+## Build or audit a workbook
 
-1. **Check the runtime.** Use the preview for trusted fixtures. Run `"$PY" "$DOC" probe` and read `command_routes`.
-   Check the XLSX inspect, validate, and recalc routes and `render.office`
-   for the steps you need. Office render requires `soffice` and
-   `pdftoppm`. Report unavailable checks and the outputs they leave unverified.
-   **Done when** you know which checks can run.
+- For an import, match the source schema and verify exact text identifiers,
+  numbers, dates, and missing values after reopening. Use [Scientific data](references/scientific-data.md)
+  for measurement tables, sample IDs, and CSV inference.
+- For a model or live calculation, use [Formulas and models](references/formulas-and-models.md).
+  Put adjustable assumptions in labeled cells and record the provenance of
+  external inputs. Check the outputs against an independent calculation and
+  test input sensitivity when the model's behavior is part of the request.
+- For a read-only audit, inspect formulas and cached results without saving the
+  source. Report findings by sheet and cell and identify caches you could not
+  verify. For analytical results, keep the source and the calculation that
+  produced them available to the user.
 
-2. **Plan a new workbook or inspect the supplied one.** Run
-   `"$PY" "$DOC" inspect FILE` for an existing workbook. Read the formula and
-   cache together, the cached errors, total errors, missing-cache count,
-   chartsheets, and preservation flags. Inspect samples are capped. Check
-   relevant cells directly using `data_only=False` for formula cells
-   (`data_type == "f"`) and `data_only=True` for cached results.
-   Use `doc.py text` for a quick overview. For a new workbook, list the
-   sheets, inputs, and outputs requested. For a read-only audit, explain
-   the requested formulas or values with cell addresses and flag missing
-   or potentially stale caches. Finish the audit here without saving.
-   **Done when** the workbook plan or the requested audit is complete,
-   or the scope and preservation risks of the edit are clear.
+## Local tools
 
-3. **Read the reference for the work.**
-   - Formula writing, modeling, or recalculation debugging → [Formulas and models](references/formulas-and-models.md)
-   - CSV import, identifiers, or research measurements → [Scientific data](references/scientific-data.md)
-   - Any existing workbook edit → [Editing an existing workbook](references/editing-existing.md)
+For trusted fixtures, `scient_document_runtime` gives the Python executable
+and tools directory. Use the `doc.py` commands for the checks the task needs.
+`inspect` samples formulas and preservation risks. `validate --original`
+compares package parts and relationships. `recalc` verifies the recalculation
+result. `render` shows the LibreOffice layout. Use `probe` to diagnose a
+missing route. The editing reference gives the chart helper commands.
 
-   For an existing workbook with charts or drawings, capture the chart
-   baseline from the exact, untouched file you are about to edit. Run
-   `"$PY" "$CHART" check ORIGINAL --save-baseline BASELINE.json`.
-   Read the baseline findings even when the command exits 1. The lineage
-   check catches a baseline taken from the wrong file by mistake; it cannot
-   prove descent, so only ever pass the baseline you saved from this file.
-   **Done when** the plan accounts for the applicable formula, import,
-   and preservation rules and the chart baseline is saved when needed.
-
-4. **Build or edit a copy.** Use openpyxl for new workbooks and safe local
-   edits. Prefer a targeted OOXML edit when a narrow change must preserve
-   printer settings, drawings, custom XML, or other parts an openpyxl save
-   can drop. After saving an existing workbook with openpyxl, run
-   `"$PY" "$DOC" validate FILE --original ORIGINAL` and read `part_diff`.
-   If any part was removed without an explanation tied to the requested
-   edit, treat the save as failed and retry from the original via OOXML.
-   Use pandas for bulk reshaping, joins, or CSV import, with the
-   identifier recipe in the scientific data reference before type
-   inference can change IDs. Write derived values as formulas and keep
-   adjustable assumptions in labeled cells. Record each input source and
-   date in a note or adjacent field. Flag any source you cannot identify.
-   Follow requested sheet names, order, headers, and labels. If Excel
-   rejects a requested sheet name (over 31 characters or containing
-   `[]:*?/\`), agree on a valid name. Keep the generating script.
-   **Done when** the saved copy reopens with the expected inputs, types,
-   formulas, and number formats, and any removed parts are accounted for.
-
-5. **Recalculate after every save of a workbook with formulas**, including
-   input-only edits. Read the JSON from `"$PY" "$DOC" recalc FILE` even on
-   failure. A pass requires exit 0, `status: "success"`, zero errors and
-   zero uncomputed cells. Compare cached errors and missing results with
-   the baseline on scoped edits. For diagnosis, read
-   [Formulas and models](references/formulas-and-models.md).
-   Hand-check up to three representative results independently at the
-   displayed precision, including an affected downstream result when
-   available. Test the model's response to an input change on a copy.
-   **Done when** the gate and hand-checks pass or the report identifies
-   unresolved cells, counts, and inherited or intentional errors.
-
-6. **Check native charts.** After recalculation, run `"$PY" "$CHART" check FILE`
-   for a new chart workbook. For an edit, add `--baseline ORIGINAL` or
-   `--baseline-json BASELINE.json` to check and refresh. On new or worsened
-   cache mismatches, run `"$PY" "$CHART" refresh FILE -o OUT` with the same
-   baseline option, then check `OUT` before rendering and validating it.
-   Review `lineage_mismatches` before treating any findings as inherited.
-   A passing check can still report inherited findings. Include them in
-   the handoff. See
-   [Editing an existing workbook](references/editing-existing.md) for
-   unsupported references and preservation checks.
-   **Done when** the final chart workbook has no new or worsened findings
-   or the report names the chart data or registrations still unverified.
-
-7. **Render and look.** Run `"$PY" "$DOC" render FILE --out DIR` and view the
-   returned page PNGs. Map pages to each created or changed sheet and
-   affected output, using a sheet-specific render copy if a sheet is
-   missing from the printout. Check sheet coverage and page order, page
-   breaks and print area, clipped cells or headers, number formats,
-   totals, and chart labels and gaps. Every native chart in the workbook
-   must appear on a page; a chart missing from the render is a render
-   defect to report, not proof the chart is fine. Adjust print settings
-   as needed, then repeat applicable gates after saving.
-   **Done when** the expected sheets and pages have been seen, or the report
-   names which views were skipped and why.
-
-8. **Check the final package and hand over.** Run `"$PY" "$DOC" validate FILE`
-   and add `--original ORIGINAL` for an edit. Read the report. XLSX
-   reports `skipped-no-xsd` for schema validation. Check the structural
-   result and, for edits, review the part and relationship diff and
-   confirm targeted read-back. Report the checks that passed, findings
-   still open, formula and error counts, hand-checked cells, and visual
-   coverage. Include the final path, scope of changes, and where inputs
-   and sources live.
-   **Done when** the user can see which checks passed and which are partial
-   or skipped.
-
-## File formats
-
-- Use formula-mode loads for edits. Saving a `data_only=True` load removes
-  the formulas.
-- Preserve `.xlsm` using `keep_vba=True` and the same extension. See the
-  editing reference for other features that need protection.
-- Convert legacy `.xls` or `.ods` with `"$PY" "$DOC" convert IN OUT.xlsx`
-  before editing. Check the converted file and report any conversion loss.
-- Deliver `.xlsx` for an Excel request. Use CSV when the user asks for
-  flat data without workbook formulas or formatting.
+Use an isolated worker for unfamiliar files when required by the runtime.
+Keep macros and the `.xlsm` extension when applicable. If a legacy file needs
+conversion, verify the converted baseline and report conversion losses.
+Link the final workbook and report the checks that affect confidence in it.

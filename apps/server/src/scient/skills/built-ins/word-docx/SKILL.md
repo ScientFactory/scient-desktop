@@ -5,7 +5,7 @@ description: "Make me a Word document, edit this .docx, add tracked changes or c
 
 # Word documents
 
-Deliver a Word file that preserves the source features the task depends on. Validate the package and inspect the rendered pages before handoff.
+Deliver a Word file that preserves the source features the task depends on. Verify the saved content and layout affected by the task.
 
 Call `scient_document_runtime` in this thread. When it returns `ready`, set the shell variables below to the returned paths. Run the commands from the workspace, with local input and output paths. An unavailable runtime leaves the corresponding checks unverified.
 
@@ -33,6 +33,8 @@ export PATH='<nativePathPrefix>':"$PATH"
 
    **Done when** the route and required tools are confirmed. For read-only requests, stop once the answer is grounded in the inspected content and any extraction gaps are reported.
 
+For Hebrew or mixed right-to-left and left-to-right text, read [Bidirectional Word documents](references/bidirectional.md) before writing.
+
 3. **Preserve the baseline.** Keep the original for validation and render comparison. On edits, inventory its features with `"$PY" "$TOOLS/ooxml/docx_feature_inventory.py" ORIGINAL.docx` and record the intended count changes. When a document has headings and the outline looks incomplete, check the paragraphs and their styles for `w:outlineLvl`. Preserve sections, page size, margins, and named fonts. For a new file, use the requested or template layout, or choose A4 or US Letter for the audience and report the choice. Read [scientific-documents.md](references/scientific-documents.md) for equations, citation fields, numbered captions, journal templates, or coauthor redlines.
 
    **Done when** the original is available, the layout is recorded, and the intended edit and feature-count changes are listed.
@@ -55,7 +57,7 @@ export PATH='<nativePathPrefix>':"$PATH"
 
    **Done when** the applicable checks pass, each requested or affected feature has been verified in the saved output, and any remaining verification gap is named.
 
-6. **Render and review.** Run `"$PY" "$DOC" render OUT.docx --out FRESH_DIR --pdf` and open every page image. The Document Lab render profile displays native OMML equations. Check page breaks, headings, tables, equations, images, headers and footers. On edits, compare with the baseline render. For a clean copy, compare against the all-accepted or all-rejected view for the requested mode. Check review markup in the XML and use Word when its display or field behavior is part of the request.
+6. **Render and review.** Run `"$PY" "$DOC" render OUT.docx --out FRESH_DIR --pdf` and view each page in a short document, or changed pages and boundary pages in a long edit. For comment-only edits, verify the anchor and existing revisions from the saved package and render when the displayed review result matters. The Document Lab render profile can display native OMML equations. Check page breaks, headings, tables, equations, images, headers and footers. On edits, compare with the baseline render. For a clean copy, compare against the all-accepted or all-rejected view for the requested mode. Check review markup in the XML and use Word when its display or field behavior is part of the request.
 
    **Done when** the page count and pages viewed are recorded, layout issues are resolved, and the outcome of Word-specific checks is recorded. If no pages could be viewed, report “visual inspection not performed” with the reason.
 

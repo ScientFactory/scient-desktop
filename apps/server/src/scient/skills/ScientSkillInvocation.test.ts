@@ -191,12 +191,15 @@ describe("turn-local Scient skill routing", () => {
       projection,
     );
     expect(result.runtimeInstruction).toContain(
-      "For Document Lab work, first load the matching built-in with `mcp__scient__scient_skill_load`.",
+      "When a listed Document Lab skill fits the request, first load it with `mcp__scient__scient_skill_load`.",
+    );
+    expect(result.runtimeInstruction).toContain(
+      "If the matching skill is absent, continue with the tools and skills available to you.",
     );
     expect(result.runtimeInstruction).not.toContain("(selected by the user)");
     expect(
       prepareScientSkillTurn(text, skills, releases, projection).runtimeInstruction,
-    ).not.toContain("For Document Lab work");
+    ).not.toContain("When a listed Document Lab skill fits the request");
   });
 
   it("points to search instead of truncating an index past its allowance", () => {

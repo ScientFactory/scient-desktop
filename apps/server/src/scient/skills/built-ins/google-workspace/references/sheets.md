@@ -19,12 +19,11 @@
 - If values have already been coerced, identify the affected cells and recover
   correct values from source data before making any requested correction.
 
-## Formulas, not typed results
+## Formulas for live calculations
 
-- Anything derivable from other cells goes in as a **formula**
-  (`=SUM(B2:B9)`, `=B2/$B$12`), never as a number you calculated in your head
-  or in Python and pasted. A pasted result goes stale the moment an input
-  changes and is indistinguishable from source data.
+- Use formulas when the user wants a calculation to follow its inputs
+  (`=SUM(B2:B9)`, `=B2/$B$12`). Preserve existing formulas during value or
+  formatting edits. Keep imported source data or a requested snapshot as such.
 - Inputs (measurements, prices, parameters) live in their own clearly labelled
   cells – an assumptions/inputs block or tab – and formulas reference them.
   Do not bury constants inside formulas (`=A2*1.175`) when the constant is an
@@ -90,9 +89,18 @@
   on shifted addresses. Re-read the affected grid before using those addresses.
   Adding a tab changes the workbook's tab inventory. Tab renames change A1
   qualifiers, and tab colors are metadata. Neither shifts row or column indices.
+- Resolve row targeting from grid coordinates and stable identifiers. Check
+  whether a protection, merge, filter, hidden row, or spill intersects the
+  write. If a request means visible rows only, enumerate those rows first.
+- Before appending or inserting, identify what the new rows should inherit.
+  Check cell styles, validation, conditional format coverage, and native table
+  membership separately. Copy just the needed properties from a verified row.
+  `PASTE_FORMAT` excludes data validation. Use the table ID to append to a
+  native table if the editor exposes that operation.
 - Sheets has no `writeControl`. Re-read the exact target and its neighbours
-  immediately before writing. This narrows the concurrency window. Compare
-  both areas after the write.
+  immediately before writing. Report a mismatch before applying a plan based
+  on old cells. Keep a large batch within the connector's limits and verify
+  each independently valid batch before continuing.
 
 ## Importing a local workbook, then going native
 
@@ -107,19 +115,18 @@
   conversion (rebuild charts natively – `charts.md`). Run the error scan below
   on every tab of an imported workbook before calling it done.
 
-## Verify checklist (Sheets)
+## Verify a Sheets operation
 
-- [ ] **Error scan on every sheet you touched** (and every sheet, for imports):
-      read the used ranges and search values for `#REF!`, `#VALUE!`, `#DIV/0!`,
-      `#NAME?`, `#N/A`, `#NUM!`, `#ERROR!`. `#N/A` from a deliberate lookup
-      pattern may be expected – everything else gets explained or fixed.
-- [ ] Read back each written range and its neighbours with the explicit
-      verification fields above. Check formulas, literal strings, effective
-      types and formats, and any rich-text runs or chips that must survive.
-- [ ] Spot-check one formula chain end-to-end: change nothing, but confirm the
-      precedent cells a key result points at are the inputs you think they are.
-- [ ] Every tab was checked, not just the first: totals tabs and chart-source
-      tabs included. List the tabs you verified in your report.
-- [ ] Export to PDF, render, view: number formats readable, columns not
-      truncating to `###`, print layout sane for the tabs that matter. Note
-      "visual inspection not performed" if no render route existed.
+Read back the exact targets and relevant neighbours. Compare
+`userEnteredValue` for literal type and formula definition, `effectiveValue`
+for calculations or typed errors, and the requested properties in
+`userEnteredFormat` or `effectiveFormat`. Verify rich-text runs, chips and
+validation if the task depends on them. Height, width and hidden state are
+in row/column metadata, including `pixelSize` for dimensions.
+
+Expected dependent formula, spill, or conditional-format results can change
+without a write to those cells. Check affected outputs and separate those
+changes from unrelated differences or possible concurrent edits. Check all
+imported tabs, since conversion can change cell types or formulas. For a
+small edit, report the ranges checked. For appearance or print work, follow
+[Visual checks](visual-checks.md).
