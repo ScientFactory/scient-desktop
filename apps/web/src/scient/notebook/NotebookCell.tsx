@@ -493,7 +493,8 @@ export function NotebookCell(props: {
         <div
           data-notebook-cell-box=""
           className={cn(
-            "rounded-md border bg-background",
+            "rounded-md border",
+            isCode ? "bg-(--markdown-code-block-background)" : "bg-background",
             selected
               ? "border-foreground/25"
               : rendered
