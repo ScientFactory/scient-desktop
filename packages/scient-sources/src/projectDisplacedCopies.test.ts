@@ -44,10 +44,7 @@ const copy = (heldBy: string, undoneAt: string, title: string) => ({
 
 describe("copies a project held and a merge Undo replaced", () => {
   it("keeps one per holder, source and Undo, without a cap, and never overwrites a file it cannot read", async () => {
-    const root = await NodeFSP.realpath(
-      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-displaced-")),
-    );
-    fixtures.push(root);
+    const root = await fixture();
     const holder = { kind: "project" } as const;
     const first = "2026-11-01T00:00:00.000Z";
 
@@ -102,10 +99,7 @@ describe("copies a project held and a merge Undo replaced", () => {
   });
 
   it("never reads or writes through a linked folder into another checkout", async () => {
-    const base = await NodeFSP.realpath(
-      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-displaced-")),
-    );
-    fixtures.push(base);
+    const base = await fixture();
     const [root, other] = [NodePath.join(base, "project"), NodePath.join(base, "other")];
     await Promise.all([root, other].map((folder) => NodeFSP.mkdir(folder)));
     const first = "2026-11-01T00:00:00.000Z";
