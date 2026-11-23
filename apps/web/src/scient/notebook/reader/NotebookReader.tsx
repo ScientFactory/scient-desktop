@@ -16,6 +16,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { cn } from "~/lib/utils";
 import { resultTime } from "~/scient/results/resultState";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -270,7 +271,12 @@ export function NotebookReader(props: {
                 </CollapsibleTrigger>
                 <CollapsiblePanel animate={false}>
                   <pre
-                    className="mt-1 overflow-x-auto rounded-lg bg-muted/40 p-2 text-sm"
+                    className={cn(
+                      "mt-1 overflow-x-auto rounded-lg p-2 text-sm",
+                      cell.cellType === "code"
+                        ? "bg-(--markdown-code-block-background)"
+                        : "bg-muted/40",
+                    )}
                     dir="auto"
                   >
                     {cell.source}
