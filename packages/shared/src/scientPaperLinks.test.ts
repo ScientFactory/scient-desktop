@@ -1,7 +1,9 @@
+import * as NodeVM from "node:vm";
 import type { AccountDetails } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   institutionLink,
+  openAthensCheckScript,
   institutionLinkFromButton,
   openAthensLink,
   publisherOf,
@@ -106,5 +108,45 @@ describe("without URL.canParse or URL.parse", () => {
       URL.canParse = canParse;
       URL.parse = parse;
     }
+  });
+});
+
+describe("OpenAthens check", () => {
+  /** The check script on a page at `url`, whose /check answers `authenticated`. */
+  const page = (url: string, authenticated: boolean, password = false) => {
+    const href = new URL(url);
+    const context = {
+      URLSearchParams,
+      location: {
+        hostname: href.hostname,
+        origin: href.origin,
+        pathname: href.pathname,
+        search: href.search,
+      },
+      document: { readyState: "complete", querySelector: () => (password ? {} : null) },
+      fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ authenticated }) }),
+    } as Record<string, unknown>;
+    context.window = context;
+    return async () => {
+      const answer = NodeVM.runInNewContext(openAthensCheckScript, context) as string;
+      // The page's own /check settles within a few promise turns.
+      for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+      return answer;
+    };
+  };
+
+  it("trusts a no only after OpenAthens' quiet ask has come back", async () => {
+    const before = page("https://my.openathens.net/", false);
+    expect([await before(), await before()]).toEqual(["wait", "wait"]);
+    const after = page("https://my.openathens.net/?passiveLogin=false", false);
+    expect([await after(), await after()]).toEqual(["wait", "signed-out"]);
+    const signedIn = page("https://my.openathens.net/", true);
+    expect([await signedIn(), await signedIn()]).toEqual(["wait", "signed-in"]);
+  });
+
+  it("reads a sign-in page as signed out and waits while passing through", async () => {
+    expect(await page("https://login.openathens.net/auth/gen?t=x", false)()).toBe("signed-out");
+    expect(await page("https://login.openathens.net/saml/2/sso/_/c/oafed", false)()).toBe("wait");
+    expect(await page("https://idp.example.ac.il/login", false, true)()).toBe("signed-out");
   });
 });

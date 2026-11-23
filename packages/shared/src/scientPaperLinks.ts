@@ -96,28 +96,43 @@ export const openAthensLink = (domain: string, articleUrl: string) =>
 /** The person's own OpenAthens page; it asks the university to sign them in when it has to. */
 const OPEN_ATHENS_HOME = "https://my.openathens.net";
 
-/** Where a quiet look asks OpenAthens whether the person is signed in, without signing them in. */
-export const OPEN_ATHENS_CHECK_PAGE = `${OPEN_ATHENS_HOME}/?passiveLogin=false`;
+/**
+ * Where a quiet look asks OpenAthens whether the person is signed in. Its page first asks its
+ * sign-in service quietly, which finds a live session without showing anything, and comes back
+ * with `passiveLogin=false` when there is none. `passiveLogin=false` up front skips that ask.
+ */
+export const OPEN_ATHENS_CHECK_PAGE = `${OPEN_ATHENS_HOME}/`;
 
 /** A request that keeps the OpenAthens session in use and starts no sign-in. */
 export const OPEN_ATHENS_QUIET_VISIT = `${OPEN_ATHENS_HOME}/check`;
 
 /**
- * Runs on the OpenAthens page: asks its own "is anyone signed in here?" and leaves the answer on
- * the page, where `openAthensAnswerScript` reads it once it has come.
+ * Run on each look at the check page: "signed-in", "signed-out", or "wait" while the quiet ask is
+ * still under way. Only a "no" after that ask has come back, or a sign-in page, means signed out.
  */
 export const openAthensCheckScript = `(() => {
+  if (document.querySelector("input[type=password]")) return "signed-out";
+  if (location.hostname === "login.openathens.net")
+    return location.pathname.startsWith("/auth") ? "signed-out" : "wait";
+  if (location.origin !== "${OPEN_ATHENS_HOME}" || document.readyState !== "complete") return "wait";
+  const seen = window.__scientOpenAthens;
+  if (seen === "signed-in" || seen === "signed-out") return seen;
+  if (seen === "asking") return "wait";
   window.__scientOpenAthens = "asking";
+  const asked = new URLSearchParams(location.search).get("passiveLogin") === "false";
   fetch("/check", { credentials: "include", headers: { accept: "application/json" } })
     .then((response) => (response.ok ? response.json() : null))
     .then((answer) => {
       window.__scientOpenAthens =
-        answer && typeof answer.authenticated === "boolean" ? answer.authenticated : "unclear";
+        answer && answer.authenticated === true
+          ? "signed-in"
+          : answer && answer.authenticated === false && asked
+            ? "signed-out"
+            : undefined;
     })
-    .catch(() => { window.__scientOpenAthens = "unclear"; });
-  return true;
+    .catch(() => { window.__scientOpenAthens = undefined; });
+  return "wait";
 })()`;
-export const openAthensAnswerScript = "window.__scientOpenAthens ?? null";
 
 /** A publisher that sends nearly every university to its own sign-in service and back. */
 const SIGN_IN_PAGE = "https://www.nature.com/";
