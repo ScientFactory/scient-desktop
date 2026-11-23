@@ -237,6 +237,27 @@ async function readVerifiedFile(
 }
 
 /**
+ * On Linux a folder swapped for a link between the check and the exclusive open makes the empty
+ * temporary file in the link's target. It is ours (exclusive, random name): remove it there, and
+ * only while that path is still the same empty file.
+ */
+async function removeCreatedElsewhere(handle: NodeFSP.FileHandle): Promise<void> {
+  if (PLATFORM !== "linux") return;
+  const created = await handle.stat({ bigint: true }).catch(() => null);
+  const where = await NodeFSP.readlink(`/proc/self/fd/${handle.fd}`).catch(() => null);
+  if (!created || !where) return;
+  const there = await NodeFSP.lstat(where, { bigint: true }).catch(() => null);
+  if (
+    there?.isFile() &&
+    there.dev === created.dev &&
+    there.ino === created.ino &&
+    there.size === 0n
+  ) {
+    await NodeFSP.rm(where).catch(() => undefined);
+  }
+}
+
+/**
  * Replaces `filePath` atomically only while its directory stays the verified one.
  * Verifies the opened temp descriptor before writing and re-verifies before rename or cleanup.
  */
@@ -268,7 +289,15 @@ async function writeVerifiedJson(
       }
       throw error;
     }
-    const verified = await verifyOpenRegularFile(canonicalRoot, temporaryPath, expectedDir, handle);
+    const verified = await verifyOpenRegularFile(
+      canonicalRoot,
+      temporaryPath,
+      expectedDir,
+      handle,
+    ).catch(async (error: unknown) => {
+      await removeCreatedElsewhere(handle!);
+      throw error;
+    });
     tempFileId = { dev: verified.dev, ino: verified.ino };
     await handle.writeFile(serialized, "utf8");
     await handle.sync();
