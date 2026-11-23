@@ -64,7 +64,8 @@ export function outsideCall(
 const PROJECT_INPUT = "projectId";
 const projectInputSchema = {
   type: "string",
-  description: "The project to act on, from scient_project_list; omit for whole-Library calls.",
+  description:
+    "The project to act on, from scient_project_list. Required except for whole-Library calls: scient_sources_list with scope library, recentChanges or libraryCopies, and scient_sources_organize's whole-Library actions (back up, restore, put back, cancel a restore, add from another Library and undo that).",
 };
 
 /** The outside variant of a listed tool: the same schema with `projectId`, which calls take out. */
