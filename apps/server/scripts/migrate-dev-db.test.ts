@@ -318,6 +318,26 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  // SCIENT-FORK:START — Scient's live and dev app databases are refused like T3's.
+  it.effect.each(["userdata", "scient-next-dev"])(
+    "refuses to drop from the Scient %s database",
+    (stateDir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-home-" });
+        const scientHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-scient-" });
+        const fixture = yield* createFixtureSource(scientHome);
+        const live = path.join(scientHome, stateDir, "statev2.sqlite");
+        yield* fs.makeDirectory(path.dirname(live), { recursive: true });
+        yield* fs.rename(fixture, live);
+
+        const refused = yield* Effect.flip(dropResumableFamilies(live, { sharedHome, scientHome }));
+        assert.equal(refused._tag, "MigrateDevDbSharedHomeError");
+      }),
+  );
+  // SCIENT-FORK:END
+
   it.effect("refuses to drop from the shared database through a symlink or a hard link", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

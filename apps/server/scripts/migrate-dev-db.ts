@@ -131,6 +131,10 @@ export interface RunMigrateDevDbInput {
 export interface RunMigrateDevDbOptions {
   /** Test override for the directory writes must never target. */
   readonly sharedHome?: string | undefined;
+  // SCIENT-FORK:START — Scient's live home is never pruned either.
+  /** Test override for the Scient home whose databases pruning must never target. */
+  readonly scientHome?: string | undefined;
+  // SCIENT-FORK:END
 }
 
 interface KeptProject {
@@ -398,15 +402,25 @@ export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(fun
       Effect.orElseSucceed(() => Option.none<string>()),
     );
   const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  const liveDatabase = path.join(sharedHome, "userdata", "statev2.sqlite");
-  const [target, live] = yield* Effect.all([resolve(databasePath), resolve(liveDatabase)]);
+  // SCIENT-FORK:START — the Scient app's and dev app's databases are live too.
+  const scientHome = path.resolve(
+    options.scientHome ?? path.join(NodeOS.homedir(), SCIENT_DESKTOP_IDENTITY.baseDirName),
+  );
+  const liveDatabases = [
+    path.join(sharedHome, "userdata", "statev2.sqlite"),
+    path.join(scientHome, "userdata", "statev2.sqlite"),
+    path.join(scientHome, SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName, "statev2.sqlite"),
+  ];
+  const target = yield* resolve(databasePath);
+  const live = yield* Effect.forEach(liveDatabases, resolve);
   const targetIdentity = yield* identity(target);
   const liveIdentities = yield* Effect.forEach(
-    [liveDatabase, `${liveDatabase}-wal`, `${liveDatabase}-shm`],
+    liveDatabases.flatMap((database) => [database, `${database}-wal`, `${database}-shm`]),
     identity,
   );
+  // SCIENT-FORK:END
   if (
-    comparable(target) === comparable(live) ||
+    live.some((database) => comparable(target) === comparable(database)) ||
     (Option.isSome(targetIdentity) &&
       liveIdentities.some(
         (candidate) => Option.isSome(candidate) && candidate.value === targetIdentity.value,
