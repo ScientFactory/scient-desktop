@@ -1063,6 +1063,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   useLayoutEffect(() => {
     restoreInputsRef.current = restoreInputs;
   });
+  // A running restore, cleared the moment it reports the thread positioned: the reader's scroll
+  // that ends it is the reading position to keep, before the positioned state commits.
+  const restoreRunningRef = useRef(false);
   // SCIENT-FORK:END
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores LegendList's scroll position for the shown thread before paint, after the list's own layout
   useLayoutEffect(() => {
@@ -1078,6 +1081,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setPositionedThreadKey(listIdentityKey);
       return;
     }
+    restoreRunningRef.current = true;
+    const onPositioned = (threadKey: string) => {
+      restoreRunningRef.current = false;
+      setPositionedThreadKey(threadKey);
+    };
     const followingPromptId = rememberedPosition?.followingPromptId;
     if (followingPromptId && citationRequest === null) {
       return startFollowResume({
@@ -1085,7 +1093,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         viewport,
         composerInset,
         promptId: followingPromptId,
-        onPositioned: setPositionedThreadKey,
+        onPositioned,
         onResumed: () => onResumeFollow?.(followingPromptId),
         listIdentityKey,
       });
@@ -1110,9 +1118,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       resolveRow: () => (found ? { index: restoreRowIndex, offsetWithinRow: restoreOffset } : null),
       onUnsettled: setAbandonedPositionKey,
       // SCIENT-FORK:END
-      onPositioned: setPositionedThreadKey,
+      // SCIENT-FORK: the restore's end is seen at once (restoreRunningRef).
+      onPositioned,
     });
     return () => {
+      // SCIENT-FORK:START
+      restoreRunningRef.current = false;
+      // SCIENT-FORK:END
       stopRestore();
       stopWatchingEnd?.();
     };
@@ -1691,28 +1703,42 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
   // SCIENT-FORK:START — the answer follow and idle end keeping (at the reading end, measured now:
-  // the bookkeeping's record trails a scroll by a frame) own the view where they apply.
+  // the bookkeeping's record trails a scroll by a frame) own the view where they apply. A width
+  // change is judged by where the reader was before it: a wider list clamps them to the end.
+  const readingEndByWidthRef = useRef<{ width: number; atEnd: boolean } | null>(null);
   const readerAtReadingEndNow = () => {
     const list = listRef.current;
     const viewport = list?.getScrollableNode();
     if (!list || !viewport) return false;
-    const state = list.getState();
-    const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
-    return gap !== null && gap <= readingEndAllowance(state);
+    const previous = readingEndByWidthRef.current;
+    const width = viewport.clientWidth;
+    let atEnd = previous?.atEnd ?? false;
+    if (!previous || previous.width === width) {
+      const state = list.getState();
+      const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
+      atEnd = gap !== null && gap <= readingEndAllowance(state);
+    }
+    readingEndByWidthRef.current = { width, atEnd };
+    return atEnd;
   };
   // SCIENT-FORK:END
-  const shouldPreserveReadingPosition = useStableCallback(
-    () =>
+  const shouldPreserveReadingPosition = useStableCallback(() => {
+    // SCIENT-FORK:START — measured on every call, so the width it was measured at stays current.
+    const atReadingEnd = readerAtReadingEndNow();
+    // SCIENT-FORK:END
+    return (
       // SCIENT-FORK:START
       followingPromptId() === null &&
       !timelinePositioningPending &&
-      !readerAtReadingEndNow() &&
+      !atReadingEnd &&
       // SCIENT-FORK:END
       !anchoredEndSpace &&
       !findActive &&
       !citationPositioning &&
-      !restoringThreadPosition,
-  );
+      // SCIENT-FORK: a restore that just ended counts as ended (restoreRunningRef).
+      !(restoringThreadPosition && (!restoreReady || restoreRunningRef.current))
+    );
+  });
   // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
