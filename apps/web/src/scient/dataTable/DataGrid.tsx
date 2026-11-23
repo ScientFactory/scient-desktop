@@ -86,6 +86,7 @@ export interface DataGridView {
 
 export interface DataGridProps {
   readonly label: string;
+  readonly validateCopy?: () => Promise<void>;
   readonly loadPage: (query: DataTableQuery) => Promise<DataTablePage>;
   /** A new revision drops every loaded row, as when the source changes. */
   readonly revision: string;
@@ -306,6 +307,7 @@ export function DataGrid(props: DataGridProps) {
         lines.push(rows[index]!.cells.slice(selection.left, selection.right + 1));
       }
     }
+    await props.validateCopy?.();
     copyToClipboard(tableText(lines), undefined);
   };
 

@@ -50,8 +50,9 @@ shown in its summary. Use **Cancel** to stop a profile in progress.
    trace. Open the source details to see more references. Choose **Show SQL**
    to edit the query, then **Show table** to see the saved changes.
 4. Open **Actions** and choose **Export table…**. Choose CSV or Parquet
-   and enter a new project path. Scient creates missing destination folders
-   and updates the Files tree after writing.
+   and enter a new project path. The export includes all rows that match the
+   grid’s search and filters, in grid order. Scient creates missing destination
+   folders and updates the Files tree after writing.
 
 Open **Actions** in the dataset or view and choose **Use in analysis…**. Pick a saved script or
 notebook. The example starts in the notebook’s language when Scient supports it.
@@ -63,7 +64,8 @@ analysis environment. Run them from the project root.
 Ask an agent to profile data with `scient_data_profile`. It can request named
 columns on a wide table. Use `scient_data_preview_view` to see a bounded set of
 rows from a saved query. Agents create a view by writing its SQL file and use
-`scient_data_materialize_view` to export it to a new path.
+`scient_data_materialize_view` to export it to a new path. Pass the same
+filter and the revision returned by the preview to export the rows you inspected.
 
 ## Browse workspace files
 

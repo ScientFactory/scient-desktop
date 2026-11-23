@@ -30,6 +30,7 @@ export function DataProfileButton(props: {
   readonly environmentId: EnvironmentId;
   readonly target: ProfileTarget;
   readonly sourceLabel: string;
+  readonly onFailure?: (failure: unknown) => void;
 }) {
   const gt = useGT();
   const execute = useAtomCommand(dataProfile, { reportFailure: false });
@@ -68,7 +69,9 @@ export function DataProfileButton(props: {
       },
     }).then((result) => {
       if (!request.signal.aborted && result._tag !== "Success") {
-        setError(String(squashAtomCommandFailure(result)));
+        const failure = squashAtomCommandFailure(result);
+        props.onFailure?.(failure);
+        setError(String(failure));
       }
     });
   };

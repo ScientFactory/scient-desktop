@@ -163,7 +163,12 @@ describe.runIf(Boolean(python))("native DuckDB data views", () => {
       yield* write("zip.sql", 'SELECT * FROM "./data/zip.csv.gz"');
       yield* write("first.sql", "SELECT 1 AS id");
       yield* write("second.sql", "SELECT 2 AS id");
-      yield* write("partitions.sql", 'SELECT * FROM "data/parts/*.parquet" ORDER BY id');
+      yield* write("partitions.sql", 'SELECT * FROM "data/parts/**/*.parquet" ORDER BY id');
+      yield* write(
+        "cohort.csv",
+        "id,score,cohort\n1,0.8,alpha\n2,0.9,beta\n3,0.3,alpha\n4,0.9,alpha\n5,0.9,alpha\n",
+      );
+      yield* write("cohort.sql", "SELECT * FROM 'cohort.csv' ORDER BY id");
       yield* write("cte.sql", "WITH rows AS (SELECT 7 AS id) SELECT * FROM rows");
       yield* write("missing.sql", "SELECT * FROM 'data/nope.csv'");
       yield* write("missing-glob.sql", "SELECT * FROM 'data/nope-*.parquet'");
@@ -217,6 +222,49 @@ describe.runIf(Boolean(python))("native DuckDB data views", () => {
             path,
           ).toEqual(ids);
         }
+        const partition = { cwd, path: "partitions.sql" };
+        const firstPage = yield* rows(partition.path);
+        const sameSourceQuery = { search: "", sort: null, offset: 1, limit: 1 };
+        const pinned = { ...partition, revision: firstPage.revision };
+        yield* views.materializeView({
+          ...pinned,
+          destination: "data/parts/nested/derived.parquet",
+        });
+        for (const operation of [
+          views.readView({ ...pinned, query: sameSourceQuery }),
+          views.profileView(pinned),
+          views.materializeView({ ...pinned, destination: "stale.csv" }),
+        ]) {
+          expect(
+            yield* Effect.result(operation as Effect.Effect<unknown, DataViewError>),
+          ).toMatchObject({
+            _tag: "Failure",
+            failure: { reason: "view-changed" },
+          });
+        }
+        expect(yield* fs.exists(paths.join(cwd, "stale.csv"))).toBe(false);
+        const cohort = { cwd, path: "cohort.sql" };
+        const filter = {
+          search: "alpha",
+          minimum: { column: 1, value: 0.7 },
+          sort: { column: 1, descending: true },
+        };
+        const cohortPage = yield* views.readView({
+          ...cohort,
+          query: { ...filter, offset: 0, limit: 10 },
+        });
+        expect(cohortPage.rows.map((row) => row.cells[0])).toEqual(["4", "5", "1"]);
+        yield* views.materializeView({
+          ...cohort,
+          revision: cohortPage.revision,
+          filter,
+          destination: "cohort-export.csv",
+        });
+        expect(yield* fs.readFileString(paths.join(cwd, "cohort-export.csv"))).toBe(
+          "id,score,cohort\n4,0.9,alpha\n5,0.9,alpha\n1,0.8,alpha\n",
+        );
+        yield* write("cohort.csv", "id,score,cohort\n1,0.7,alpha\n");
+        expect(yield* views.viewRevision(cohort)).not.toBe(cohortPage.revision);
         const profile = yield* views.profileView({ cwd, path: "profile.sql" });
         expect(profile.columns).toMatchObject([
           { missing: 1, nanCount: 1, distinct: 2, range: { min: "3.0", max: "3.0" } },

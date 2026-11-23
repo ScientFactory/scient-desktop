@@ -1,13 +1,19 @@
-import type { DataTableQuery, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  DataViewError,
+  type DataTableQuery,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { savedViewReferences, savedViewUnresolvedRelations } from "@t3tools/shared/savedDataView";
+import * as Schema from "effect/Schema";
 import { useGT } from "gt-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
-import { FileSurfaceLoading } from "~/components/files/fileSurfaceChrome";
+import { FileSurfaceFailure, FileSurfaceLoading } from "~/components/files/fileSurfaceChrome";
 
 import {
   Select,
@@ -16,14 +22,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { DataProfileButton } from "./DataProfileButton";
 import { DataGrid } from "./DataGrid";
 import { canSaveDataView, isScientSavedViewFile } from "./dataFiles";
-import { dataFileTablePage, dataViewPage, type ProfileTarget } from "./dataTableState";
+import {
+  dataFileTablePage,
+  dataViewPage,
+  dataViewRevision,
+  type ProfileTarget,
+} from "./dataTableState";
 import { DataViewActions, type DataWorkspaceFile } from "./DataViewActions";
 import { UseDataInAnalysis } from "./UseDataInAnalysis";
+
+const isDataViewError = Schema.is(DataViewError);
 
 /** A data file read in place on its environment, a page at a time. */
 export function DataFileTable(props: {
@@ -39,17 +53,20 @@ export function DataFileTable(props: {
   /** Moves when the reader asks to reload: the rows are read again. */
   readonly reloadKey: string;
 }) {
-  // Each move checks the file's revision; the table reads its rows again only for a new one.
-  // An environment that reports no revision reads them on every move.
   const gt = useGT();
+  const workspace = props.workspace;
+  const savedView =
+    workspace && isScientSavedViewFile(workspace.path, props.viewSql) ? workspace : null;
   const asset = useAssetUrlState(
     props.environmentId,
-    {
-      _tag: "media-file",
-      threadId: props.threadId,
-      path: props.absolutePath,
-      disposition: "attachment",
-    },
+    savedView !== null
+      ? null
+      : {
+          _tag: "media-file",
+          threadId: props.threadId,
+          path: props.absolutePath,
+          disposition: "attachment",
+        },
     props.refreshToken,
   );
   const checked =
@@ -62,18 +79,83 @@ export function DataFileTable(props: {
   if (checked !== null && checked !== revision) setRevision(checked);
   const readPage = useAtomQueryRunner(dataFileTablePage, { reportFailure: false, refresh: true });
   const readView = useAtomQueryRunner(dataViewPage, { reportFailure: false, refresh: true });
-  const workspace = props.workspace;
-  const savedView =
-    workspace && isScientSavedViewFile(workspace.path, props.viewSql) ? workspace : null;
+  const readRevision = useStableCallback(
+    useAtomQueryRunner(dataViewRevision, { reportFailure: false, refresh: true }),
+  );
+  const cwd = savedView?.cwd;
+  const viewPath = savedView?.path;
+  const viewKey = JSON.stringify([props.environmentId, cwd, viewPath]);
+  const [viewState, setViewState] = useState<{
+    key: string;
+    revision: string | null;
+    error: string | null;
+  } | null>(null);
+  const [viewAttempt, setViewAttempt] = useState(0);
+  const viewRevision = viewState?.key === viewKey ? viewState.revision : null;
+  const viewError = viewState?.key === viewKey ? viewState.error : null;
+  const viewRefresh = JSON.stringify([props.refreshToken, props.reloadKey, viewAttempt]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refresh the server's view identity when project files may have changed.
+  useEffect(() => {
+    if (cwd === undefined || viewPath === undefined) return;
+    const controller = new AbortController();
+    void readRevision(
+      { environmentId: props.environmentId, input: { cwd, path: viewPath } },
+      { signal: controller.signal },
+    ).then((result) => {
+      if (controller.signal.aborted) return;
+      setViewState(
+        result._tag === "Success"
+          ? { key: viewKey, revision: result.value, error: null }
+          : { key: viewKey, revision: null, error: String(squashAtomCommandFailure(result)) },
+      );
+    });
+    return () => controller.abort();
+  }, [
+    props.environmentId,
+    cwd,
+    viewPath,
+    readRevision,
+    viewKey,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A file notification or reload requires a fresh server revision.
+    viewRefresh,
+  ]);
+
+  const onViewFailure = (failure: unknown) => {
+    if (!isDataViewError(failure) || failure.reason !== "view-changed") return;
+    setViewState((state) =>
+      state?.key === viewKey && state.revision === viewRevision ? null : state,
+    );
+    setViewAttempt((attempt) => attempt + 1);
+  };
+  const viewInput =
+    savedView && viewRevision !== null
+      ? { cwd: savedView.cwd, path: savedView.path, revision: viewRevision }
+      : null;
+  const validateCopy = async () => {
+    if (viewInput === null) return;
+    const result = await readRevision({
+      environmentId: props.environmentId,
+      input: { cwd: viewInput.cwd, path: viewInput.path },
+    });
+    if (result._tag === "Success" && result.value === viewInput.revision) return;
+    const failure = new DataViewError({ reason: "view-changed" });
+    onViewFailure(failure);
+    throw failure;
+  };
   const [sheet, setSheet] = useState(0);
   const [sheets, setSheets] = useState<ReadonlyArray<string>>([]);
   const loadPage = async (query: DataTableQuery) => {
-    if (savedView !== null) {
+    if (viewInput !== null) {
       const result = await readView({
         environmentId: props.environmentId,
-        input: { cwd: savedView.cwd, path: savedView.path, query },
+        input: { ...viewInput, query },
       });
-      if (result._tag !== "Success") throw squashAtomCommandFailure(result);
+      if (result._tag !== "Success") {
+        const failure = squashAtomCommandFailure(result);
+        onViewFailure(failure);
+        throw failure;
+      }
       return result.value;
     }
     const result = await readPage({
@@ -84,16 +166,29 @@ export function DataFileTable(props: {
     setSheets(result.value.sheets);
     return result.value;
   };
-  if (revision === null) return <FileSurfaceLoading />;
-  const gridRevision = `${revision}#${props.reloadKey}`;
-  const target: ProfileTarget = savedView
-    ? { kind: "view", input: { cwd: savedView.cwd, path: savedView.path } }
+  if (savedView !== null && viewError !== null)
+    return (
+      <FileSurfaceFailure
+        title={gt("Couldn't read this table")}
+        description={viewError}
+        onRetry={() => {
+          setViewState(null);
+          setViewAttempt((attempt) => attempt + 1);
+        }}
+      />
+    );
+  const currentRevision = savedView === null ? revision : viewRevision;
+  if (currentRevision === null) return <FileSurfaceLoading />;
+  const gridRevision = `${currentRevision}#${props.reloadKey}`;
+  const target: ProfileTarget = viewInput
+    ? { kind: "view", input: viewInput }
     : { kind: "file", input: { path: props.absolutePath, sheet } };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {savedView ? <SavedViewBanner sql={props.viewSql ?? ""} onShowSql={props.onShowSql} /> : null}
       <DataGrid
-        key={sheet}
+        key={savedView === null ? sheet : `${viewKey}#${gridRevision}`}
+        {...(viewInput === null ? {} : { validateCopy })}
         label={sheets[sheet] ?? props.name}
         revision={gridRevision}
         loadPage={loadPage}
@@ -106,6 +201,7 @@ export function DataFileTable(props: {
             environmentId={props.environmentId}
             sourceLabel={workspace?.path ?? props.name}
             target={target}
+            {...(viewInput === null ? {} : { onFailure: onViewFailure })}
           />
         }
         {...(workspace
@@ -114,7 +210,13 @@ export function DataFileTable(props: {
                 <>
                   {savedView || canSaveDataView(workspace.path) ? (
                     <DataViewActions
-                      kind={savedView ? "export" : "save"}
+                      {...(viewInput === null
+                        ? { kind: "save" as const }
+                        : {
+                            kind: "export" as const,
+                            revision: viewInput.revision,
+                            onFailure: onViewFailure,
+                          })}
                       file={workspace}
                       view={view}
                       environmentId={props.environmentId}

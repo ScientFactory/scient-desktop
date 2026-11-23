@@ -101,18 +101,31 @@ export class DataFileTableError extends Schema.TaggedError<DataFileTableError>()
   }
 }
 
-export const DataViewInput = Schema.Struct({ cwd: DataFilePath, path: DataFilePath });
+export const DataViewRevision = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
+export const DataViewAddress = Schema.Struct({ cwd: DataFilePath, path: DataFilePath });
+export const DataViewInput = Schema.Struct({
+  ...DataViewAddress.fields,
+  revision: Schema.optional(DataViewRevision),
+});
 export type DataViewInput = typeof DataViewInput.Type;
 
 export const DataViewPageInput = Schema.Struct({ ...DataViewInput.fields, query: DataTableQuery });
 export type DataViewPageInput = typeof DataViewPageInput.Type;
 
-export const DataViewSaveInput = Schema.Struct({
-  ...DataViewInput.fields,
-  destination: DataFilePath,
+export const DataViewPage = Schema.Struct({ ...DataTablePage.fields, revision: DataViewRevision });
+export type DataViewPage = typeof DataViewPage.Type;
+
+export const DataViewFilter = Schema.Struct({
   search: DataTableQuery.fields.search,
   sort: DataTableQuery.fields.sort,
   minimum: DataTableQuery.fields.minimum,
+});
+export type DataViewFilter = typeof DataViewFilter.Type;
+
+export const DataViewSaveInput = Schema.Struct({
+  ...DataViewAddress.fields,
+  destination: DataFilePath,
+  ...DataViewFilter.fields,
   columns: Schema.Array(RowCount).check(Schema.isMaxLength(1024)),
 });
 export type DataViewSaveInput = typeof DataViewSaveInput.Type;
@@ -120,6 +133,7 @@ export type DataViewSaveInput = typeof DataViewSaveInput.Type;
 export const DataViewMaterializeInput = Schema.Struct({
   ...DataViewInput.fields,
   destination: DataFilePath,
+  filter: Schema.optional(DataViewFilter),
 });
 export type DataViewMaterializeInput = typeof DataViewMaterializeInput.Type;
 
@@ -129,6 +143,7 @@ export class DataViewError extends Schema.TaggedError<DataViewError>()("DataView
     "source-unavailable",
     "source-missing",
     "source-untraced",
+    "view-changed",
     "destination-exists",
     "invalid-path",
     "invalid-columns",
@@ -153,6 +168,8 @@ export class DataViewError extends Schema.TaggedError<DataViewError>()("DataView
         return this.reference
           ? `Data file not found: ${this.reference}`
           : "A data file for this view is missing.";
+      case "view-changed":
+        return "This view changed. Reload the rows and try again.";
       case "source-untraced":
         return this.reference
           ? `Scient couldn’t trace this view’s input: ${this.reference}`

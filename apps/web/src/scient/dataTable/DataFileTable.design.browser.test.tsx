@@ -12,7 +12,8 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import type { ProfileTarget } from "./dataTableState";
 
-const { exported } = vi.hoisted(() => ({
+const { exported, sources } = vi.hoisted(() => ({
+  sources: { revision: "view-revision-1" },
   exported: vi.fn(async ({ input }: { input: DataViewMaterializeInput }) => ({
     _tag: "Success",
     value: { path: input.destination },
@@ -25,8 +26,9 @@ vi.mock("~/assets/assetUrls", () => ({
 
 vi.mock("~/state/use-atom-query-runner", () => ({
   useAtomQueryRunner:
-    () =>
-    async ({ input }: { input: { path: string } }) => {
+    (family: string | undefined) =>
+    async ({ input }: { input: { path: string; revision?: string } }) => {
+      if (family === "view-revision") return { _tag: "Success", value: sources.revision };
       const rowCount = input.path.endsWith(".sql") ? 4 : 10;
       return {
         _tag: "Success",
@@ -40,7 +42,7 @@ vi.mock("~/state/use-atom-query-runner", () => ({
           sheets: [],
           rows: Array.from({ length: rowCount }, (_, index) => ({
             label: String(index + 1),
-            cells: ["0.95"],
+            cells: [input.revision === "view-revision-2" ? "0.77" : "0.95"],
           })),
         },
       };
@@ -69,6 +71,7 @@ vi.mock("./dataTableState", async () => {
   return {
     dataFileTablePage: undefined,
     dataViewPage: undefined,
+    dataViewRevision: "view-revision",
     dataProfile: { label: "profile" },
     saveDataView: { label: "save", permissionAtom: () => permission },
     materializeDataView: { label: "export", permissionAtom: () => permission },
@@ -137,9 +140,10 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
     root.classList.toggle("dark", theme === "dark");
 
     exported.mockClear();
+    sources.revision = "view-revision-1";
     const showSql = vi.fn();
     const open = vi.fn();
-    const file = (path: string, viewSql?: string) => (
+    const file = (path: string, viewSql?: string, refreshToken = "1") => (
       <div className="flex h-dvh min-w-0 flex-col bg-background text-foreground">
         <DataFileTable
           key={path}
@@ -150,17 +154,17 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
           workspace={{ cwd: "/project", path, onOpenPath: open }}
           viewSql={viewSql}
           onShowSql={showSql}
-          refreshToken="1"
+          refreshToken={refreshToken}
           reloadKey="0"
         />
       </div>
     );
 
+    const viewPath = "views/high_risk.sql";
+    const viewSql =
+      "SELECT * FROM 'data/predictions.parquet' JOIN 'data/threshold.csv' USING (id) JOIN 'data/check.csv' USING (id) JOIN other_input USING (id)";
     await using screen = await render(
-      file(
-        "views/high_risk.sql",
-        "SELECT * FROM 'data/predictions.parquet' JOIN 'data/threshold.csv' USING (id) JOIN 'data/check.csv' USING (id) JOIN other_input USING (id)",
-      ),
+      file(viewPath, viewSql),
       { router: false }, // This fixture stays inside the Files surface.
     );
     const capture = async (name: string) => {
@@ -206,7 +210,11 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
     await page.getByRole("menuitem", { name: "Export table…" }).click();
     const exportDialog = page.getByRole("dialog", { name: "Export derived table…" });
     await expect
-      .element(exportDialog.getByText("Export rows from views/high_risk.sql."))
+      .element(
+        exportDialog.getByText(
+          "Export all rows from views/high_risk.sql that match the grid’s search and filters, in grid order.",
+        ),
+      )
       .toBeVisible();
     const outputFormat = exportDialog.getByRole("combobox", { name: "Format" });
     await expect.element(outputFormat).toHaveTextContent("Parquet");
@@ -223,6 +231,8 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
           cwd: "/project",
           path: "views/high_risk.sql",
           destination: "derived/high_risk.csv",
+          revision: "view-revision-1",
+          filter: { search: "", sort: null, minimum: { column: 0, value: 0.7 } },
         },
       }),
     );
@@ -261,6 +271,11 @@ it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const
     await expect.poll(() => profile.element().getBoundingClientRect().width).toBe(960);
     await capture("profile-wide");
     await profile.getByRole("button", { name: "Close" }).click();
+
+    sources.revision = "view-revision-2";
+    await screen.rerender(file(viewPath, viewSql, "2"));
+    await expect.element(screen.getByText("0.77", { exact: true }).first()).toBeVisible();
+    await expect.element(screen.getByText("Filter applied · score ≥ 0.7")).not.toBeInTheDocument();
 
     await screen.rerender(file("data/predictions.csv"));
     await screen.getByRole("button", { name: "Column profile" }).click();

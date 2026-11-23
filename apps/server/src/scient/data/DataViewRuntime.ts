@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { DataTableTotals } from "@scientfactory/compute";
-import { DataViewError, type DataTableQuery } from "@t3tools/contracts";
+import { DataViewError, type DataTableQuery, type DataViewFilter } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -149,32 +149,32 @@ def run():
         count_sql = options["countSql"]
         row_count = connection.sql(count_sql).fetchone()[0] if count_sql else None
         return {"digest": digest.hexdigest(), "rowCount": row_count}
-    if target:
-        if target.endswith(".csv"):
-            table.write_csv(target, header=True)
-        else:
-            table.write_parquet(target)
-        return None
     columns = table.columns
-    types = [str(kind) for kind in table.types]
-    count = table.aggregate("count(*)").fetchone()[0]
-    query = options["query"]
-    needle = query["search"].strip().lower()
+    query = options.get("filter") if target else options["query"]
+    count = None if target else table.aggregate("count(*)").fetchone()[0]
+    needle = query["search"].strip().lower() if query else ""
     if needle and columns:
         table = table.filter(" OR ".join(
             "contains(lower(cast(" + identifier(column) + " as varchar)), " + quote(needle) + ")"
             for column in columns
         ))
-    minimum = query.get("minimum")
+    minimum = query.get("minimum") if query else None
     if minimum and minimum["column"] < min(1024, len(columns)):
         name = identifier(columns[minimum["column"]])
         number = "try_cast(" + name + " AS DOUBLE)"
         table = table.filter(number + " >= " + str(minimum["value"]) + " AND NOT isnan(" + number + ")")
-    match_count = table.aggregate("count(*)").fetchone()[0] if needle or minimum else count
-    if query["sort"] is not None and query["sort"]["column"] < min(1024, len(columns)):
-        sort = query["sort"]
+    match_count = table.aggregate("count(*)").fetchone()[0] if not target and (needle or minimum) else count
+    sort = query.get("sort") if query else None
+    if sort and sort["column"] < min(1024, len(columns)):
         order = " DESC" if sort["descending"] else " ASC"
-        table = table.order(identifier(columns[sort["column"]]) + order + " NULLS LAST")
+        table = table.order(identifier(columns[sort["column"]]) + order + " NULLS LAST, row_number() OVER ()")
+    if target:
+        if options["format"] == "csv":
+            table.write_csv(target, header=True)
+        else:
+            table.write_parquet(target)
+        return None
+    types = [str(kind) for kind in table.types]
     width = min(1024, len(columns))
     limit = min(query["limit"], max(1, 16384 // max(1, width)))
     if width < len(columns):
@@ -240,7 +240,11 @@ const encodeOptions = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
 const decodeResponse = Schema.decodeEffect(response);
 
 type ReadOptions = { readonly query: DataTableQuery };
-type WriteOptions = { readonly writePath: string };
+type WriteOptions = {
+  readonly writePath: string;
+  readonly format: "csv" | "parquet";
+  readonly filter?: DataViewFilter;
+};
 type CheckOptions = { readonly countSql: string | null };
 type ProfileOptions = {
   readonly profilePath: string;

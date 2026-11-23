@@ -10,7 +10,7 @@ import {
   type DataFileTableError,
   type DataProfileEvent,
   type DataProfile,
-  type DataTablePage,
+  type DataViewPage,
   type DataViewInput,
   type DataViewMaterializeInput,
   type DataViewPageInput,
@@ -28,6 +28,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
+
+import { mediaFileRevision } from "../../assets/MediaFile.ts";
 
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import { workspaceEntryDisposition } from "../workspace/WorkspaceEntryPolicy.ts";
@@ -67,12 +69,17 @@ function projectPath(root: string, relative: string): string {
 }
 
 /** A path used by a view must name a regular file directly in this project. */
-async function sourceFile(root: string, relative: string) {
+async function sourceInfo(root: string, relative: string) {
   const path = projectPath(root, relative);
-  if ((await NodeFSP.realpath(path)) !== path || !(await NodeFSP.stat(path)).isFile()) {
+  if ((await NodeFSP.realpath(path)) !== path)
     throw new DataViewError({ reason: "source-unavailable" });
-  }
-  return path;
+  const stat = await NodeFSP.stat(path, { bigint: true });
+  if (!stat.isFile()) throw new DataViewError({ reason: "source-unavailable" });
+  return { path, revision: mediaFileRevision(stat) };
+}
+
+async function sourceFile(root: string, relative: string) {
+  return (await sourceInfo(root, relative)).path;
 }
 
 async function destinationFile(root: string, relative: string) {
@@ -94,7 +101,12 @@ async function destinationFile(root: string, relative: string) {
   return target;
 }
 
-async function resolveGlob(root: string, pattern: string, signal: AbortSignal) {
+async function resolveGlob(
+  root: string,
+  pattern: string,
+  sources: Map<string, string>,
+  signal: AbortSignal,
+) {
   const untraced = () =>
     new DataViewError({ reason: "source-untraced", reference: pattern.slice(0, 4096) });
   projectPath(root, pattern);
@@ -108,7 +120,7 @@ async function resolveGlob(root: string, pattern: string, signal: AbortSignal) {
     ).replaceAll(NodePath.sep, "/");
     if (files.length === MAX_GLOB_MATCHES || /[*?[]/u.test(relative)) throw untraced();
     try {
-      await sourceFile(root, relative);
+      sources.set(relative, (await sourceInfo(root, relative)).revision);
     } catch {
       throw untraced();
     }
@@ -126,13 +138,12 @@ async function readSql(root: string, path: string, signal: AbortSignal) {
   signal.throwIfAborted();
   if (bytesRead > MAX_SQL_BYTES) throw new DataViewError({ reason: "query-required" });
   const sql = new TextDecoder().decode(buffer.subarray(0, bytesRead));
-  const sources = new Set<string>();
+  const sources = new Map<string, string>();
   const missingSources = new Set<string>();
   for (const relative of savedViewReferences(sql).files) {
     signal.throwIfAborted();
     try {
-      await sourceFile(root, relative);
-      sources.add(relative);
+      sources.set(relative, (await sourceInfo(root, relative)).revision);
     } catch (cause) {
       // Dataset-like literals can appear in predicates. Report only failed reads.
       if (missingFile(cause)) missingSources.add(relative);
@@ -142,13 +153,20 @@ async function readSql(root: string, path: string, signal: AbortSignal) {
   const rewritten = await expandSavedViewGlobs(sql, async (pattern) => {
     const cached = expansions.get(pattern);
     if (cached !== undefined) return cached;
-    const files = await resolveGlob(root, pattern, signal);
+    const files = await resolveGlob(root, pattern, sources, signal);
     expansions.set(pattern, files);
     if (files.length === 0) missingSources.add(pattern);
-    for (const relative of files) sources.add(relative);
     return files;
   });
-  return { sql: rewritten, sources: [...sources], missingSources: [...missingSources] };
+  const revision = NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([sql, [...sources].sort(), [...expansions], [...missingSources].sort()]))
+    .digest("hex");
+  return {
+    sql: rewritten,
+    sources: [...sources.keys()],
+    missingSources: [...missingSources],
+    revision,
+  };
 }
 
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -234,7 +252,8 @@ export class DataViews extends Context.Service<
     readonly profileFile: (
       input: DataFileProfileInput,
     ) => Stream.Stream<DataProfileEvent, DataFileTableError>;
-    readonly readView: (input: DataViewPageInput) => Effect.Effect<DataTablePage, DataViewError>;
+    readonly viewRevision: (input: DataViewInput) => Effect.Effect<string, DataViewError>;
+    readonly readView: (input: DataViewPageInput) => Effect.Effect<DataViewPage, DataViewError>;
     readonly profileDataset: (
       input: DataViewInput & { readonly sheet?: number },
     ) => Effect.Effect<DataProfile, DataViewError>;
@@ -266,10 +285,39 @@ const make = Effect.gen(function* () {
           : failure("source-unavailable")(cause),
     });
   });
+  const viewRevision = Effect.fn("DataViews.viewRevision")(function* (input: DataViewInput) {
+    const root = yield* rootFor(input.cwd);
+    return (yield* load(root, input.path)).revision;
+  });
+
+  const changedView = () => new DataViewError({ reason: "view-changed" });
+  const loadPinned = Effect.fn("DataViews.loadPinned")(function* (
+    root: string,
+    input: DataViewInput,
+  ) {
+    const view = yield* load(root, input.path).pipe(
+      Effect.mapError((error) => (input.revision === undefined ? error : changedView())),
+    );
+    if (input.revision !== undefined && input.revision !== view.revision)
+      return yield* changedView();
+    return view;
+  });
+  const runPinned = Effect.fn("DataViews.runPinned")(function* (
+    root: string,
+    path: string,
+    revision: string,
+    options: Parameters<typeof run>[1],
+  ) {
+    const result = yield* run(root, options).pipe(Effect.result);
+    const current = yield* load(root, path).pipe(Effect.mapError(changedView));
+    if (current.revision !== revision) return yield* changedView();
+    return yield* Effect.fromResult(result);
+  });
+
   const readViewPage = Effect.fn("DataViews.readViewPage")(function* (input: DataViewPageInput) {
     const root = yield* rootFor(input.cwd);
-    const options = yield* load(root, input.path);
-    const result = yield* run(root, { ...options, query: input.query });
+    const { revision, ...options } = yield* loadPinned(root, input);
+    const result = yield* runPinned(root, input.path, revision, { ...options, query: input.query });
     if (result.kind !== "page") return yield* new DataViewError({ reason: "query-failed" });
     const { names, types, columnCount, rowCount, matchCount, rows, clippedColumns } = result.page;
     const page = {
@@ -286,7 +334,8 @@ const make = Effect.gen(function* () {
       })),
       offset: input.query.offset,
       truncated: false,
-    } satisfies DataTablePage;
+      revision,
+    } satisfies DataViewPage;
     return { page, clippedColumns };
   }, Effect.scoped);
 
@@ -352,7 +401,7 @@ const make = Effect.gen(function* () {
         prefix: ".scient-derived-",
       })
       .pipe(Effect.mapError(writeFailure));
-    return NodePath.join(directory, `table${NodePath.extname(target).toLowerCase()}`);
+    return NodePath.join(directory, "table.tmp");
   });
 
   const publish = Effect.fn("DataViews.publish")(function* (staged: string, target: string) {
@@ -427,19 +476,25 @@ const make = Effect.gen(function* () {
     if (format !== ".csv" && format !== ".parquet")
       return yield* new DataViewError({ reason: "invalid-path" });
     const root = yield* rootFor(input.cwd);
-    const options = yield* load(root, input.path);
+    const { revision, ...options } = yield* loadPinned(root, input);
     const target = yield* Effect.tryPromise({
       try: () => destinationFile(root, input.destination),
       catch: writeFailure,
     });
     const writePath = yield* stageFile(target);
-    yield* run(root, { ...options, writePath });
+    yield* runPinned(root, input.path, revision, {
+      ...options,
+      writePath,
+      format: format === ".csv" ? "csv" : "parquet",
+      ...(input.filter === undefined ? {} : { filter: input.filter }),
+    });
     yield* publish(writePath, target);
     return { path: input.destination };
   }, Effect.scoped);
 
   return DataViews.of({
     profileFile,
+    viewRevision,
     readView,
     profileDataset,
     profileView,

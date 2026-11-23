@@ -14646,7 +14646,7 @@
   "f5581a87f0f169f7": "Search isn’t saved: Scient couldn’t verify that DuckDB returns the same rows as the grid.",
   "fee1202c41c65c3f": "Export table…",
   "9a93ff86b482dae7": "Save the current filters, search, sort and selected columns as a DuckDB SQL file.",
-  "19404d09f3a8e6da": "Export rows from {view}.",
+  "9da28c3b182d10e7": "Alle Zeilen aus {view} exportieren, die der Suche und den Filtern entsprechen, in der Reihenfolge der Tabelle.",
   "625fb008800011a5": "Format",
   "ed8f2fd30180ac16": "CSV",
   "c295a35fdf5afae8": "Parquet",

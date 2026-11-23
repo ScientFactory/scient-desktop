@@ -362,6 +362,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.dataReadFileTable]: AuthFilesystemReadScope,
   // SCIENT-FORK:START — authorize data profiles and view reads on the destination.
   [WS_METHODS.dataProfileFile]: AuthFilesystemReadScope,
+  [WS_METHODS.dataViewRevision]: AuthFilesystemReadScope,
   [WS_METHODS.dataReadView]: AuthFilesystemReadScope,
   [WS_METHODS.dataProfileView]: AuthFilesystemReadScope,
   [WS_METHODS.dataProfileVariable]: AuthOrchestrationOperateScope,

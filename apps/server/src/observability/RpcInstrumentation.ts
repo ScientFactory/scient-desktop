@@ -335,6 +335,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.dataReadFileTable]: "filesystem",
   // SCIENT-FORK:START — label data profile and saved view RPCs by their aggregate.
   [WS_METHODS.dataProfileFile]: "filesystem",
+  [WS_METHODS.dataViewRevision]: "filesystem",
   [WS_METHODS.dataReadView]: "filesystem",
   [WS_METHODS.dataProfileView]: "filesystem",
   [WS_METHODS.dataSaveView]: "filesystem",

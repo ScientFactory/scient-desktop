@@ -48,12 +48,20 @@ export interface DataWorkspaceFile {
   readonly onOpenPath: (path: string) => void;
 }
 
-export function DataViewActions(props: {
-  readonly kind: "save" | "export";
-  readonly file: DataWorkspaceFile;
-  readonly view: DataGridView;
-  readonly environmentId: EnvironmentId;
-}) {
+export function DataViewActions(
+  props: {
+    readonly file: DataWorkspaceFile;
+    readonly view: DataGridView;
+    readonly environmentId: EnvironmentId;
+  } & (
+    | { readonly kind: "save" }
+    | {
+        readonly kind: "export";
+        readonly revision: string;
+        readonly onFailure: (failure: unknown) => void;
+      }
+  ),
+) {
   const gt = useGT();
   const menu = use(GridActionMenuContext);
   const { kind, file, environmentId, view } = props;
@@ -119,13 +127,25 @@ export function DataViewActions(props: {
               columns: [...selected].toSorted((a, b) => a - b),
             },
           })
-        : materialize({ environmentId, input })
+        : materialize({
+            environmentId,
+            input: {
+              ...input,
+              revision: props.revision,
+              filter: {
+                search: view.search,
+                sort: view.sort,
+                ...(view.minimum === null ? {} : { minimum: view.minimum }),
+              },
+            },
+          })
     ).finally(() => setBusy(false));
     if (result._tag === "Success") {
       setOpen(false);
       file.onOpenPath(result.value.path);
     } else {
       const failure = squashAtomCommandFailure(result);
+      if (props.kind === "export") props.onFailure(failure);
       if (isDataViewError(failure) && failure.reason === "search-not-saved") {
         setConfirmWithoutSearch(true);
         setError(
@@ -157,7 +177,12 @@ export function DataViewActions(props: {
               ? gt(
                   "Save the current filters, search, sort and selected columns as a DuckDB SQL file.",
                 )
-              : gt("Export rows from {view}.", { view: file.path })}
+              : gt(
+                  "Export all rows from {view} that match the grid’s search and filters, in grid order.",
+                  {
+                    view: file.path,
+                  },
+                )}
           </DialogDescription>
         </DialogHeader>
         <form

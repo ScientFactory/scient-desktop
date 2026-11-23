@@ -30,6 +30,13 @@ export const computeTablePage = createEnvironmentRpcCommand(connectionAtomRuntim
   },
 });
 
+export const dataViewRevision = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:data:view-revision",
+  tag: WS_METHODS.dataViewRevision,
+  staleTimeMs: 0,
+  idleTtlMs: 0,
+});
+
 export const dataViewPage = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "environment-data:data:read-view",
   tag: WS_METHODS.dataReadView,

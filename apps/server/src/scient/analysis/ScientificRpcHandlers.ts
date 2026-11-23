@@ -222,6 +222,10 @@ export const makeScientificRpcHandlers = ({
           .pipe(Effect.map(profileTablePage)),
         { "rpc.aggregate": "compute" },
       ),
+    [WS_METHODS.dataViewRevision]: (input) =>
+      observeRpcEffect(WS_METHODS.dataViewRevision, dataViews.viewRevision(input), {
+        "rpc.aggregate": "filesystem",
+      }),
     [WS_METHODS.dataReadView]: (input) =>
       observeRpcEffect(WS_METHODS.dataReadView, dataViews.readView(input), {
         "rpc.aggregate": "workspace",

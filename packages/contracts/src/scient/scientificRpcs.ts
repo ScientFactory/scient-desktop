@@ -113,7 +113,10 @@ import {
   DataProfileEvent,
   ComputeTableProfileInput,
   DataTablePage,
+  DataViewAddress,
   DataViewError,
+  DataViewPage,
+  DataViewRevision,
   DataViewInput,
   DataViewPageInput,
   DataViewSaveInput,
@@ -206,6 +209,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   // Scient-owned data file viewer
   dataReadFileTable: "data.readFileTable",
   dataProfileFile: "data.profileFile",
+  dataViewRevision: "data.viewRevision",
   dataReadView: "data.readView",
   dataProfileView: "data.profileView",
   dataSaveView: "data.saveView",
@@ -455,9 +459,15 @@ const WsDataProfileVariableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataProfi
 const dataViewRpcError = Schema.Union([DataViewError, EnvironmentAuthorizationError]);
 const writtenDataPath = Schema.Struct({ path: DataViewInput.fields.path });
 
+const WsDataViewRevisionRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataViewRevision, {
+  payload: DataViewAddress,
+  success: DataViewRevision,
+  error: dataViewRpcError,
+});
+
 const WsDataReadViewRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataReadView, {
   payload: DataViewPageInput,
-  success: DataTablePage,
+  success: DataViewPage,
   error: dataViewRpcError,
 });
 
@@ -747,6 +757,7 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeReadTableRpc,
   WsDataReadFileTableRpc,
   WsDataProfileFileRpc,
+  WsDataViewRevisionRpc,
   WsDataReadViewRpc,
   WsDataProfileViewRpc,
   WsDataSaveViewRpc,

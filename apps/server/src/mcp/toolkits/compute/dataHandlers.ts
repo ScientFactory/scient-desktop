@@ -1,3 +1,4 @@
+import type { DataViewMaterializeInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { agentScope, computeFailed, toolError } from "./agentComputeScope.ts";
@@ -6,6 +7,7 @@ export const profileScientData = Effect.fn("ScientDataTools.profile")(function* 
   readonly path: string;
   readonly sheet?: number | undefined;
   readonly columns?: ReadonlyArray<string> | undefined;
+  readonly revision?: string | undefined;
 }) {
   const { gateway, cwd } = yield* agentScope();
   const profile = yield* gateway
@@ -13,6 +15,7 @@ export const profileScientData = Effect.fn("ScientDataTools.profile")(function* 
       cwd,
       path: input.path,
       ...(input.sheet === undefined ? {} : { sheet: input.sheet }),
+      ...(input.revision === undefined ? {} : { revision: input.revision }),
     })
     .pipe(Effect.mapError(computeFailed));
   if (input.columns?.length) {
@@ -32,6 +35,7 @@ export const profileScientData = Effect.fn("ScientDataTools.profile")(function* 
 export const previewScientDataView = Effect.fn("ScientDataTools.previewView")(function* (input: {
   readonly path: string;
   readonly limit?: number | undefined;
+  readonly filter?: DataViewMaterializeInput["filter"] | undefined;
 }) {
   const { gateway, cwd } = yield* agentScope();
   const limit = input.limit ?? 10;
@@ -39,7 +43,7 @@ export const previewScientDataView = Effect.fn("ScientDataTools.previewView")(fu
     .previewDataView({
       cwd,
       path: input.path,
-      query: { offset: 0, limit: limit + 1, sort: null, search: "" },
+      query: { offset: 0, limit: limit + 1, sort: null, search: "", ...input.filter },
     })
     .pipe(Effect.mapError(computeFailed));
   const columns = page.columns.slice(0, 20);
@@ -51,17 +55,17 @@ export const previewScientDataView = Effect.fn("ScientDataTools.previewView")(fu
     columns,
     rows,
     rowCount: page.rowCount,
+    matchCount: page.matchCount,
     columnCount: page.columnCount,
-    cappedRows: rows.length < page.rowCount,
+    cappedRows: rows.length < page.matchCount,
+    revision: page.revision,
     cappedColumns: columns.length < page.columnCount,
   };
 });
 
-export const materializeScientDataView = Effect.fn("ScientDataTools.materializeView")(
-  function* (input: { readonly path: string; readonly destination: string }) {
-    const { gateway, cwd } = yield* agentScope();
-    return yield* gateway
-      .materializeDataView({ cwd, ...input })
-      .pipe(Effect.mapError(computeFailed));
-  },
-);
+export const materializeScientDataView = Effect.fn("ScientDataTools.materializeView")(function* (
+  input: Omit<DataViewMaterializeInput, "cwd">,
+) {
+  const { gateway, cwd } = yield* agentScope();
+  return yield* gateway.materializeDataView({ cwd, ...input }).pipe(Effect.mapError(computeFailed));
+});

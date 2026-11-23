@@ -11,6 +11,8 @@ import {
   ComputeResultsRerunResult,
   DataProfile,
   DataTableColumn,
+  DataViewFilter,
+  DataViewRevision,
   DataTableRow,
   ComputeResultRevisionId,
   ResultHandoffChoices,
@@ -779,11 +781,12 @@ const ScientResultsCheckTool = Tool.make("scient_results_check", {
 
 const ScientDataProfileTool = Tool.make("scient_data_profile", {
   description:
-    "Profile a project dataset or DuckDB SQL view. Reports types, missingness, distinct values, ranges or top values, and row coverage. Optionally name columns or a zero-based workbook sheet.",
+    "Profile a project dataset or DuckDB SQL view. Reports types, missingness, distinct values, ranges or top values, and row coverage. Optionally name columns, a zero-based workbook sheet, or the revision from scient_data_preview_view.",
   parameters: Schema.Struct({
     path: ResultPath,
     columns: Schema.optional(Schema.Array(Schema.NonEmptyString).check(Schema.isMaxLength(32))),
     sheet: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    revision: Schema.optional(DataViewRevision),
   }),
   success: Schema.Struct({ ...DataProfile.fields, cappedColumns: Schema.Boolean }),
   failure: ScientComputeToolError,
@@ -796,15 +799,18 @@ const ScientDataProfileTool = Tool.make("scient_data_profile", {
 
 const ScientDataPreviewViewTool = Tool.make("scient_data_preview_view", {
   description:
-    "Preview up to 50 rows of a saved DuckDB SELECT and report any caps. Create a view by writing a .sql file with quoted project-relative data paths.",
+    "Preview up to 50 rows of a saved DuckDB SELECT, with optional search, minimum and sort, and return the view revision. Create a view by writing a .sql file with quoted project-relative data paths.",
   parameters: Schema.Struct({
     path: ResultPath,
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    filter: Schema.optional(DataViewFilter),
   }),
   success: Schema.Struct({
+    revision: DataViewRevision,
     columns: Schema.Array(DataTableColumn),
     rows: Schema.Array(DataTableRow),
     rowCount: Schema.Int,
+    matchCount: Schema.Int,
     columnCount: Schema.Int,
     cappedRows: Schema.Boolean,
     cappedColumns: Schema.Boolean,
@@ -819,8 +825,13 @@ const ScientDataPreviewViewTool = Tool.make("scient_data_preview_view", {
 
 const ScientDataMaterializeViewTool = Tool.make("scient_data_materialize_view", {
   description:
-    "Run a saved DuckDB SELECT and write a new CSV or Parquet file. Both paths are relative to the project. Refuses an existing destination.",
-  parameters: Schema.Struct({ path: ResultPath, destination: ResultPath }),
+    "Export a saved DuckDB SELECT to a new CSV or Parquet file. Pass the same filter and revision from scient_data_preview_view to export the matching rows in the same order. Both paths are relative to the project. Refuses an existing destination.",
+  parameters: Schema.Struct({
+    path: ResultPath,
+    destination: ResultPath,
+    revision: Schema.optional(DataViewRevision),
+    filter: Schema.optional(DataViewFilter),
+  }),
   success: Schema.Struct({ path: ResultPath }),
   failure: ScientComputeToolError,
   dependencies,
