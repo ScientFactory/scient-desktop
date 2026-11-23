@@ -195,17 +195,17 @@ describe("Code cell chrome, line numbers, and wrapping", () => {
     const { screen } = await mountCell(420);
     await using _screen = screen;
 
-    await screen.getByRole("button", { name: "Hide code" }).click();
-    const show = screen.getByRole("button", { name: "Show code" });
+    await screen.getByRole("button", { name: /^Hide code/ }).click();
+    const show = screen.getByRole("button", { name: /^Show code/ });
     await expect.element(show).toHaveAttribute("aria-expanded", "false");
     expect(show.element().textContent).toMatch(/2 lines$/);
     expect(screen.container.querySelector("[data-notebook-cell-box] pre")).toBeNull();
     // One row: no second "Show code" control below the label.
-    expect(screen.getByRole("button", { name: "Show code" }).all()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /^Show code/ }).all()).toHaveLength(1);
 
     await show.click();
     await expect
-      .element(screen.getByRole("button", { name: "Hide code" }))
+      .element(screen.getByRole("button", { name: /^Hide code/ }))
       .toHaveAttribute("aria-expanded", "true");
     expect(screen.container.querySelector("[data-notebook-cell-box] pre")).not.toBeNull();
   });

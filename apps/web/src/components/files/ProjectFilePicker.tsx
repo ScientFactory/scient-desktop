@@ -162,7 +162,9 @@ export function ProjectFilePickerForTarget(
       aria-label={gt("File picker")}
       autoHighlight="always"
       escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
+      // SCIENT-FORK:START — use the caller's action label when selecting a file.
       footerActionLabel={props.actionLabel ?? gt("Open file")}
+      // SCIENT-FORK:END
       inputProps={{ placeholder: gt("Search files…") }}
       mode="none"
       onItemHighlighted={(value) => {

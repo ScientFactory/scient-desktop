@@ -527,18 +527,18 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
     await screen.getByRole("button", { name: "Reset" }).click();
     await expect.element(screen.getByRole("row", { name: "4 2" })).toBeVisible();
     // Reader code starts folded to its language row; the label unfolds it.
-    const disclosures = screen.getByRole("button", { name: "Show code" });
+    const disclosures = screen.getByRole("button", { name: /^Show code/ });
     const cardOf = (toggle: typeof disclosures) => toggle.element().closest(".group\\/code-box")!;
     const parameterCode = disclosures.first();
     const parameterCard = cardOf(parameterCode);
     expect(parameterCode.element().textContent).toMatch(/1 line$/);
     await parameterCode.click();
     await expect
-      .element(page.elementLocator(parameterCard).getByRole("button", { name: "Hide code" }))
+      .element(page.elementLocator(parameterCard).getByRole("button", { name: /^Hide code/ }))
       .toHaveAttribute("aria-expanded", "true");
     const parameterSource = parameterCard.querySelector("pre")!;
     await expect.element(page.elementLocator(parameterSource)).toHaveTextContent("threshold = 0.5");
-    const computeCode = screen.getByRole("button", { name: "Show code" }).first();
+    const computeCode = screen.getByRole("button", { name: /^Show code/ }).first();
     const computeCardElement = cardOf(computeCode);
     await computeCode.click();
     await vi.waitFor(() => expect(computeCardElement.querySelector("pre")).not.toBeNull());

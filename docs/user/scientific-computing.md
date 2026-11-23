@@ -530,7 +530,7 @@ Use **Insert ▸ Result** in a manuscript to link to that revision.
 - Select **Add file…** to declare an input. A saved SQL view also declares the files it names.
   A missing declared file stops the run before it starts. The result shows how many files you
   declared, how many Scient saw the runtime read, and when the check covered only some inputs.
-  In R, Julia, SQL and MATLAB, **Suggested from the script** shows existing project files named in the
+  In R, Julia, SQL and MATLAB, **Suggested from the code** shows existing project files named in the
   saved script. Choose **Add** beside a suggestion to declare it for this run.
 - Open **Run details** to see which inputs Scient checked. Python can record directory listings
   and name data files read outside the project. Freshness for those outside files is unknown.
@@ -617,7 +617,7 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
   Text cell to edit its Markdown.
 - If a cell needs setup from earlier cells, select it and choose **Run from top through this cell**
   from the Run menu. When the selected cell reads a name that only an earlier, unrun cell defines,
-  that action is first in the menu. A Python error for an undefined name can also offer replay or a jump to the
+  that action moves up to sit right after **Run all**. A Python error for an undefined name can also offer replay or a jump to the
   defining cell when live evidence shows it failed. Full tracebacks stay collapsed under
   **Details**.
 - Text, figures, observed written file links and errors appear below the cell that produced them.

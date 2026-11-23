@@ -79,7 +79,6 @@ export function NotebookCodeHeader(props: {
         <button
           type="button"
           aria-expanded={!folded}
-          aria-label={folded ? gt("Show code") : gt("Hide code")}
           className={cn(
             labelClass,
             "-ml-1.5 rounded-sm px-1.5 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none",
@@ -89,6 +88,7 @@ export function NotebookCodeHeader(props: {
             props.onFoldChange?.(!folded);
           }}
         >
+          <span className="sr-only">{folded ? gt("Show code") : gt("Hide code")}</span>
           {label}
         </button>
       )}

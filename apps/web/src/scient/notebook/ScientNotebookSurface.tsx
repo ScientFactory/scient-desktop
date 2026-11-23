@@ -171,6 +171,14 @@ function useNotebookController(props: {
   return controller;
 }
 
+/** File names, with their folder only where two inputs share a name. */
+function inputFileLabels(paths: ReadonlyArray<string>): ReadonlyArray<string> {
+  const name = (path: string) => path.split("/").at(-1) ?? path;
+  return paths.map((path) =>
+    paths.some((other) => other !== path && name(other) === name(path)) ? path : name(path),
+  );
+}
+
 export default function ScientNotebookSurface(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -818,15 +826,20 @@ export default function ScientNotebookSurface(props: {
                   >
                     <T>Input files…</T>
                   </MenuItem>
-                  {parameters.map((parameter) => (
-                    <MenuItem
-                      key={parameter.name}
-                      disabled={freshRunDisabled}
-                      onClick={() => setSweepParameter(parameter)}
-                    >
-                      {gt("Run for each {parameter} value", { parameter: parameter.name })}
-                    </MenuItem>
-                  ))}
+                  {parameters.flatMap((parameter) =>
+                    // A value set by code cannot be overridden, so it cannot be swept.
+                    parameter.value === undefined
+                      ? []
+                      : [
+                          <MenuItem
+                            key={parameter.name}
+                            disabled={freshRunDisabled}
+                            onClick={() => setSweepParameter(parameter)}
+                          >
+                            {gt("Run for each {parameter} value", { parameter: parameter.name })}
+                          </MenuItem>,
+                        ],
+                  )}
                   <MenuItem
                     disabled={runAllDisabled}
                     onClick={() => {
@@ -953,9 +966,7 @@ export default function ScientNotebookSurface(props: {
                 <NotebookFreshRunWarning />
                 {inputs !== undefined && inputs.length > 0 ? (
                   <span className="mt-1 block wrap-anywhere">
-                    {gt("Records {files}", {
-                      files: inputs.map((path) => path.split("/").at(-1) ?? path).join(", "),
-                    })}
+                    {gt("Records {files}", { files: inputFileLabels(inputs).join(", ") })}
                   </span>
                 ) : null}
               </>

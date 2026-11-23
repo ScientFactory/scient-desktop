@@ -189,23 +189,22 @@ export function notebookNeedsSetup(input: {
   const targetIndex = input.order.indexOf(input.targetCellId);
   if (target?.cellType !== "code" || targetIndex <= 0) return false;
   const own = definedNames(target.source);
-  const used = [...usedNames(target.source)].filter((name) => !own.has(name));
+  // Words inside string literals are not reads.
+  const code = target.source.replace(/(["'])(?:\\.|(?!\1)[^\\\n])*\1/g, "");
+  const used = [...usedNames(code)].filter((name) => !own.has(name));
   if (used.length === 0) return false;
-  const pending = new Set<string>();
+  const unrun = new Set<string>();
+  const ran = new Set<string>();
   for (const id of input.order.slice(0, targetIndex)) {
     const cell = input.cells[id];
     if (cell?.cellType !== "code") continue;
     const defined = definedNames(cell.source);
     // Without a live session the next run starts empty, so nothing above has run in it.
-    const ran =
+    const settled =
       input.liveSessionGeneration !== null &&
       sessionRunStatus(input.cellRuns.get(id), input.liveSessionGeneration) === "ran";
-    // A later definition that ran settles the name; an unrun one leaves it pending.
-    for (const name of used) {
-      if (!defined.has(name)) continue;
-      if (ran) pending.delete(name);
-      else pending.add(name);
-    }
+    for (const name of used) if (defined.has(name)) (settled ? ran : unrun).add(name);
   }
-  return pending.size > 0;
+  // Any definition that ran in this session is enough for the name to exist.
+  return [...unrun].some((name) => !ran.has(name));
 }

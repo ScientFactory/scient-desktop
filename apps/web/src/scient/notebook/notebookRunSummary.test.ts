@@ -295,6 +295,26 @@ describe("notebookNeedsSetup", () => {
     // A run from an earlier session, or no session at all, leaves the name undefined.
     expect(needs(new Map([["setup", ranSetup]]), 3)).toBe(true);
     expect(needs(new Map([["setup", ranSetup]]), null)).toBe(true);
+    // A name only inside a string is not a read.
+    expect(
+      notebookNeedsSetup({
+        order: ["setup", "quoted"],
+        cells: { ...cells, quoted: makeCell("quoted", 'print("run_date")') },
+        targetCellId: "quoted",
+        cellRuns: new Map(),
+        liveSessionGeneration: 2,
+      }),
+    ).toBe(false);
+    // One definition that ran is enough, even if a later reassignment has not run.
+    expect(
+      notebookNeedsSetup({
+        order: ["setup", "again", "target"],
+        cells: { ...cells, again: makeCell("again", "run_date = '20261124'") },
+        targetCellId: "target",
+        cellRuns: new Map([["setup", ranSetup]]),
+        liveSessionGeneration: 2,
+      }),
+    ).toBe(false);
     // Names the cell defines itself need nothing above.
     expect(
       notebookNeedsSetup({
