@@ -138,11 +138,15 @@ async function verifyOpenRegularFile(
   if (!opened.isFile()) {
     throw new Error(`${NodePath.basename(expectedPath)} is not a safe regular file.`);
   }
-  if (PLATFORM === "linux") {
-    const fdPath = await NodeFSP.readlink(`/proc/self/fd/${handle.fd}`).catch(() => null);
+  // Without /proc (some containers) the folder and identity checks below still apply.
+  const fdPath =
+    PLATFORM === "linux"
+      ? await NodeFSP.readlink(`/proc/self/fd/${handle.fd}`).catch(() => null)
+      : null;
+  if (fdPath !== null) {
     if (fdPath !== expectedPath) {
       const dir = NodePath.dirname(expectedPath);
-      if (fdPath === null || NodePath.dirname(fdPath) !== dir) {
+      if (NodePath.dirname(fdPath) !== dir) {
         throw new Error(`${NodePath.basename(dir)} is not a safe directory.`);
       }
       throw new Error(`${NodePath.basename(expectedPath)} is not a safe regular file.`);
