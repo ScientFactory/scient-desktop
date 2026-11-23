@@ -133,6 +133,7 @@ export interface WorkspaceWriteBinaryFileInput extends WorkspaceCreateBinaryFile
   readonly createOnly?: true;
   readonly expectedRevision?: string;
   readonly expectedMutationEpoch?: string;
+  readonly keepPreviousVersion?: true;
 }
 export type WorkspaceMutationError =
   | WorkspaceFileSystemError
@@ -4677,11 +4678,37 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   /** The version menu lists the file history beside any copies from older builds. */
   const withFileHistory = (methods: WorkspaceFileMutationMethods): WorkspaceFileMutationMethods => {
     const directory = deps.fileHistoryDirectory;
-    if (directory === undefined) return methods;
     return {
       ...methods,
+      writeBinaryFile: Effect.fn("WorkspaceFileSystem.writeBinaryWithHistory")(function* (input) {
+        if (input.keepPreviousVersion) {
+          const revision = input.expectedRevision;
+          yield* methods.withSettledFileRead(input, (attention) =>
+            Effect.flatMap(resolveTarget(input), (resolved) =>
+              Effect.tryPromise({
+                try: async () => {
+                  if (attention !== null || directory === undefined || revision === undefined)
+                    throw new Error("A recovery copy is unavailable for this file.");
+                  const kept = await keepFileVersion({
+                    directory,
+                    target: resolved.target,
+                    revision,
+                    ownSave: false,
+                    now: await runPromise(Clock.currentTimeMillis),
+                  });
+                  if (!kept)
+                    throw new Error("The current file could not be kept in File versions.");
+                },
+                catch: (cause) => errorFor(input, resolved.target, cause),
+              }),
+            ),
+          );
+        }
+        return yield* methods.writeBinaryFile(input);
+      }),
       listFileVersions: Effect.fn("WorkspaceFileSystem.listFileHistory")(function* (input) {
         const listed = yield* methods.listFileVersions(input);
+        if (directory === undefined) return listed;
         const resolved = yield* resolveTarget(input, true);
         // The rest of the menu never depends on the history being readable.
         const kept = yield* Effect.promise(() =>
@@ -4695,7 +4722,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         };
       }),
       discardFileVersion: (input) =>
-        isFileHistoryVersion(input.versionId)
+        directory !== undefined && isFileHistoryVersion(input.versionId)
           ? resolveTarget(input, true).pipe(
               Effect.flatMap((resolved) =>
                 Effect.tryPromise({

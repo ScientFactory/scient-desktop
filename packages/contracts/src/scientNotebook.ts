@@ -2,11 +2,72 @@ import * as Schema from "effect/Schema";
 
 import { FilePathString, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ComputeExecutionId, ComputeSessionId } from "./scientCompute.ts";
+import {
+  ComputeResultParameter,
+  ComputeResultParameterValues,
+  ComputeResultRevision,
+  ComputeResultRevisionId,
+  ComputeResultValue,
+  ComputeResultsRerunInput,
+  ComputeResultsRerunResult,
+} from "./scientComputeResults.ts";
 
 const NotebookAddress = {
   cwd: TrimmedNonEmptyString,
   path: FilePathString,
 };
+
+export const NotebookFreshRunInput = Schema.Struct({
+  ...ComputeResultsRerunInput.fields,
+  /** Each setting saves an alternative revision and leaves the published setting in place. */
+  sweep: Schema.optional(
+    Schema.Array(ComputeResultParameterValues).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  ),
+});
+export type NotebookFreshRunInput = typeof NotebookFreshRunInput.Type;
+
+export const NotebookFreshRunStatusInput = Schema.Struct({
+  cwd: ComputeResultsRerunInput.fields.cwd,
+  scriptPath: ComputeResultsRerunInput.fields.scriptPath,
+  /** Omit to find the latest job for this notebook. */
+  runId: Schema.optional(ComputeSessionId),
+});
+export type NotebookFreshRunStatusInput = typeof NotebookFreshRunStatusInput.Type;
+
+export const NotebookFreshRunStopInput = Schema.Struct({
+  ...NotebookFreshRunStatusInput.fields,
+  runId: ComputeSessionId,
+});
+export type NotebookFreshRunStopInput = typeof NotebookFreshRunStopInput.Type;
+
+export const NotebookFreshRun = Schema.Struct({
+  runId: ComputeSessionId,
+  /** Absent while running. */
+  outcome: Schema.optional(ComputeResultsRerunResult),
+  parameters: Schema.optional(ComputeResultParameterValues),
+  progress: Schema.optional(
+    Schema.Struct({
+      phase: Schema.Literals(["starting", "running", "saving", "stopping"]),
+      cell: Schema.Int,
+      total: Schema.Int,
+    }),
+  ),
+  publishedResults: Schema.optional(Schema.Int),
+  sweepSummary: Schema.optional(
+    Schema.Struct({
+      total: Schema.Int,
+      saved: Schema.Int,
+      failures: Schema.Array(
+        Schema.Struct({
+          index: Schema.Int,
+          parameters: ComputeResultParameterValues,
+          message: Schema.String,
+        }),
+      ),
+    }),
+  ),
+});
+export type NotebookFreshRun = typeof NotebookFreshRun.Type;
 
 const CellId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
 
@@ -32,6 +93,9 @@ export const NotebookOutputView = Schema.Struct({
 });
 export type NotebookOutputView = typeof NotebookOutputView.Type;
 
+const NotebookFold = Schema.Literals(["source", "outputs", "section"]);
+export type NotebookFold = typeof NotebookFold.Type;
+
 export const NotebookCellView = Schema.Struct({
   id: CellId,
   cellType: NotebookCellType,
@@ -41,13 +105,52 @@ export const NotebookCellView = Schema.Struct({
   /** A submitted run this cell is waiting to record. */
   pendingExecution: Schema.NullOr(Schema.String),
   outputs: Schema.Array(NotebookOutputView),
+  folded: Schema.optional(Schema.Array(NotebookFold)),
+  parameterCell: Schema.optional(Schema.Boolean),
+  injectedParameters: Schema.optional(Schema.Boolean),
+  parameterHints: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  savedParameters: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  parameterEvidenceMismatch: Schema.optional(Schema.Boolean),
 });
 export type NotebookCellView = typeof NotebookCellView.Type;
+
+const NotebookSavedOutput = Schema.Struct({
+  name: Schema.String,
+  preview: Schema.NullOr(
+    Schema.Union([
+      Schema.TaggedStruct("figure", {
+        mediaType: Schema.Literals(["image/png", "image/jpeg", "image/svg+xml"]),
+        data: Schema.String,
+      }),
+      Schema.TaggedStruct("table", {
+        rows: Schema.Array(Schema.Array(Schema.String)),
+        partial: Schema.Boolean,
+      }),
+    ]),
+  ),
+});
+
+const NotebookAlternatives = Schema.Struct({
+  publishedRevision: Schema.NullOr(ComputeResultRevisionId),
+  runs: Schema.Array(
+    Schema.Struct({
+      revision: ComputeResultRevisionId,
+      codeSha256: ComputeResultRevision.fields.script.fields.codeSha256,
+      finishedAt: Schema.optional(ComputeResultRevision.fields.run.fields.finishedAt),
+      parameters: Schema.Array(ComputeResultParameter),
+      values: Schema.Array(ComputeResultValue),
+      outputs: Schema.Array(NotebookSavedOutput),
+    }),
+  ),
+  prunedRuns: Schema.Int,
+});
+export type NotebookAlternatives = typeof NotebookAlternatives.Type;
 
 export const NotebookView = Schema.Struct({
   revision: Schema.String,
   language: Schema.String,
   cells: Schema.Array(NotebookCellView),
+  alternatives: Schema.optional(NotebookAlternatives),
 });
 export type NotebookView = typeof NotebookView.Type;
 
@@ -55,6 +158,7 @@ export const NotebookReadInput = Schema.Struct({
   ...NotebookAddress,
   /** Null comes back when the notebook is still at this revision. */
   knownRevision: Schema.optional(Schema.String),
+  includeAlternatives: Schema.optional(Schema.Boolean),
 });
 export type NotebookReadInput = typeof NotebookReadInput.Type;
 
@@ -84,8 +188,15 @@ export const NotebookEdit = Schema.Union([
   Schema.TaggedStruct("delete", { cellId: CellId }),
   /** Puts back a cell deleted earlier, outputs included. */
   Schema.TaggedStruct("restore", { cellId: CellId, afterCellId: Schema.NullOr(CellId) }),
+  Schema.TaggedStruct("restore-file-version", { versionId: Schema.String }),
   Schema.TaggedStruct("move", { cellId: CellId, offset: Schema.Literals([-1, 1]) }),
   Schema.TaggedStruct("convert", { cellId: CellId, cellType: NotebookCellType }),
+  Schema.TaggedStruct("set-parameters", { cellId: CellId, enabled: Schema.Boolean }),
+  Schema.TaggedStruct("set-fold", {
+    cellId: CellId,
+    part: NotebookFold,
+    folded: Schema.Boolean,
+  }),
   Schema.TaggedStruct("clear-outputs", {}),
   /** Durable before the run ends, so its result is recorded even after a reload. */
   Schema.TaggedStruct("expect-run", { cellId: CellId, execution: Schema.String }),

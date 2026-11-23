@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ComputeExecutionId, ComputeSessionId } from "@t3tools/contracts";
@@ -10,6 +11,7 @@ import * as Scope from "effect/Scope";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as NotebookStore from "./NotebookStore.ts";
+import { indexNotebook, notebookBytes } from "./notebookIndex.ts";
 
 const notebook = {
   cells: [
@@ -89,6 +91,101 @@ describe("NotebookStore", () => {
   const scoped = <A, E>(
     effect: Effect.Effect<A, E, Layer.Success<typeof testLayer> | Scope.Scope>,
   ) => effect.pipe(Effect.provide(testLayer), Effect.scoped);
+
+  it.effect("preserves a notebook byte for byte and matches nbformat when a fold is edited", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store } = yield* fixture;
+        const fs = yield* FileSystem.FileSystem;
+        const load = (name: string) =>
+          fs.readFile(NodeURL.fileURLToPath(new URL(`./fixtures/${name}.ipynb`, import.meta.url)));
+        const attached = yield* load("attachments");
+        const older = yield* load("transfusion-excerpt");
+        const expected = yield* load("attachments-folded");
+        for (const notebook of [attached, older]) {
+          const index = indexNotebook(Buffer.from(notebook));
+          expect(notebookBytes(index).equals(notebook)).toBe(true);
+        }
+        const oldIndex = indexNotebook(Buffer.from(older));
+        expect(oldIndex.minor).toBe(4);
+        expect(oldIndex.cells.every((cell) => cell.fields.id === undefined && cell.id !== "")).toBe(
+          true,
+        );
+
+        yield* fs.writeFile(`${cwd}/${path}`, attached);
+        yield* store.read({ cwd, path });
+        yield* store.flush({ cwd, path });
+        expect(Buffer.from(yield* fs.readFile(`${cwd}/${path}`)).equals(attached)).toBe(true);
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-fold", cellId: "analysis", part: "outputs", folded: true }],
+        });
+        yield* store.flush({ cwd, path });
+        expect(Buffer.from(yield* fs.readFile(`${cwd}/${path}`)).equals(expected)).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect(
+    "saves a clean run with its overrides and refuses the old snapshot after publication",
+    () =>
+      scoped(
+        Effect.gen(function* () {
+          const { cwd, store, onDisk } = yield* fixture;
+          const address = { cwd, path };
+          yield* store.edit({
+            ...address,
+            edits: [{ _tag: "set-parameters", cellId: "first", enabled: true }],
+          });
+          const snapshot = yield* store.freshSnapshot(address);
+          const attempt = {
+            ...address,
+            snapshot: snapshot.executionBasis,
+            parameterCellId: "first",
+            injection: { id: "injected", source: "# Parameters\na = 2.0" },
+            parameters: { a: "2.0" },
+            overrides: { a: 2 },
+            codeSha256: "digest",
+            executionId: "fresh-execution",
+            results: [],
+          };
+          yield* store.reserveFreshRun(address);
+          const denied = yield* store
+            .edit({
+              ...address,
+              edits: [{ _tag: "set-source", cellId: "title", source: "new text" }],
+            })
+            .pipe(Effect.flip);
+          expect(denied.message).toBe("Editing resumes when the fresh run finishes.");
+          yield* store.edit({
+            ...address,
+            edits: [{ _tag: "set-fold", cellId: "title", part: "section", folded: true }],
+          });
+          yield* store.saveFreshRun(attempt);
+          const saved = yield* onDisk;
+          const fs = yield* FileSystem.FileSystem;
+          expect(yield* fs.readFileString(`${cwd}/${path}`)).toContain('"a": 2.0');
+          expect(saved.cells.map((cell) => cell.id)).toEqual([
+            "title",
+            "first",
+            "injected",
+            "second",
+          ]);
+          expect(saved.cells[0]?.metadata).toMatchObject({ "jp-MarkdownHeadingCollapsed": true });
+          expect(saved.cells[1]?.metadata.tags).toEqual(["keep", "parameters"]);
+          expect(saved.cells[2]?.metadata.tags).toEqual(["injected-parameters"]);
+          expect(saved.metadata).toMatchObject({
+            papermill: { parameters: { a: 2 } },
+            scient: { notebookRun: { executionId: "fresh-execution", parameters: { a: "2.0" } } },
+          });
+          const after = yield* store.read(address);
+          expect(after?.cells[1]?.savedParameters).toEqual({ a: "2.0" });
+          expect((yield* store.saveFreshRun(attempt).pipe(Effect.exit))._tag).toBe("Failure");
+          expect(yield* onDisk).toEqual(saved);
+        }),
+      ),
+  );
 
   it.effect("reads cells and reports when nothing changed", () =>
     scoped(

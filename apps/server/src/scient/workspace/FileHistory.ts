@@ -133,7 +133,7 @@ export async function keepFileVersion(input: {
       await copy.close();
     }
     const revision = await revisionOf(partial);
-    if (revision === newest?.revision) return true;
+    if (revision === newest?.revision) return revision === input.revision;
     const extension = NodePath.extname(input.target);
     const name = `${input.now}-${revision.replace("sha256:", "")}${
       /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt"

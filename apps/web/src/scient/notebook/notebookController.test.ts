@@ -207,11 +207,26 @@ describe("notebookController", () => {
     await controller.flush();
   });
 
-  it("marks a cell expecting a run straight away", async () => {
-    const { fake, controller } = await opened([cell("a")]);
-    controller.expectRuns([{ cellId: "a", execution: "run-1" }]);
-    expect(controller.store.getState().cells.a?.pendingExecution).toBe("run-1");
+  it("marks a submitted batch with one store notification and one edit batch", async () => {
+    const { fake, controller } = await opened([cell("a"), cell("b"), cell("c")]);
+    const untouched = controller.store.getState().cells.c;
+    const observed: Array<string | null | undefined> = [];
+    const unsubscribe = controller.store.subscribe((state) => {
+      observed.push(state.cells.a?.pendingExecution, state.cells.b?.pendingExecution);
+    });
+    controller.expectRuns([
+      { cellId: "a", execution: "run-1" },
+      { cellId: "b", execution: "run-2" },
+    ]);
+    unsubscribe();
+    expect(observed).toEqual(["run-1", "run-2"]);
+    expect(controller.store.getState().cells.c).toBe(untouched);
     await controller.flush();
-    expect(fake.sent.flat()).toEqual([{ _tag: "expect-run", cellId: "a", execution: "run-1" }]);
+    expect(fake.sent).toEqual([
+      [
+        { _tag: "expect-run", cellId: "a", execution: "run-1" },
+        { _tag: "expect-run", cellId: "b", execution: "run-2" },
+      ],
+    ]);
   });
 });

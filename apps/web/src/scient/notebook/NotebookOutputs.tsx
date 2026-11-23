@@ -1,10 +1,16 @@
 /* oxlint-disable react/no-array-index-key -- Notebook outputs keep their saved order and have no identity. */
-import type { EnvironmentId, NotebookCellView, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  ComputeSessionId,
+  EnvironmentId,
+  NotebookCellView,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { computeEnvironment } from "~/state/compute";
-import { useEnvironmentQuery } from "~/state/query";
 import { ComputeOutputBlock } from "~/scient/compute/ComputeOutputBlock";
 import { ComputeRichOutput, type ComputeRichDisplay } from "~/scient/compute/ComputeRichOutput";
 import { computeDisplays } from "~/scient/compute/computeRichRepresentation";
@@ -21,6 +27,33 @@ import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import type { NotebookController } from "./notebookController";
 
 type NotebookOutput = Readonly<Record<string, unknown>>;
+
+const notebookLiveOutput = Atom.family((scope: string) => {
+  const [environmentId, cwd, sessionId, executionId] = JSON.parse(scope) as [
+    EnvironmentId,
+    string,
+    ComputeSessionId,
+    string,
+  ];
+  const events = computeEnvironment.events({ environmentId, input: { cwd } });
+  return Atom.make((get) => {
+    const state = AsyncResult.getOrElse(get(events), () => null);
+    const session = state?.sessions.get(sessionId);
+    const output = state?.outputs.get(`${sessionId}/${executionId}`);
+    if (session === undefined || output === undefined) return null;
+    const cached = get.self<{
+      readonly session: typeof session;
+      readonly output: typeof output;
+    } | null>();
+    if (
+      cached._tag === "Some" &&
+      cached.value?.output === output &&
+      cached.value.session.generation === session.generation
+    )
+      return cached.value;
+    return { session, output };
+  });
+});
 
 /** nbformat stores multiline text as a string or as a list of lines. */
 function notebookText(value: unknown): string {
@@ -235,6 +268,7 @@ export function NotebookCellOutputs(props: {
   const liveRun = useStore(controller.store, (state) => state.liveRuns[cell.id]);
   const running = useStore(controller.store, (state) => (state.activity[cell.id] ?? null) !== null);
   const showsRun =
+    near &&
     liveRun !== undefined &&
     (running || (cell.run?.execution === liveRun.executionId && cell.outputs.length > 0));
   return showsRun ? (
@@ -259,10 +293,12 @@ function LiveOutputs(props: {
   readonly run: { readonly sessionId: string; readonly executionId: string };
 }) {
   const { environmentId, cwd, threadRef } = props.place;
-  const events = useEnvironmentQuery(computeEnvironment.events({ environmentId, input: { cwd } }));
-  const session = events.data?.sessions.get(props.run.sessionId as never);
-  const live = events.data?.outputs.get(`${props.run.sessionId}/${props.run.executionId}`);
-  if (session === undefined || live === undefined) {
+  const live = useAtomValue(
+    notebookLiveOutput(
+      JSON.stringify([environmentId, cwd, props.run.sessionId, props.run.executionId]),
+    ),
+  );
+  if (live === null) {
     return <StoredOutputs controller={props.controller} cell={props.cell} near={props.near} />;
   }
   return (
@@ -270,9 +306,9 @@ function LiveOutputs(props: {
       <ComputeOutputView
         cwd={cwd}
         environmentId={environmentId}
-        session={session}
+        session={live.session}
         executionId={props.run.executionId as never}
-        outputs={live.outputs}
+        outputs={live.output.outputs}
         threadRef={threadRef}
         onAskAgent={
           props.place.askAboutCell === undefined

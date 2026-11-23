@@ -5,6 +5,9 @@ import {
   ComputeExecutionId,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   type ComputeExecutionRecord,
+  type ComputeResultsRerunInput,
+  type ComputeSessionId,
+  type NotebookFold,
   type NotebookCellView,
   type NotebookEdit,
   type NotebookView,
@@ -12,9 +15,15 @@ import {
 import {
   notebookCellRun,
   notebookCodeHash,
+  notebookHeadings,
   staleNotebookCells,
   type NotebookStaleness,
 } from "@t3tools/shared/notebookStaleness";
+import {
+  notebookOverrideAllowed,
+  notebookParameters,
+  parseNotebookOverride,
+} from "@t3tools/shared/notebookParameters";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -79,7 +88,7 @@ function describeCell(
         : stale === "edited"
           ? "edited since it ran"
           : stale === "upstream"
-            ? "a cell above changed"
+            ? "output may be out of date"
             : cell.pendingExecution !== null
               ? "running"
               : failed
@@ -88,6 +97,8 @@ function describeCell(
                   ? "never run"
                   : "ran",
     count: cell.executionCount,
+    ...(cell.folded === undefined ? {} : { folded: cell.folded }),
+    ...(cell.injectedParameters ? { parameterRole: "scient-injected-parameters" as const } : {}),
     output:
       output.length > MAXIMUM_CELL_OUTPUT_CHARACTERS
         ? `${output.slice(0, MAXIMUM_CELL_OUTPUT_CHARACTERS)}\n… output cut, ${output.length} characters in all`
@@ -107,9 +118,27 @@ const describeNotebook = (view: NotebookView, only?: ReadonlySet<string>) => {
   const cells = view.cells
     .filter((cell) => only === undefined || only.has(cell.id))
     .map((cell) => describeCell(cell, stale.get(cell.id)));
+  const parameterCell = view.cells.find((cell) => cell.parameterCell);
   return {
     language: view.language,
     total: view.cells.length,
+    outline: view.cells.flatMap((cell) =>
+      cell.cellType === "markdown"
+        ? notebookHeadings(cell.source).map((heading) => ({ ...heading, cell: cell.id }))
+        : [],
+    ),
+    ...(parameterCell === undefined
+      ? {}
+      : {
+          parameterCell: parameterCell.id,
+          parameters: notebookParameters(parameterCell, view.language).map((parameter) => ({
+            name: parameter.name,
+            value: parameter.defaultJson ?? null,
+            saved: Object.hasOwn(parameterCell.savedParameters ?? {}, parameter.name)
+              ? (parameterCell.savedParameters?.[parameter.name] ?? null)
+              : null,
+          })),
+        }),
     cells:
       only !== undefined
         ? cells
@@ -216,8 +245,60 @@ const figuresOf = Effect.fn("ScientComputeToolkit.notebookFigures")(function* (
 export const readScientNotebook = Effect.fn("ScientComputeToolkit.notebookRead")(function* (input: {
   readonly path: string;
   readonly cells?: ReadonlyArray<string> | undefined;
+  readonly includeAlternatives?: boolean | undefined;
+  readonly savedRevision?: string | undefined;
+  readonly freshRunId?: ComputeSessionId | undefined;
+  readonly includeFreshRun?: boolean | undefined;
 }) {
   const scope = yield* agentScope();
+  if (input.includeFreshRun || input.freshRunId !== undefined) {
+    const freshRun = yield* scope.gateway
+      .notebookFreshStatus({
+        cwd: scope.cwd,
+        scriptPath: input.path,
+        ...(input.freshRunId === undefined ? {} : { runId: input.freshRunId }),
+      })
+      .pipe(Effect.mapError(notebookFailed));
+    return { ...describeNotebook(yield* requireNotebook(scope, input.path)), freshRun };
+  }
+  if (input.includeAlternatives || input.savedRevision !== undefined) {
+    const alternatives = yield* scope.gateway
+      .notebookAlternatives({ cwd: scope.cwd, path: input.path })
+      .pipe(Effect.mapError(notebookFailed));
+    const selected = alternatives.runs.find((entry) => entry.revision === input.savedRevision);
+    if (input.savedRevision !== undefined && selected === undefined) {
+      return yield* toolError("compute-failed", "That saved notebook revision is unavailable.");
+    }
+    const images = (selected?.outputs ?? [])
+      .flatMap(({ preview }) =>
+        preview?._tag === "figure" &&
+        (preview.mediaType === "image/png" || preview.mediaType === "image/jpeg")
+          ? [{ mediaType: preview.mediaType, data: preview.data }]
+          : [],
+      )
+      .slice(0, MAXIMUM_IMAGES);
+    return {
+      ...describeNotebook(
+        yield* requireNotebook(scope, input.path),
+        input.cells === undefined ? undefined : new Set(input.cells),
+      ),
+      alternatives: (selected === undefined ? alternatives.runs : [selected]).map((run) => ({
+        revision: run.revision,
+        ...(run.codeSha256 === undefined ? {} : { codeSha256: run.codeSha256 }),
+        parameters: run.parameters,
+        outputs: run.outputs.map(({ name, preview }) => ({
+          name,
+          ...(preview?._tag === "table" && selected !== undefined
+            ? { rows: preview.rows, partial: preview.partial }
+            : {}),
+        })),
+        ...(selected === undefined ? {} : { values: run.values }),
+      })),
+      publishedRevision: alternatives.publishedRevision,
+      omittedAlternatives: alternatives.prunedRuns,
+      ...(images.length === 0 ? {} : { images }),
+    };
+  }
   yield* recordSettledRuns(scope, input.path, yield* requireNotebook(scope, input.path));
   return describeNotebook(
     yield* requireNotebook(scope, input.path),
@@ -240,6 +321,13 @@ type AgentEdit =
     }
   | { readonly op: "delete"; readonly cell: string }
   | { readonly op: "move"; readonly cell: string; readonly offset: -1 | 1 }
+  | {
+      readonly op: "fold";
+      readonly cell: string;
+      readonly part: NotebookFold;
+      readonly folded: boolean;
+    }
+  | { readonly op: "parameters"; readonly cell: string; readonly enabled: boolean }
   | { readonly op: "clear-outputs" };
 
 function notebookEdit(edit: AgentEdit): NotebookEdit {
@@ -258,6 +346,10 @@ function notebookEdit(edit: AgentEdit): NotebookEdit {
       return { _tag: "delete", cellId: edit.cell };
     case "move":
       return { _tag: "move", cellId: edit.cell, offset: edit.offset };
+    case "fold":
+      return { _tag: "set-fold", cellId: edit.cell, part: edit.part, folded: edit.folded };
+    case "parameters":
+      return { _tag: "set-parameters", cellId: edit.cell, enabled: edit.enabled };
     case "clear-outputs":
       return { _tag: "clear-outputs" };
   }
@@ -284,13 +376,97 @@ export const editScientNotebook = Effect.fn("ScientComputeToolkit.notebookEdit")
   };
 });
 
+type AgentParameterValues = Readonly<Record<string, Schema.Json>>;
+
+function normalizeAgentNotebookParameters(
+  values: AgentParameterValues,
+  parameters: ReturnType<typeof notebookParameters>,
+) {
+  return Object.fromEntries(
+    Object.entries(values).map(([name, value]) => {
+      if (typeof value === "string") {
+        const legacy = parseNotebookOverride(value);
+        const declared = parameters.find((parameter) => parameter.name === name);
+        if (
+          legacy !== undefined &&
+          (declared === undefined || notebookOverrideAllowed(declared, legacy))
+        )
+          return [name, value];
+      }
+      return [name, JSON.stringify(value)];
+    }),
+  );
+}
+
 export const runScientNotebook = Effect.fn("ScientComputeToolkit.notebookRun")(function* (input: {
   readonly path: string;
   readonly cells?: ReadonlyArray<string> | undefined;
   readonly waitSeconds?: number | undefined;
   readonly includeImages?: boolean | undefined;
+  readonly fresh?: boolean | undefined;
+  readonly sweep?: ReadonlyArray<AgentParameterValues> | undefined;
+  readonly parameters?: AgentParameterValues | undefined;
+  readonly inputs?: ComputeResultsRerunInput["inputs"] | undefined;
 }) {
   const scope = yield* agentScope();
+  if (
+    input.fresh ||
+    input.sweep !== undefined ||
+    input.parameters !== undefined ||
+    input.inputs !== undefined
+  ) {
+    if (input.cells !== undefined) {
+      return yield* toolError(
+        "compute-failed",
+        "A fresh notebook run runs every code cell. Omit cells.",
+      );
+    }
+    const view = yield* requireNotebook(scope, input.path);
+    const declared = notebookParameters(
+      view.cells.find((cell) => cell.parameterCell),
+      view.language,
+    );
+    const freshRun = yield* scope.gateway
+      .runNotebookFresh({
+        cwd: scope.cwd,
+        scriptPath: input.path,
+        threadId: scope.threadId,
+        ...(input.parameters === undefined
+          ? {}
+          : { parameters: normalizeAgentNotebookParameters(input.parameters, declared) }),
+        ...(input.sweep === undefined
+          ? {}
+          : {
+              sweep: input.sweep.map((values) =>
+                normalizeAgentNotebookParameters(values, declared),
+              ),
+            }),
+        ...(input.inputs === undefined ? {} : { inputs: input.inputs }),
+      })
+      .pipe(Effect.mapError(notebookFailed));
+    const outcome =
+      freshRun.outcome ??
+      Option.getOrUndefined(
+        yield* scope.gateway
+          .waitNotebookFresh({ cwd: scope.cwd, scriptPath: input.path, runId: freshRun.runId })
+          .pipe(
+            Effect.timeoutOption(Duration.seconds(input.waitSeconds ?? DEFAULT_WAIT_SECONDS)),
+            Effect.mapError(notebookFailed),
+          ),
+      );
+    const current = yield* scope.gateway
+      .notebookFreshStatus({
+        cwd: scope.cwd,
+        scriptPath: input.path,
+        runId: freshRun.runId,
+      })
+      .pipe(Effect.mapError(notebookFailed));
+    return {
+      ...describeNotebook(yield* requireNotebook(scope, input.path)),
+      freshRun: current ?? { ...freshRun, ...(outcome === undefined ? {} : { outcome }) },
+      ...(outcome === undefined || input.sweep !== undefined ? {} : { publication: outcome }),
+    };
+  }
   const view = yield* requireNotebook(scope, input.path);
   const requested = input.cells === undefined ? null : new Set(input.cells);
   const targets = view.cells.filter(
@@ -317,6 +493,7 @@ export const runScientNotebook = Effect.fn("ScientComputeToolkit.notebookRun")(f
       sessionId: session.sessionId,
       expectedGeneration: session.generation,
       path: input.path,
+      ...(requested === null ? { runAll: true } : {}),
       actor: { _tag: "agent", threadId: scope.threadId },
       cells: runs,
     })

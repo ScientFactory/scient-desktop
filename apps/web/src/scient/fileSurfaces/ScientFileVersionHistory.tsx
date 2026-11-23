@@ -14,6 +14,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 import { projectEnvironment } from "~/state/projects";
+import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { normalizeRenamePath } from "~/components/files/FileRenameButton";
 import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
@@ -41,6 +42,7 @@ function ScientFileVersionHistoryPanel(props: {
   readonly onRefresh: () => void;
   readonly onOpen: (path: string) => void;
   readonly onDiscard: (versionId: string) => Promise<boolean>;
+  readonly onRestore?: (versionId: string) => Promise<boolean>;
   readonly onCopy: (version: Version, destination: string, mutationId: string) => Promise<boolean>;
   readonly onAcceptCurrent?: (
     recoveryId: string,
@@ -61,6 +63,7 @@ function ScientFileVersionHistoryPanel(props: {
   const gt = useGT();
   const attention = props.history?.attention ?? props.publicationAttention ?? null;
   const [discard, setDiscard] = useState<string | null>(null);
+  const [restore, setRestore] = useState<string | null>(null);
   const [copy, setCopy] = useState<Version | null>(null);
   const [destination, setDestination] = useState("");
   const [copyMutationId, setCopyMutationId] = useState("");
@@ -252,6 +255,20 @@ function ScientFileVersionHistoryPanel(props: {
                     >
                       <T>Compare with current…</T>
                     </Button>
+                    {props.onRestore && version.versionId.startsWith("history:") ? (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={!props.canWrite || props.busy}
+                        onClick={() => {
+                          setRestore(version.versionId);
+                          setDiscard(null);
+                          setCopy(null);
+                        }}
+                      >
+                        <T>Restore…</T>
+                      </Button>
+                    ) : null}
                     <Button
                       size="xs"
                       variant="ghost"
@@ -287,6 +304,35 @@ function ScientFileVersionHistoryPanel(props: {
         <p role="status">
           <T>Loading retained versions…</T>
         </p>
+      ) : null}
+      {restore !== null && props.onRestore ? (
+        <div className="flex flex-col gap-2">
+          <p>
+            <T>Restore this notebook version? The current file is kept in File versions.</T>
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={props.busy}
+              onClick={() => setRestore(null)}
+            >
+              <T>Cancel</T>
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={props.busy || !props.canWrite}
+              onClick={() => {
+                void props.onRestore?.(restore).then((done) => {
+                  if (done) setRestore(null);
+                });
+              }}
+            >
+              <T>Restore notebook</T>
+            </Button>
+          </div>
+        </div>
       ) : null}
       {discard ? (
         <div
@@ -417,6 +463,7 @@ export function ScientFileVersionHistory(props: {
   const read = useAtomCommand(projectEnvironment.readFileOrdered, { reportFailure: false });
   const write = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const resolve = useAtomCommand(projectEnvironment.resolveFileMutation, { reportFailure: false });
+  const editNotebook = useAtomCommand(computeEnvironment.notebookEdit, { reportFailure: false });
   const [history, setHistory] = useState<ProjectListFileVersionsResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -677,6 +724,27 @@ export function ScientFileVersionHistory(props: {
               return true;
             })
           }
+          {...(props.relativePath.toLowerCase().endsWith(".ipynb")
+            ? {
+                onRestore: (versionId: string) =>
+                  run(async () => {
+                    const result = await editNotebook({
+                      environmentId: props.environmentId,
+                      input: {
+                        cwd: props.cwd,
+                        path: props.relativePath,
+                        edits: [{ _tag: "restore-file-version", versionId }],
+                      },
+                    });
+                    if (result._tag !== "Success") {
+                      setError(gt("The notebook version could not be restored."));
+                      return false;
+                    }
+                    refreshProjectEntriesQuery(props.environmentId, props.cwd);
+                    return load();
+                  }),
+              }
+            : {})}
           onCopy={(version, destination, mutationId) =>
             run(async () => {
               if (!props.canWrite) return false;

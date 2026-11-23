@@ -1,19 +1,25 @@
 import {
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   type ComputeExecutionRecord,
+  type ComputeSessionRecord,
   type EnvironmentId,
   type NotebookCellType,
+  type NotebookFreshRunInput,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { Plus, Square, Variable } from "lucide-react";
+import { BookOpen, ListTree, Plus, Square, Variable } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useStore } from "zustand";
+import { useAtomValue } from "@effect/atom-react";
 
 import { Button } from "~/components/ui/button";
+import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
 import { MenuItem, MenuSeparator } from "~/components/ui/menu";
+import { Sheet, SheetHeader, SheetPopup, SheetTitle } from "~/components/ui/sheet";
 import { toastManager } from "~/components/ui/toast";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { observeResize } from "~/lib/observeResize";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
@@ -35,8 +41,23 @@ import { computeFileContextId, useComputeContextStore } from "~/scient/compute/c
 import type { ComputePanelView } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForId } from "~/scient/compute/computeSourceLanguage";
 import { useComputePanelSessions } from "~/scient/compute/useComputePanelSessions";
+import { ResultDeclaredInputs, useSavedResultRunSetup } from "~/scient/results/ResultRunSetup";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { NotebookCell, type NotebookCellEdge, type NotebookCellHandlers } from "./NotebookCell";
+import { NotebookOutline } from "./NotebookOutline";
+import { NotebookFreshRunWarning } from "./NotebookFreshRunWarning";
+import { NotebookFreshRunStatus } from "./NotebookFreshRunStatus";
+import { NotebookSweepDialog } from "./NotebookSweepDialog";
+import {
+  notebookParameterChanged,
+  NotebookParameterControls,
+  useNotebookParameters,
+  validNotebookParameter,
+} from "./NotebookParameters";
+import { NotebookReader } from "./reader/NotebookReader";
+import { useNotebookFreshRun } from "./useNotebookFreshRun";
+import { notebookRunDraftKey, useNotebookRunDrafts } from "./notebookRunDrafts";
+import { sweepValues } from "./reader/notebookReaderModel";
 import { notebookCommand, type NotebookCommand, type NotebookKeyPress } from "./notebookCommands";
 import {
   createNotebookController,
@@ -151,9 +172,81 @@ export default function ScientNotebookSurface(props: {
 }) {
   const gt = useGT();
   const controller = useNotebookController(props);
+  const {
+    parameters,
+    saved: savedParameters,
+    mismatch: parameterEvidenceMismatch,
+  } = useNotebookParameters(controller);
+  const fresh = useNotebookFreshRun({
+    environmentId: props.environmentId,
+    cwd: props.cwd,
+    scriptPath: props.relativePath,
+  });
+  const settledFreshRun = fresh.job?.outcome === undefined ? null : fresh.job.runId;
+  const canRerun = useAtomValue(
+    computeEnvironment.notebookFreshStart.permissionAtom(props.environmentId),
+  );
+  const canStopFresh = useAtomValue(
+    computeEnvironment.notebookFreshStop.permissionAtom(props.environmentId),
+  );
+  const [readerOpen, setReaderOpen] = useState(false);
+  const [sweepParameter, setSweepParameter] = useState<
+    Parameters<typeof validNotebookParameter>[0] | null
+  >(null);
+  const [preparingFresh, setPreparingFresh] = useState(false);
+  const [freshConfirmation, setFreshConfirmation] = useState<Readonly<
+    Record<string, string>
+  > | null>(null);
+  const runningFresh = preparingFresh || fresh.running;
+  const outcome = fresh.job?.outcome;
+  const runMessage =
+    fresh.error ??
+    (outcome?._tag === "failed" ? outcome.message : (outcome?.notebookMessage ?? null));
+  const runStatus = (
+    <NotebookFreshRunStatus
+      job={fresh.job}
+      running={runningFresh}
+      message={runMessage}
+      {...(canStopFresh ? { onStop: () => void fresh.stop() } : {})}
+    />
+  );
+  const draftKey = notebookRunDraftKey(props.environmentId, props.cwd, props.relativePath);
+  const draftParameters = useNotebookRunDrafts((state) => state.drafts[draftKey]?.parameters);
+  const draftInputs = useNotebookRunDrafts((state) => state.drafts[draftKey]?.inputs);
+  const setupTarget = {
+    environmentId: props.environmentId,
+    cwd: props.cwd,
+    scriptPath: props.relativePath,
+  };
+  const { setup, retry: retrySetup } = useSavedResultRunSetup(setupTarget, settledFreshRun);
+  const savedSetup = setup !== null && !("message" in setup) ? setup : undefined;
+  const pendingParameters =
+    draftParameters ??
+    Object.fromEntries((savedSetup?.parameters ?? []).map(({ name, value }) => [name, value]));
+  const inputs = draftInputs ?? savedSetup?.inputs;
   const status = useStore(controller.store, (state) => state.status);
   const languageId = useStore(controller.store, (state) => state.language);
   const order = useStore(controller.store, (state) => state.order);
+  const sections = useStore(controller.store, (state) => state.sections);
+  const selected = useStore(controller.store, (state) => state.selected);
+  const [dockedOutline, setDockedOutline] = useState(false);
+  const [dockOpen, setDockOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const outlineButton = useRef<HTMLButtonElement>(null);
+  const outlineDestination = useRef<{ readonly cellId: string; readonly heading: number } | null>(
+    null,
+  );
+  const observeNotebookWidth = useStableCallback((node: HTMLDivElement | null) => {
+    if (node === null) return;
+    const measure = () => {
+      const docked = node.clientWidth >= 640;
+      setDockedOutline(docked);
+      if (docked) setSheetOpen(false);
+    };
+    measure();
+    return observeResize(node, measure);
+  });
+  const visibleOrder = order.filter((id) => !sections.hidden.has(id));
   const changed = useStore(controller.store, (state) => [...state.stale.keys()].join("\n"));
   const language = computeSourceLanguageForId(languageId);
   const contextId = computeFileContextId({
@@ -166,20 +259,27 @@ export default function ScientNotebookSurface(props: {
   const list = useRef<HTMLDivElement>(null);
   const deleted = useRef<Array<{ readonly cellId: string; readonly after: string | null }>>([]);
   const lastKey = useRef<NotebookKeyPress | null>(null);
-  const restartedTo = useRef<number | null>(null);
+  const restartedTo = useRef<Pick<ComputeSessionRecord, "sessionId" | "generation"> | null>(null);
+  const restartAnchor = useRef<HTMLDivElement>(null);
+  const [restartTarget, setRestartTarget] = useState<ComputeSessionRecord | null>(null);
+  const [restarting, setRestarting] = useState(false);
   const [{ setRoot: setScroller, watch: watchNear }] = useState(createNearWatcher);
   const [scroller, setScrollerNode] = useState<HTMLDivElement | null>(null);
   const attachScroller = useStableCallback((node: HTMLDivElement | null) => {
     setScroller(node);
     setScrollerNode(node);
   });
-  const [focusedCell, setFocusedCell] = useState<{ readonly cellId: string } | null>(null);
+  const [focusedCell, setFocusedCell] = useState<{
+    readonly cellId: string;
+    readonly heading?: number;
+  } | null>(null);
   const [submitting, setSubmitting] = useState<ReadonlySet<string>>(new Set());
   const [panelView, setPanelView] = useState<ComputePanelView | null>(null);
   const model = useComputePanelSessions({
     environmentId: props.environmentId,
     cwd: props.cwd,
     contextId,
+    refreshAfterQueueDrains: true,
   });
   const liveSession = model.liveSession;
   const interruptSession = useAtomCommand(computeEnvironment.interruptSession, {
@@ -204,7 +304,8 @@ export default function ScientNotebookSurface(props: {
     );
   });
 
-  const runCells = useStableCallback((cellIds: ReadonlyArray<string>) => {
+  const runCells = useStableCallback((cellIds: ReadonlyArray<string>, runAll: boolean = false) => {
+    if (runningFresh) return;
     const { cells } = controller.store.getState();
     const runnable = cellIds.flatMap((id) => {
       const cell = cells[id];
@@ -217,7 +318,7 @@ export default function ScientNotebookSurface(props: {
     setSubmitting((waiting) => new Set([...waiting, ...ids]));
     void controller
       .flush()
-      .then(() => actions.current?.runCells(runnable))
+      .then(() => actions.current?.runCells(runnable, runAll))
       .finally(() =>
         setSubmitting((waiting) => {
           const next = new Set(waiting);
@@ -230,7 +331,7 @@ export default function ScientNotebookSurface(props: {
     const { order: ids, cells } = controller.store.getState();
     return ids.slice(from, to).filter((id) => cells[id]?.cellType === "code");
   };
-  const runAllCells = useStableCallback(() => runCells(codeCellIds()));
+  const runAllCells = useStableCallback(() => runCells(codeCellIds(), true));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the cell a command selected; a cell's editor places its own caret.
   useLayoutEffect(() => {
@@ -238,15 +339,26 @@ export default function ScientNotebookSurface(props: {
     const section = list.current?.querySelector<HTMLElement>(
       `[data-notebook-cell="${CSS.escape(focusedCell.cellId)}"]`,
     );
-    section?.scrollIntoView({ block: "nearest" });
+    const heading =
+      focusedCell.heading === undefined
+        ? undefined
+        : section?.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")[focusedCell.heading];
+    (heading ?? section)?.scrollIntoView({ block: heading === undefined ? "nearest" : "start" });
     if (controller.store.getState().editing !== focusedCell.cellId) {
-      section?.focus({ preventScroll: true });
+      if (heading !== undefined) heading.tabIndex = -1;
+      (heading ?? section)?.focus({ preventScroll: true });
     }
   }, [controller, focusedCell]);
 
   // The Run control must see the restarted session before it can submit into it.
   const runAfterRestart = useStableCallback(() => {
-    if (restartedTo.current === null || liveSession?.generation !== restartedTo.current) return;
+    const target = restartedTo.current;
+    if (
+      target === null ||
+      liveSession?.sessionId !== target.sessionId ||
+      liveSession.generation !== target.generation
+    )
+      return;
     restartedTo.current = null;
     runAllCells();
   });
@@ -264,38 +376,56 @@ export default function ScientNotebookSurface(props: {
       },
     });
   });
-  const restartAndRunAll = async () => {
-    if (liveSession === null) {
-      runAllCells();
+  const restartAndRunAll = async (target: ComputeSessionRecord) => {
+    if (
+      liveSession?.sessionId !== target.sessionId ||
+      liveSession.generation !== target.generation
+    ) {
+      toastManager.add({ type: "info", title: gt("The session changed") });
       return;
     }
+    setRestarting(true);
     const restarted = await restartSession({
       environmentId: props.environmentId,
       input: {
         cwd: props.cwd,
-        sessionId: liveSession.sessionId,
-        expectedGeneration: liveSession.generation,
+        sessionId: target.sessionId,
+        expectedGeneration: target.generation,
       },
-    });
+    }).finally(() => setRestarting(false));
     if (restarted._tag !== "Success") {
       toastManager.add({ type: "error", title: gt("The session could not be restarted") });
       return;
     }
-    useComputeContextStore.getState().bindSession({
-      contextId,
-      sessionId: restarted.value.sessionId,
-      generation: restarted.value.generation,
-    });
-    restartedTo.current = restarted.value.generation;
+    if (
+      !useComputeContextStore.getState().bindSession({
+        contextId,
+        sessionId: restarted.value.sessionId,
+        generation: restarted.value.generation,
+      })
+    )
+      return;
+    restartedTo.current = restarted.value;
     runAfterRestart();
   };
 
-  const focusCell = (cellId: string | undefined, target: NotebookFocusTarget) => {
+  const focusCell = (cellId: string | undefined, target: NotebookFocusTarget, heading?: number) => {
     if (cellId === undefined) return;
+    if (runningFresh) target = "cell";
+    const state = controller.store.getState();
+    for (const parent of state.sections.hidden.get(cellId) ?? []) {
+      controller.setFold(parent, "section", false);
+    }
+    if (
+      (target !== "cell" || heading !== undefined) &&
+      state.cells[cellId]?.folded?.includes("source")
+    ) {
+      controller.setFold(cellId, "source", false);
+    }
     controller.select(cellId);
     if (target === "cell") controller.stopEditing();
     else controller.edit(cellId, target);
-    setFocusedCell({ cellId });
+    setFocusedCell({ cellId, ...(heading === undefined ? {} : { heading }) });
   };
   const positionOf = (cellId: string) => controller.store.getState().order.indexOf(cellId);
   const placeOfCell = useStableCallback((source: HTMLElement): ComputePlace | null => {
@@ -306,15 +436,17 @@ export default function ScientNotebookSurface(props: {
   });
   const cellAt = (index: number) => controller.store.getState().order[index];
   const addCell = (position: number, cellType: NotebookCellType) => {
-    focusCell(controller.insert(position, cellType), "start");
+    if (!runningFresh) focusCell(controller.insert(position, cellType), "start");
   };
   const undoDelete = () => {
+    if (runningFresh) return;
     const entry = deleted.current.pop();
     if (entry === undefined) return;
     controller.restore(entry.cellId, entry.after);
     focusCell(entry.cellId, "cell");
   };
   const deleteCell = (cellId: string) => {
+    if (runningFresh) return;
     const index = positionOf(cellId);
     const next = cellAt(index + 1) ?? cellAt(index - 1);
     const removed = controller.remove(cellId);
@@ -337,7 +469,7 @@ export default function ScientNotebookSurface(props: {
       return;
     }
     if (cellAt(index + 1) === undefined) addCell(index + 1, "code");
-    else focusCell(cellAt(index + 1), "start");
+    else focusCell(cellAt(index + 1), "cell");
   };
 
   const runCommand = (command: NotebookCommand, cellId: string) => {
@@ -360,9 +492,11 @@ export default function ScientNotebookSurface(props: {
       case "undo-delete":
         return undoDelete();
       case "to-text":
-        return controller.convert(cellId, "markdown");
+        if (!runningFresh) controller.convert(cellId, "markdown");
+        return;
       case "to-code":
-        return controller.convert(cellId, "code");
+        if (!runningFresh) controller.convert(cellId, "code");
+        return;
       case "run":
         return runAndAdvance(cellId, false);
       case "run-and-next":
@@ -373,7 +507,9 @@ export default function ScientNotebookSurface(props: {
   };
   const onCommandKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!(event.target instanceof HTMLElement)) return;
-    const cellId = event.target.dataset.notebookCell;
+    const cellId = event.target.matches("h1, h2, h3, h4, h5, h6")
+      ? event.target.closest<HTMLElement>("[data-notebook-cell]")?.dataset.notebookCell
+      : event.target.dataset.notebookCell;
     if (cellId === undefined) return;
     const command = notebookCommand(event, lastKey.current, event.timeStamp);
     lastKey.current = { key: event.key, at: event.timeStamp };
@@ -438,6 +574,65 @@ export default function ScientNotebookSurface(props: {
     observeNear: watchNear,
   };
 
+  const overrides = Object.fromEntries(
+    parameters.flatMap((parameter) => {
+      const input = Object.hasOwn(pendingParameters, parameter.name)
+        ? pendingParameters[parameter.name]
+        : undefined;
+      return input === undefined
+        ? []
+        : [[parameter.name, validNotebookParameter(parameter, input)]];
+    }),
+  );
+  const validOverrides = Object.fromEntries(
+    Object.entries(overrides).flatMap(([name, value]) => (value === null ? [] : [[name, value]])),
+  );
+  const invalidOverrides = Object.values(overrides).includes(null);
+  const runSettings = (settings: Pick<NotebookFreshRunInput, "parameters" | "sweep">) => {
+    if (inputs === undefined) return;
+    controller.stopEditing();
+    setPreparingFresh(true);
+    void (async () => {
+      await controller.flush();
+      if (controller.saveIsFailing()) return;
+      await fresh.start({ ...settings, inputs });
+    })().finally(() => setPreparingFresh(false));
+  };
+  const refreshFreshRun = useStableCallback(() => {
+    controller.reload();
+    model.refresh();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a finished server job may have saved fresh notebook outputs and Results.
+  useEffect(() => {
+    if (settledFreshRun !== null) refreshFreshRun();
+  }, [settledFreshRun, refreshFreshRun]);
+
+  if (readerOpen) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center border-b border-border/60 px-2 py-1">
+          <Button size="sm" variant="ghost" focus="edge" onClick={() => setReaderOpen(false)}>
+            <T>Back to notebook</T>
+          </Button>
+        </div>
+        {runStatus}
+        <NotebookReader
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          relativePath={props.relativePath}
+          settledRunId={settledFreshRun}
+          running={runningFresh}
+          {...(canRerun && inputs !== undefined
+            ? {
+                onRunForValue: (values: Readonly<Record<string, string>>) =>
+                  runSettings({ sweep: [values] }),
+              }
+            : {})}
+        />
+      </div>
+    );
+  }
+
   if (status === "failed") {
     return (
       <p className="p-6 text-sm text-muted-foreground">
@@ -446,10 +641,33 @@ export default function ScientNotebookSurface(props: {
     );
   }
 
-  const selectedIndex = (() => {
-    const { selected } = controller.store.getState();
-    return selected === null ? -1 : positionOf(selected);
-  })();
+  const selectedIndex = selected === null ? -1 : positionOf(selected);
+  let currentHeading = sections.headings.findLast(
+    (heading) =>
+      order.indexOf(heading.cellId) <= selectedIndex && !sections.hidden.has(heading.cellId),
+  );
+  if (focusedCell?.cellId === selected && focusedCell?.heading !== undefined) {
+    currentHeading = sections.headings.filter((heading) => heading.cellId === selected)[
+      focusedCell.heading
+    ];
+  }
+  const outlineOpen = dockedOutline ? dockOpen : sheetOpen;
+  const outline = (
+    <NotebookOutline
+      headings={sections.headings}
+      current={currentHeading}
+      docked={dockedOutline}
+      onSelect={(heading, index) => {
+        const first = sections.headings.findIndex((entry) => entry.cellId === heading.cellId);
+        if (dockedOutline) {
+          focusCell(heading.cellId, "cell", index - first);
+        } else {
+          outlineDestination.current = { cellId: heading.cellId, heading: index - first };
+          setSheetOpen(false);
+        }
+      }}
+    />
+  );
   const outOfDate = changed === "" ? [] : changed.split("\n");
   const place = {
     environmentId: props.environmentId,
@@ -464,11 +682,24 @@ export default function ScientNotebookSurface(props: {
         execution.result === null ||
         !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status),
     );
+  const hasParameterChanges = parameters.some((parameter) =>
+    notebookParameterChanged(
+      parameter,
+      Object.hasOwn(draftParameters ?? {}, parameter.name)
+        ? draftParameters?.[parameter.name]
+        : undefined,
+      Object.hasOwn(savedParameters ?? {}, parameter.name)
+        ? savedParameters?.[parameter.name]
+        : savedSetup?.parameters.find(({ name }) => name === parameter.name)?.value,
+    ),
+  );
+  const runAllDisabled = busy || restarting || runningFresh;
+  const freshRunDisabled = runAllDisabled || !canRerun || inputs === undefined || invalidOverrides;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div ref={observeNotebookWidth} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/20 px-2 py-1">
-        <div className="min-w-22 flex-1">
+        <div ref={restartAnchor} className="min-w-22 flex-1">
           <ComputeFileActions
             ref={actions}
             language={language}
@@ -483,35 +714,68 @@ export default function ScientNotebookSurface(props: {
             contextId={contextId}
             onRunRequested={() => undefined}
             onShowMatlabOneShot={() => undefined}
-            onExecutionSubmitted={() => model.refreshExecutions()}
+            onExecutionSubmitted={() => undefined}
             onCellsSubmitted={controller.expectRuns}
-            runAll={runAllCells}
-            runMenu={
-              <>
-                <MenuItem disabled={outOfDate.length === 0} onClick={() => runCells(outOfDate)}>
-                  <T>Run out-of-date cells</T>
-                </MenuItem>
-                <MenuItem
-                  disabled={selectedIndex <= 0}
-                  onClick={() => runCells(codeCellIds(0, selectedIndex))}
-                >
-                  <T>Run cells above</T>
-                </MenuItem>
-                <MenuItem
-                  disabled={selectedIndex < 0}
-                  onClick={() => runCells(codeCellIds(selectedIndex))}
-                >
-                  <T>Run from this cell</T>
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem disabled={busy} onClick={() => void restartAndRunAll()}>
-                  <T>Restart and run all</T>
-                </MenuItem>
-                <MenuItem disabled={busy} onClick={controller.clearOutputs}>
-                  <T>Clear all outputs</T>
-                </MenuItem>
-              </>
-            }
+            notebookRun={{
+              label: hasParameterChanges ? gt("Run with changes") : gt("Run all"),
+              requiresLiveRuntime: !hasParameterChanges,
+              disabled: hasParameterChanges ? freshRunDisabled : runAllDisabled,
+              run: hasParameterChanges ? () => setFreshConfirmation(validOverrides) : runAllCells,
+              runAll: runAllCells,
+              runAllDisabled,
+              menu: (
+                <>
+                  <MenuItem disabled={outOfDate.length === 0} onClick={() => runCells(outOfDate)}>
+                    <T>Run out-of-date cells</T>
+                  </MenuItem>
+                  <MenuItem
+                    disabled={selectedIndex <= 0}
+                    onClick={() => runCells(codeCellIds(0, selectedIndex))}
+                  >
+                    <T>Run cells above</T>
+                  </MenuItem>
+                  <MenuItem
+                    disabled={selectedIndex < 0}
+                    onClick={() => runCells(codeCellIds(selectedIndex))}
+                  >
+                    <T>Run from this cell</T>
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuItem
+                    disabled={freshRunDisabled}
+                    onClick={() => setFreshConfirmation(validOverrides)}
+                  >
+                    <T>Run fresh and publish</T>
+                  </MenuItem>
+                  {parameters.flatMap((parameter) => {
+                    const values = sweepValues(parameter.control);
+                    return values.length === 0
+                      ? []
+                      : [
+                          <MenuItem
+                            key={parameter.name}
+                            disabled={freshRunDisabled}
+                            onClick={() => setSweepParameter(parameter)}
+                          >
+                            <T>Run for each {parameter.name} value</T>
+                          </MenuItem>,
+                        ];
+                  })}
+                  <MenuItem
+                    disabled={runAllDisabled}
+                    onClick={() => {
+                      if (liveSession === null) runAllCells();
+                      else setRestartTarget(liveSession);
+                    }}
+                  >
+                    <T>Restart and run all</T>
+                  </MenuItem>
+                  <MenuItem disabled={busy || runningFresh} onClick={controller.clearOutputs}>
+                    <T>Clear all outputs</T>
+                  </MenuItem>
+                </>
+              ),
+            }}
             leadingActions={
               <>
                 {busy ? (
@@ -519,6 +783,7 @@ export default function ScientNotebookSurface(props: {
                     <Button
                       size="icon-xs"
                       variant="outline"
+                      focus="edge"
                       aria-label={gt("Stop", { $context: "verb, stops running cells" })}
                       onClick={stop}
                     >
@@ -526,10 +791,39 @@ export default function ScientNotebookSurface(props: {
                     </Button>
                   </ScientTooltip>
                 ) : null}
+                <ScientTooltip content={gt("Reader view")}>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    focus="edge"
+                    aria-label={gt("Reader view")}
+                    onClick={() => setReaderOpen(true)}
+                  >
+                    <BookOpen />
+                  </Button>
+                </ScientTooltip>
+                <ScientTooltip content={gt("Notebook outline")}>
+                  <Button
+                    ref={outlineButton}
+                    size="icon-xs"
+                    variant={outlineOpen ? "selected" : "ghost-muted"}
+                    focus="edge"
+                    aria-label={gt("Notebook outline")}
+                    aria-expanded={outlineOpen}
+                    aria-haspopup={dockedOutline ? undefined : "dialog"}
+                    onClick={() => {
+                      if (dockedOutline) setDockOpen(!dockOpen);
+                      else setSheetOpen(!sheetOpen);
+                    }}
+                  >
+                    <ListTree />
+                  </Button>
+                </ScientTooltip>
                 <ScientTooltip content={gt("Variables")}>
                   <Button
                     size="icon-xs"
-                    variant={panelView === null ? "ghost-muted" : "secondary"}
+                    variant={panelView === null ? "ghost-muted" : "selected"}
+                    focus="edge"
                     aria-label={gt("Variables")}
                     aria-pressed={panelView !== null}
                     onClick={() => setPanelView(panelView === null ? "variables" : null)}
@@ -540,40 +834,148 @@ export default function ScientNotebookSurface(props: {
               </>
             }
           />
+          <ContextualConfirmation
+            open={freshConfirmation !== null}
+            onOpenChange={(open) => {
+              if (!open) setFreshConfirmation(null);
+            }}
+            anchor={restartAnchor}
+            title={gt("Run fresh and replace saved outputs?")}
+            description={<NotebookFreshRunWarning />}
+            confirmLabel={gt("Run fresh")}
+            destructive
+            onConfirm={() => {
+              if (freshConfirmation !== null) runSettings({ parameters: freshConfirmation });
+            }}
+          />
+          <ContextualConfirmation
+            open={restartTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) setRestartTarget(null);
+            }}
+            anchor={restartAnchor}
+            title={gt("Restart and run all?")}
+            description={gt("Current variables will be lost. Run history is kept.")}
+            confirmLabel={gt("Restart and run all")}
+            destructive
+            onConfirm={() => {
+              if (restartTarget !== null) void restartAndRunAll(restartTarget);
+            }}
+          />
         </div>
       </div>
-      <div
-        ref={attachScroller}
-        data-assistant-citation-viewport=""
-        className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto"
-      >
-        <ComputeQuoteActions
-          viewport={scroller}
-          threadRef={props.threadRef}
-          cwd={props.cwd}
-          placeOf={placeOfCell}
-        />
-        <div ref={list} className="mx-auto max-w-4xl pb-4" onKeyDown={onCommandKey}>
-          {order.map((cellId) => (
-            <NotebookCell
-              key={cellId}
-              controller={controller}
-              place={place}
-              cellId={cellId}
-              language={language.languageId}
-              handlers={handlers}
+      {parameters.length === 0 ? null : (
+        <div className="max-h-40 shrink-0 overflow-auto border-b border-border/60">
+          <NotebookParameterControls
+            parameters={parameters}
+            pending={
+              runningFresh ? (fresh.job?.parameters ?? pendingParameters) : pendingParameters
+            }
+            saved={savedParameters}
+            mismatch={parameterEvidenceMismatch}
+            disabled={runningFresh}
+            onChange={(name, value) => {
+              const { drafts, update } = useNotebookRunDrafts.getState();
+              update(draftKey, {
+                parameters: {
+                  ...(drafts[draftKey]?.parameters ?? pendingParameters),
+                  [name]: value,
+                },
+              });
+            }}
+          />
+        </div>
+      )}
+      {status !== "ready" ? null : (
+        <div className="max-h-40 shrink-0 overflow-auto border-b border-border/60 px-4 py-2 text-xs">
+          {inputs !== undefined ? (
+            <ResultDeclaredInputs
+              {...setupTarget}
+              inputs={inputs}
+              suggestedInputs={savedSetup?.suggestedInputs ?? []}
+              disabled={!canRerun || runningFresh}
+              onChange={(next) =>
+                useNotebookRunDrafts.getState().update(draftKey, { inputs: next })
+              }
             />
-          ))}
-          {status === "ready" ? (
-            <div className="flex gap-1 pt-3 pl-9">
-              <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "code")}>
-                <Plus className="size-3.5" /> {gt("Code", { $context: "inserts a code cell" })}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "markdown")}>
-                <Plus className="size-3.5" /> {gt("Text", { $context: "inserts a text cell" })}
+          ) : setup !== null && "message" in setup ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="alert">{setup.message}</p>
+              <Button size="xs" variant="outline" onClick={retrySetup}>
+                <T>Try again</T>
               </Button>
             </div>
-          ) : null}
+          ) : (
+            <p role="status" className="text-muted-foreground">
+              <T>Loading declared inputs…</T>
+            </p>
+          )}
+        </div>
+      )}
+      {runStatus}
+      <div className="flex min-h-0 flex-1">
+        {dockedOutline && dockOpen ? (
+          <nav
+            aria-label={gt("Notebook outline")}
+            className="w-56 shrink-0 overflow-auto border-e border-border/60 p-2"
+          >
+            {outline}
+          </nav>
+        ) : null}
+        <Sheet
+          open={sheetOpen}
+          onOpenChange={setSheetOpen}
+          onOpenChangeComplete={(open) => {
+            if (open) return;
+            const target = outlineDestination.current;
+            outlineDestination.current = null;
+            if (target === null) outlineButton.current?.focus();
+            else focusCell(target.cellId, "cell", target.heading);
+          }}
+        >
+          <SheetPopup side="left" finalFocus={false}>
+            <SheetHeader>
+              <SheetTitle>
+                <T>Notebook outline</T>
+              </SheetTitle>
+            </SheetHeader>
+            <div className="min-h-0 overflow-auto px-4 pb-4">{outline}</div>
+          </SheetPopup>
+        </Sheet>
+        <div
+          ref={attachScroller}
+          data-assistant-citation-viewport=""
+          className="scrollbar-gutter-both min-h-0 min-w-0 flex-1 overflow-auto"
+        >
+          <ComputeQuoteActions
+            viewport={scroller}
+            threadRef={props.threadRef}
+            cwd={props.cwd}
+            placeOf={placeOfCell}
+          />
+          <div ref={list} className="mx-auto max-w-4xl pb-4" onKeyDown={onCommandKey}>
+            {visibleOrder.map((cellId) => (
+              <NotebookCell
+                key={cellId}
+                controller={controller}
+                place={place}
+                cellId={cellId}
+                language={language.languageId}
+                handlers={handlers}
+                editsDisabled={runningFresh}
+              />
+            ))}
+            {status === "ready" && !runningFresh ? (
+              <div className="flex gap-1 pt-3 pl-9">
+                <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "code")}>
+                  <Plus className="size-3.5" /> {gt("Code", { $context: "inserts a code cell" })}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "markdown")}>
+                  <Plus className="size-3.5" /> {gt("Text", { $context: "inserts a text cell" })}
+                </Button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
       {panelView === null ? null : (
@@ -589,6 +991,18 @@ export default function ScientNotebookSurface(props: {
             embedded
           />
         </div>
+      )}
+      {sweepParameter === null ? null : (
+        <NotebookSweepDialog
+          parameter={sweepParameter}
+          onClose={() => setSweepParameter(null)}
+          onRun={(values) => {
+            setSweepParameter(null);
+            runSettings({
+              sweep: values.map((value) => ({ ...validOverrides, [sweepParameter.name]: value })),
+            });
+          }}
+        />
       )}
     </div>
   );

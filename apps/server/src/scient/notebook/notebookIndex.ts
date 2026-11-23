@@ -137,6 +137,11 @@ const parseRange = (buffer: Buffer, range: Range): unknown =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+export function notebookCellTags(fields: NotebookCellRecord["fields"]): ReadonlyArray<unknown> {
+  const tags = isRecord(fields.metadata) ? fields.metadata.tags : undefined;
+  return Array.isArray(tags) ? tags : [];
+}
+
 /** nbformat stores multiline text as a string or as a list of lines. */
 export function notebookText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -170,13 +175,19 @@ export interface NotebookCellRecord {
   readonly outputIndex: ReadonlyArray<IndexedOutput>;
   /** The cell exactly as saved, until an edit means it must be written again. */
   readonly saved: Buffer | null;
+  readonly rawFields?: ReadonlyMap<string, { readonly bytes: Buffer; readonly value: unknown }>;
 }
 
 export interface NotebookIndex {
   readonly head: Buffer;
   readonly tail: Buffer;
   readonly language: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+  readonly metadataRange?: Range & { readonly part: "head" | "tail" };
   readonly cells: ReadonlyArray<NotebookCellRecord>;
+  readonly minor: number;
+  readonly originalCells: ReadonlyArray<NotebookCellRecord>;
+  readonly gaps: ReadonlyArray<Buffer>;
 }
 
 function notebookLanguage(metadata: unknown): string {
@@ -191,7 +202,8 @@ function notebookLanguage(metadata: unknown): string {
 }
 
 function indexCell(buffer: Buffer, range: Range, ids: CellIds): NotebookCellRecord {
-  const fields: Record<string, unknown> = {};
+  const fields = Object.create(null) as Record<string, unknown>;
+  const rawFields = new Map<string, { bytes: Buffer; value: unknown }>();
   let outputs: Buffer | null = null;
   for (const [key, value] of objectMembers(buffer, range)) {
     if (key === "outputs") {
@@ -199,6 +211,7 @@ function indexCell(buffer: Buffer, range: Range, ids: CellIds): NotebookCellReco
       fields.outputs = null;
     } else {
       fields[key] = parseRange(buffer, value);
+      rawFields.set(key, { bytes: buffer.subarray(value.start, value.end), value: fields[key] });
     }
   }
   const saved = typeof fields.id === "string" && fields.id.length > 0 ? fields.id : null;
@@ -210,8 +223,8 @@ function indexCell(buffer: Buffer, range: Range, ids: CellIds): NotebookCellReco
     fields,
     outputs,
     outputIndex: outputs === null ? [] : indexOutputs(outputs),
-    // A cell without its own id must be written once to gain one.
-    saved: unique ? buffer.subarray(range.start, range.end) : null,
+    saved: buffer.subarray(range.start, range.end),
+    rawFields,
   };
 }
 
@@ -240,63 +253,141 @@ function savedCellIds(buffer: Buffer, ranges: ReadonlyArray<Range>): Set<string>
 /** Reads a notebook's structure without decoding its stored figures. */
 export function indexNotebook(buffer: Buffer): NotebookIndex {
   if (buffer.length === 0) {
-    return {
-      head: Buffer.from('{\n "cells": ['),
-      tail: Buffer.from('],\n "metadata": {},\n "nbformat": 4,\n "nbformat_minor": 5\n}\n'),
-      language: "python",
-      cells: [],
-    };
+    return indexNotebook(
+      Buffer.from('{\n "cells": [],\n "metadata": {},\n "nbformat": 4,\n "nbformat_minor": 5\n}\n'),
+    );
   }
   const root = skipSpace(buffer, 0);
   const members = objectMembers(buffer, { start: root, end: valueEnd(buffer, root) });
   const cells = members.find(([key]) => key === "cells")?.[1];
   if (cells === undefined) throw new NotebookFormatError({ message: "This file has no cells" });
   const metadata = members.find(([key]) => key === "metadata")?.[1];
+  const parsedMetadata = metadata === undefined ? {} : parseRange(buffer, metadata);
+  const metadataRange =
+    metadata === undefined
+      ? undefined
+      : metadata.start < cells.start
+        ? { ...metadata, part: "head" as const }
+        : {
+            start: metadata.start - cells.end + 1,
+            end: metadata.end - cells.end + 1,
+            part: "tail" as const,
+          };
   const cellRanges = arrayItems(buffer, cells);
   const ids: CellIds = { saved: savedCellIds(buffer, cellRanges), seen: new Set() };
+  const records = cellRanges.map((range) => indexCell(buffer, range, ids));
+  const gaps = cellRanges.map((range, index) =>
+    buffer.subarray(cellRanges[index - 1]?.end ?? cells.start + 1, range.start),
+  );
+  gaps.push(buffer.subarray(cellRanges.at(-1)?.end ?? cells.start + 1, cells.end - 1));
+  const minorField = members.find(([key]) => key === "nbformat_minor")?.[1];
+  const minor = minorField === undefined ? null : parseRange(buffer, minorField);
   return {
     head: buffer.subarray(0, cells.start + 1),
     tail: buffer.subarray(cells.end - 1),
-    language: notebookLanguage(metadata === undefined ? {} : parseRange(buffer, metadata)),
-    cells: cellRanges.map((range) => indexCell(buffer, range, ids)),
+    language: notebookLanguage(parsedMetadata),
+    metadata: isRecord(parsedMetadata) ? parsedMetadata : {},
+    ...(metadataRange === undefined ? {} : { metadataRange }),
+    cells: records,
+    minor: typeof minor === "number" ? minor : 0,
+    originalCells: records,
+    gaps,
   };
 }
 
-function cellBytes(cell: NotebookCellRecord): Buffer {
+export function notebookWithMetadata(
+  notebook: NotebookIndex,
+  metadata: Readonly<Record<string, unknown>>,
+  replacer: (key: string, value: unknown) => unknown,
+): NotebookIndex {
+  const encoded = Buffer.from(JSON.stringify(metadata, replacer, 1).replaceAll("\n", "\n "));
+  const range = notebook.metadataRange;
+  if (range === undefined) {
+    const prefix = Buffer.from('],\n "metadata": ');
+    return {
+      ...notebook,
+      metadata,
+      metadataRange: { part: "tail", start: prefix.length, end: prefix.length + encoded.length },
+      tail: Buffer.concat([
+        prefix,
+        encoded,
+        Buffer.from(notebook.tail[skipSpace(notebook.tail, 1)] === 0x7d ? "" : ","),
+        notebook.tail.subarray(1),
+      ]),
+    };
+  }
+  const buffer = notebook[range.part];
+  return {
+    ...notebook,
+    metadata,
+    metadataRange: { ...range, end: range.start + encoded.length },
+    [range.part]: Buffer.concat([
+      buffer.subarray(0, range.start),
+      encoded,
+      buffer.subarray(range.end),
+    ]),
+  };
+}
+
+function orderedFields(_key: string, value: unknown): unknown {
+  return isRecord(value)
+    ? Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, value[key]]),
+      )
+    : value;
+}
+
+export function notebookCellFieldBytes(value: unknown): Buffer {
+  return Buffer.from(JSON.stringify(value, orderedFields, 1).replaceAll("\n", "\n   "));
+}
+
+function cellBytes(cell: NotebookCellRecord, minor: number): Buffer {
   if (cell.saved !== null) return cell.saved;
-  // Field by field: `outputs` stays as its stored bytes, and any other field can hold any text.
+  const fields = { ...cell.fields };
+  if (minor >= 5 || cell.rawFields?.has("id")) fields.id = cell.id;
+  else delete fields.id;
   const parts: Buffer[] = [Buffer.from("{")];
-  for (const [index, [key, value]] of Object.entries({ ...cell.fields, id: cell.id }).entries()) {
+  const keys = Object.keys(fields).sort();
+  for (const [index, key] of keys.entries()) {
+    const value = fields[key];
     parts.push(Buffer.from(`${index === 0 ? "" : ","}\n   ${JSON.stringify(key)}: `));
+    const original = cell.rawFields?.get(key);
     parts.push(
       key === "outputs" && cell.outputs !== null
         ? cell.outputs
-        : Buffer.from(JSON.stringify(value, null, 1).replaceAll("\n", "\n   ")),
+        : original !== undefined && original.value === value
+          ? original.bytes
+          : notebookCellFieldBytes(value),
     );
   }
   parts.push(Buffer.from("\n  }"));
   return Buffer.concat(parts);
 }
 
-/** The notebook as bytes. Cells nobody edited are copied exactly as they were saved. */
+/** Cells and whitespace nobody edited are copied exactly as they were saved. */
 export function notebookBytes(notebook: NotebookIndex): Buffer {
   const parts: Buffer[] = [notebook.head];
-  const separator = Buffer.from(",\n  ");
-  const open = Buffer.from("\n  ");
-  const close = Buffer.from("\n ");
-  notebook.cells.forEach((cell, index) => {
-    parts.push(index === 0 ? open : separator, cellBytes(cell));
-  });
-  if (notebook.cells.length > 0) parts.push(close);
-  parts.push(minorVersion(notebook.tail));
+  const sameOrder =
+    notebook.cells.length === notebook.originalCells.length &&
+    notebook.cells.every((cell, index) => cell.id === notebook.originalCells[index]?.id);
+  if (sameOrder) {
+    notebook.cells.forEach((cell, index) => {
+      parts.push(notebook.gaps[index]!, cellBytes(cell, notebook.minor));
+    });
+    parts.push(notebook.gaps.at(-1)!);
+  } else {
+    const separator = Buffer.from(",\n  ");
+    const open = Buffer.from("\n  ");
+    const close = Buffer.from("\n ");
+    notebook.cells.forEach((cell, index) => {
+      parts.push(index === 0 ? open : separator, cellBytes(cell, notebook.minor));
+    });
+    if (notebook.cells.length > 0) parts.push(close);
+  }
+  parts.push(notebook.tail);
   return Buffer.concat(parts);
-}
-
-/** Cell ids need nbformat 4.5. */
-function minorVersion(tail: Buffer): Buffer {
-  const text = tail.toString("utf8");
-  const updated = text.replace(/("nbformat_minor"\s*:\s*)([0-4])\b/, "$15");
-  return updated === text ? tail : Buffer.from(updated);
 }
 
 export { INLINE_OUTPUT_BYTES };

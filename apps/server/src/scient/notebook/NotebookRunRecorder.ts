@@ -63,6 +63,8 @@ export const layer = Layer.effectDiscard(
     });
 
     yield* compute.settledRuns.pipe(
+      // Fresh notebook runs copy their outputs before allowing cleanup.
+      Stream.filter((run) => run.session?.lifetime !== "fresh"),
       Stream.runForEach((run) =>
         record(run).pipe(
           Effect.catchCause((cause) => Effect.logWarning("notebook run not recorded", { cause })),

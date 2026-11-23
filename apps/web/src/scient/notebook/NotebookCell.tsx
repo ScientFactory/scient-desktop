@@ -3,6 +3,8 @@ import type { NotebookStaleness } from "@t3tools/shared/notebookStaleness";
 import {
   ArrowDown,
   ArrowUp,
+  ChevronRight,
+  Ellipsis,
   LoaderCircle,
   MessageSquarePlus,
   Play,
@@ -19,11 +21,12 @@ import {
   useState,
   type ReactElement,
 } from "react";
-import { msg, useGT, useMessages } from "gt-react";
+import { T, msg, useGT, useMessages } from "gt-react";
 import { useStore } from "zustand";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { m, type MessageResolver } from "~/i18n/messages";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
@@ -170,7 +173,7 @@ function runLabel(
   resolve: MessageResolver = m,
 ): string {
   if (stale === "edited") return resolve(msg("Run · edited since it ran"));
-  if (stale === "upstream") return resolve(msg("Run · a cell above changed since it ran"));
+  if (stale === "upstream") return resolve(msg("Run · output may be out of date"));
   if (cell.run === null) return resolve(msg("Run", { $context: "verb, runs a notebook cell" }));
   const time = new Date(cell.run.at).toLocaleTimeString([], {
     hour: "2-digit",
@@ -212,7 +215,10 @@ function CellGutter(props: {
             className="size-2 rounded-full border border-muted-foreground/70"
           />
         ) : stale !== null ? (
-          <span aria-label={gt("Out of date")} className="size-2 rounded-full bg-warning" />
+          <span
+            aria-label={stale === "upstream" ? gt("Output may be out of date") : gt("Out of date")}
+            className="size-2 rounded-full bg-warning"
+          />
         ) : (
           <span
             className={cn(
@@ -244,42 +250,59 @@ function CellGutter(props: {
 
 /** Insert and arrange live in a row of their own, so no control ever sits on a cell's code. */
 function CellRow(props: {
+  readonly editsDisabled?: boolean | undefined;
   readonly onInsert: (type: NotebookCellType) => void;
   readonly onAsk: (() => void) | null;
   readonly onMove: (offset: -1 | 1) => void;
   readonly onDelete: () => void;
+  readonly menu: ReactElement | null;
 }) {
   const gt = useGT();
   return (
     <div className="col-start-2 flex h-6.5 min-w-0 items-center justify-between gap-1">
       <div className="group/insert flex h-full min-w-0 flex-1 items-center">
         <span className="flex gap-0.5 opacity-0 transition-opacity group-hover/insert:opacity-100 focus-within:opacity-100">
-          <Button variant="ghost-muted" size="xs" onClick={() => props.onInsert("code")}>
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            disabled={props.editsDisabled}
+            onClick={() => props.onInsert("code")}
+          >
             <Plus /> {gt("Code", { $context: "inserts a code cell" })}
           </Button>
-          <Button variant="ghost-muted" size="xs" onClick={() => props.onInsert("markdown")}>
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            disabled={props.editsDisabled}
+            onClick={() => props.onInsert("markdown")}
+          >
             <Plus /> {gt("Text", { $context: "inserts a text cell" })}
           </Button>
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
+        {props.menu}
         {props.onAsk !== null ? (
           <CellAction label={gt("Ask in chat")} onClick={props.onAsk}>
             <MessageSquarePlus />
           </CellAction>
         ) : null}
-        <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
-          <ArrowUp />
-        </CellAction>
-        <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
-          <ArrowDown />
-        </CellAction>
-        <CellAction
-          label={gt("Delete", { $context: "verb, deletes a cell" })}
-          onClick={props.onDelete}
-        >
-          <Trash2 />
-        </CellAction>
+        {props.editsDisabled ? null : (
+          <>
+            <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
+              <ArrowUp />
+            </CellAction>
+            <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
+              <ArrowDown />
+            </CellAction>
+            <CellAction
+              label={gt("Delete", { $context: "verb, deletes a cell" })}
+              onClick={props.onDelete}
+            >
+              <Trash2 />
+            </CellAction>
+          </>
+        )}
       </div>
     </div>
   );
@@ -363,12 +386,14 @@ export function NotebookCell(props: {
   readonly cellId: string;
   readonly language: string;
   readonly handlers: NotebookCellHandlers;
+  readonly editsDisabled?: boolean;
 }) {
   const gt = useGT();
   const { controller, cellId, handlers } = props;
   const cell = useStore(controller.store, (state) => state.cells[cellId]);
   const selected = useStore(controller.store, (state) => state.selected === cellId);
-  const editing = useStore(controller.store, (state) => state.editing === cellId);
+  const editing =
+    useStore(controller.store, (state) => state.editing === cellId) && !props.editsDisabled;
   const caretRequest = useStore(controller.store, (state) =>
     state.editing === cellId ? state.caretRequest : 0,
   );
@@ -382,9 +407,15 @@ export function NotebookCell(props: {
     if (section.current === null) return;
     return handlers.observeNear(section.current, () => setNear(true));
   }, [handlers]);
+  const sectionHeading = useStore(controller.store, (state) =>
+    state.sections.headingCells.has(cellId),
+  );
   if (cell === undefined) return null;
   const isCode = cell.cellType === "code";
   const isText = cell.cellType === "markdown";
+  const sourceFolded = cell.folded?.includes("source") === true && !editing;
+  const outputsFolded = cell.folded?.includes("outputs") === true;
+  const sectionFolded = cell.folded?.includes("section") === true;
   const rendered = isText && !editing && cell.source.trim() !== "";
   const live = near || selected;
   const language = isCode ? props.language : isText ? "markdown" : "text";
@@ -402,12 +433,50 @@ export function NotebookCell(props: {
       onClick={() => controller.select(cellId)}
     >
       <CellRow
+        editsDisabled={props.editsDisabled}
         onInsert={(type) => handlers.insert(cellId, type)}
         onAsk={
           handlers.ask === null || cell.source.trim() === "" ? null : () => handlers.ask?.(cellId)
         }
         onMove={(offset) => controller.move(cellId, offset)}
         onDelete={() => handlers.delete(cellId)}
+        menu={
+          isCode || sectionHeading ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button variant="ghost-muted" size="icon-xs" aria-label={gt("Cell actions")} />
+                }
+              >
+                <Ellipsis />
+              </MenuTrigger>
+              <MenuPopup align="end">
+                {isCode ? (
+                  <>
+                    {cell.injectedParameters ? null : (
+                      <MenuItem
+                        disabled={props.editsDisabled}
+                        onClick={() => controller.setParameterCell(cellId, !cell.parameterCell)}
+                      >
+                        {cell.parameterCell ? <T>Untag parameters</T> : <T>Tag as parameters</T>}
+                      </MenuItem>
+                    )}
+                    <MenuItem onClick={() => controller.setFold(cellId, "source", !sourceFolded)}>
+                      {sourceFolded ? <T>Show code</T> : <T>Hide code</T>}
+                    </MenuItem>
+                    <MenuItem onClick={() => controller.setFold(cellId, "outputs", !outputsFolded)}>
+                      {outputsFolded ? <T>Show outputs</T> : <T>Hide outputs</T>}
+                    </MenuItem>
+                  </>
+                ) : (
+                  <MenuItem onClick={() => controller.setFold(cellId, "section", !sectionFolded)}>
+                    {sectionFolded ? <T>Expand section</T> : <T>Collapse section</T>}
+                  </MenuItem>
+                )}
+              </MenuPopup>
+            </Menu>
+          ) : null
+        }
       />
       {isCode ? (
         <CellGutter
@@ -432,7 +501,15 @@ export function NotebookCell(props: {
                 : "border-border/60",
           )}
         >
-          {rendered ? (
+          {sourceFolded ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => controller.setFold(cellId, "source", false)}
+            >
+              <T>Show code</T>
+            </Button>
+          ) : rendered ? (
             <div
               className="min-h-8 cursor-text px-3 py-1"
               onClick={(event) => {
@@ -478,7 +555,27 @@ export function NotebookCell(props: {
             />
           )}
         </div>
-        {isCode ? (
+        {sectionFolded && sectionHeading ? (
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            focus="edge"
+            aria-expanded={false}
+            onClick={() => controller.setFold(cellId, "section", false)}
+          >
+            <ChevronRight aria-hidden className="rtl:rotate-180" />
+            <T>Expand section</T>
+          </Button>
+        ) : null}
+        {isCode && outputsFolded && cell.outputs.length > 0 ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => controller.setFold(cellId, "outputs", false)}
+          >
+            <T>Show outputs</T>
+          </Button>
+        ) : isCode && !outputsFolded ? (
           <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
             <NotebookCellOutputs
               controller={controller}

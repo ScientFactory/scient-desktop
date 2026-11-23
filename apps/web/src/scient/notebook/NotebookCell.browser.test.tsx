@@ -74,6 +74,24 @@ const box = () => {
   return element.getBoundingClientRect();
 };
 
+it("shows a collapsed section and expands it with one click", async () => {
+  const heading: NotebookCellView = {
+    ...cell,
+    id: "heading",
+    cellType: "markdown",
+    source: "## Results",
+    folded: ["section"],
+  };
+  const { controller, screen } = await mountCell(360, { cells: [heading, cell] });
+  await using _screen = screen;
+  expect(controller.store.getState().sections.hidden.has(cell.id)).toBe(true);
+  await screen.getByRole("button", { name: "Expand section" }).click();
+  expect(controller.store.getState().sections.hidden.has(cell.id)).toBe(false);
+  await expect
+    .element(screen.getByRole("button", { name: "Expand section" }))
+    .not.toBeInTheDocument();
+});
+
 describe("Ask in chat from a cell", () => {
   const action = (container: ParentNode) =>
     container.querySelector<HTMLButtonElement>('button[aria-label="Ask in chat"]');

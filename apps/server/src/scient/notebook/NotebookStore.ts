@@ -9,6 +9,7 @@ import {
   type NotebookCellRun,
   type NotebookCellView,
   type NotebookEdit,
+  type NotebookFold,
   type NotebookEditInput,
   type NotebookOutputJson,
   type NotebookReadInput,
@@ -16,6 +17,7 @@ import {
   type NotebookRecordRunInput,
   type NotebookView,
 } from "@t3tools/contracts";
+import { readNotebookParameters } from "@t3tools/shared/notebookParameters";
 import { notebookCodeHash } from "@t3tools/shared/notebookStaleness";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -26,13 +28,17 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
+import { isFileHistoryVersion } from "../workspace/FileHistory.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import {
   INLINE_OUTPUT_BYTES,
   indexNotebook,
   indexOutputs,
   notebookBytes,
+  notebookCellFieldBytes,
   notebookText,
+  notebookWithMetadata,
+  notebookCellTags,
   type NotebookCellRecord,
   type NotebookIndex,
 } from "./notebookIndex.ts";
@@ -67,8 +73,44 @@ function pendingExecution(fields: NotebookCellRecord["fields"]): string | null {
   return isRecord(scient) && typeof scient.pending === "string" ? scient.pending : null;
 }
 
+function freshRunBasis(index: NotebookIndex): string {
+  const code = index.cells
+    .filter((cell) => cell.fields.cell_type === "code")
+    .map((cell) => {
+      const tags = notebookCellTags(cell.fields);
+      return [
+        cell.id,
+        notebookText(cell.fields.source),
+        tags.includes("parameters"),
+        tags.includes("injected-parameters"),
+      ];
+    });
+  return NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([index.language, code]))
+    .digest("hex");
+}
+
+const HEADING_COLLAPSED = "jp-MarkdownHeadingCollapsed";
+
+function cellFolds(fields: NotebookCellRecord["fields"]): NotebookFold[] {
+  const metadata = isRecord(fields.metadata) ? fields.metadata : {};
+  const jupyter = isRecord(metadata.jupyter) ? metadata.jupyter : {};
+  if (fields.cell_type === "markdown") {
+    return metadata[HEADING_COLLAPSED] === true ? ["section"] : [];
+  }
+  if (fields.cell_type !== "code") return [];
+  const folded: NotebookFold[] = [];
+  if (jupyter.source_hidden === true) folded.push("source");
+  if (jupyter.outputs_hidden === true || metadata.collapsed === true) folded.push("outputs");
+  return folded;
+}
+
 function cellView(cell: NotebookCellRecord, budget: { left: number }): NotebookCellView {
   const { fields } = cell;
+  const tags = notebookCellTags(fields);
+  const parameterCell = fields.cell_type === "code" && tags.includes("parameters");
+  const scient = isRecord(fields.metadata) ? fields.metadata.scient : undefined;
+  const hints = parameterCell && isRecord(scient) ? scient.parameters : undefined;
   return {
     id: cell.id,
     cellType:
@@ -77,6 +119,12 @@ function cellView(cell: NotebookCellRecord, budget: { left: number }): NotebookC
     executionCount: typeof fields.execution_count === "number" ? fields.execution_count : null,
     run: cellRun(fields),
     pendingExecution: pendingExecution(fields),
+    folded: cellFolds(fields),
+    ...(parameterCell ? { parameterCell } : {}),
+    ...(fields.cell_type === "code" && tags.includes("injected-parameters")
+      ? { injectedParameters: true }
+      : {}),
+    ...(isRecord(hints) ? { parameterHints: hints } : {}),
     outputs: cell.outputIndex.map((output) => {
       const bytes = output.range.end - output.range.start;
       const inline = bytes <= INLINE_OUTPUT_BYTES && bytes <= budget.left;
@@ -103,7 +151,7 @@ interface RunResult {
   readonly run: NotebookCellRun;
   readonly truncated: boolean;
 }
-type StoreEdit = NotebookEdit | RunResult;
+type StoreEdit = Exclude<NotebookEdit, { _tag: "restore-file-version" }> | RunResult;
 
 /** Output that was not kept is not a run that printed nothing: what was saved stays, as its run's. */
 function keepSavedOutput(cell: NotebookCellRecord, execution: string): NotebookCellRecord {
@@ -135,11 +183,13 @@ function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex 
       const pending = pendingExecution(cell.fields);
       const scient =
         pending === null || pending === result.run.execution
-          ? result.run
-          : { ...result.run, pending };
-      const outputs = Buffer.from(
-        JSON.stringify(result.outputs, null, 1).replaceAll("\n", "\n   "),
-      );
+          ? {
+              ...(isRecord(metadata.scient) ? metadata.scient : {}),
+              ...result.run,
+              pending: undefined,
+            }
+          : { ...(isRecord(metadata.scient) ? metadata.scient : {}), ...result.run, pending };
+      const outputs = notebookCellFieldBytes(result.outputs);
       return {
         ...cell,
         fields: {
@@ -193,8 +243,17 @@ function insertAfter(
 
 function withoutRun(fields: NotebookCellRecord["fields"]): NotebookCellRecord["fields"] {
   if (!isRecord(fields.metadata) || fields.metadata.scient === undefined) return fields;
-  const { scient: _run, ...metadata } = fields.metadata;
-  return { ...fields, metadata };
+  const { scient, ...metadata } = fields.metadata;
+  if (!isRecord(scient)) return { ...fields, metadata };
+  const {
+    execution: _execution,
+    code: _code,
+    at: _at,
+    ms: _ms,
+    pending: _pending,
+    ...kept
+  } = scient;
+  return { ...fields, metadata: { ...metadata, scient: kept } };
 }
 
 /** Applies one edit. `removed` keeps deleted cells so an undo restores their outputs. */
@@ -253,6 +312,62 @@ function applyEdit(
           outputIndex: [],
           saved: null,
         };
+      });
+    case "set-parameters": {
+      const target = index.cells.find((cell) => cell.id === edit.cellId);
+      if (
+        target?.fields.cell_type !== "code" ||
+        notebookCellTags(target.fields).includes("injected-parameters")
+      ) {
+        return index;
+      }
+      return {
+        ...index,
+        cells: index.cells.map((cell) => {
+          const tags = notebookCellTags(cell.fields);
+          if (cell.id !== edit.cellId && (!edit.enabled || !tags.includes("parameters")))
+            return cell;
+          const metadata = isRecord(cell.fields.metadata) ? cell.fields.metadata : {};
+          return {
+            ...cell,
+            fields: {
+              ...cell.fields,
+              metadata: {
+                ...metadata,
+                tags: [
+                  ...tags.filter((tag) => tag !== "parameters"),
+                  ...(cell.id === edit.cellId && edit.enabled ? ["parameters"] : []),
+                ],
+              },
+            },
+            saved: null,
+          };
+        }),
+      };
+    }
+    case "set-fold":
+      return update(edit.cellId, (cell) => {
+        const heading = edit.part === "section";
+        if (cell.fields.cell_type !== (heading ? "markdown" : "code")) return cell;
+        const metadata = isRecord(cell.fields.metadata) ? { ...cell.fields.metadata } : {};
+        if (heading) {
+          if (edit.folded) metadata[HEADING_COLLAPSED] = true;
+          else delete metadata[HEADING_COLLAPSED];
+        } else {
+          const jupyter = isRecord(metadata.jupyter) ? { ...metadata.jupyter } : {};
+          if (edit.part === "outputs") {
+            delete jupyter.outputs_hidden;
+            if (edit.folded) metadata.collapsed = true;
+            else delete metadata.collapsed;
+          } else if (edit.folded) {
+            jupyter.source_hidden = true;
+          } else {
+            delete jupyter.source_hidden;
+          }
+          if (Object.keys(jupyter).length > 0) metadata.jupyter = jupyter;
+          else delete metadata.jupyter;
+        }
+        return { ...cell, fields: { ...cell.fields, metadata }, saved: null };
       });
     case "expect-run":
       return update(edit.cellId, (cell) => {
@@ -350,10 +465,53 @@ const revisionOf = (notebook: OpenNotebook) => `${notebook.loadId}.${notebook.ve
 
 function notebookView(notebook: OpenNotebook): NotebookView {
   const budget = { left: INLINE_BUDGET_BYTES };
+  const cells = notebook.index.cells.map((cell) => cellView(cell, budget));
+  const parameters = cells.findIndex((cell) => cell.parameterCell);
+  const parameterCell = cells[parameters];
+  if (parameterCell !== undefined) {
+    const metadata = notebook.index.metadata;
+    const scient = isRecord(metadata?.scient) ? metadata.scient.notebookRun : undefined;
+    const papermill = isRecord(metadata?.papermill) ? metadata.papermill.parameters : undefined;
+    const injections = cells.filter((cell) => cell.injectedParameters);
+    const values =
+      isRecord(scient) && scient.parameterCellId === parameterCell.id && isRecord(scient.parameters)
+        ? Object.fromEntries(
+            Object.entries(scient.parameters).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string",
+            ),
+          )
+        : undefined;
+    const injected = injections[0];
+    const actualOverrides = new Map(
+      readNotebookParameters(injected?.source ?? "", notebook.index.language).map(
+        ({ name, value }) => [name, JSON.stringify(value)],
+      ),
+    );
+    const mismatch =
+      injections.length > 1 ||
+      (isRecord(papermill) &&
+        (Object.keys(papermill).length !== actualOverrides.size ||
+          Object.entries(papermill).some(
+            ([name, value]) => actualOverrides.get(name) !== JSON.stringify(value),
+          ))) ||
+      (isRecord(scient) &&
+        scient.injectionSha256 !==
+          (injected === undefined
+            ? null
+            : NodeCrypto.createHash("sha256").update(injected.source).digest("hex")));
+    cells[parameters] = {
+      ...parameterCell,
+      ...(mismatch
+        ? { parameterEvidenceMismatch: true }
+        : values === undefined
+          ? {}
+          : { savedParameters: values }),
+    };
+  }
   return {
     revision: revisionOf(notebook),
     language: notebook.index.language,
-    cells: notebook.index.cells.map((cell) => cellView(cell, budget)),
+    cells,
   };
 }
 
@@ -366,6 +524,7 @@ export const makeNotebookStore = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const notebooks = new Map<string, OpenNotebook>();
   const opening = yield* Semaphore.make(1);
+  const freshRuns = new Set<string>();
   let loads = 0;
 
   const fileState = (absolutePath: string) =>
@@ -445,16 +604,22 @@ export const makeNotebookStore = Effect.gen(function* () {
     );
   });
 
-  const publish = Effect.fn("NotebookStore.publish")(function* (notebook: OpenNotebook) {
-    const bytes = notebookBytes(notebook.index);
+  const publish = Effect.fn("NotebookStore.publish")(function* (
+    notebook: OpenNotebook,
+    index = notebook.index,
+    keepPreviousVersion = false,
+  ) {
+    const bytes = notebookBytes(index);
     yield* workspaceFileSystem.writeBinaryFile({
       cwd: notebook.cwd,
       relativePath: notebook.relativePath,
       bytes,
       // A writer that gets in after the last read is found here, not overwritten.
       expectedRevision: bytesRevision(notebook.fileBytes),
+      ...(keepPreviousVersion ? { keepPreviousVersion: true } : {}),
     });
     const state = yield* fileState(notebook.absolutePath);
+    notebook.index = index;
     notebook.fileBytes = bytes;
     notebook.pending = [];
     notebook.mtimeMs = state.mtimeMs;
@@ -513,9 +678,49 @@ export const makeNotebookStore = Effect.gen(function* () {
   const edit = Effect.fn("NotebookStore.edit")(function* (request: NotebookEditInput) {
     const notebook = yield* open(request);
     const refused = yield* notebook.lock.withPermits(1)(
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        if (
+          freshRuns.has(notebook.absolutePath) &&
+          request.edits.some((edit) => edit._tag !== "set-fold")
+        ) {
+          return yield* fail("Editing resumes when the fresh run finishes.");
+        }
+        const restore = request.edits.find((change) => change._tag === "restore-file-version");
+        if (restore) {
+          if (request.edits.length !== 1 || !isFileHistoryVersion(restore.versionId))
+            return yield* fail("Choose one notebook version from File versions.");
+          if (notebook.pending.length > 0)
+            return yield* fail("Save pending notebook changes before restoring a version.");
+          yield* refresh(notebook);
+          const target = { cwd: notebook.cwd, relativePath: notebook.relativePath };
+          const history = yield* workspaceFileSystem
+            .listFileVersions(target)
+            .pipe(Effect.mapError((cause) => fail(describe(cause))));
+          const version = history.versions.find(({ versionId }) => versionId === restore.versionId);
+          if (!version) return yield* fail("This retained notebook version is unavailable.");
+          const { fileBytes, index } = yield* readNotebookFile(version.retainedPath);
+          if (bytesRevision(fileBytes) !== version.revision)
+            return yield* fail("This retained notebook version changed.");
+          yield* workspaceFileSystem
+            .writeBinaryFile({
+              ...target,
+              bytes: fileBytes,
+              expectedRevision: bytesRevision(notebook.fileBytes),
+              keepPreviousVersion: true,
+            })
+            .pipe(Effect.mapError((cause) => fail(describe(cause))));
+          const state = yield* fileState(notebook.absolutePath);
+          notebook.index = index;
+          notebook.fileBytes = fileBytes;
+          notebook.size = state.size;
+          notebook.mtimeMs = state.mtimeMs;
+          notebook.removed.clear();
+          notebook.version += 1;
+          return [];
+        }
         const refused: string[] = [];
         for (const change of request.edits) {
+          if (change._tag === "restore-file-version") continue;
           if (sourceMovedOn(notebook.index, change)) {
             refused.push((change as Extract<NotebookEdit, { _tag: "set-source" }>).cellId);
             continue;
@@ -588,7 +793,174 @@ export const makeNotebookStore = Effect.gen(function* () {
     yield* save(notebook);
   });
 
-  return { read, readOutput, edit, recordRun, flush };
+  const reserveFreshRun = (address: NotebookReadInput) =>
+    Effect.acquireRelease(
+      Effect.gen(function* () {
+        const notebook = yield* open(address);
+        const path = notebook.absolutePath;
+        if (freshRuns.has(path)) return yield* fail("This notebook already has a fresh run.");
+        freshRuns.add(path);
+        return path;
+      }),
+      (path) =>
+        Effect.sync(() => {
+          freshRuns.delete(path);
+        }),
+    );
+
+  const freshSnapshot = Effect.fn("NotebookStore.freshSnapshot")(function* (
+    address: NotebookReadInput,
+  ) {
+    yield* flush(address);
+    const notebook = yield* open(address);
+    return yield* notebook.lock.withPermits(1)(
+      Effect.gen(function* () {
+        yield* refresh(notebook);
+        if (notebook.pending.length > 0)
+          return yield* fail("The notebook changed before the run could start.");
+        return {
+          revision: bytesRevision(notebook.fileBytes),
+          executionBasis: freshRunBasis(notebook.index),
+          language: notebook.index.language,
+          cells: notebook.index.cells.map((cell) => cellView(cell, { left: 0 })),
+        };
+      }),
+    );
+  });
+
+  const saveFreshRun = Effect.fn("NotebookStore.saveFreshRun")(function* (
+    request: NotebookReadInput & {
+      readonly snapshot: string;
+      readonly parameterCellId: string | undefined;
+      readonly injection: { readonly id: string; readonly source: string } | undefined;
+      readonly parameters: Readonly<Record<string, string>>;
+      readonly overrides: Readonly<Record<string, unknown>>;
+      readonly codeSha256: string;
+      readonly executionId: string;
+      readonly results: ReadonlyArray<RunResult>;
+    },
+  ) {
+    const notebook = yield* open(request);
+    yield* notebook.lock.withPermits(1)(
+      Effect.gen(function* () {
+        yield* refresh(notebook);
+        if (freshRunBasis(notebook.index) !== request.snapshot) {
+          return yield* fail(
+            "The code changed during the run. The notebook's cell outputs were left as they were.",
+          );
+        }
+        const cells = notebook.index.cells.filter(
+          (cell) => !notebookCellTags(cell.fields).includes("injected-parameters"),
+        );
+        let index = { ...notebook.index, cells: cells as ReadonlyArray<NotebookCellRecord> };
+        const injection = request.injection;
+        if (injection !== undefined && request.parameterCellId !== undefined) {
+          const cell = newCell({
+            _tag: "insert",
+            cellId: injection.id,
+            afterCellId: request.parameterCellId,
+            cellType: "code",
+            source: injection.source,
+          });
+          index = {
+            ...index,
+            cells: insertAfter(cells, request.parameterCellId, {
+              ...cell,
+              fields: { ...cell.fields, metadata: { tags: ["injected-parameters"] } },
+            }),
+          };
+        }
+        const results = new Map(request.results.map((result) => [result.cellId, result]));
+        index = {
+          ...index,
+          cells: index.cells.map((cell) => {
+            const ran = results.get(cell.id);
+            if (cell.fields.cell_type !== "code") return cell;
+            const metadata = isRecord(cell.fields.metadata) ? cell.fields.metadata : {};
+            const { pending: _pending, ...scient } = isRecord(metadata.scient)
+              ? metadata.scient
+              : {};
+            const saved = ran?.outputs ?? [];
+            const outputs = notebookCellFieldBytes(
+              ran?.truncated
+                ? [
+                    ...saved,
+                    {
+                      output_type: "stream",
+                      name: "stderr",
+                      text: "Some cell output exceeded the saved output limit and was omitted.\n",
+                    },
+                  ]
+                : saved,
+            );
+            return {
+              ...cell,
+              fields: {
+                ...cell.fields,
+                metadata: {
+                  ...metadata,
+                  scient: {
+                    ...scient,
+                    ...(ran === undefined
+                      ? { execution: undefined, code: undefined, at: undefined, ms: undefined }
+                      : ran.run),
+                  },
+                },
+                execution_count: ran?.executionCount ?? null,
+                outputs: null,
+              },
+              outputs,
+              outputIndex: indexOutputs(outputs),
+              saved: null,
+            };
+          }),
+        };
+        const metadata = index.metadata ?? {};
+        const scient = isRecord(metadata.scient) ? metadata.scient : {};
+        const papermill = isRecord(metadata.papermill) ? metadata.papermill : {};
+        const papermillOverrides = Object.fromEntries(
+          Object.entries(request.overrides).map(([name, value]) => {
+            const json = request.parameters[name];
+            return [
+              name,
+              typeof value === "number" && json !== undefined && /[.eE]/u.test(json)
+                ? JSON.rawJSON(json)
+                : value,
+            ];
+          }),
+        );
+        index = notebookWithMetadata(
+          index,
+          {
+            ...metadata,
+            papermill: { ...papermill, parameters: request.overrides },
+            scient: {
+              ...scient,
+              notebookRun: {
+                executionId: request.executionId,
+                codeSha256: request.codeSha256,
+                parameterCellId: request.parameterCellId ?? null,
+                injectionSha256:
+                  request.injection === undefined
+                    ? null
+                    : NodeCrypto.createHash("sha256")
+                        .update(request.injection.source)
+                        .digest("hex"),
+                parameters: request.parameters,
+              },
+            },
+          },
+          (_key, value) => (value === request.overrides ? papermillOverrides : value),
+        );
+        yield* publish(notebook, index, true).pipe(
+          Effect.mapError((cause) => fail(`The run could not be saved: ${describe(cause)}`)),
+        );
+        notebook.version += 1;
+      }).pipe(Effect.uninterruptible),
+    );
+  });
+
+  return { read, readOutput, edit, recordRun, flush, reserveFreshRun, freshSnapshot, saveFreshRun };
 });
 
 export class NotebookStore extends Context.Service<

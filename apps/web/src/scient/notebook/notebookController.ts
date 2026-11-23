@@ -4,6 +4,7 @@ import type {
   NotebookCellView,
   NotebookEdit,
   NotebookEditResult,
+  NotebookFold,
   NotebookOutputJson,
   NotebookOutputView,
   NotebookRecordRunInput,
@@ -18,6 +19,7 @@ import { m } from "~/i18n/messages";
 import {
   notebookCellRun,
   notebookCodeHash,
+  notebookHeadings,
   staleNotebookCells,
   type NotebookStaleness,
 } from "@t3tools/shared/notebookStaleness";
@@ -48,6 +50,7 @@ export interface NotebookState {
   readonly language: string;
   readonly order: ReadonlyArray<string>;
   readonly cells: Readonly<Record<string, NotebookCellView>>;
+  readonly sections: ReturnType<typeof notebookSections>;
   readonly stale: ReadonlyMap<string, NotebookStaleness>;
   readonly activity: Readonly<Record<string, NotebookCellActivity>>;
   readonly liveRuns: Readonly<Record<string, NotebookLiveRun>>;
@@ -82,6 +85,30 @@ function emptyCell(id: string, cellType: NotebookCellType, source: string): Note
   };
 }
 
+function notebookSections(state: Pick<NotebookState, "order" | "cells">) {
+  const headings: Array<ReturnType<typeof notebookHeadings>[number] & { cellId: string }> = [];
+  const hidden = new Map<string, ReadonlyArray<string>>();
+  const collapsed: Array<{ cellId: string; level: number }> = [];
+  for (const cellId of state.order) {
+    const cell = state.cells[cellId];
+    const cellHeadings = cell?.cellType === "markdown" ? notebookHeadings(cell.source) : [];
+    const first = cellHeadings[0];
+    if (first !== undefined) {
+      while ((collapsed.at(-1)?.level ?? 0) >= first.level) collapsed.pop();
+      headings.push(...cellHeadings.map((heading) => ({ ...heading, cellId })));
+    }
+    if (collapsed.length > 0)
+      hidden.set(
+        cellId,
+        collapsed.map((section) => section.cellId),
+      );
+    if (first !== undefined && cell?.folded?.includes("section")) {
+      collapsed.push({ cellId, level: first.level });
+    }
+  }
+  return { headings, hidden, headingCells: new Set(headings.map((heading) => heading.cellId)) };
+}
+
 /**
  * One open notebook in the page. It holds the cells outside React, so typing in one cell
  * re-renders that cell alone, and it sends every change to the server, which owns the file.
@@ -93,6 +120,7 @@ export function createNotebookController(transport: NotebookTransport) {
     order: [],
     cells: {},
     stale: new Map(),
+    sections: { headings: [], hidden: new Map(), headingCells: new Set() },
     activity: {},
     liveRuns: {},
     selected: null,
@@ -122,6 +150,12 @@ export function createNotebookController(transport: NotebookTransport) {
       const cell = state.cells[id];
       return cell === undefined ? [] : [cell];
     });
+  const refreshSections = () => {
+    store.setState({ sections: notebookSections(store.getState()) });
+  };
+  store.subscribe((state, previous) => {
+    if (state.order !== previous.order) refreshSections();
+  });
   const refreshStale = () => {
     store.setState({ stale: staleNotebookCells(orderedCells(store.getState())) });
   };
@@ -264,9 +298,46 @@ export function createNotebookController(transport: NotebookTransport) {
       void load();
     },
     flush,
+    saveIsFailing,
+    reload: () => {
+      void load();
+    },
     insert,
+    setParameterCell: (cellId: string, enabled: boolean) => {
+      const state = store.getState();
+      store.setState({
+        cells: Object.fromEntries(
+          state.order.flatMap((id) => {
+            const cell = state.cells[id];
+            if (cell === undefined) return [];
+            if (id === cellId || (enabled && cell.parameterCell)) {
+              return [[id, { ...cell, parameterCell: id === cellId && enabled }]];
+            }
+            return [[id, cell]];
+          }),
+        ),
+      });
+      enqueue({ _tag: "set-parameters", cellId, enabled });
+      revision = undefined;
+      reloadWanted = true;
+    },
+    setFold: (cellId: string, part: NotebookFold, folded: boolean) => {
+      update(cellId, (cell) => ({
+        ...cell,
+        folded: [
+          ...(cell.folded ?? []).filter((entry) => entry !== part),
+          ...(folded ? [part] : []),
+        ],
+      }));
+      if (part === "section") refreshSections();
+      if (part === "source" && folded && store.getState().editing === cellId) {
+        store.setState({ editing: null });
+      }
+      enqueue({ _tag: "set-fold", cellId, part, folded });
+    },
     setSource: (cellId: string, source: string) => {
       update(cellId, (cell) => ({ ...cell, source }));
+      if (store.getState().cells[cellId]?.cellType === "markdown") refreshSections();
       const last = queue.at(-1);
       if (last?._tag === "set-source" && last.cellId === cellId) {
         queue[queue.length - 1] = { ...last, source };
@@ -314,6 +385,7 @@ export function createNotebookController(transport: NotebookTransport) {
     },
     convert: (cellId: string, cellType: NotebookCellType) => {
       update(cellId, (cell) => ({ ...emptyCell(cell.id, cellType, cell.source) }));
+      refreshSections();
       enqueue({ _tag: "convert", cellId, cellType });
       scheduleStale();
     },
@@ -342,10 +414,13 @@ export function createNotebookController(transport: NotebookTransport) {
     },
     /** Each submitted cell durably expects its run, so its result survives a reload. */
     expectRuns: (runs: ReadonlyArray<{ readonly cellId: string; readonly execution: string }>) => {
+      const cells = { ...store.getState().cells };
       for (const { cellId, execution } of runs) {
-        update(cellId, (cell) => ({ ...cell, pendingExecution: execution }));
+        const cell = cells[cellId];
+        if (cell !== undefined) cells[cellId] = { ...cell, pendingExecution: execution };
         queue.push({ _tag: "expect-run", cellId, execution });
       }
+      store.setState({ cells });
       void startSending();
     },
     /** Follows the session's runs: what each cell is doing, and results it has not recorded. */
@@ -356,7 +431,11 @@ export function createNotebookController(transport: NotebookTransport) {
       const toRecord: Array<{ cellId: string; execution: ComputeExecutionRecord }> = [];
       for (const [cellId, execution] of runs) {
         const { executionId, sessionId } = execution.request;
-        liveRuns[cellId] = { sessionId, executionId };
+        const prior = state.liveRuns[cellId];
+        liveRuns[cellId] =
+          prior?.executionId === executionId && prior.sessionId === sessionId
+            ? prior
+            : { sessionId, executionId };
         const status = execution.result?.status;
         if (status === undefined || status === "queued" || status === "submitting") {
           activity[cellId] = "queued";
