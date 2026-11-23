@@ -34,6 +34,11 @@ export interface AccountService {
   /** A `msg()` string: resolve it where it is shown. */
   readonly description: string;
   readonly categories: ReadonlyArray<ExtensionCategory>;
+  /**
+   * Categories whose home section leaves this service to the category page, so a catalog pick
+   * takes its place there (Slack instead of Telegram in Email, calendar & chat).
+   */
+  readonly categoryPageOnly?: ReadonlyArray<ExtensionCategory> | undefined;
   readonly websiteUrl?: string | undefined;
   /** ChatGPT's id for the app, the same for every account; absent when ChatGPT has none. */
   readonly chatgptAppId?: string | undefined;
@@ -199,6 +204,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
       "Claude and Scient Agent reach Telegram through Anthropic’s Telegram plugin for Claude Code, which works through a bot you create with @BotFather.",
     ),
     categories: ["most-used", "communication"],
+    categoryPageOnly: ["communication"],
     websiteUrl: "https://telegram.org",
     stores: { claude: "telegram@claude-plugins-official" },
   },

@@ -272,7 +272,9 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                 section.total + accountServicesFor(section.category).length >= 4,
             )
             .map((section) => {
-              const services = accountServicesFor(section.category);
+              const services = accountServicesFor(section.category).filter(
+                (service) => !service.categoryPageOnly?.includes(section.category),
+              );
               const rows =
                 section.category === "most-used"
                   ? services.length + section.entries.length
