@@ -1826,18 +1826,29 @@ async function importZoteroOperationItem(input: {
         ),
       );
       const base = await readScientSourceZoteroSync(input.root, record.sourceId);
+      // Only a base this record's originating import wrote is its own: Trash keeps the sync
+      // file, so a re-import starts beside the previous import's baseline and its namespace.
+      const ownBase =
+        partial &&
+        base?.importOperationId !== undefined &&
+        base.importOperationId === record.origin?.operationId
+          ? base
+          : null;
+      const reference = record.externalReferences.find((entry) => entry.system === "zotero");
+      // A retained base for this same item and library owns the stable highlight namespace,
+      // whoever wrote it; any other retained file must not name this import's highlights.
+      const sameItemBase =
+        base && base.itemKey === input.itemKey && base.libraryId === reference?.libraryId
+          ? base
+          : null;
       const annotationLibraryId =
-        base?.annotationLibraryId ??
-        base?.libraryId ??
-        record.externalReferences.find((reference) => reference.system === "zotero")?.libraryId;
+        sameItemBase?.annotationLibraryId ?? sameItemBase?.libraryId ?? reference?.libraryId;
       if (annotationLibraryId === undefined) {
         throw new Error("This source is not linked to a Zotero item.");
       }
-      // Only resuming this operation's own record reuses its initial sync write's decision; a
-      // fresh import (including over a trashed source) records its own baseline.
-      const savedDecision = partial ? base?.importOmittedOriginalNoteHtml : undefined;
+      const savedDecision = ownBase?.importOmittedOriginalNoteHtml;
       let omittedOriginalNoteHtml = savedDecision === true;
-      if (!partial || !base) {
+      if (!ownBase) {
         const saved = await recordZoteroSync({
           root: input.root,
           record,
@@ -1845,7 +1856,9 @@ async function importZoteroOperationItem(input: {
           attachmentKeys: files.map((file) => file.attachmentKey),
           pdfs: Object.fromEntries(pdfs),
           annotationLibraryId,
-          recordImportOmission: true,
+          ...(record.origin?.operationId !== undefined
+            ? { initialImportOperationId: record.origin.operationId }
+            : {}),
         });
         omittedOriginalNoteHtml = saved.omittedOriginalNoteHtmlCount > 0;
       }

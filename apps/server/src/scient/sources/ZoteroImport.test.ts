@@ -27,6 +27,7 @@ import {
   updateScientSourceNote,
   sourceAttachmentAbsolutePath,
   updateSourceImportOperationItem,
+  writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
@@ -598,6 +599,13 @@ describe("Zotero import", () => {
     expect(
       (await readScientSourceZoteroSync(root, record!.sourceId))?.importOmittedOriginalNoteHtml,
     ).toBe(true);
+    // As a Send to a group would leave it: the retained base is the group item's baseline.
+    const firstSync = (await readScientSourceZoteroSync(root, record!.sourceId))!;
+    await writeScientSourceZoteroSync(root, {
+      ...firstSync,
+      libraryId: "groups/77",
+      itemKey: "NEWA2345",
+    });
 
     await removeScientSource({
       root,
@@ -616,6 +624,38 @@ describe("Zotero import", () => {
       scope: { kind: "library" },
       zotero,
     });
+    const rename = NodeFS.promises.rename;
+    let interrupted = false;
+    NodeFS.promises.rename = async (from, to) => {
+      if (!interrupted && String(to).includes(`${NodePath.sep}zotero${NodePath.sep}`)) {
+        interrupted = true;
+        NodeFS.promises.rename = rename;
+        NodeModule.syncBuiltinESMExports();
+        throw new Error("Interrupted at the sync write.");
+      }
+      return rename(from, to);
+    };
+    NodeModule.syncBuiltinESMExports();
+    try {
+      const failed = await advanceSourceImport({
+        root,
+        operationId: "trash-reimport-second",
+        zotero,
+      });
+      expect(failed.items[0]).toMatchObject({
+        state: "failed",
+        message: "Interrupted at the sync write.",
+      });
+    } finally {
+      NodeFS.promises.rename = rename;
+      NodeModule.syncBuiltinESMExports();
+    }
+    expect(interrupted).toBe(true);
+    const retained = await readScientSourceZoteroSync(root, record!.sourceId);
+    expect(retained?.importOmittedOriginalNoteHtml).toBe(true);
+    expect(retained?.libraryId).toBe("groups/77");
+
+    await retrySourceImport({ root, operationId: "trash-reimport-second", itemKeys: ["ABCD2345"] });
     const second = await advanceSourceImport({
       root,
       operationId: "trash-reimport-second",
@@ -630,6 +670,10 @@ describe("Zotero import", () => {
     const resaved = await readScientSourceZoteroSync(root, record!.sourceId);
     expect(resaved?.importOmittedOriginalNoteHtml).toBe(false);
     expect(resaved?.notes).toHaveLength(1);
+    expect(resaved?.annotationLibraryId ?? resaved?.libraryId).toBe("475425");
+    const [reimported] = await listScientSourceRecords(root);
+    expect(resaved?.importOperationId).toBe(reimported?.origin?.operationId);
+    expect(resaved?.importOperationId).not.toBe(record!.origin?.operationId);
   });
 
   it.each([

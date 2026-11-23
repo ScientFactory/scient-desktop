@@ -3694,38 +3694,62 @@ function fitZoteroSyncToBudget(
 export async function writeScientSourceZoteroSync(
   root: ScientSourceStoreLocation,
   state: ScientSourceZoteroSyncType,
-  options?: { readonly recordImportOmission?: boolean },
+  options?: { readonly initialImportOperationId?: string },
 ): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const paths = await sourceStorePaths(root);
-  const prepared: ScientSourceZoteroSyncType = options?.recordImportOmission
-    ? {
-        ...state,
-        importOmittedOriginalNoteHtml:
-          state.notes?.some((entry) => entry.html === undefined) ?? false,
-      }
-    : state;
-  const bounded = fitZoteroSyncToBudget(prepared, MAX_RECORD_BYTES);
-  // Flipping false -> true shrinks JSON by 1 byte, so the bounded payload stays within MAX_RECORD_BYTES.
-  const finalState: ScientSourceZoteroSyncType =
-    options?.recordImportOmission && bounded.omittedOriginalNoteHtmlCount > 0
-      ? { ...bounded.state, importOmittedOriginalNoteHtml: true }
-      : bounded.state;
+  let omittedOriginalNoteHtmlCount = 0;
   // Under deletion's lock: a sync finishing after Delete for good must not bring its base back.
-  let written = false;
   await withStoreLock(paths, "source-write", async () => {
     const gone = async (path: string) => (await snapshot(path)) === "missing";
     if (
-      (await gone(sourceRecordPath(paths, finalState.sourceId))) &&
-      (await gone(trashEntryPath(paths, finalState.sourceId)))
+      (await gone(sourceRecordPath(paths, state.sourceId))) &&
+      (await gone(trashEntryPath(paths, state.sourceId)))
     ) {
       return;
     }
-    await atomicWriteJson(zoteroSyncPath(paths, finalState.sourceId), finalState, MAX_RECORD_BYTES);
-    written = true;
+    const syncPath = zoteroSyncPath(paths, state.sourceId);
+    let prepared: ScientSourceZoteroSyncType;
+    if (options?.initialImportOperationId !== undefined) {
+      prepared = {
+        ...state,
+        importOperationId: options.initialImportOperationId,
+        importOmittedOriginalNoteHtml:
+          state.notes?.some((entry) => entry.html === undefined) ?? false,
+      };
+    } else if (
+      state.importOperationId === undefined ||
+      state.importOmittedOriginalNoteHtml === undefined
+    ) {
+      // A later sync write keeps the initial import's provenance and omission decision.
+      const existing =
+        (await snapshot(syncPath)) === "missing"
+          ? null
+          : await readBoundedJson(syncPath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(
+              () => null,
+            );
+      prepared = {
+        ...state,
+        ...(state.importOperationId === undefined && existing?.importOperationId !== undefined
+          ? { importOperationId: existing.importOperationId }
+          : {}),
+        ...(state.importOmittedOriginalNoteHtml === undefined &&
+        existing?.importOmittedOriginalNoteHtml !== undefined
+          ? { importOmittedOriginalNoteHtml: existing.importOmittedOriginalNoteHtml }
+          : {}),
+      };
+    } else {
+      prepared = state;
+    }
+    const bounded = fitZoteroSyncToBudget(prepared, MAX_RECORD_BYTES);
+    // Flipping false -> true shrinks JSON by 1 byte, so the bounded payload stays within MAX_RECORD_BYTES.
+    const finalState: ScientSourceZoteroSyncType =
+      options?.initialImportOperationId !== undefined && bounded.omittedOriginalNoteHtmlCount > 0
+        ? { ...bounded.state, importOmittedOriginalNoteHtml: true }
+        : bounded.state;
+    await atomicWriteJson(syncPath, finalState, MAX_RECORD_BYTES);
+    omittedOriginalNoteHtmlCount = bounded.omittedOriginalNoteHtmlCount;
   });
-  return {
-    omittedOriginalNoteHtmlCount: written ? bounded.omittedOriginalNoteHtmlCount : 0,
-  };
+  return { omittedOriginalNoteHtmlCount };
 }
 
 /** Replaces a source's links to other reference managers, as a new revision. */

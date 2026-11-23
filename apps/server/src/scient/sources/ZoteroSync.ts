@@ -200,10 +200,8 @@ export async function recordZoteroSync(input: {
   readonly annotationLibraryId?: string;
   /** The notes of an earlier base, kept when what was written to Zotero had none. */
   readonly notes?: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
-  /** Persist whether the initial import sync write omitted original note HTML. */
-  readonly recordImportOmission?: boolean;
-  /** The recorded initial-import omission decision of an earlier base, kept across rewrites. */
-  readonly importOmittedOriginalNoteHtml?: boolean;
+  /** The originating import operation when this write is the import's initial sync write. */
+  readonly initialImportOperationId?: string;
 }): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const reference = zoteroReference(input.material.candidate);
   if (!reference) return { omittedOriginalNoteHtmlCount: 0 };
@@ -230,13 +228,12 @@ export async function recordZoteroSync(input: {
       note: notes.note,
       ...(zoteroNote !== undefined ? { zoteroNote } : {}),
       ...(notes.notes ? { notes: [...notes.notes] } : {}),
-      ...(input.importOmittedOriginalNoteHtml !== undefined
-        ? { importOmittedOriginalNoteHtml: input.importOmittedOriginalNoteHtml }
-        : {}),
       attachmentKeys: [...input.attachmentKeys],
       ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
     },
-    ...(input.recordImportOmission ? [{ recordImportOmission: true }] : []),
+    ...(input.initialImportOperationId !== undefined
+      ? [{ initialImportOperationId: input.initialImportOperationId }]
+      : []),
   );
 }
 
@@ -515,9 +512,6 @@ async function refreshOne(input: {
     note: plan.base.note,
     ...(plan.base.zoteroNote !== undefined ? { zoteroNote: plan.base.zoteroNote } : {}),
     ...(plan.base.notes ? { notes: [...plan.base.notes] } : {}),
-    ...(base?.importOmittedOriginalNoteHtml !== undefined
-      ? { importOmittedOriginalNoteHtml: base.importOmittedOriginalNoteHtml }
-      : {}),
     attachmentKeys: attached.keys,
     pdfs: Object.fromEntries(pdfs),
   });
@@ -756,7 +750,6 @@ async function syncAfterSend(input: {
         : editableMetadataFromRecord(input.record),
     );
     const annotationLibraryId = input.reference?.libraryId ?? fresh.libraryId;
-    const previous = await readScientSourceZoteroSync(input.root, record.sourceId);
     await writeScientSourceZoteroSync(input.root, {
       formatVersion: 1,
       sourceId: record.sourceId,
@@ -771,9 +764,6 @@ async function syncAfterSend(input: {
         ? { zoteroNote: input.created.notes.zoteroNote }
         : {}),
       ...(input.created.notes.notes ? { notes: [...input.created.notes.notes] } : {}),
-      ...(previous?.importOmittedOriginalNoteHtml !== undefined
-        ? { importOmittedOriginalNoteHtml: previous.importOmittedOriginalNoteHtml }
-        : {}),
       attachmentKeys: [],
     });
     return;
@@ -792,9 +782,6 @@ async function syncAfterSend(input: {
       ? (previous.annotationLibraryId ?? previous.libraryId)
       : (input.reference?.libraryId ?? fresh.libraryId),
     notes: same ? previous : (input.created?.notes ?? { note: null, notes: [] }),
-    ...(previous?.importOmittedOriginalNoteHtml !== undefined
-      ? { importOmittedOriginalNoteHtml: previous.importOmittedOriginalNoteHtml }
-      : {}),
   });
 }
 
