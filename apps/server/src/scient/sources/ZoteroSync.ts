@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
 import {
+  editableMetadataFromRecord,
   normalizeScientSourceEditableMetadata,
   scientLibraryIdentityProblem,
   workLevelIdentifierKey,
@@ -714,7 +715,29 @@ async function syncAfterSend(input: {
       );
     }
   }
-  if (fresh.itemVersion !== input.sentVersion) return;
+  if (fresh.itemVersion !== input.sentVersion) {
+    if (!input.createdNotes) return;
+    // Parent changed in Zotero before readback; record the acknowledged creation baseline
+    // fenced at `sentVersion` so Refresh merges both parent and child edits cleanly.
+    const { citationKey: _key, ...metadata } = normalizeScientSourceEditableMetadata(
+      editableMetadataFromRecord(input.record),
+    );
+    const annotationLibraryId = input.reference?.libraryId ?? fresh.libraryId;
+    await writeScientSourceZoteroSync(input.root, {
+      formatVersion: 1,
+      sourceId: record.sourceId,
+      libraryId: fresh.libraryId,
+      ...(annotationLibraryId !== fresh.libraryId ? { annotationLibraryId } : {}),
+      itemKey: fresh.itemKey,
+      itemVersion: input.sentVersion,
+      syncedAt: new Date().toISOString(),
+      metadata,
+      note: input.createdNotes.note,
+      ...(input.createdNotes.notes ? { notes: [...input.createdNotes.notes] } : {}),
+      attachmentKeys: [],
+    });
+    return;
+  }
   const previous = await readScientSourceZoteroSync(input.root, record.sourceId);
   const same =
     previous?.itemKey === fresh.itemKey &&

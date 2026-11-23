@@ -255,13 +255,15 @@ export function planZoteroRefresh(input: {
     // By digest, which every note has even when its HTML was too long to keep.
     const digests = (notes: ReadonlyArray<{ readonly itemKey: string; readonly sha256: string }>) =>
       notes.map(({ itemKey, sha256 }) => `${itemKey}:${sha256}`);
+    const sameHtml =
+      input.base?.notes !== undefined &&
+      same(digests(input.base.notes), digests(input.zotero.notes));
     const zoteroChanged = !input.base
       ? true
       : input.base.notes
-        ? !same(digests(input.base.notes), digests(input.zotero.notes)) &&
-          zoteroNote !== input.base.note
+        ? !sameHtml && zoteroNote !== input.base.note
         : legacyNote !== input.base.note;
-    if (useZotero.has("note") || untouched) {
+    if (useZotero.has("note") || (untouched && !sameHtml)) {
       note = { value: zoteroNote };
     } else if (zoteroChanged && !keepLocal.has("note")) {
       conflicts.push({
@@ -275,6 +277,14 @@ export function planZoteroRefresh(input: {
         metadata: planBase.metadata,
         note: input.base ? input.base.note : null,
         ...(input.base?.notes ? { notes: input.base.notes } : {}),
+      };
+    } else if (sameHtml && input.base) {
+      // Keep the local text baseline when Zotero's HTML is unchanged, so a round-trip escape
+      // difference does not rewrite local Markdown or break future untouched detection.
+      planBase = {
+        metadata: planBase.metadata,
+        note: input.base.note,
+        notes: input.zotero.notes,
       };
     }
   }

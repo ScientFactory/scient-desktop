@@ -1110,6 +1110,59 @@ describe("Send to Zotero", () => {
     );
   });
 
+  it("keeps unchanged local Markdown intact across Refresh after Send, then takes a later Zotero edit", async () => {
+    const { root, sourceId } = await sourceInScient({ note: "# Heading" });
+    const org = zoteroOrg();
+    await sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+
+    const unchanged = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+    expect(unchanged.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("# Heading");
+
+    org.editInZotero("NEWB2345", { note: "<p>Revised in Zotero</p>" });
+    const changed = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+    expect(changed.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Revised in Zotero");
+  });
+
+  it("retains the created child note baseline and parent version fence when both parent and child change before readback", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const org = zoteroOrg();
+    let edited = false;
+    const during = afterEachRequest(org, (request) => {
+      if (edited || request.method !== "POST" || !request.url.pathname.endsWith("/items")) return;
+      if (!org.items.has("NEWB2345")) return;
+      edited = true;
+      org.editInZotero("NEWA2345", { pages: "99-110" });
+      org.editInZotero("NEWB2345", { note: "<p>Both parent and child edited</p>" });
+    });
+
+    const created = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: during,
+    });
+    expect(created.items[0]).toMatchObject({ outcome: "created", itemKey: "NEWA2345" });
+    expect(
+      (
+        await sendSourcesToZotero({
+          root,
+          sourceIds: [sourceId],
+          actor: "user",
+          zotero: org.zotero,
+        })
+      ).items[0]?.outcome,
+    ).toBe("changed-in-zotero");
+
+    const refreshed = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+    expect(refreshed.items[0]?.conflicts).toEqual([]);
+    expect(await readScientSourceRecord(root, sourceId)).toMatchObject({
+      pages: "99-110",
+      note: "Both parent and child edited",
+    });
+  });
+
   it("keeps a note changed in Zotero for Refresh when a Send updates the item", async () => {
     const { root, sourceId } = await sourceInScient();
     const org = zoteroOrg();

@@ -1679,9 +1679,13 @@ describe("what differs between the two Libraries, and taking one thing at a time
     const theirs = await built([{ op: "add", label: "fresh", pdf: false }]);
     const id = workOf(theirs.model, "fresh").sourceId;
     const record = (await readScientSourceRecord(theirs.library, id))!;
-    const baseOf = (itemVersion: number, attachmentKeys: ReadonlyArray<string>) => ({
+    const baseOf = (
+      sourceId: string,
+      itemVersion: number,
+      attachmentKeys: ReadonlyArray<string>,
+    ) => ({
       formatVersion: 1 as const,
-      sourceId: id,
+      sourceId,
       libraryId: "475425",
       itemKey: "ABCD2345",
       itemVersion,
@@ -1690,54 +1694,66 @@ describe("what differs between the two Libraries, and taking one thing at a time
       note: null,
       attachmentKeys: [...attachmentKeys],
     });
-    await writeScientSourceZoteroSync(theirs.library, baseOf(2, ["OLD2345"]));
 
     const ours = await built([{ op: "add", label: "mine", pdf: false }]);
-    // Simulate an interrupted join with a pending receipt naming both a valid orphan and a traversal ID.
+    // Simulate an interrupted join with a pending receipt naming both a valid orphan the new
+    // backup never touches and a traversal ID, plus an abandoned sidecar for the incoming source.
     const zoteroDir = NodePath.join(ours.scenario.libraryRoot, "zotero");
     await NodeFSP.mkdir(zoteroDir, { recursive: true });
-    const validOrphan = NodePath.join(zoteroDir, `${id}.json`);
-    await NodeFSP.writeFile(validOrphan, JSON.stringify(baseOf(1, ["STALE234"])));
+    const orphanId = "src_interrupted_orphan";
+    const orphanFile = NodePath.join(zoteroDir, `${orphanId}.json`);
+    await NodeFSP.writeFile(orphanFile, JSON.stringify(baseOf(orphanId, 1, ["ORPHAN1"])));
+    await NodeFSP.writeFile(
+      NodePath.join(zoteroDir, `${id}.json`),
+      JSON.stringify(baseOf(id, 1, ["STALE234"])),
+    );
     const outsideTarget = NodePath.join(ours.scenario.libraryRoot, "keep-me.json");
     await NodeFSP.writeFile(outsideTarget, '{"kept":true}');
     const pendingJoinDir = NodePath.join(ours.scenario.libraryRoot, "joins", "join_interrupted");
+    const pendingHeaderPath = NodePath.join(pendingJoinDir, "join.json");
     await NodeFSP.mkdir(pendingJoinDir, { recursive: true });
     await NodeFSP.writeFile(
-      NodePath.join(pendingJoinDir, "join.json"),
+      pendingHeaderPath,
       JSON.stringify({
         formatVersion: 1,
         joinId: "join_interrupted",
-        actor: "user",
         startedAt: "2026-11-21T08:00:00.000Z",
-        state: "running",
+        by: "user",
         other: { libraryId: "lib_other", kind: "backup", folder: "/missing" },
+        state: "running",
+        planned: 2,
         identical: 0,
+        removedThere: 0,
         different: [],
         removedHere: [],
-        removedThere: 0,
         collections: [],
       }),
     );
     await NodeFSP.writeFile(
-      NodePath.join(pendingJoinDir, "part-0001.json"),
+      NodePath.join(pendingJoinDir, "part-00001.json"),
       JSON.stringify({
         formatVersion: 1,
         number: 1,
-        state: "running",
         sources: [
-          { sourceId: id, fingerprint: "fp_orphan" },
+          { sourceId: orphanId, fingerprint: "fp_orphan" },
           { sourceId: "../keep-me", fingerprint: "fp_bad" },
         ],
+        state: "pending",
         added: [],
         skipped: [],
       }),
     );
-    await writeScientSourceZoteroSync(theirs.library, baseOf(5, ["NEW2345"]));
+    await writeScientSourceZoteroSync(theirs.library, baseOf(id, 5, ["NEW2345"]));
     const updatedBackup = await backUp(theirs.scenario);
 
     expect(
       await joinScientLibrary({ library: ours.library, folder: updatedBackup, actor: "user" }),
     ).toMatchObject({ outcome: "joined", added: 1 });
+    expect(JSON.parse(await NodeFSP.readFile(pendingHeaderPath, "utf8"))).toMatchObject({
+      state: "stopped",
+    });
+    expect(await readScientSourceZoteroSync(ours.library, orphanId)).toBeNull();
+    await expect(NodeFSP.stat(orphanFile)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readScientSourceZoteroSync(ours.library, id)).toMatchObject({
       itemVersion: 5,
       attachmentKeys: ["NEW2345"],
@@ -1753,7 +1769,7 @@ describe("what differs between the two Libraries, and taking one thing at a time
     await NodeFSP.mkdir(NodePath.join(oursTwo.scenario.libraryRoot, "zotero"), { recursive: true });
     await NodeFSP.writeFile(
       NodePath.join(oursTwo.scenario.libraryRoot, "zotero", `${id}.json`),
-      JSON.stringify(baseOf(1, ["ORPHAN01"])),
+      JSON.stringify(baseOf(id, 1, ["ORPHAN01"])),
     );
     expect(
       await joinScientLibrary({ library: oursTwo.library, folder: noBaseBackup, actor: "user" }),
