@@ -1857,10 +1857,34 @@ export function ScientSourcesPanel(props: {
         }}
       />
       <PanelHeader
-        title={gt("Library", { $context: "the personal Library of sources" })}
+        {...(scopes
+          ? {
+              start: (
+                // Full labels first: the row wraps before they shorten, and only a panel narrower
+                // than the switch itself shortens them.
+                <ToggleGroup
+                  className="max-w-full shrink-0 *:min-w-0 *:shrink"
+                  aria-label={gt("Source scope")}
+                  value={[scopes.listed]}
+                  onValueChange={(values) => {
+                    const scope = values[0];
+                    if (scope === "project" || scope === "library") selectScope(scope);
+                  }}
+                >
+                  <Toggle value="project">
+                    <span className="truncate">{m(LIBRARY_LABELS.scopes.project)}</span>
+                  </Toggle>
+                  <Toggle value="library">
+                    <span className="truncate">{m(LIBRARY_LABELS.scopes.library)}</span>
+                  </Toggle>
+                </ToggleGroup>
+              ),
+            }
+          : {})}
         {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere, m) } : {})}
         action={
           <div className="flex shrink-0 items-center gap-1">
+            {scopes && sources.overview.records.length > 0 ? <AskLibraryButton /> : null}
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
             <Menu>
               <MenuTrigger
@@ -2025,38 +2049,12 @@ export function ScientSourcesPanel(props: {
         />
       ) : null}
       <div className={`${SOURCES_COLUMN} flex shrink-0 flex-col`}>
-        {scopes ? (
-          <div className="@container mx-3 mt-2 flex flex-wrap items-center gap-2">
-            {/* In a narrow panel a long translation shortens the labels instead of overflowing. */}
-            <ToggleGroup
-              className="max-w-full *:min-w-0 *:shrink"
-              aria-label={gt("Source scope")}
-              value={[scopes.listed]}
-              onValueChange={(values) => {
-                const scope = values[0];
-                if (scope === "project" || scope === "library") selectScope(scope);
-              }}
-            >
-              <Toggle value="project">
-                <span className="truncate">{m(LIBRARY_LABELS.scopes.project)}</span>
-              </Toggle>
-              <Toggle value="library">
-                <span className="truncate">{m(LIBRARY_LABELS.scopes.library)}</span>
-              </Toggle>
-            </ToggleGroup>
-            {packageSources ? (
-              <>
-                <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
-                <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
-                  <T>Show all</T>
-                </Button>
-              </>
-            ) : null}
-            {sources.overview.records.length > 0 ? (
-              <div className="ml-auto">
-                <AskLibraryButton />
-              </div>
-            ) : null}
+        {scopes && packageSources ? (
+          <div className="mx-3 mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
+            <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
+              <T>Show all</T>
+            </Button>
           </div>
         ) : null}
         {shownResult ? <div className="mx-3 mt-2">{resultSlot}</div> : null}

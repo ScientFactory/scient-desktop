@@ -436,6 +436,28 @@ describe("Sources project scope", () => {
     expect(mocks.organize).not.toHaveBeenCalled();
   });
 
+  it("leads the list with the scope switch, not the tab's name again", async () => {
+    setup();
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    const scope = screen.getByRole("group", { name: "Source scope" });
+    await expect.element(scope).toBeVisible();
+    // The switch shares the top row with Import, and nothing there reads "Library" alone.
+    const row = scope.element().parentElement!;
+    expect(row.contains(screen.getByRole("button", { name: "Import sources" }).element())).toBe(
+      true,
+    );
+    expect(screen.getByText("Library", { exact: true }).query()).toBeNull();
+  });
+
   it("does not show Import as busy while the list is read again", async () => {
     setup();
     const read = mocks.read.getMockImplementation()!;
