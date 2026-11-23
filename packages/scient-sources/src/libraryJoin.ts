@@ -342,20 +342,36 @@ async function safeOtherFileBytes(
   }
   try {
     const opened = await handle.stat({ bigint: true });
-    if (!opened.isFile()) {
+    if (!opened.isFile() || opened.dev !== pre.dev || opened.ino !== pre.ino) {
       throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
     }
     if (opened.size > BigInt(maxBytes)) {
       throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
     }
-    if ((await NodeFSP.realpath(resolvedPath)) !== resolvedPath) {
+    const current = await NodeFSP.lstat(resolvedPath, { bigint: true });
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      current.dev !== opened.dev ||
+      current.ino !== opened.ino ||
+      (await NodeFSP.realpath(resolvedPath)) !== resolvedPath
+    ) {
       throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
     }
-    const bytes = await handle.readFile();
-    if (bytes.byteLength > maxBytes) {
-      throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const remaining = maxBytes - total + 1;
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes) {
+        throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+      }
+      chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
     }
-    return bytes;
+    return Buffer.concat(chunks, total);
   } finally {
     await handle.close();
   }
@@ -1148,6 +1164,11 @@ async function settleStopped(
       if (part.state === "done") continue;
       const added: Arrived[] = [];
       for (const planned of part.sources) {
+        try {
+          assertSafeIdentifier(planned.sourceId, "Source ID");
+        } catch {
+          continue;
+        }
         const name = `${planned.sourceId}.json`;
         const anywhere = await Promise.all(
           ["records", "trash", "deleted"].map((folder) =>
@@ -1155,7 +1176,13 @@ async function settleStopped(
           ),
         );
         if (!anywhere.some(Boolean)) {
-          await NodeFSP.rm(NodePath.join(libraryRoot, "zotero", name), { force: true });
+          const zoteroDir = NodePath.join(libraryRoot, "zotero");
+          const safeZoteroDir = await assertScientProjectDirectory(libraryRoot, zoteroDir)
+            .then(() => true)
+            .catch(() => false);
+          if (safeZoteroDir) {
+            await NodeFSP.unlink(NodePath.join(zoteroDir, name)).catch(() => undefined);
+          }
           continue;
         }
         const record = await readScientSourceRecord(library, planned.sourceId);

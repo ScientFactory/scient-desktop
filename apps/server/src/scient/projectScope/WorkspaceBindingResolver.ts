@@ -205,15 +205,6 @@ const make = Effect.gen(function* () {
     return true;
   };
 
-  const samePhysicalRoot = (
-    binding: WorkspaceBindingRecordV1,
-    observed: ObservedWorkspaceEvidence,
-  ): boolean =>
-    binding.rootFileSystemIdentity !== null &&
-    observed.rootFileSystemIdentity !== null &&
-    binding.rootFileSystemIdentity.device === observed.rootFileSystemIdentity.device &&
-    binding.rootFileSystemIdentity.inode === observed.rootFileSystemIdentity.inode;
-
   /** Verifies a registered root without inserting or updating any workspace-binding rows. */
   const verifyObservedReadOnly = Effect.fn("WorkspaceBindingResolver.verifyObservedReadOnly")(
     function* (input: WorkspaceBindingStore.VerifyObservedWorkspaceInput) {
@@ -231,7 +222,7 @@ const make = Effect.gen(function* () {
         if (
           existing.trustState !== "verified" ||
           input.evidence.trustState !== "verified" ||
-          !samePhysicalRoot(existing, input.evidence) ||
+          !WorkspaceBindingStore.samePhysicalRoot(existing, input.evidence) ||
           (yield* rootHasConflictingRegistration(input.evidence.canonicalRoot, input.hostProjectId))
         ) {
           return yield* new WorkspaceBindingStoreError({
@@ -240,9 +231,14 @@ const make = Effect.gen(function* () {
           });
         }
       }
+      const unchangedForSameProject =
+        existing !== null &&
+        existing.hostProjectId === input.hostProjectId &&
+        WorkspaceBindingStore.authorityEvidenceEqual(existing, input.evidence);
       if (
         existing &&
-        !samePhysicalRoot(existing, input.evidence) &&
+        !unchangedForSameProject &&
+        !WorkspaceBindingStore.samePhysicalRoot(existing, input.evidence) &&
         input.evidence.rootFileSystemIdentity === null
       ) {
         return yield* new WorkspaceBindingStoreError({
@@ -254,6 +250,7 @@ const make = Effect.gen(function* () {
         ? {
             ...existing,
             hostProjectId: input.hostProjectId,
+            rootFileSystemIdentity: input.evidence.rootFileSystemIdentity,
             scientProjectId: input.evidence.scientProjectId,
             repositoryIdentity: input.evidence.repositoryIdentity,
             worktreeIdentity: input.evidence.worktreeIdentity,

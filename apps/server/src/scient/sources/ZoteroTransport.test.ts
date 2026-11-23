@@ -102,7 +102,9 @@ describe("Zotero Node HTTP completion", () => {
     await using directory = await temporaryDirectory();
     let slow = true;
     const seen: string[] = [];
+    const signals: Array<AbortSignal | undefined> = [];
     const partialOnDisk = Promise.withResolvers<void>();
+    let observedPartial = false;
     await using fixture = await startHttpTransport((request, response) => {
       request.resume();
       seen.push(request.url ?? "");
@@ -112,7 +114,7 @@ describe("Zotero Node HTTP completion", () => {
       }
       if (request.url === "/storage") {
         response.writeHead(200).write("%PDF-partial");
-        // Poll until the partial chunk is actually written into the temp directory before timing out.
+        // Observe the partial file on disk; fail promptly if the connection closes first.
         const poll = NodeTimers.setInterval(() => {
           void NodeFSP.readdir(directory.path)
             .then(async (entries) => {
@@ -122,6 +124,7 @@ describe("Zotero Node HTTP completion", () => {
                 for (const file of files) {
                   const stat = await NodeFSP.stat(NodePath.join(sub, file)).catch(() => null);
                   if (stat && stat.size > 0) {
+                    observedPartial = true;
                     NodeTimers.clearInterval(poll);
                     partialOnDisk.resolve();
                     return;
@@ -131,18 +134,26 @@ describe("Zotero Node HTTP completion", () => {
             })
             .catch(() => undefined);
         }, 10);
-        response.once("close", () => NodeTimers.clearInterval(poll));
+        response.once("close", () => {
+          NodeTimers.clearInterval(poll);
+          if (!observedPartial) {
+            partialOnDisk.reject(new Error("Download closed before partial bytes reached disk."));
+          }
+        });
       } else {
-        NodeTimers.setTimeout(
-          () => response.writeHead(302, { Location: "https://storage.example/storage" }).end(),
-          50,
-        );
+        response.writeHead(302, { Location: "https://storage.example/storage" }).end();
       }
     });
     const { transport } = makeZoteroWebLibrary({
       apiKey: headers["Zotero-API-Key"],
       account,
-      http: makeNodeZoteroWebHttp(fixture.send, { requestMs: 300, downloadMs: 300 }),
+      http: makeNodeZoteroWebHttp(
+        (url, options, onResponse) => {
+          if (slow) signals.push(options.signal);
+          return fixture.send(url, options, onResponse);
+        },
+        { requestMs: 300, downloadMs: 300 },
+      ),
       temporaryDirectory: directory.path,
     });
 
@@ -151,6 +162,10 @@ describe("Zotero Node HTTP completion", () => {
     );
     await partialOnDisk.promise;
     expect(seen).toEqual([`/users/42/items/${attachment.key}/file`, "/storage"]);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBeDefined();
+    expect(signals[1]).toBe(signals[0]);
+    expect(signals[0]?.aborted).toBe(true);
     expect(await NodeFSP.readdir(directory.path)).toEqual([]);
     slow = false;
     const downloaded = await transport.attachmentFile(attachment);

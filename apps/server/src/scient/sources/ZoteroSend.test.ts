@@ -1081,6 +1081,35 @@ describe("Send to Zotero", () => {
     expect((await readScientSourceRecord(root, sourceId))?.pages).toBe("99-110");
   });
 
+  it("applies a Zotero edit to a newly created child note without false conflict when local note is untouched", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const org = zoteroOrg();
+    let editedChild = false;
+    const during = afterEachRequest(org, (request) => {
+      if (editedChild || request.method !== "POST" || !request.url.pathname.endsWith("/items")) {
+        return;
+      }
+      if (!org.items.has("NEWB2345")) return;
+      editedChild = true;
+      // Child note changes in Zotero before readback while parent version and local note stay fixed.
+      org.editInZotero("NEWB2345", { note: "<p>Edited in Zotero right after create</p>" });
+    });
+
+    const created = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: during,
+    });
+    expect(created.items[0]).toMatchObject({ outcome: "created", itemKey: "NEWA2345" });
+
+    const refreshed = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+    expect(refreshed.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe(
+      "Edited in Zotero right after create",
+    );
+  });
+
   it("keeps a note changed in Zotero for Refresh when a Send updates the item", async () => {
     const { root, sourceId } = await sourceInScient();
     const org = zoteroOrg();

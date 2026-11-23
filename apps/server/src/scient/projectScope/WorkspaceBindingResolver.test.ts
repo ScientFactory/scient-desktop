@@ -696,6 +696,27 @@ describe("WorkspaceBindingResolver", () => {
           .pipe(Effect.flip),
       ).toMatchObject({ kind: "binding-revoked" });
       expect(yield* rows()).toEqual(afterRevoke);
+
+      // Persisted null-identity binding: unchanged evidence still resolves read-only without writes.
+      state.evidence.set(
+        "/projects/other",
+        observed("/projects/other", {
+          rootFileSystemIdentity: null,
+          observedAt: "2026-08-30T00:00:00.000Z",
+        }),
+      );
+      const nullPersisted = yield* resolver.resolveWorkspaceRoot("/projects/other");
+      const beforeNullRead = yield* rows();
+      state.evidence.set(
+        "/projects/other",
+        observed("/projects/other", {
+          rootFileSystemIdentity: null,
+          observedAt: "2026-09-02T00:00:00.000Z",
+        }),
+      );
+      const nullRead = yield* resolver.resolveWorkspaceRoot("/projects/other", { readOnly: true });
+      expect(nullRead.binding.bindingId).toBe(nullPersisted.binding.bindingId);
+      expect(yield* rows()).toEqual(beforeNullRead);
     }).pipe(Effect.provide(makeResolverLayer(state)));
   });
 });

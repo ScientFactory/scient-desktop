@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- A real socket fixture answers slowly on purpose.
-import * as NodeTimers from "node:timers";
-
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
@@ -79,28 +76,33 @@ describe("metadata HTTP completion", () => {
 
   it("gives a request one budget across its redirects", async () => {
     const seen: string[] = [];
+    const signals: Array<AbortSignal | undefined> = [];
     await using fixture = await startHttpTransport((request, response) => {
       request.resume();
       seen.push(request.url ?? "");
       if (request.url === "/first") {
-        NodeTimers.setTimeout(
-          () => response.writeHead(302, { Location: "https://registry.example/second" }).end(),
-          50,
-        );
+        response.writeHead(302, { Location: "https://registry.example/second" }).end();
       } else {
-        const timer = NodeTimers.setTimeout(() => response.end("complete"), 500);
-        response.once("close", () => NodeTimers.clearTimeout(timer));
+        // Hold the second hop open until the shared deadline signal aborts it.
+        response.writeHead(200);
       }
     });
-    const request = makeMetadataRequest(fixture.send);
+    const request = makeMetadataRequest((url, options, onResponse) => {
+      signals.push(options.signal);
+      return fixture.send(url, options, onResponse);
+    });
 
     await expect(
       request(new URL("https://registry.example/first"), agent, {
-        deadlineMs: 250,
+        deadlineMs: 120,
         timeoutMs: 1_000,
       }),
     ).rejects.toThrow("The metadata request timed out.");
     expect(seen).toEqual(["/first", "/second"]);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBeDefined();
+    expect(signals[1]).toBe(signals[0]);
+    expect(signals[0]?.aborted).toBe(true);
   });
 
   it("follows complete HTTPS redirects and still refuses plain HTTP before opening a socket", async () => {

@@ -1691,15 +1691,46 @@ describe("what differs between the two Libraries, and taking one thing at a time
       attachmentKeys: [...attachmentKeys],
     });
     await writeScientSourceZoteroSync(theirs.library, baseOf(2, ["OLD2345"]));
-    const newerBackup = await backUp(theirs.scenario);
 
     const ours = await built([{ op: "add", label: "mine", pdf: false }]);
-    // Simulate an interrupted join that left an older Zotero base without a live/trash/deleted record.
+    // Simulate an interrupted join with a pending receipt naming both a valid orphan and a traversal ID.
     const zoteroDir = NodePath.join(ours.scenario.libraryRoot, "zotero");
     await NodeFSP.mkdir(zoteroDir, { recursive: true });
+    const validOrphan = NodePath.join(zoteroDir, `${id}.json`);
+    await NodeFSP.writeFile(validOrphan, JSON.stringify(baseOf(1, ["STALE234"])));
+    const outsideTarget = NodePath.join(ours.scenario.libraryRoot, "keep-me.json");
+    await NodeFSP.writeFile(outsideTarget, '{"kept":true}');
+    const pendingJoinDir = NodePath.join(ours.scenario.libraryRoot, "joins", "join_interrupted");
+    await NodeFSP.mkdir(pendingJoinDir, { recursive: true });
     await NodeFSP.writeFile(
-      NodePath.join(zoteroDir, `${id}.json`),
-      JSON.stringify(baseOf(1, ["STALE234"])),
+      NodePath.join(pendingJoinDir, "join.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        joinId: "join_interrupted",
+        actor: "user",
+        startedAt: "2026-11-21T08:00:00.000Z",
+        state: "running",
+        other: { libraryId: "lib_other", kind: "backup", folder: "/missing" },
+        identical: 0,
+        different: [],
+        removedHere: [],
+        removedThere: 0,
+        collections: [],
+      }),
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(pendingJoinDir, "part-0001.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        number: 1,
+        state: "running",
+        sources: [
+          { sourceId: id, fingerprint: "fp_orphan" },
+          { sourceId: "../keep-me", fingerprint: "fp_bad" },
+        ],
+        added: [],
+        skipped: [],
+      }),
     );
     await writeScientSourceZoteroSync(theirs.library, baseOf(5, ["NEW2345"]));
     const updatedBackup = await backUp(theirs.scenario);
@@ -1711,6 +1742,7 @@ describe("what differs between the two Libraries, and taking one thing at a time
       itemVersion: 5,
       attachmentKeys: ["NEW2345"],
     });
+    expect(await NodeFSP.readFile(outsideTarget, "utf8")).toBe('{"kept":true}');
 
     // When a later backup has no Zotero base for the source, an abandoned orphan does not survive.
     const oursTwo = await built([{ op: "add", label: "mine", pdf: false }]);
@@ -1727,7 +1759,6 @@ describe("what differs between the two Libraries, and taking one thing at a time
       await joinScientLibrary({ library: oursTwo.library, folder: noBaseBackup, actor: "user" }),
     ).toMatchObject({ outcome: "joined", added: 1 });
     expect(await readScientSourceZoteroSync(oursTwo.library, id)).toBeNull();
-    expect(newerBackup).toBeTruthy();
   });
 
   it("refuses a symlinked or non-regular Zotero sidecar in a kept Library without blocking", async () => {
