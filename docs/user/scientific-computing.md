@@ -612,6 +612,10 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
   source or outputs. The file keeps those folds when you reopen it in Scient or JupyterLab.
 - Point at a cell's number to run it, or choose **Run all**. Cells run in order and stop at the
   first failure. Click code to edit it at the pointer, or click a Text cell to edit its Markdown.
+- If a cell needs setup from earlier cells, select it and choose **Run from top through this cell**
+  from the Run menu. Scient stops at the selected cell or at the first failure.
+- Text, figures and errors appear below the cell that produced them. A cell can show **No output**
+  after it runs. Choose **Show outputs** if a cell's output is folded.
 - A dot and dimmed output mark a cell whose code changed or whose output may be out of date.
   Scient uses names in the code to guess which cells depend on earlier ones.
 - Press Shift+Enter to run and move on or Cmd/Ctrl+Enter to run and stay. Press Esc to leave the
