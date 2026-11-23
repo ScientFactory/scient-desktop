@@ -400,7 +400,8 @@ export const ScientSourceZoteroSync = Schema.Struct({
   zoteroNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /**
    * Zotero's notes as it wrote them: each by key with the sha256 of its HTML, and the HTML while
-   * the notes fit 1,000,000 characters; absent when last read before they were kept.
+   * the notes fit 1,000,000 characters and the 2 MiB sync-file limit; absent when last read
+   * before they were kept.
    */
   notes: Schema.optionalKey(
     Schema.Array(

@@ -1833,16 +1833,17 @@ async function importZoteroOperationItem(input: {
       if (annotationLibraryId === undefined) {
         throw new Error("This source is not linked to a Zotero item.");
       }
-      let omittedOriginalNoteHtmlCount = 0;
+      let omittedOriginalNoteHtml = base?.notes?.some((entry) => entry.html === undefined) ?? false;
       if (!base) {
-        ({ omittedOriginalNoteHtmlCount } = await recordZoteroSync({
+        const saved = await recordZoteroSync({
           root: input.root,
           record,
           material,
           attachmentKeys: files.map((file) => file.attachmentKey),
           pdfs: Object.fromEntries(pdfs),
           annotationLibraryId,
-        }));
+        });
+        omittedOriginalNoteHtml = saved.omittedOriginalNoteHtmlCount > 0;
       }
       const unfiled = await addToZoteroCollections({
         root: input.root,
@@ -1869,7 +1870,7 @@ async function importZoteroOperationItem(input: {
       const unavailable = Math.min(material.pdfs.length, ZOTERO_PDFS_PER_ITEM) - files.length;
       const notBrought = [...material.notBrought];
       if (
-        omittedOriginalNoteHtmlCount > 0 &&
+        omittedOriginalNoteHtml &&
         !notBrought.some((entry) => entry.kind === "note-cut" && entry.name === "original")
       ) {
         addNotBrought(notBrought, "note-cut", 1, "original");
