@@ -675,6 +675,93 @@ describe("Send to Zotero", () => {
     },
   );
 
+  it("keeps the legacy note baseline when Zotero changes after a verified Send", async () => {
+    const legacy = {
+      system: "zotero",
+      libraryId: "0",
+      itemKey: "SAME2345",
+      itemVersion: 10,
+      rawItemType: "journalArticle",
+    };
+    const { root, sourceId } = await sourceInScient({ externalReferences: [legacy] });
+    const record = (await readScientSourceRecord(root, sourceId))!;
+    const baseline = {
+      formatVersion: 1 as const,
+      sourceId,
+      libraryId: legacy.libraryId,
+      itemKey: legacy.itemKey,
+      itemVersion: legacy.itemVersion,
+      syncedAt: "2026-11-15T10:00:00.000Z",
+      metadata: editableMetadataFromRecord(record),
+      note: record.note ?? null,
+      importOperationId: record.origin!.operationId,
+      importOmittedOriginalNoteHtml: false,
+      attachmentKeys: [],
+    };
+    const note = { itemKey: "NOTE2345", sha256: "a".repeat(64), html: "" };
+    const withoutHtml = Buffer.byteLength(
+      `${JSON.stringify({ ...baseline, notes: [note] }, null, 2)}\n`,
+      "utf8",
+    );
+    // Keep the baseline just under the sync file limit, so an extra field would cut the HTML.
+    note.html = "界".repeat(Math.floor((2 * 1024 * 1024 - withoutHtml) / 3));
+    const saved = await writeScientSourceZoteroSync(root, { ...baseline, notes: [note] });
+    expect(saved.omittedOriginalNoteHtmlCount).toBe(0);
+    const before = await readScientSourceZoteroSync(root, sourceId);
+    expect(before?.notes?.[0]?.html).toHaveLength(note.html.length);
+
+    const org = zoteroOrg();
+    const item = zoteroItem(
+      legacy.itemKey,
+      { version: 10, title: "Before sending", DOI: "10.1000/notes" },
+      USER,
+    );
+    org.items.set(item.key, item);
+    org.items.set(
+      note.itemKey,
+      zoteroItem(
+        note.itemKey,
+        { itemType: "note", parentItem: item.key, note: "<p>Revised in Zotero</p>" },
+        USER,
+      ),
+    );
+    const localItem = zoteroItem(
+      item.key,
+      { version: 10, title: "Written in Scient", DOI: "10.1000/notes" },
+      USER,
+    );
+    const local = fakeZoteroTransport({
+      items: new Map([[item.key, { item: localItem, children: [] }]]),
+    });
+    const during = afterEachRequest(org, (request) => {
+      if (request.method === "PATCH") org.editInZotero(item.key, { pages: "1-10" });
+    });
+    const result = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: { ...during, local },
+    });
+
+    expect(result.items[0]?.outcome).toBe("updated");
+    expect((await readScientSourceRecord(root, sourceId))?.externalReferences[0]?.libraryId).toBe(
+      String(USER),
+    );
+    const after = await readScientSourceZoteroSync(root, sourceId);
+    expect(after?.notes?.[0]?.html).toHaveLength(note.html.length);
+    expect(after).toEqual(before);
+
+    const refreshed = await refreshZoteroSources({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      connection: "web",
+      zotero: org.zotero,
+    });
+    expect(refreshed.items[0]?.conflicts.map((conflict) => conflict.field)).not.toContain("note");
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Revised in Zotero");
+  });
+
   it.each([true, false])(
     "refreshes a legacy local link only when its work is corroborated: %s",
     async (sameWork) => {

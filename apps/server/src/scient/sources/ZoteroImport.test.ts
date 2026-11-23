@@ -79,13 +79,11 @@ async function pdf(root: string, name: string) {
 const pdfAttachment = (key: string, filename: string) =>
   zoteroItem(key, { itemType: "attachment", contentType: "application/pdf", filename });
 
-function failRenameOnce(segment: string, message: string, occurrence = 1) {
+function failRenameOnce(segment: string, message: string) {
   const rename = NodeFS.promises.rename;
   let interrupted = false;
-  let seen = 0;
   NodeFS.promises.rename = async (from, to) => {
-    if (String(to).includes(segment)) seen += 1;
-    if (!interrupted && seen === occurrence && String(to).includes(segment)) {
+    if (!interrupted && String(to).includes(segment)) {
       interrupted = true;
       NodeFS.promises.rename = rename;
       NodeModule.syncBuiltinESMExports();
@@ -876,7 +874,8 @@ describe("Zotero import", () => {
     expect(interrupted).toBe(true);
     const [partial] = await listScientSourceRecords(root);
     expect(partial).toBeDefined();
-    expect((await readScientSourceZoteroSync(root, partial!.sourceId))?.libraryId).toBe("0");
+    const legacyBaseline = await readScientSourceZoteroSync(root, partial!.sourceId);
+    expect(legacyBaseline?.libraryId).toBe("0");
     const first = partial!.attachments[0]!;
     await mutateScientAnnotations({
       canonicalRoot: root,
@@ -901,7 +900,6 @@ describe("Zotero import", () => {
     const fault = failRenameOnce(
       `${NodePath.sep}zotero${NodePath.sep}`,
       "Interrupted at the sync write.",
-      2,
     );
     try {
       const refreshed = await refreshZoteroSources({
@@ -918,10 +916,7 @@ describe("Zotero import", () => {
     expect((await listScientSourceRecords(root))[0]?.externalReferences[0]).toMatchObject({
       libraryId: "475425",
     });
-    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toMatchObject({
-      libraryId: "0",
-      verifiedOwnerLibraryId: "475425",
-    });
+    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toEqual(legacyBaseline);
 
     await retrySourceImport({ root, operationId: "legacy-upgrade-resume", itemKeys: ["ABCD2345"] });
     const finished = await advanceSourceImport({

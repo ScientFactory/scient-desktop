@@ -94,6 +94,25 @@ function sameZoteroLibrary(left: string, right: string, verifiedLocalOwner?: str
   return left === right;
 }
 
+function legacyZoteroBaselineSha256(
+  base: ScientSourceZoteroSync | null,
+  record: ScientSourceRecord,
+  itemKey: string,
+): string | undefined {
+  if (
+    base?.libraryId !== "0" ||
+    base.sourceId !== record.sourceId ||
+    base.itemKey !== itemKey ||
+    base.importOperationId === undefined ||
+    base.importOperationId !== record.origin?.operationId
+  ) {
+    return undefined;
+  }
+  // Move and restore can rekey the sidecar while keeping its Zotero contents.
+  const { sourceId: _sourceId, ...contents } = base;
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(contents)).digest("hex");
+}
+
 const libraryIdOfWeb = (library: ZoteroWebLibrary): string =>
   library.groupId ? zoteroGroupLibraryId(library.groupId) : library.account.userId;
 
@@ -395,36 +414,19 @@ async function refreshOne(input: {
     action: "refresh",
   });
   const currentLibraryId = currentReference!.libraryId;
-  // A "0" baseline stamped by this record's originating import is its own once its verified
-  // personal owner was bound to it before the concrete link superseded the legacy link.
+  const legacyBaselineSha256 = legacyZoteroBaselineSha256(
+    savedBase,
+    input.record,
+    reference.itemKey,
+  );
   const legacyOwnBase =
-    savedBase?.libraryId === "0" &&
-    savedBase.importOperationId !== undefined &&
-    savedBase.importOperationId === input.record.origin?.operationId &&
-    savedBase.verifiedOwnerLibraryId === reference.libraryId &&
-    reference.libraryId !== "0" &&
-    !input.record.externalReferences.some(
-      (entry) =>
-        entry.system === "zotero" && entry.libraryId === "0" && entry.itemKey === reference.itemKey,
-    );
+    legacyBaselineSha256 !== undefined &&
+    reference.zoteroLegacyBaselineSha256 === legacyBaselineSha256;
   const base =
     savedBase?.itemKey === reference.itemKey &&
     (sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner) || legacyOwnBase)
       ? savedBase
       : null;
-  if (
-    base?.libraryId === "0" &&
-    reference.libraryId === "0" &&
-    verifiedLocalOwner === currentLibraryId &&
-    currentLibraryId !== "0" &&
-    base.verifiedOwnerLibraryId !== currentLibraryId
-  ) {
-    // Bind the verified owner to the legacy baseline before publishing the concrete link.
-    await writeScientSourceZoteroSync(input.root, {
-      ...base,
-      verifiedOwnerLibraryId: currentLibraryId,
-    });
-  }
   const annotationLibraryId = base?.annotationLibraryId ?? base?.libraryId ?? reference.libraryId;
   const plan = planZoteroRefresh({
     record: input.record,
@@ -515,8 +517,14 @@ async function refreshOne(input: {
     current &&
     (current.itemVersion !== reference.itemVersion || current.libraryId !== reference.libraryId)
   ) {
+    // Publish the proof with the link so an interrupted sync write can reuse the exact legacy base.
+    const linked =
+      legacyBaselineSha256 !== undefined &&
+      (legacyOwnBase || (reference.libraryId === "0" && verifiedLocalOwner === current.libraryId))
+        ? { ...current, zoteroLegacyBaselineSha256: legacyBaselineSha256 }
+        : current;
     const references = record.externalReferences.map((entry) =>
-      entry === zoteroReference(record) ? current : entry,
+      entry === zoteroReference(record) ? linked : entry,
     );
     record = (
       await updateScientSourceExternalReferences({
@@ -739,24 +747,25 @@ async function syncAfterSend(input: {
   const material = await readZoteroItemMaterial(input.library.transport, input.itemKey);
   const fresh = zoteroReference(material.candidate);
   if (!fresh) return;
-  if (
-    input.reference?.libraryId === "0" &&
-    input.verifiedLocalOwner === fresh.libraryId &&
-    fresh.libraryId !== "0"
-  ) {
-    const legacyBase = await readScientSourceZoteroSync(input.root, input.record.sourceId);
-    if (
-      legacyBase?.libraryId === "0" &&
-      legacyBase.itemKey === fresh.itemKey &&
-      legacyBase.verifiedOwnerLibraryId !== fresh.libraryId
-    ) {
-      await writeScientSourceZoteroSync(input.root, {
-        ...legacyBase,
-        verifiedOwnerLibraryId: fresh.libraryId,
-      });
+  let legacyBaselineSha256: string | undefined;
+  if (input.reference?.itemKey === fresh.itemKey) {
+    if (input.reference.libraryId === "0" && input.verifiedLocalOwner === fresh.libraryId) {
+      legacyBaselineSha256 = legacyZoteroBaselineSha256(
+        await readScientSourceZoteroSync(input.root, input.record.sourceId),
+        input.record,
+        fresh.itemKey,
+      );
+    } else if (input.reference.libraryId === fresh.libraryId) {
+      legacyBaselineSha256 = input.reference.zoteroLegacyBaselineSha256;
     }
   }
-  const linked = { ...fresh, itemVersion: input.sentVersion };
+  const linked = {
+    ...fresh,
+    itemVersion: input.sentVersion,
+    ...(legacyBaselineSha256 !== undefined
+      ? { zoteroLegacyBaselineSha256: legacyBaselineSha256 }
+      : {}),
+  };
   let record = input.record;
   // Against the record as it is now: an edit made during the Send keeps itself and the link.
   for (let attempt = 1; ; attempt += 1) {
@@ -822,7 +831,9 @@ async function syncAfterSend(input: {
   const previous = await readScientSourceZoteroSync(input.root, record.sourceId);
   const same =
     previous?.itemKey === fresh.itemKey &&
-    sameZoteroLibrary(previous.libraryId, fresh.libraryId, input.verifiedLocalOwner);
+    (sameZoteroLibrary(previous.libraryId, fresh.libraryId, input.verifiedLocalOwner) ||
+      (legacyBaselineSha256 !== undefined &&
+        legacyBaselineSha256 === legacyZoteroBaselineSha256(previous, record, fresh.itemKey)));
   await recordZoteroSync({
     root: input.root,
     record,
