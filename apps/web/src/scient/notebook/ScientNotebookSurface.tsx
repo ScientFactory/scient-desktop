@@ -722,6 +722,7 @@ export default function ScientNotebookSurface(props: {
     path: props.relativePath,
     liveSessionGeneration: liveSession?.generation ?? null,
     runtimeInspection,
+    dependencyRecovery: { contextId, onSettled: model.refresh },
     cellRuns,
     onJumpToCell: jumpToCell,
     askAboutCell: askAbout === null ? undefined : askAboutCell,

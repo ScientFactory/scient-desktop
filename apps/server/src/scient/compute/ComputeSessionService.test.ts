@@ -3831,6 +3831,11 @@ describe("compute session execution", () => {
             mode: "all",
             status: "failed",
             failedCell: 1,
+            firstFailure: {
+              path: "a.ipynb",
+              cell: "one",
+              generation: INITIAL_COMPUTE_SESSION_GENERATION,
+            },
             count: 3,
             notRun: 2,
           });

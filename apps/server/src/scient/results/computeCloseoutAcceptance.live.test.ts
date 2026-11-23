@@ -199,6 +199,11 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
             mode: "all",
             status: "failed",
             failedCell: 1,
+            firstFailure: {
+              path: "animation.ipynb",
+              cell: "cell-setup",
+              generation: started.generation,
+            },
             count: 3,
             notRun: 2,
           });

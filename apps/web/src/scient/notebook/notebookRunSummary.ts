@@ -99,20 +99,31 @@ export function notebookBatchFailureSummary(input: {
       }
     }
   }
-  if (firstFailed === null) return null;
+  const durableFailure =
+    lastNotebookBatch?.id === latestId && lastNotebookBatch.status === "failed"
+      ? lastNotebookBatch.firstFailure
+      : undefined;
+  const cellId =
+    firstFailed?.cellId ??
+    (durableFailure !== undefined &&
+    durableFailure.path === path &&
+    durableFailure.generation === liveSessionGeneration
+      ? durableFailure.cell
+      : undefined);
+  if (cellId === undefined) return null;
 
-  const latestForCell = cellRuns.get(firstFailed.cellId);
-  if (latestForCell?.result?.status !== "failed") return null;
+  const latestForCell = cellRuns.get(cellId);
+  if (latestForCell !== undefined && latestForCell.result?.status !== "failed") return null;
 
   const codeOrder = order.filter((id) => cells[id]?.cellType === "code");
-  const codeIndex = codeOrder.indexOf(firstFailed.cellId);
+  const codeIndex = codeOrder.indexOf(cellId);
   if (codeIndex < 0) return null;
 
   const summaryNotRun = lastNotebookBatch?.id === latestId ? (lastNotebookBatch.notRun ?? 0) : 0;
 
   return {
     batchId: latestId,
-    cellId: firstFailed.cellId,
+    cellId,
     cellNumber: codeIndex + 1,
     skippedCount: Math.max(skippedCount, summaryNotRun),
   };

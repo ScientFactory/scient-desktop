@@ -11,7 +11,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { T, useGT } from "gt-react";
 import { CircleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 
 import { Button } from "~/components/ui/button";
 import { computeEnvironment } from "~/state/compute";
@@ -79,6 +79,7 @@ export interface NotebookPlace {
   readonly path: string;
   readonly liveSessionGeneration?: number | null | undefined;
   readonly runtimeInspection?: ComputeRuntimeInspection | null | undefined;
+  readonly dependencyRecovery?: ComponentProps<typeof ComputeOutputView>["dependencyRecovery"];
   readonly cellRuns?: ReadonlyMap<string, ComputeExecutionRecord> | undefined;
   readonly onJumpToCell?: ((cellId: string) => void) | undefined;
   /** Adds text from a cell's output to the chat as a quote of that cell, when a chat is open. */
@@ -432,6 +433,9 @@ function LiveOutputs(props: {
         outputs={live.output.outputs}
         threadRef={threadRef}
         runtimeInspection={props.place.runtimeInspection ?? null}
+        {...(props.place.dependencyRecovery === undefined
+          ? {}
+          : { dependencyRecovery: props.place.dependencyRecovery })}
         notebook={{
           path: props.place.path,
           onReplay: props.onReplay,

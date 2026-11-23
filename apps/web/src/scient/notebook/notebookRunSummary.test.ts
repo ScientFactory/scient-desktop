@@ -91,6 +91,42 @@ describe("notebookBatchFailureSummary", () => {
     plot: makeCell("plot", "print('done')"),
   };
 
+  it("locates the first failure when only skipped cells remain in the recent feed", () => {
+    const skipped = makeBatchExecution({
+      id: "last",
+      cellId: "plot",
+      batchId: "long-batch",
+      index: 399,
+      count: 400,
+      status: "cancelled",
+      startedAt: null,
+    });
+    const lastNotebookBatch = {
+      id: ComputeExecutionId.make("long-batch"),
+      mode: "all" as const,
+      status: "failed" as const,
+      failedCell: 1,
+      count: 400,
+      notRun: 399,
+      firstFailure: {
+        path: "analysis.ipynb",
+        cell: "setup",
+        generation: skipped.request.generation,
+      },
+    };
+    expect(
+      notebookBatchFailureSummary({
+        executions: [skipped],
+        cellRuns: new Map([["plot", skipped]]),
+        path: "analysis.ipynb",
+        order,
+        cells,
+        lastNotebookBatch,
+        liveSessionGeneration: 1,
+      }),
+    ).toEqual({ batchId: "long-batch", cellId: "setup", cellNumber: 1, skippedCount: 399 });
+  });
+
   it("reports the first failed code cell and skipped cell count, then clears once fixed or restarted", () => {
     const e1 = makeBatchExecution({
       id: "e1",

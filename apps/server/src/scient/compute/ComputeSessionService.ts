@@ -1352,7 +1352,8 @@ const make = Effect.gen(function* () {
     live: LiveComputeSession,
     execution: ComputeExecutionRecord,
   ) {
-    const { source } = execution.request;
+    const request = execution.request;
+    const { source } = request;
     const result = execution.result;
     if (source._tag !== "document" || !source.notebookBatch || !result) return;
     const { id, mode, index, count } = source.notebookBatch;
@@ -1363,6 +1364,10 @@ const make = Effect.gen(function* () {
       result.status === "failed"
         ? Math.min(previous?.failedCell ?? Infinity, index + 1)
         : previous?.failedCell;
+    const firstFailure =
+      result.status === "failed" && index + 1 === failedCell && source.cell !== undefined
+        ? { path: source.path, cell: source.cell, generation: request.generation }
+        : previous?.firstFailure;
     const notRun =
       (previous?.notRun ?? 0) +
       (result.status === "cancelled" && result.startedAt === null ? 1 : 0);
@@ -1380,6 +1385,7 @@ const make = Effect.gen(function* () {
       count,
       status,
       ...(failedCell === undefined ? {} : { failedCell }),
+      ...(firstFailure === undefined ? {} : { firstFailure }),
       ...(notRun === 0 ? {} : { notRun }),
     } satisfies ComputeNotebookBatchSummary;
     if (remaining > 0) {

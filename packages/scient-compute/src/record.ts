@@ -125,6 +125,9 @@ export const ComputeNotebookBatchSummary = Schema.Struct({
   mode: Schema.Literals(["all", "selection"]),
   count: Count,
   failedCell: Schema.optional(Count),
+  firstFailure: Schema.optional(
+    Schema.Struct({ path: ShortText, cell: ShortText, generation: ComputeSessionGeneration }),
+  ),
   notRun: Schema.optional(Count),
   status: ComputeExecutionStatus,
 });

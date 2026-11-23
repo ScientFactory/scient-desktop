@@ -258,6 +258,13 @@ function ComputeDiagnostic(props: {
             </div>
             {recovery !== null ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                {props.notebook !== undefined && props.session.runtime !== null ? (
+                  <span className="text-muted-foreground">
+                    {props.session.runtime.origin ?? props.session.runtime.displayName}
+                    {" · "}
+                    {props.session.runtime.languageVersion}
+                  </span>
+                ) : null}
                 {managed !== null && props.dependencyRecovery !== undefined ? (
                   <ComputeDependencyRecoveryAction
                     contextId={props.dependencyRecovery.contextId}
