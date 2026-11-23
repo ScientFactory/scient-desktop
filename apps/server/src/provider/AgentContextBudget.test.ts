@@ -204,7 +204,11 @@ it.effect("every advertised tool is owned by a Scient operation or declared as a
     const host = hostToolVisibility(McpHttpServer.hostMcpTools, McpHttpServer.hostMcpToolGrants);
     const unowned = mcp.tools
       .map(({ tool }) => tool.name)
-      .filter((name) => !scientOperationCatalog.forTool(name) && !host.owns(name));
+      // ScientAgentFeedbackGate keeps agentFeedback off in Scient, so t3_feedback is never listed.
+      .filter(
+        (name) =>
+          name !== "t3_feedback" && !scientOperationCatalog.forTool(name) && !host.owns(name),
+      );
     expect(unowned).toEqual([]);
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );

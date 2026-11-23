@@ -1859,8 +1859,6 @@ export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...Object.values(MessageToolkit.tools),
   // A deferring client lists tool_search; it needs no grant.
   ...Object.values(ToolSearchToolkit.tools),
-  // Feedback shows only while it is on (EnabledWhen) and needs no grant.
-  ...Object.values(FeedbackToolkit.tools),
 ];
 export const hostMcpToolGrants = {
   orchestration: orchestrationTools,
