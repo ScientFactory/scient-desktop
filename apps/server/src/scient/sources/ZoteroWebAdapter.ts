@@ -16,6 +16,7 @@ import {
   withRequestDeadline,
   type NodeHttpRequest,
 } from "./nodeHttpResponse.ts";
+import { decodeZoteroRawItem, type ZoteroRawItem } from "./ZoteroItems.ts";
 import type { ZoteroResponse, ZoteroTransport } from "./ZoteroLibraryReader.ts";
 import type { ZoteroItemTemplate } from "./ZoteroWrite.ts";
 
@@ -654,7 +655,13 @@ export function makeZoteroWebLibrary(input: {
     createItems: async (
       items: ReadonlyArray<Readonly<Record<string, unknown>>>,
       writeToken: string,
-    ): Promise<ReadonlyArray<{ readonly key: string; readonly version: number } | null>> => {
+    ): Promise<
+      ReadonlyArray<{
+        readonly key: string;
+        readonly version: number;
+        readonly item?: ZoteroRawItem;
+      } | null>
+    > => {
       const response = await write("POST", "/items", items, { "Zotero-Write-Token": writeToken });
       // A reused token: an earlier request made these items, and Zotero does not say which.
       if (response.status === 412) {
@@ -671,9 +678,14 @@ export function makeZoteroWebLibrary(input: {
       };
       return items.map((_, index) => {
         const created = parsed.successful?.[String(index)];
-        return typeof created?.key === "string" && typeof created.version === "number"
-          ? { key: created.key, version: created.version }
-          : null;
+        if (typeof created?.key !== "string" || typeof created.version !== "number") return null;
+        let item: ZoteroRawItem | undefined;
+        try {
+          item = decodeZoteroRawItem(created);
+        } catch {
+          item = undefined;
+        }
+        return { key: created.key, version: created.version, ...(item ? { item } : {}) };
       });
     },
     /** Replaces the given fields only if the item is still at `version`. */

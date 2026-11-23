@@ -15,6 +15,7 @@ import {
   readScientSourceRecord,
   readScientSourceZoteroSync,
   updateScientSourceMetadata,
+  updateScientSourceNote,
   writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -197,19 +198,20 @@ function zoteroOrg(
           return { status: 412, headers: {}, body: "Write token already used" };
         }
         if (token) usedTokens.add(token);
-        const successful: Record<string, { key: string; version: number }> = {};
+        const successful: Record<string, ZoteroRawItem> = {};
         for (const [index, entry] of (JSON.parse(request.body ?? "[]") as object[]).entries()) {
           version += 1;
           const key = nextKey();
-          items.set(key, {
+          const createdItem: ZoteroRawItem = {
             key,
             version,
             library: options.groupId
               ? { type: "group", id: Number(options.groupId) }
               : { type: "user", id: USER },
             data: { ...(entry as ZoteroRawItem["data"]), key, version },
-          });
-          successful[String(index)] = { key, version };
+          };
+          items.set(key, createdItem);
+          successful[String(index)] = createdItem;
         }
         return json({ successful, failed: {} });
       }
@@ -1110,7 +1112,7 @@ describe("Send to Zotero", () => {
     );
   });
 
-  it("keeps unchanged local Markdown intact across Refresh after Send, then takes a later Zotero edit", async () => {
+  it("keeps unchanged local Markdown intact across byte-identical and formatting-only Zotero Refreshes, then takes a later text edit", async () => {
     const { root, sourceId } = await sourceInScient({ note: "# Heading" });
     const org = zoteroOrg();
     await sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
@@ -1119,10 +1121,111 @@ describe("Send to Zotero", () => {
     expect(unchanged.items[0]?.conflicts).toEqual([]);
     expect((await readScientSourceRecord(root, sourceId))?.note).toBe("# Heading");
 
+    // Formatting-only HTML change (colour) changes the digest without changing rendered Markdown.
+    org.editInZotero("NEWB2345", { note: '<p style="color: red"># Heading</p>' });
+    const styled = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+    expect(styled.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("# Heading");
+
     org.editInZotero("NEWB2345", { note: "<p>Revised in Zotero</p>" });
     const changed = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
     expect(changed.items[0]?.conflicts).toEqual([]);
     expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Revised in Zotero");
+
+    // Formatting-only edit in Zotero also avoids a false conflict when local Markdown was edited.
+    const edited = await sourceInScient({ note: "# Heading" });
+    const org2 = zoteroOrg();
+    await sendSourcesToZotero({
+      root: edited.root,
+      sourceIds: [edited.sourceId],
+      actor: "user",
+      zotero: org2.zotero,
+    });
+    const current = (await readScientSourceRecord(edited.root, edited.sourceId))!;
+    await updateScientSourceNote({
+      root: edited.root,
+      sourceId: edited.sourceId,
+      expectedRevision: current.revision,
+      note: "# Heading\n\nLocal addition",
+      actor: "user",
+    });
+    org2.editInZotero("NEWB2345", { note: '<p style="color: blue"># Heading</p>' });
+    const styledEdited = await refreshZoteroSources({
+      root: edited.root,
+      actor: "user",
+      zotero: org2.zotero,
+    });
+    expect(styledEdited.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(edited.root, edited.sourceId))?.note).toBe(
+      "# Heading\n\nLocal addition",
+    );
+  });
+
+  it("uses Zotero's saved parent object on parent-version race so transformed fields do not falsely conflict", async () => {
+    const program = await sourceInScient({
+      type: "software",
+      title: "lme4",
+      containerTitle: null,
+      volume: null,
+      pages: null,
+      identifiers: [],
+      creators: [
+        { creatorType: "programmer", givenName: "Douglas", familyName: "Bates", literalName: null },
+      ],
+      more: { version: "1.1-35", genre: "R" },
+      note: undefined as never,
+    });
+    const initial = (await readScientSourceRecord(program.root, program.sourceId))!;
+    const editedCreators = await updateScientSourceMetadata({
+      root: program.root,
+      sourceId: program.sourceId,
+      expectedRevision: initial.revision,
+      metadata: {
+        ...editableMetadataFromRecord(initial),
+        creators: [
+          {
+            creatorType: "programmer",
+            givenName: "Douglas",
+            familyName: "Bates",
+            literalName: null,
+          },
+          { creatorType: "editor", givenName: "Ben", familyName: "Bolker", literalName: null },
+        ],
+      },
+      actor: "user",
+    });
+    expect(
+      editedCreators.record.fieldProvenance.some(
+        (entry) => entry.field === "creators" && entry.origin === "user",
+      ),
+    ).toBe(true);
+    const org = zoteroOrg();
+    let edited = false;
+    const during = afterEachRequest(org, (request) => {
+      if (edited || request.method !== "POST" || !request.url.pathname.endsWith("/items")) return;
+      if (!org.items.has("NEWA2345")) return;
+      edited = true;
+      // Parent changes title before readback while creators remain the saved `programmer` roles.
+      org.editInZotero("NEWA2345", { title: "lme4 (CRAN)" });
+    });
+
+    const created = await sendSourcesToZotero({
+      root: program.root,
+      sourceIds: [program.sourceId],
+      actor: "user",
+      zotero: during,
+    });
+    expect(created.items[0]).toMatchObject({ outcome: "created", itemKey: "NEWA2345" });
+
+    const refreshed = await refreshZoteroSources({
+      root: program.root,
+      actor: "user",
+      zotero: org.zotero,
+    });
+    expect(refreshed.items[0]?.conflicts).toEqual([]);
+    expect((await readScientSourceRecord(program.root, program.sourceId))?.title).toBe(
+      "lme4 (CRAN)",
+    );
   });
 
   it("retains the created child note baseline and parent version fence when both parent and child change before readback", async () => {

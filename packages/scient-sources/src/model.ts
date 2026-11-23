@@ -394,6 +394,11 @@ export const ScientSourceZoteroSync = Schema.Struct({
   /** The text Scient last wrote into the source's note from Zotero's notes. */
   note: Schema.NullOr(Schema.String),
   /**
+   * The Markdown converted from Zotero's saved note when it differs from `note` (for example,
+   * local Markdown sent as plain paragraphs whose round-trip escapes characters).
+   */
+  zoteroNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
    * Zotero's notes as it wrote them: each by key with the sha256 of its HTML, and the HTML while
    * the notes fit 1,000,000 characters; absent when last read before they were kept.
    */

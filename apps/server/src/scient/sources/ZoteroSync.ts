@@ -57,6 +57,7 @@ import {
   readZoteroItemMaterial,
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
+import { zoteroNotesMarkdown } from "./ZoteroNoteMarkdown.ts";
 import {
   planZoteroRefresh,
   refreshedFieldProvenance,
@@ -198,11 +199,12 @@ export async function recordZoteroSync(input: {
   readonly pdfs: Readonly<Record<string, string>> | undefined;
   readonly annotationLibraryId?: string;
   /** The notes of an earlier base, kept when what was written to Zotero had none. */
-  readonly notes?: Pick<ScientSourceZoteroSync, "note" | "notes">;
+  readonly notes?: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
 }): Promise<void> {
   const reference = zoteroReference(input.material.candidate);
   if (!reference) return;
   const notes = input.notes ?? input.material;
+  const zoteroNote = input.notes?.zoteroNote;
   const { citationKey: _key, ...metadata } = normalizeScientSourceEditableMetadata({
     ...input.material.candidate,
     customType: input.material.candidate.customType ?? null,
@@ -219,6 +221,7 @@ export async function recordZoteroSync(input: {
     syncedAt: new Date().toISOString(),
     metadata,
     note: notes.note,
+    ...(zoteroNote !== undefined ? { zoteroNote } : {}),
     ...(notes.notes ? { notes: [...notes.notes] } : {}),
     attachmentKeys: [...input.attachmentKeys],
     ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
@@ -498,6 +501,7 @@ async function refreshOne(input: {
     syncedAt: new Date().toISOString(),
     metadata: plan.base.metadata,
     note: plan.base.note,
+    ...(plan.base.zoteroNote !== undefined ? { zoteroNote: plan.base.zoteroNote } : {}),
     ...(plan.base.notes ? { notes: [...plan.base.notes] } : {}),
     attachmentKeys: attached.keys,
     pdfs: Object.fromEntries(pdfs),
@@ -677,8 +681,11 @@ async function syncAfterSend(input: {
   readonly itemKey: string;
   /** The item's version once this Send's write landed, or as read when nothing was written. */
   readonly sentVersion: number;
-  /** Present when this Send created the item; records the note base acknowledged by create. */
-  readonly createdNotes?: Pick<ScientSourceZoteroSync, "note" | "notes">;
+  /** Present when this Send created the item; records the parent item and note base acknowledged by create. */
+  readonly created?: {
+    readonly item?: ZoteroRawItem;
+    readonly notes: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
+  };
   readonly actor: ScientSourceActor;
   readonly reference?: ScientSourceExternalReference;
   readonly verifiedLocalOwner?: string | undefined;
@@ -716,11 +723,16 @@ async function syncAfterSend(input: {
     }
   }
   if (fresh.itemVersion !== input.sentVersion) {
-    if (!input.createdNotes) return;
+    if (!input.created) return;
     // Parent changed in Zotero before readback; record the acknowledged creation baseline
-    // fenced at `sentVersion` so Refresh merges both parent and child edits cleanly.
+    // fenced at `sentVersion` from Zotero's saved parent object so Refresh sees no false conflict.
+    const createdCandidate = input.created.item
+      ? zoteroItemMaterial(input.created.item, []).candidate
+      : null;
     const { citationKey: _key, ...metadata } = normalizeScientSourceEditableMetadata(
-      editableMetadataFromRecord(input.record),
+      createdCandidate
+        ? { ...createdCandidate, customType: createdCandidate.customType ?? null }
+        : editableMetadataFromRecord(input.record),
     );
     const annotationLibraryId = input.reference?.libraryId ?? fresh.libraryId;
     await writeScientSourceZoteroSync(input.root, {
@@ -732,8 +744,11 @@ async function syncAfterSend(input: {
       itemVersion: input.sentVersion,
       syncedAt: new Date().toISOString(),
       metadata,
-      note: input.createdNotes.note,
-      ...(input.createdNotes.notes ? { notes: [...input.createdNotes.notes] } : {}),
+      note: input.created.notes.note,
+      ...(input.created.notes.zoteroNote !== undefined
+        ? { zoteroNote: input.created.notes.zoteroNote }
+        : {}),
+      ...(input.created.notes.notes ? { notes: [...input.created.notes.notes] } : {}),
       attachmentKeys: [],
     });
     return;
@@ -751,7 +766,7 @@ async function syncAfterSend(input: {
     annotationLibraryId: same
       ? (previous.annotationLibraryId ?? previous.libraryId)
       : (input.reference?.libraryId ?? fresh.libraryId),
-    notes: same ? previous : (input.createdNotes ?? { note: null, notes: [] }),
+    notes: same ? previous : (input.created?.notes ?? { note: null, notes: [] }),
   });
 }
 
@@ -979,7 +994,25 @@ async function sendOne(input: {
       message: "zotero.org did not accept this source.",
     };
   }
-  let createdNotes: Pick<ScientSourceZoteroSync, "note" | "notes"> = { note: null, notes: [] };
+  let createdItem = created.item;
+  if (!createdItem) {
+    try {
+      createdItem = decodeZoteroRawItem({
+        key: created.key,
+        version: created.version,
+        library: library.groupId
+          ? { type: "group", id: Number(library.groupId) }
+          : { type: "user", id: Number(library.account.userId) },
+        data: { ...data, key: created.key, version: created.version },
+      });
+    } catch {
+      createdItem = undefined;
+    }
+  }
+  let createdNotes: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes"> = {
+    note: null,
+    notes: [],
+  };
   if (record.note?.trim()) {
     const noteHtml = zoteroNoteHtml(record.note);
     const [createdNote] = await library.createItems(
@@ -987,12 +1020,17 @@ async function sendOne(input: {
       writeToken(record, "note"),
     );
     if (createdNote) {
+      const savedHtml = createdNote.item?.data.note ?? noteHtml;
+      const convertedNote = zoteroNotesMarkdown([
+        { itemKey: createdNote.key, html: savedHtml },
+      ]).markdown;
       createdNotes = {
         note: record.note,
+        ...(convertedNote !== record.note ? { zoteroNote: convertedNote } : {}),
         notes: zoteroNoteOriginals([
           {
             key: createdNote.key,
-            data: { itemType: "note", note: noteHtml },
+            data: { itemType: "note", note: savedHtml },
           },
         ]),
       };
@@ -1002,7 +1040,7 @@ async function sendOne(input: {
     ...input,
     itemKey: created.key,
     sentVersion: created.version,
-    createdNotes,
+    created: { ...(createdItem ? { item: createdItem } : {}), notes: createdNotes },
   });
   return { ...summary, outcome: "created", itemKey: created.key, message: null };
 }
