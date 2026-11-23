@@ -7,14 +7,18 @@ import {
 
 const packagedPolicy: MainWindowRequestHeaderPolicy = {
   desktopOrigin: "t3code://app",
-  mainWebContentsId: 42,
+  // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+  mainWebContentsIds: new Set([42]),
+  // SCIENT-FORK:END
   clerkFrontendApiHostname: "clerk.t3.codes",
   isDevelopment: false,
 };
 
 const devPolicy: MainWindowRequestHeaderPolicy = {
   desktopOrigin: "t3code-dev://app",
-  mainWebContentsId: 42,
+  // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+  mainWebContentsIds: new Set([42]),
+  // SCIENT-FORK:END
   clerkFrontendApiHostname: "clerk.t3.codes",
   devServerOrigin: "http://devbox.internal:5733",
   isDevelopment: true,

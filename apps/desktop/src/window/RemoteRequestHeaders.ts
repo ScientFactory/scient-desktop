@@ -7,7 +7,9 @@ const REMOTE_REQUEST_URL_PATTERNS = ["http://*/*", "https://*/*", "ws://*/*", "w
 
 export interface MainWindowRequestHeaderPolicy {
   readonly desktopOrigin: string;
-  readonly mainWebContentsId: number;
+  // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+  readonly mainWebContentsIds: ReadonlySet<number>;
+  // SCIENT-FORK:END
   readonly clerkFrontendApiHostname?: string | undefined;
   readonly devServerOrigin?: string | undefined;
   readonly isDevelopment: boolean;
@@ -92,7 +94,14 @@ export function stripDesktopOriginHeaders(
   policy: MainWindowRequestHeaderPolicy,
   details: MainWindowRequestHeaderDetails,
 ): Record<string, string> | undefined {
-  if (details.webContentsId !== policy.mainWebContentsId) return undefined;
+  // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+  if (
+    details.webContentsId === undefined ||
+    !policy.mainWebContentsIds.has(details.webContentsId)
+  ) {
+    return undefined;
+  }
+  // SCIENT-FORK:END
   if (isSubframe(details)) return undefined;
   if (!hasExactDesktopOriginHeader(details.requestHeaders, policy.desktopOrigin)) {
     return undefined;
