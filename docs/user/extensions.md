@@ -14,8 +14,9 @@ extensions.
   iMessage, Telegram, Figma, Zotero, GitHub, Slack, Notion, Dropbox, Linear, PubMed,
   Semantic Scholar, Hugging Face, Exa, Canva, Playwright, Context7, Vercel and Cloudflare), then
   one section per kind of work: Papers & literature, Biology & medicine, Code & developer tools,
-  Data & databases, Cloud, DevOps & security, and more. Categories with only a few picks, such
-  as AI & machine learning, appear as links after these sections. Each section shows its
+  AI & machine learning, Data & databases, Cloud, DevOps & security, and more. Categories with
+  only a few picks, such as Social science, economics & finance, appear as links after these
+  sections. Each section shows its
   most useful picks, up to eight and in full rows; select its title to see the whole category,
   including the matching plugins from each agent's store. After them come the features built into Scient,
   each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Sections and categories list

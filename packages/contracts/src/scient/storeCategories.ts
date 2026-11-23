@@ -1,7 +1,7 @@
-import type { ExtensionCategory } from "./extensions.ts";
+import type { ListedExtensionCategory } from "./extensions.ts";
 
 /** A store's own category label, lower-cased, to Scient's Discover categories. */
-const STORE_CATEGORIES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
+const STORE_CATEGORIES: Readonly<Record<string, readonly ListedExtensionCategory[]>> = {
   "education & research": ["papers"],
   research: ["papers"],
   learning: ["papers"],
@@ -21,12 +21,12 @@ const STORE_CATEGORIES: Readonly<Record<string, readonly ExtensionCategory[]>> =
   communication: ["communication"],
   creativity: ["figures"],
   design: ["figures"],
-  math: ["physics-math"],
-  location: ["earth"],
+  math: ["data"],
+  location: ["data"],
   "business & operations": ["projects"],
   finance: ["social-science"],
 };
-const OVERRIDES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
+const OVERRIDES: Readonly<Record<string, readonly ListedExtensionCategory[]>> = {
   zotero: ["papers"],
   "life-science-research": ["biology"],
   "ngs-analysis": ["biology"],
@@ -37,18 +37,18 @@ const OVERRIDES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
   deepnote: ["data"],
   hex: ["data"],
   motherduck: ["data"],
-  "math-olympiad": ["physics-math"],
-  "math-proof": ["physics-math"],
+  "math-olympiad": ["data"],
+  "math-proof": ["data"],
   "10x-genomics": ["biology"],
-  skywatch: ["earth"],
+  skywatch: ["data"],
   dominodatalab: ["data"],
   "neon-postgres": ["data", "code"],
   supabase: ["data", "code"],
   biorender: ["biology", "figures"],
   fiftyone: ["data", "code"],
   "huggingface-skills": ["ai-ml", "code", "data"],
-  mapbox: ["earth", "code"],
-  "amazon-location-service": ["earth", "code"],
+  mapbox: ["code"],
+  "amazon-location-service": ["code"],
   // Labelled productivity by their stores.
   box: ["files"],
   dropbox: ["files"],
@@ -120,7 +120,7 @@ const OVERRIDES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
 export function storeCategories(
   name: string,
   category: string | undefined,
-): readonly ExtensionCategory[] {
+): readonly ListedExtensionCategory[] {
   return (
     OVERRIDES[name.toLowerCase()] ?? STORE_CATEGORIES[category?.trim().toLowerCase() ?? ""] ?? []
   );

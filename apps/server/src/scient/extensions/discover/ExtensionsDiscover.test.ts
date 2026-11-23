@@ -693,6 +693,9 @@ describe("curated Discover catalog", () => {
       expect(
         server.categories.filter((category) => category !== "most-used").length,
       ).toBeGreaterThan(0);
+      // Retired categories (physics-math, earth) list no section, so an entry there is unreachable.
+      for (const category of server.categories)
+        expect(CATALOG_CATEGORY_ORDER, server.id).toContain(category);
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
