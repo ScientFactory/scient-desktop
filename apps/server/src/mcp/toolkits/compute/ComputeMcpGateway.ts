@@ -135,7 +135,6 @@ export const ComputeMcpGatewayLive = Layer.effect(
     const resultHandoff = makeResultHandoff({
       layout: { computeDir },
       gateway: rpc,
-      compute,
       process: yield* LocalExecutionProcess.ExecutionProcess,
     });
     return ComputeMcpGateway.of({

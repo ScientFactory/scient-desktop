@@ -4444,7 +4444,6 @@ export const layerWsRpc = (
             ),
             layout: { computeDir: config.computeDir },
             gateway: computeGateway,
-            compute,
           }),
           // SCIENT-FORK:END
           // SCIENT-FORK:START — linked results share Compute's project resolution.

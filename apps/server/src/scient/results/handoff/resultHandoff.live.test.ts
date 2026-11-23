@@ -464,8 +464,8 @@ describe.runIf(Boolean(RECIPIENT))("owned process cancellation", () => {
         gateway: {
           project: () => Effect.die("Unused"),
           inspectRuntimes: () => Effect.die("Unused"),
+          listAllExecutions: () => Effect.die("Unused"),
         },
-        compute: { listExecutions: () => Effect.die("Unused") },
       });
       const verificationId = "e29f4ff3-4af4-45e0-8cbc-11694558ac38";
       const verify = yield* handoff

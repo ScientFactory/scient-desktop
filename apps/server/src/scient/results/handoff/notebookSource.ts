@@ -41,7 +41,7 @@ export function portableNotebook(
   recordedCells: ReadonlyArray<string> | undefined,
 ): string {
   const saved = savedNotebookCode(contents);
-  const code = [saved, recordedCells].find(
+  const code = [saved, recordedCells, saved?.filter((cell) => cell.trim() !== "")].find(
     (cells) => cells != null && hashBytes(cells.join("\n")) === sha256,
   );
   if (code == null) {

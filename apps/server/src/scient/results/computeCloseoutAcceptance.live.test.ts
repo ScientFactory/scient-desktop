@@ -42,11 +42,13 @@ import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts"
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 import { ComputeResults, layer as resultsLayer } from "./ComputeResults.ts";
+import { makeResultHandoff } from "./handoff/ResultHandoff.ts";
 import { makeResultOperations } from "./resultOperations.ts";
 import { makeResultsReader } from "./resultRevisions.ts";
 
 const python = NodeProcess.env.SCIENT_TEST_PYTHON;
 const fixture = NodeProcess.env.SCIENT_TEST_THRESHOLD_PROJECT;
+const recipientPython = NodeProcess.env.HANDOFF_TEST_RECIPIENT ?? python;
 
 const makeAcceptanceLayers = (cwd: string, stateDir: string) => {
   const config = ServerConfig.layerTest(cwd, stateDir);
@@ -72,12 +74,13 @@ const makeAcceptanceLayers = (cwd: string, stateDir: string) => {
     paths,
     config,
     resultsLayer.pipe(Layer.provide(compute), Layer.provide(config)),
+    LocalExecutionProcess.layer.pipe(Layer.provide(NodeServices.layer)),
   );
 };
 
 describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", () => {
   it.live(
-    "covers setup failure skip/replay with inline animation and observed writes, sweep/reader/compare, fail/retain, and parameterized agent history",
+    "covers setup failure skip/replay with inline animation and observed writes, sweep/reader/handoff, fail/retain, compare, and parameterized agent history",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -275,39 +278,88 @@ describe.runIf(Boolean(python && fixture))("compute closeout live acceptance", (
           });
           yield* fs.remove(outsidePath).pipe(Effect.ignore);
 
-          // 2. Threshold sweep on notebook (0.3, 0.5, 0.7) -> Reader reads exact saved alternatives without starting a kernel
-          const publishNotebook = Effect.fn("Acceptance.publishNotebook")(function* (
-            threshold: string,
-          ) {
-            const run = yield* operations.rerun({
-              cwd,
-              scriptPath: "threshold.ipynb",
-              parameters: { threshold },
-            });
-            if (run._tag !== "published") return yield* Effect.die(run.message);
-            return run.summary.revision;
+          // 2. Publish a baseline, then sweep through a failure and preserve the baseline.
+          const notebookAddress = { cwd, scriptPath: "threshold.ipynb" };
+          const notebookFile = NodePath.join(cwd, notebookAddress.scriptPath);
+          const source: { cells: unknown[] } = JSON.parse(yield* fs.readFileString(notebookFile));
+          source.cells.splice(1, 0, {
+            cell_type: "code",
+            metadata: {},
+            source: " ",
+            execution_count: null,
+            outputs: [],
           });
-          const revNb03 = yield* publishNotebook("0.3");
-          const revNb05 = yield* publishNotebook("0.5");
-          const revNb07 = yield* publishNotebook("0.7");
+          yield* fs.writeFileString(notebookFile, JSON.stringify(source));
+          const baseline = yield* operations.rerun({
+            ...notebookAddress,
+            parameters: { threshold: "0.5" },
+          });
+          if (baseline._tag !== "published") return yield* Effect.die(baseline.message);
+          const savedNotebook = yield* fs.readFile(notebookFile);
 
-          const alternatives = yield* notebookReader({ cwd, path: "threshold.ipynb" });
+          const { runId } = yield* notebooks.start({
+            ...notebookAddress,
+            sweep: [{ threshold: "0.3" }, { threshold: "1.1" }, { threshold: "0.7" }],
+          });
+          const sweepOutcome = yield* notebooks.wait({ ...notebookAddress, runId });
+          if (sweepOutcome._tag !== "published") return yield* Effect.die(sweepOutcome.message);
+          const sweepJob = yield* notebooks.status({ ...notebookAddress, runId });
+          expect(sweepJob?.sweepSummary).toMatchObject({
+            total: 3,
+            saved: 2,
+            failures: [{ index: 1, parameters: { threshold: "1.1" } }],
+          });
+
+          const alternatives = yield* notebookReader({ cwd, path: notebookAddress.scriptPath });
           const byThreshold = new Map(
             alternatives.runs.map((run) => [
               run.parameters.find((param) => param.name === "threshold")?.value,
               run,
             ]),
           );
-          expect(byThreshold.get("0.3")?.revision).toBe(revNb03);
-          expect(byThreshold.get("0.5")?.revision).toBe(revNb05);
-          expect(byThreshold.get("0.7")?.revision).toBe(revNb07);
-          expect(byThreshold.has("0.6")).toBe(false);
+          expect(alternatives.publishedRevision).toBe(baseline.summary.revision);
+          expect(byThreshold.get("0.3")?.revision).toBeDefined();
+          expect(byThreshold.get("0.5")?.revision).toBe(baseline.summary.revision);
+          expect(byThreshold.get("0.7")?.revision).toBe(sweepOutcome.summary.revision);
+          expect(byThreshold.has("1.1")).toBe(false);
+          expect(yield* fs.readFile(notebookFile)).toEqual(savedNotebook);
           expect(byThreshold.get("0.5")?.values).toContainEqual(
             expect.objectContaining({ output: "metrics.json", pointer: "/recall", value: "0.8" }),
           );
           expect(byThreshold.get("0.7")?.values).toContainEqual(
             expect.objectContaining({ output: "metrics.json", pointer: "/recall", value: "0.6" }),
           );
+
+          const handoff = makeResultHandoff({
+            layout: { computeDir },
+            process: yield* LocalExecutionProcess.ExecutionProcess,
+            gateway,
+          });
+          const selectedRevision = sweepOutcome.summary.revision;
+          const exported = yield* handoff.exportPackage({
+            cwd,
+            destination: instance,
+            revision: selectedRevision,
+            includeInputs: ["data/predictions.csv"],
+          });
+          const manifest = JSON.parse(
+            yield* fs.readFileString(NodePath.join(exported.folder, "manifest.json")),
+          );
+          expect(manifest).toMatchObject({
+            revision: selectedRevision,
+            parameters: [{ name: "threshold", value: "0.7", source: "override" }],
+          });
+          const verified = yield* handoff.verify({
+            packageFolder: exported.folder,
+            executable: recipientPython!,
+            allowExecution: true,
+          });
+          expect(verified.report).toMatchObject({ status: "verified" });
+          expect(verified.report.outputs.map(({ path, status }) => [path, status])).toEqual([
+            ["confusion.csv", "matched"],
+            ["metrics.json", "matched"],
+            ["roc.png", "matched"],
+          ]);
 
           // 3. Threshold script publish 0.5 -> fail 1.1 retains 0.5 -> parameterized agent run 0.7 records actual History -> compare 0.5 vs 0.7
           const rev05Run = yield* operations.rerun({

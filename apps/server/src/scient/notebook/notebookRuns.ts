@@ -347,7 +347,7 @@ export function makeNotebookRuns(deps: {
         return { _tag: "failed" as const, message: "The notebook run was stopped." };
       }
       const finish = ran.at(-1)?.result?.finishedAt ?? ran[0]!.request.submittedAt;
-      const code = plan.cells.map(({ source }) => source).join("\n");
+      const code = cells.map(({ code }) => code).join("\n");
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {
           yield* project.admission?.assertCurrent ?? Effect.void;

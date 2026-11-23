@@ -244,8 +244,8 @@ it.effect(
         gateway: {
           project: () => Effect.succeed({ projectId: ComputeProjectId.make("project"), root }),
           inspectRuntimes: () => Effect.die("Unused"),
+          listAllExecutions: () => Effect.succeed([]),
         },
-        compute: { listExecutions: () => Effect.succeed([]) },
       });
       const latest = yield* handoff.exportPackage({
         cwd: root,

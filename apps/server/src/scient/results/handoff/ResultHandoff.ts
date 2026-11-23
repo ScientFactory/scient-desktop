@@ -16,7 +16,6 @@ import * as Effect from "effect/Effect";
 
 import packageJson from "../../../../package.json" with { type: "json" };
 import type { ComputeRpcGateway } from "../../compute/ComputeRpcGateway.ts";
-import type { ComputeSessionService } from "../../compute/ComputeSessionService.ts";
 import type { ExecutionProcess } from "../../execution/LocalExecutionProcess.ts";
 import { makeResultsReader, type ResultsLayout } from "../resultRevisions.ts";
 import { exportResultPackage } from "./exportResultPackage.ts";
@@ -39,8 +38,7 @@ type RevisionSelection = {
 export function makeResultHandoff(options: {
   readonly layout: ResultsLayout;
   readonly process: ExecutionProcess["Service"];
-  readonly gateway: Pick<ComputeRpcGateway, "project" | "inspectRuntimes">;
-  readonly compute: Pick<ComputeSessionService["Service"], "listExecutions">;
+  readonly gateway: Pick<ComputeRpcGateway, "project" | "inspectRuntimes" | "listAllExecutions">;
 }) {
   const verifications = new Map<string, Deferred.Deferred<void>>();
   const exports = new Map<string, { current: ResultHandoffExportProgress | null }>();
@@ -99,9 +97,9 @@ export function makeResultHandoff(options: {
       });
     }
     const { project, reader, revision } = yield* readRevision(input);
-    const history = yield* options.compute
-      .listExecutions({
-        projectId: project.projectId,
+    const history = yield* options.gateway
+      .listAllExecutions({
+        cwd: project.root,
         sessionId: ComputeSessionId.make(revision.run.sessionId),
       })
       .pipe(Effect.orElseSucceed(() => []));
@@ -110,19 +108,34 @@ export function makeResultHandoff(options: {
     );
     const recorded = history[end];
     const recordedScript = revision.script.kind === "notebook" ? undefined : recorded?.request.code;
+    // Fresh notebook revisions use their first cell as the batch ID.
+    const recordedSource = recorded?.request.source;
+    const batchId =
+      recordedSource?._tag === "document" ? recordedSource.notebookBatch?.id : undefined;
     const recordedCells =
       recorded === undefined || revision.script.kind !== "notebook"
         ? undefined
-        : history.slice(0, end + 1).flatMap(({ request, result }) => {
-            const { source } = request;
-            return request.generation === recorded.request.generation &&
-              result?.status === "succeeded" &&
-              source._tag === "document" &&
-              source.origin === "cell" &&
-              source.path === revision.script.path
-              ? [request.code]
-              : [];
-          });
+        : (batchId === undefined ? history.slice(0, end + 1) : history)
+            .flatMap(({ request, result }, index) => {
+              const { source } = request;
+              if (
+                request.generation !== recorded.request.generation ||
+                result?.status !== "succeeded" ||
+                source._tag !== "document" ||
+                source.origin !== "cell" ||
+                source.path !== revision.script.path ||
+                (batchId !== undefined && source.notebookBatch?.id !== batchId)
+              )
+                return [];
+              return [
+                {
+                  index: batchId === undefined ? index : (source.notebookBatch?.index ?? index),
+                  code: request.code,
+                },
+              ];
+            })
+            .toSorted((first, second) => first.index - second.index)
+            .map(({ code }) => code);
     const createdAt = DateTime.formatIso(yield* DateTime.now);
     const entry: { current: ResultHandoffExportProgress | null } = { current: null };
     const id = input.progressId;
