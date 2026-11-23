@@ -1833,7 +1833,7 @@ async function importZoteroOperationItem(input: {
       if (annotationLibraryId === undefined) {
         throw new Error("This source is not linked to a Zotero item.");
       }
-      let omittedOriginalNoteHtml = base?.notes?.some((entry) => entry.html === undefined) ?? false;
+      let omittedOriginalNoteHtml = base?.importOmittedOriginalNoteHtml === true;
       if (!base) {
         const saved = await recordZoteroSync({
           root: input.root,
@@ -1842,6 +1842,7 @@ async function importZoteroOperationItem(input: {
           attachmentKeys: files.map((file) => file.attachmentKey),
           pdfs: Object.fromEntries(pdfs),
           annotationLibraryId,
+          recordImportOmission: true,
         });
         omittedOriginalNoteHtml = saved.omittedOriginalNoteHtmlCount > 0;
       }

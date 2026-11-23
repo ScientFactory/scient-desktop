@@ -412,6 +412,8 @@ export const ScientSourceZoteroSync = Schema.Struct({
       }),
     ),
   ),
+  /** Whether the initial import sync write omitted any original note HTML for size; preserved across Refresh. */
+  importOmittedOriginalNoteHtml: Schema.optionalKey(Schema.Boolean),
   attachmentKeys: Schema.Array(NonEmptyString),
   /** Each Zotero file's PDF here, by sha256; absent when imported before it was kept. */
   pdfs: Schema.optionalKey(Schema.Record(NonEmptyString, NonEmptyString)),

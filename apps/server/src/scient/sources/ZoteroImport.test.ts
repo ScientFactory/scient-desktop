@@ -376,98 +376,127 @@ describe("Zotero import", () => {
     },
   );
 
-  it("keeps byte-limit original note HTML disclosure when resuming after the sync write", async () => {
-    const root = await project();
+  it("keeps byte-limit original note HTML disclosure when resuming after the sync write, even across an intervening Refresh", async () => {
     const body = `<p>${"漢".repeat(1_000)}</p>`.repeat(65);
-    const children = Array.from({ length: 10 }, (_, index) =>
+    const largeChildren = Array.from({ length: 10 }, (_, index) =>
       zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
         itemType: "note",
         note: `<h1>Note ${index + 1}</h1>${body}`,
       }),
     );
-    const library = {
-      items: new Map([
-        [
-          "ABCD2345",
-          {
-            item: zoteroItem(
-              "ABCD2345",
-              {
-                title: "Long multi-byte notes",
-                DOI: "10.1000/cjk-resume",
-              },
-              475425,
-            ),
-            children,
-          },
-        ],
-      ]),
-    };
-    const transport = fakeZoteroTransport(library);
-    const zotero = fakeZoteroAccess(transport);
-    const operationId = "resume-byte-cut-zotero";
-    await beginZoteroScopedImport({
-      root,
-      operationId,
-      scope: { kind: "library" },
-      zotero,
-      partSize: 1,
-    });
+    const shortChildren = [zoteroItem("NOTE0001", { itemType: "note", note: "<p>Short note</p>" })];
 
-    const rename = NodeFS.promises.rename;
-    let sawSyncWrite = false;
-    let interrupted = false;
-    NodeFS.promises.rename = async (from, to) => {
-      const target = String(to);
-      if (
-        sawSyncWrite &&
-        !interrupted &&
-        target.includes(`${NodePath.sep}operations${NodePath.sep}`)
-      ) {
-        interrupted = true;
+    const interruptAfterSyncWrite = async (
+      initialChildren: ReadonlyArray<ZoteroRawItem>,
+      refreshedChildren: ReadonlyArray<ZoteroRawItem>,
+      operationId: string,
+    ) => {
+      const root = await project();
+      const library = {
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem(
+                "ABCD2345",
+                {
+                  title: "Long multi-byte notes",
+                  abstractNote: "Already has an abstract.",
+                  DOI: "10.1000/cjk-resume",
+                },
+                475425,
+              ),
+              children: [...initialChildren],
+            },
+          ],
+        ]),
+      };
+      const transport = fakeZoteroTransport(library);
+      const zotero = fakeZoteroAccess(transport);
+      await beginZoteroScopedImport({
+        root,
+        operationId,
+        scope: { kind: "library" },
+        zotero,
+        partSize: 1,
+      });
+
+      const rename = NodeFS.promises.rename;
+      let sawSyncWrite = false;
+      let interrupted = false;
+      NodeFS.promises.rename = async (from, to) => {
+        const target = String(to);
+        if (
+          sawSyncWrite &&
+          !interrupted &&
+          target.includes(`${NodePath.sep}operations${NodePath.sep}`)
+        ) {
+          interrupted = true;
+          NodeFS.promises.rename = rename;
+          NodeModule.syncBuiltinESMExports();
+          throw new Error("Interrupted before recording import receipt.");
+        }
+        const result = await rename(from, to);
+        if (target.includes(`${NodePath.sep}zotero${NodePath.sep}`)) {
+          sawSyncWrite = true;
+        }
+        return result;
+      };
+      NodeModule.syncBuiltinESMExports();
+      try {
+        const failed = await advanceSourceImport({ root, operationId, zotero });
+        expect(failed.items[0]).toMatchObject({
+          state: "failed",
+          message: "Interrupted before recording import receipt.",
+        });
+      } finally {
         NodeFS.promises.rename = rename;
         NodeModule.syncBuiltinESMExports();
-        throw new Error("Interrupted before recording import receipt.");
       }
-      const result = await rename(from, to);
-      if (target.includes(`${NodePath.sep}zotero${NodePath.sep}`)) {
-        sawSyncWrite = true;
-      }
-      return result;
+      expect(sawSyncWrite).toBe(true);
+      expect(interrupted).toBe(true);
+
+      const [partial] = await listScientSourceRecords(root);
+      expect(partial).toBeDefined();
+      const entry = library.items.get("ABCD2345")!;
+      library.items.set("ABCD2345", { ...entry, children: [...refreshedChildren] });
+      await refreshZoteroSources({ root, sourceIds: [partial!.sourceId], actor: "user", zotero });
+      const savedBeforeResume = await readScientSourceZoteroSync(root, partial!.sourceId);
+
+      await retrySourceImport({ root, operationId, itemKeys: ["ABCD2345"] });
+      const completed = await advanceSourceImport({ root, operationId, zotero });
+      expect(completed.state).toBe("completed");
+      expect(completed.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
+      expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toEqual(savedBeforeResume);
+      return completed;
     };
-    NodeModule.syncBuiltinESMExports();
-    try {
-      const failed = await advanceSourceImport({ root, operationId, zotero });
-      expect(failed.items[0]).toMatchObject({
-        state: "failed",
-        message: "Interrupted before recording import receipt.",
-      });
-    } finally {
-      NodeFS.promises.rename = rename;
-      NodeModule.syncBuiltinESMExports();
-    }
-    expect(sawSyncWrite).toBe(true);
-    expect(interrupted).toBe(true);
 
-    const [partial] = await listScientSourceRecords(root);
-    expect(partial).toBeDefined();
-    const savedBeforeResume = await readScientSourceZoteroSync(root, partial!.sourceId);
-    expect(savedBeforeResume?.notes).toHaveLength(10);
-    expect(savedBeforeResume?.notes?.some((entry) => entry.html === undefined)).toBe(true);
-
-    await retrySourceImport({ root, operationId, itemKeys: ["ABCD2345"] });
-    const completed = await advanceSourceImport({ root, operationId, zotero });
-    expect(completed.state).toBe("completed");
-    expect(completed.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
-    expect(completed.items[0]?.notBrought).toContainEqual({
+    // Direction 1: initial import dropped HTML for size, intervening Refresh switched to short note.
+    const omittedOnImport = await interruptAfterSyncWrite(
+      largeChildren,
+      shortChildren,
+      "resume-byte-cut-zotero",
+    );
+    expect(omittedOnImport.items[0]?.notBrought).toContainEqual({
       kind: "note-cut",
       name: "original",
       count: 1,
     });
-    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toEqual(savedBeforeResume);
-    expect(summarizeNotBrought(completed).map((line) => notBroughtName(line))).toContain(
-      "Notes not kept as Zotero wrote them (over 1,000,000 characters or 2 MiB together)",
+    expect(summarizeNotBrought(omittedOnImport).map((line) => notBroughtName(line))).toContain(
+      "Notes not kept as Zotero wrote them (exceeded size limit)",
     );
+
+    // Direction 2: initial import kept all originals, intervening Refresh hit the byte limit.
+    const keptOnImport = await interruptAfterSyncWrite(
+      shortChildren,
+      largeChildren,
+      "resume-short-then-large-zotero",
+    );
+    expect(
+      keptOnImport.items[0]?.notBrought?.some(
+        (entry) => entry.kind === "note-cut" && entry.name === "original",
+      ) ?? false,
+    ).toBe(false);
   });
 
   it.each([

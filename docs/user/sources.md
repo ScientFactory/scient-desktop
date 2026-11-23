@@ -479,7 +479,8 @@ too long to keep (over 100,000 characters), files that are not PDFs,
 links kept as attachments, PDFs Zotero could not hand over, images in notes,
 notes too long to keep whole (a note holds 100,000 characters; what does not
 fit is left out from a paragraph on), notes not kept as Zotero wrote them
-(Scient keeps up to 1,000,000 characters and 2 MiB of a reference's notes that way), notes and
+(Scient keeps up to 1,000,000 characters of original note HTML within a 2 MiB
+sync file that also holds the source's text and metadata), notes and
 files that belong to no reference, and collections that could not be made or
 filled here (the Library holds 500 collections, ten levels, names of 200
 characters, and 20,000 sources in one collection).

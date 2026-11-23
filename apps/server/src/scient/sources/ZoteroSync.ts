@@ -200,6 +200,8 @@ export async function recordZoteroSync(input: {
   readonly annotationLibraryId?: string;
   /** The notes of an earlier base, kept when what was written to Zotero had none. */
   readonly notes?: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
+  /** Persist whether the initial import sync write omitted original note HTML. */
+  readonly recordImportOmission?: boolean;
 }): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const reference = zoteroReference(input.material.candidate);
   if (!reference) return { omittedOriginalNoteHtmlCount: 0 };
@@ -209,23 +211,28 @@ export async function recordZoteroSync(input: {
     ...input.material.candidate,
     customType: input.material.candidate.customType ?? null,
   });
-  return writeScientSourceZoteroSync(input.root, {
-    formatVersion: 1,
-    sourceId: input.record.sourceId,
-    libraryId: reference.libraryId,
-    ...(input.annotationLibraryId !== undefined && input.annotationLibraryId !== reference.libraryId
-      ? { annotationLibraryId: input.annotationLibraryId }
-      : {}),
-    itemKey: reference.itemKey,
-    itemVersion: reference.itemVersion,
-    syncedAt: new Date().toISOString(),
-    metadata,
-    note: notes.note,
-    ...(zoteroNote !== undefined ? { zoteroNote } : {}),
-    ...(notes.notes ? { notes: [...notes.notes] } : {}),
-    attachmentKeys: [...input.attachmentKeys],
-    ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
-  });
+  return writeScientSourceZoteroSync(
+    input.root,
+    {
+      formatVersion: 1,
+      sourceId: input.record.sourceId,
+      libraryId: reference.libraryId,
+      ...(input.annotationLibraryId !== undefined &&
+      input.annotationLibraryId !== reference.libraryId
+        ? { annotationLibraryId: input.annotationLibraryId }
+        : {}),
+      itemKey: reference.itemKey,
+      itemVersion: reference.itemVersion,
+      syncedAt: new Date().toISOString(),
+      metadata,
+      note: notes.note,
+      ...(zoteroNote !== undefined ? { zoteroNote } : {}),
+      ...(notes.notes ? { notes: [...notes.notes] } : {}),
+      attachmentKeys: [...input.attachmentKeys],
+      ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
+    },
+    ...(input.recordImportOmission ? [{ recordImportOmission: true }] : []),
+  );
 }
 
 /** The connection to use: the one asked for, else whichever is ready now. */
@@ -503,6 +510,9 @@ async function refreshOne(input: {
     note: plan.base.note,
     ...(plan.base.zoteroNote !== undefined ? { zoteroNote: plan.base.zoteroNote } : {}),
     ...(plan.base.notes ? { notes: [...plan.base.notes] } : {}),
+    ...(base?.importOmittedOriginalNoteHtml !== undefined
+      ? { importOmittedOriginalNoteHtml: base.importOmittedOriginalNoteHtml }
+      : {}),
     attachmentKeys: attached.keys,
     pdfs: Object.fromEntries(pdfs),
   });
