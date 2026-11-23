@@ -497,7 +497,6 @@ describe("bounded binary previews", () => {
 
   it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs and type-13 ExifIFD pointers and rejects invalid metadata before decoding", async () => {
     let bytes = new ArrayBuffer(0);
-    let exifEntry = 0;
     for (const { pixels, expected } of [
       { pixels: [0, 255], expected: [255, 255, 255, 255, 0, 0, 0, 255] },
       { pixels: [0, 255, 255, 0], expected: [255, 255, 255, 255, 0, 0, 0, 0] },
@@ -520,7 +519,6 @@ describe("bounded binary previews", () => {
         ...(samples === 2 ? [[338, 2]] : []),
         [34665, exif, 13],
       ];
-      exifEntry = 10 + (tags.length - 1) * 12;
       bytes = new ArrayBuffer(exif + 8);
       const view = new DataView(bytes);
       view.setUint16(0, 0x4949);
@@ -548,20 +546,13 @@ describe("bounded binary previews", () => {
         URL.revokeObjectURL(src);
       }
     }
+    // SCIENT-FORK:START — Scient's TIFF decoder never follows Exif or GPS directories, so their
+    // pointers are not checked (nor located: upstream's exifEntry is gone); it refuses truncated
+    // metadata in its own words.
     for (const [mutate, message] of [
-      [
-        (view: DataView) => view.setUint16(exifEntry + 2, 3, true),
-        "Invalid TIFF metadata pointer.",
-      ],
-      [
-        (view: DataView) => view.setUint32(exifEntry + 4, 2, true),
-        "Invalid TIFF metadata pointer.",
-      ],
-      [
-        (view: DataView) => view.setUint32(14, 1_000_000, true),
-        "This TIFF has too much or truncated metadata.",
-      ],
+      [(view: DataView) => view.setUint32(14, 1_000_000, true), "Invalid TIFF metadata."],
     ] as const) {
+      // SCIENT-FORK:END
       const copy = bytes.slice(0);
       mutate(new DataView(copy));
       const invalid = URL.createObjectURL(new Blob([copy]));

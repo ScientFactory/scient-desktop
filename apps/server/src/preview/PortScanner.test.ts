@@ -1669,7 +1669,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
 
     return Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
-      expect(yield* scanner.scan()).toMatchObject([
+      // SCIENT-FORK: Scient lists only declared URLs.
+      const urls = [`http://localhost:${appPort}/`, `http://localhost:${devToolsPort}/`];
+      expect(yield* scanner.scan(urls)).toMatchObject([
         { port: appPort, pid: 4242, agent: { threadId: "thread-agent" } },
       ]);
     }).pipe(Effect.provide(layer));

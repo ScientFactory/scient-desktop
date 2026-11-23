@@ -3755,7 +3755,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const transcript = makeCodexReplayTranscript({
         scenario: "immediate-approval-response",
         entries: [
-          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run the command." }),
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId,
+            prompt: "Run the command.",
+            turnPolicy: { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly" } },
+          }),
           {
             type: "emit_inbound",
             label: "approval",
@@ -3820,15 +3825,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }),
       );
       yield* Deferred.succeed(runtimeReady, harness.runtime);
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("immediate-approval-attempt"),
-          text: "Run the command.",
-        }),
-      );
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("immediate-approval-attempt"),
+        text: "Run the command.",
+      });
+      // SCIENT-FORK: Full access accepts command approvals itself, so ask under approval-required.
+      yield* harness.runtime.startTurn({
+        ...turnInput,
+        runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode: "approval-required" },
+      });
       yield* harness.firstTerminal;
       assert.isTrue(sawRequest);
       assert.isTrue(hadApprovalNode, "an actionable request has its approval node");

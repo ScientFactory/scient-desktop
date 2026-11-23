@@ -648,6 +648,12 @@ describe("orchestrator MCP delegation", () => {
         clientRequestId: `${name}-delegate`,
       });
       expect(child.status).toBe("completed");
+      // The wait reads the child; the parent's task row settles from the child's events after it.
+      yield* fx.waitFor(parentThreadId, (projection) =>
+        projection.subagents.some(
+          (task) => task.id === child.taskId && task.status === "completed" && task.result !== null,
+        ),
+      );
       const messageId = MessageId.make(`message:mcp-child:${name}`);
       yield* fx.orchestrator.dispatch({
         type: "message.dispatch",

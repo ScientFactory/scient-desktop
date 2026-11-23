@@ -795,6 +795,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         Effect.gen(function* () {
           const attached = yield* Deferred.make<void>();
           const detached = yield* Deferred.make<void>();
+          const firstLive = yield* Deferred.make<void>();
           const held = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           let observeLive = false;
@@ -807,9 +808,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                   : Stream.unwrap(
                       Deferred.succeed(attached, undefined).pipe(
                         Effect.as(
-                          events
-                            .streamProjectedApplicationEvents(input)
-                            .pipe(Stream.ensuring(Deferred.succeed(detached, undefined))),
+                          events.streamProjectedApplicationEvents(input).pipe(
+                            Stream.tap(() => Deferred.succeed(firstLive, undefined)),
+                            Stream.ensuring(Deferred.succeed(detached, undefined)),
+                          ),
                         ),
                       ),
                     ),
@@ -864,6 +866,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               },
             ],
           });
+          // The shell's batch window starts its sleep when the update arrives; replay may deliver it late.
+          yield* Deferred.await(firstLive);
           yield* TestClock.adjust(Duration.millis(100));
           yield* Deferred.await(held);
           yield* app.v2.eventSink.write({

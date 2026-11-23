@@ -1054,7 +1054,8 @@ const writeParentRun = (input: {
             status: input.status,
             queuePosition: null,
             requestedAt: now,
-            startedAt: setupUnfinished ? null : now,
+            // A cancelled run here never started, so its queued input was never delivered.
+            startedAt: setupUnfinished || input.status === "cancelled" ? null : now,
             completedAt:
               input.status === "preparing" ||
               input.status === "running" ||

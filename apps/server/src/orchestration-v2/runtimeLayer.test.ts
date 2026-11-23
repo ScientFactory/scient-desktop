@@ -8587,8 +8587,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }
       const error = yield* settle.pipe(Effect.flip);
       assert.equal(error._tag, "OrchestratorDispatchError");
+      // SCIENT-FORK: Scient reports a blocked settle as a typed error carrying the reason.
       assert.equal(
-        error.cause,
+        (error.cause as { readonly message?: string }).message,
         `Thread ${threadId} is still running background agents or commands, and settling would end them. Wait for them to finish, or press Stop, then settle.`,
       );
       const projection = yield* orchestrator.getThreadProjection(threadId);

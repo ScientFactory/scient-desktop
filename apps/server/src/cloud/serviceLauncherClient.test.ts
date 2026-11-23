@@ -371,7 +371,8 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const baseDir = path.join(root, ".t3");
-      const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+      // SCIENT-FORK: Scient's pinned runtime layout.
+      const exe = (version: string) => pinnedRuntimePaths(path, baseDir, version).entryPath;
       const cwd = path.join(root, "work");
       const inCwd = path.join(cwd, "t3");
       for (const file of [exe("1.0.0"), exe("2.0.0")]) {
@@ -404,7 +405,8 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const baseDir = path.join(root, ".t3");
-      const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+      // SCIENT-FORK: Scient's pinned runtime layout.
+      const exe = (version: string) => pinnedRuntimePaths(path, baseDir, version).entryPath;
       const cwd = path.join(root, "work");
       const onPath = path.join(root, "bin/t3");
       for (const file of [exe("1.0.0"), exe("2.0.0")]) {

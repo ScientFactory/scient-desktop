@@ -84,10 +84,11 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
+      // SCIENT-FORK: Scient's asset states carry `refresh`.
       stubbedAsset.failed
-        ? { _tag: "Failure" }
+        ? { _tag: "Failure", refresh: () => {} }
         : stubbedAsset.url
-          ? { _tag: "Success", url: stubbedAsset.url }
+          ? { _tag: "Success", url: stubbedAsset.url, refresh: () => {} }
           : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
     useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
       stubbedAsset.url

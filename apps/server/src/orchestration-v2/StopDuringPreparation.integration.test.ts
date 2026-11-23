@@ -184,11 +184,8 @@ it.live.each(["run.interrupt", "thread.stop"] as const)(
         const pull = yield* Stream.toPull(
           orchestrator.streamStoredEventsFrom({ threadId, afterSequence: cursor }),
         );
-        for (const commandId of [
-          CommandId.make(`${name}-stop`),
-          CommandId.make(`${name}-stop-again`),
-        ]) {
-          yield* orchestrator.dispatch(
+        const stop = (commandId: CommandId) =>
+          orchestrator.dispatch(
             stopType === "run.interrupt"
               ? {
                   type: stopType,
@@ -198,6 +195,17 @@ it.live.each(["run.interrupt", "thread.stop"] as const)(
                   holdQueue: true,
                 }
               : { type: stopType, commandId, threadId },
+          );
+        yield* stop(CommandId.make(`${name}-stop`));
+        // Preparation observes the first Stop concurrently, so a repeat can find the run already
+        // interrupted; run.interrupt then refuses it, and only for that reason.
+        const again = yield* stop(CommandId.make(`${name}-stop-again`)).pipe(Effect.result);
+        if (again._tag === "Failure") {
+          assert.equal(stopType, "run.interrupt");
+          assert.include(String(again.failure.cause), `Run ${run.id} is not interruptible.`);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.status,
+            "interrupted",
           );
         }
         yield* Deferred.await(captureInterrupted).pipe(Effect.timeout("5 seconds"));

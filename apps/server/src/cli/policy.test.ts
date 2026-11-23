@@ -80,7 +80,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) => {
       );
 
       assert.include(
-        yield* fs.readFileString(path.join(home, "macos", "t3code.mobileconfig")),
+        // SCIENT-FORK: Scient names its macOS profile scient.mobileconfig.
+        yield* fs.readFileString(path.join(home, "macos", "scient.mobileconfig")),
         "Tilde Corp",
       );
     }),

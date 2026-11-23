@@ -4178,6 +4178,18 @@ it.effect.each(
         if (delegated.childThreadId === null) throw new Error("expected a child thread");
         const childThreadId = delegated.childThreadId;
         yield* Deferred.await(setupEntered);
+        // An async setup script runs beside the launch, which releases the run without waiting for it.
+        if (cancelAsync) {
+          yield* threads
+            .streamStoredEventsFrom({ threadId: childThreadId, eventType: "run.updated" })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" && stored.event.payload.status === "starting",
+              ),
+              Stream.runHead,
+            );
+        }
         const child = yield* threads.getThreadProjection(childThreadId);
         assert.equal(child.thread.lineage.parentThreadId, parentThreadId);
         assert.equal(child.thread.worktreePath, "/repo-worktrees/feature");
