@@ -112,6 +112,7 @@ import {
   updateScientSourceNote,
   sourceAttachmentAbsolutePath,
   scientSourceIdFor,
+  writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 
 import {
@@ -1835,13 +1836,15 @@ async function importZoteroOperationItem(input: {
           ? base
           : null;
       const reference = record.externalReferences.find((entry) => entry.system === "zotero");
-      // A retained base for this same item and library owns the stable highlight namespace,
-      // whoever wrote it; any other retained file must not name this import's highlights.
-      const sameItemBase =
-        base && base.itemKey === input.itemKey && base.libraryId === reference?.libraryId
+      // A retained base for this same item owns the stable highlight namespace: its own
+      // library's, or the legacy local "0" of this import's own baseline after the owner
+      // was verified; any other retained file must not name this import's highlights.
+      const namespaceBase =
+        base &&
+        base.itemKey === input.itemKey &&
+        (base.libraryId === reference?.libraryId || (ownBase === base && base.libraryId === "0"))
           ? base
           : null;
-      const namespaceBase = ownBase && ownBase.itemKey === input.itemKey ? ownBase : sameItemBase;
       const annotationLibraryId =
         namespaceBase?.annotationLibraryId ?? namespaceBase?.libraryId ?? reference?.libraryId;
       if (annotationLibraryId === undefined) {
@@ -1862,6 +1865,19 @@ async function importZoteroOperationItem(input: {
             : {}),
         });
         omittedOriginalNoteHtml = saved.omittedOriginalNoteHtmlCount > 0;
+      } else if (
+        namespaceBase === ownBase &&
+        ownBase.libraryId === "0" &&
+        reference !== undefined &&
+        reference.libraryId !== "0"
+      ) {
+        // Publish the verified owner transition Refresh could not save, keeping the "0" namespace.
+        await writeScientSourceZoteroSync(input.root, {
+          ...ownBase,
+          libraryId: reference.libraryId,
+          annotationLibraryId: ownBase.annotationLibraryId ?? "0",
+          syncedAt: new Date().toISOString(),
+        });
       }
       const unfiled = await addToZoteroCollections({
         root: input.root,

@@ -1337,6 +1337,9 @@ describe("Send to Zotero", () => {
       note: null,
       notes: [],
       importOmittedOriginalNoteHtml: true,
+      ...(record.origin?.operationId !== undefined
+        ? { importOperationId: record.origin.operationId }
+        : {}),
       attachmentKeys: [],
     });
     const org = zoteroOrg();

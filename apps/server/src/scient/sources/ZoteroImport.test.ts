@@ -667,6 +667,11 @@ describe("Zotero import", () => {
     const retained = await readScientSourceZoteroSync(root, record!.sourceId);
     expect(retained?.importOmittedOriginalNoteHtml).toBe(true);
     expect(retained?.libraryId).toBe("groups/77");
+    const [partial] = await listScientSourceRecords(root);
+    await refreshZoteroSources({ root, sourceIds: [partial!.sourceId], actor: "user", zotero });
+    const refreshedSync = await readScientSourceZoteroSync(root, record!.sourceId);
+    expect(refreshedSync?.importOperationId).toBe(partial?.origin?.operationId);
+    expect(refreshedSync?.importOmittedOriginalNoteHtml).toBeUndefined();
 
     await retrySourceImport({ root, operationId: "trash-reimport-second", itemKeys: ["ABCD2345"] });
     const second = await advanceSourceImport({
@@ -681,7 +686,7 @@ describe("Zotero import", () => {
       ) ?? false,
     ).toBe(false);
     const resaved = await readScientSourceZoteroSync(root, record!.sourceId);
-    expect(resaved?.importOmittedOriginalNoteHtml).toBe(false);
+    expect(resaved?.importOmittedOriginalNoteHtml).toBeUndefined();
     expect(resaved?.notes).toHaveLength(1);
     expect(resaved?.annotationLibraryId ?? resaved?.libraryId).toBe("475425");
     const [reimported] = await listScientSourceRecords(root);
@@ -834,7 +839,6 @@ describe("Zotero import", () => {
       operationId: "legacy-upgrade-resume",
       scope: { kind: "library" },
       zotero,
-      partSize: 1,
     });
     const rename = NodeFS.promises.rename;
     let sawSyncWrite = false;
@@ -921,6 +925,117 @@ describe("Zotero import", () => {
     });
     expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
     expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
+    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toMatchObject({
+      libraryId: "475425",
+      annotationLibraryId: "0",
+    });
+    const refreshedAgain = await refreshZoteroSources({
+      root,
+      sourceIds: [partial!.sourceId],
+      actor: "user",
+      zotero,
+    });
+    expect(refreshedAgain.items[0]?.outcome).not.toBe("failed");
+    expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
+  });
+
+  it("names highlights from the incoming library when a same-key baseline came from another library", async () => {
+    const root = await project();
+    const secondPdf = await pdf(root, "two.pdf");
+    const library = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem(
+              "ABCD2345",
+              {
+                title: "Same key in two libraries",
+                abstractNote: "Already has an abstract.",
+                DOI: "10.1000/same-key-namespace",
+              },
+              475425,
+            ),
+            children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>Original note</p>" })],
+          },
+        ],
+      ]),
+      files: new Map([["PDFB2345", secondPdf]]),
+      annotations: new Map([
+        [
+          "PDFB2345",
+          [
+            zoteroItem("MARK2345", {
+              itemType: "annotation",
+              parentItem: "PDFB2345",
+              annotationType: "highlight",
+              annotationText: "A quote on a scanned page",
+              annotationComment: "Keep this comment",
+              annotationColor: "#ffd400",
+              annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+            }),
+          ],
+        ],
+      ]),
+    };
+    const transport = fakeZoteroTransport(library);
+    const zotero = fakeZoteroAccess(transport);
+    await beginZoteroScopedImport({
+      root,
+      operationId: "same-key-first",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "same-key-first", zotero });
+    const [first] = await listScientSourceRecords(root);
+    expect(first).toBeDefined();
+    await removeScientSource({
+      root,
+      sourceId: first!.sourceId,
+      expectedRevision: first!.revision,
+    });
+    const entry = library.items.get("ABCD2345")!;
+    library.items.set("ABCD2345", {
+      ...entry,
+      children: [...entry.children, pdfAttachment("PDFB2345", "two.pdf")],
+    });
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "same-key-second",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const fault = failRenameOnce(
+      `${NodePath.sep}zotero${NodePath.sep}`,
+      "Interrupted at the sync write.",
+    );
+    try {
+      const failed = await advanceSourceImport({ root, operationId: "same-key-second", zotero });
+      expect(failed.items[0]).toMatchObject({ state: "failed" });
+    } finally {
+      fault.restore();
+    }
+    const [partial] = await listScientSourceRecords(root);
+    // As a Send to another library's same-key item would leave it.
+    const retained = (await readScientSourceZoteroSync(root, partial!.sourceId))!;
+    await writeScientSourceZoteroSync(root, {
+      ...retained,
+      libraryId: "groups/77",
+      annotationLibraryId: "groups/77",
+      ...(partial!.origin?.operationId !== undefined
+        ? { importOperationId: partial!.origin.operationId }
+        : {}),
+    });
+
+    await retrySourceImport({ root, operationId: "same-key-second", itemKeys: ["ABCD2345"] });
+    const finished = await advanceSourceImport({ root, operationId: "same-key-second", zotero });
+    expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
+    const [reimported] = await listScientSourceRecords(root);
+    const second = reimported!.attachments.find((attachment) => attachment.fileName === "two.pdf")!;
+    expect((await readScientAnnotationFile(root, second.sha256))?.unplaced).toMatchObject([
+      { annotationId: "ann_zotero_user_475425_MARK2345" },
+    ]);
   });
 
   it.each([

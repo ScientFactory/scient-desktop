@@ -3727,13 +3727,14 @@ export async function writeScientSourceZoteroSync(
           : await readBoundedJson(syncPath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(
               () => null,
             );
+      const importOperationId = state.importOperationId ?? existing?.importOperationId;
       prepared = {
         ...state,
-        ...(state.importOperationId === undefined && existing?.importOperationId !== undefined
-          ? { importOperationId: existing.importOperationId }
-          : {}),
+        ...(importOperationId !== undefined ? { importOperationId } : {}),
         ...(state.importOmittedOriginalNoteHtml === undefined &&
-        existing?.importOmittedOriginalNoteHtml !== undefined
+        existing?.importOmittedOriginalNoteHtml !== undefined &&
+        existing.importOperationId !== undefined &&
+        existing.importOperationId === importOperationId
           ? { importOmittedOriginalNoteHtml: existing.importOmittedOriginalNoteHtml }
           : {}),
       };
