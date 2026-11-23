@@ -15,7 +15,7 @@ import {
 import { workspaceFileHostPath } from "~/components/files/filePath";
 import { rightPanelHostRef, useRightPanelStore } from "~/rightPanelStore";
 import type { usePreparedConnection } from "~/state/session";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import {
@@ -97,6 +97,8 @@ export function useChatEnvironmentHtmlPreview<AssetError, PreviewError>(input: {
 export function useChatFileLinkOpening(input: {
   readonly threadRef: ScopedThreadRef | undefined;
   readonly cwd: string | undefined;
+  /** The folder the thread's file panel reads relative paths from, read at click time. */
+  readonly readPanelRoot: () => string | undefined;
   readonly environmentId: EnvironmentId | null;
   readonly changedFiles: ReadonlyArray<{ readonly path: string }> | undefined;
   readonly resolveEnvironmentFileLink: (
@@ -116,6 +118,7 @@ export function useChatFileLinkOpening(input: {
   const {
     threadRef,
     cwd,
+    readPanelRoot,
     environmentId,
     changedFiles,
     resolveEnvironmentFileLink,
@@ -173,9 +176,18 @@ export function useChatFileLinkOpening(input: {
         Math.max(0, deadline - Date.now()),
       );
       if (!isCurrentClick()) return;
+      const openPath = plan.kind === "resolved" ? plan.path : location;
+      // Markdown rendered in another checkout (a pull request body) names paths in that checkout.
+      const panelRoot = readPanelRoot();
       useRightPanelStore
         .getState()
-        .openFile(threadRef, plan.kind === "resolved" ? plan.path : location, line);
+        .openFile(
+          threadRef,
+          cwd && panelRoot !== undefined && cwd !== panelRoot
+            ? resolveWorkspaceFilePath(openPath, cwd)
+            : openPath,
+          line,
+        );
     })();
   };
   const openFileInPanel = (

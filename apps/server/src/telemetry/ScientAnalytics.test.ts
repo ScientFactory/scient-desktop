@@ -121,6 +121,37 @@ it.layer(NodeServices.layer)("ScientAnalytics", (it) => {
       }
     }),
   );
+  it.effect("refuses agent feedback reports while queueing other events", () =>
+    Effect.gen(function* () {
+      const analytics = (yield* ScientAnalytics.make).analytics;
+      assert.isTrue(yield* analytics.record("server.boot.heartbeat", { threadCount: 1 }));
+      assert.isFalse(
+        yield* analytics.record("agent.feedback", {
+          kind: "bug",
+          subject: "general",
+          expected: "synthetic expected",
+          actual: "synthetic actual",
+        } as never),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "scient-analytics-held-" }),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                SCIENT_ANALYTICS_ENABLED: "true",
+                SCIENT_ANALYTICS_TEST_ENDPOINT: "http://127.0.0.1:9/v1/events",
+              },
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("is completely inert by default", () =>
     Effect.gen(function* () {
       const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {

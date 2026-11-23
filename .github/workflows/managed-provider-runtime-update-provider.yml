@@ -352,6 +352,7 @@ jobs:
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
@@ -426,6 +427,7 @@ jobs:
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
@@ -504,6 +506,7 @@ jobs:
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
@@ -601,6 +604,7 @@ jobs:
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/serverSettings.ts \
             apps/server/src/policy \

@@ -142,6 +142,7 @@ function analyticsFixture() {
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
+        return true;
       }),
     flush: Effect.void,
   });
@@ -262,12 +263,10 @@ describe("native V2 analytics", () => {
                   fixture.service
                     .record(name, properties)
                     .pipe(
-                      Effect.andThen(
-                        Effect.suspend(() =>
-                          fixture.events.length === 2
-                            ? Deferred.succeed(recorded, undefined)
-                            : Effect.void,
-                        ),
+                      Effect.tap(() =>
+                        fixture.events.length === 2
+                          ? Deferred.succeed(recorded, undefined)
+                          : Effect.void,
                       ),
                     ),
               }),

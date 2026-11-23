@@ -165,6 +165,8 @@ export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
+export * from "./milestones.ts";
+export * from "./workflow.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
@@ -176,6 +178,7 @@ export * from "./worktreeSetup.ts";
 
 export * from "./providerCitationPresentation.ts";
 export * from "./secretRequest.ts";
+export * from "./agentFeedback.ts";
 export * from "./secretReference.ts";
 export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";

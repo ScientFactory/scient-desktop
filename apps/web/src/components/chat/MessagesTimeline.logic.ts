@@ -2617,6 +2617,10 @@ export function deriveMessagesTimelineRows(
     }
   }
 
+  // SCIENT-FORK:START — ThinkingRowFade hides Thinking once a streaming reply's lines appear, so the
+  // row stays through the reveal's short wait instead of leaving the turn blank.
+  const replyIsStreaming = false;
+  // SCIENT-FORK:END
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
@@ -2629,6 +2633,7 @@ export function deriveMessagesTimelineRows(
   if (
     input.isWorking &&
     input.latestRun?.turnEnded !== true &&
+    !replyIsStreaming &&
     !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&

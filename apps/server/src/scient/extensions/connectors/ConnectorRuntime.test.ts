@@ -906,6 +906,7 @@ describe("connector analytics", () => {
           record: (name, properties) =>
             Effect.sync(() => {
               events.push({ name, properties: { ...properties } });
+              return true;
             }),
         },
       });
@@ -950,6 +951,7 @@ describe("connector analytics", () => {
           record: (name, properties) =>
             Effect.sync(() => {
               events.push({ name, properties: { ...properties } });
+              return true;
             }),
         },
       });
