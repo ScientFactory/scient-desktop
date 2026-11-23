@@ -267,12 +267,13 @@ export const requestInSession = Effect.fn("EnvironmentRpc.request")(function* <
     environmentId: supervisor.target.environmentId,
     environmentLabel: supervisor.target.label,
     method: tag,
-    // SCIENT-FORK:START — Only suppress the generic warning for a Julia session start.
-    ...(tag === WS_METHODS.computeStartSession &&
-    typeof input === "object" &&
-    input !== null &&
-    "languageId" in input &&
-    input.languageId === "julia"
+    // SCIENT-FORK:START — Julia startup and result verification have their own status.
+    ...(tag === WS_METHODS.computeResultsVerify ||
+    (tag === WS_METHODS.computeStartSession &&
+      typeof input === "object" &&
+      input !== null &&
+      "languageId" in input &&
+      input.languageId === "julia")
       ? { suppressSlowWarning: true }
       : {}),
     // SCIENT-FORK:END
