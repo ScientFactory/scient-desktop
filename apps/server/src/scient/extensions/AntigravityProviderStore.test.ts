@@ -2,6 +2,12 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ProviderStorePage,
+} from "@t3tools/contracts";
+import type { AntigravityManagedRelease } from "../providerLifecycle/antigravityRuntimeRelease.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -9,14 +15,20 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as Scope from "effect/Scope";
+import type { ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 import { ANTIGRAVITY_MARKETPLACES, antigravityCategories } from "./AntigravityPluginCatalog.ts";
 import {
+  ANTIGRAVITY_CUSTOM_NOT_CLI,
+  ANTIGRAVITY_NO_CLI_RELEASE,
   ANTIGRAVITY_NOT_CLI,
+  ANTIGRAVITY_SYSTEM_NOT_CLI,
   antigravityPluginCommandEnvironment,
+  makeAntigravityInstancePlugins,
   makeAntigravityPluginActions,
 } from "./AntigravityProviderStore.ts";
 import { makeZip, renameInZip } from "./AntigravityPluginArchive.testkit.ts";
@@ -212,7 +224,11 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
   });
 
 const provide = <A, E>(
-  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
+  effect: Effect.Effect<
+    A,
+    E,
+    FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+  >,
 ) => Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("AntigravityProviderStore", () => {
@@ -729,6 +745,122 @@ it.live("refreshes every instance that shares the plugin folder after a change",
         }
       }
       expect((yield* latest(elsewhere.reports))._tag).toBe("None");
+    }),
+  ),
+);
+
+it.live("tells open pages when an update switches the runtime to agy, and only then", () =>
+  provide(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped();
+      const install = yield* SubscriptionRef.make<ProviderInstallState>({
+        driver: ProviderDriverKind.make("antigravity"),
+        operationId: null,
+        phase: "idle",
+        downloadedBytes: 0,
+        totalBytes: null,
+        version: null,
+        installedVersion: "1.4.5",
+        canRemove: true,
+        message: null,
+      });
+      let harnessPath: string | null = path.join(stateDir, "localharness_external");
+      const executable = (source: "managed" | "path" | "override") =>
+        Effect.sync(() => ({
+          executablePath: path.join(stateDir, "agy"),
+          harnessPath,
+          source,
+          version: harnessPath === null ? "1.0.0" : "1.4.5",
+          managedVersionDirectory: null,
+        }));
+      const gmail = yield* gmailZip;
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url === OFFICIAL.url
+              ? Response.json(officialFeed(gmail))
+              : new Response("", { status: 404 }),
+          ),
+        ),
+      );
+      // Only the identity matters here: a CLI release carries a SHA-512, a paired one a SHA-256.
+      const cliRelease = { version: "1.0.0", sha512: "a".repeat(128) };
+      const pairedRelease = { version: "1.4.6", sha256: "b".repeat(64), registryVersion: "1" };
+      const instance = (source: "managed" | "path" | "override", latest: object = cliRelease) =>
+        makeAntigravityInstancePlugins({
+          installation: {
+            resolve: () => executable(source),
+            acquire: () => executable(source),
+            changes: SubscriptionRef.changes(install),
+            latestRelease: Effect.succeed(latest as AntigravityManagedRelease),
+          },
+          binaryPath: source === "override" ? path.join(stateDir, "acp") : "",
+          environment: { HOME: stateDir },
+          stateDir,
+        }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      const store = (yield* instance("managed")).actions.store!;
+      // Each older runtime's reason names the step Settings offers for it, and the store names
+      // that step only when it installs the agy CLI.
+      const answer = (page: ProviderStorePage) => ({
+        message: page.message,
+        step: page.entries.find((entry) => entry.name === "gmail")?.storeUnavailableStep,
+      });
+      const answers = {
+        managed: answer(yield* store.search({})),
+        custom: answer(yield* (yield* instance("override")).actions.store!.search({})),
+        onPath: answer(yield* (yield* instance("path")).actions.store!.search({})),
+        paired: answer(
+          yield* (yield* instance("managed", pairedRelease)).actions.store!.search({}),
+        ),
+        pairedOnPath: answer(
+          yield* (yield* instance("path", pairedRelease)).actions.store!.search({}),
+        ),
+      };
+      expect(answers).toEqual({
+        managed: { message: ANTIGRAVITY_NOT_CLI, step: "update" },
+        custom: { message: ANTIGRAVITY_CUSTOM_NOT_CLI, step: undefined },
+        onPath: { message: ANTIGRAVITY_SYSTEM_NOT_CLI, step: "install" },
+        paired: { message: ANTIGRAVITY_NO_CLI_RELEASE, step: undefined },
+        pairedOnPath: { message: ANTIGRAVITY_NO_CLI_RELEASE, step: undefined },
+      });
+      const nextChange = () =>
+        store.changes!.pipe(
+          Stream.runHead,
+          Effect.timeoutOption("300 millis"),
+          Effect.map(Option.flatten),
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+      // Download progress, and a finished install of the same older runtime, change nothing.
+      const quiet = yield* nextChange();
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        operationId: "repair",
+        phase: "downloading" as const,
+      }));
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        phase: "succeeded" as const,
+      }));
+      expect((yield* Fiber.join(quiet))._tag).toBe("None");
+
+      const switched = yield* nextChange();
+      harnessPath = null;
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        operationId: "update",
+        phase: "downloading" as const,
+      }));
+      yield* SubscriptionRef.update(install, (state) => ({
+        ...state,
+        phase: "succeeded" as const,
+        installedVersion: "1.0.0",
+      }));
+      expect((yield* Fiber.join(switched))._tag).toBe("Some");
+      expect((yield* store.search({})).message).not.toBe(ANTIGRAVITY_NOT_CLI);
     }),
   ),
 );

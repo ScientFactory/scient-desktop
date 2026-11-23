@@ -57,6 +57,16 @@ function providerFromResult(
   return provider;
 }
 
+/** A plan for another action (a shared request's answer) is never started in this one's place. */
+function planForAction(
+  plan: ProviderRuntimePlan,
+  action: ProviderManagedRuntimeAction,
+): ProviderRuntimePlan {
+  if (plan.action !== action)
+    throw new Error("Scient prepared a different runtime action. Try again.");
+  return plan;
+}
+
 function resultValue<A, E>(result: AtomCommandResult<A, E>, fallback: string): A {
   if (result._tag === "Success") return result.value;
   if (isAtomCommandInterrupted(result)) throw new Error("The provider action was cancelled.");
@@ -73,6 +83,8 @@ export function useStartProviderRuntimeAction(): (input: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ServerProvider["instanceId"];
   readonly action: ProviderManagedRuntimeAction;
+  /** Why this plan must not start (it would not do what the caller offered), or null. */
+  readonly refuse?: ((plan: ProviderRuntimePlan) => string | null) | undefined;
 }) => Promise<ServerProvider> {
   const planProviderRuntime = useAtomCommand(serverEnvironment.planProviderRuntime, {
     reportFailure: false,
@@ -80,11 +92,16 @@ export function useStartProviderRuntimeAction(): (input: {
   const startProviderRuntime = useAtomCommand(serverEnvironment.startProviderRuntime, {
     reportFailure: false,
   });
-  return async ({ environmentId, instanceId, action }) => {
-    const plan = resultValue(
-      await planProviderRuntime({ environmentId, input: { instanceId, action } }),
-      "Scient could not prepare the provider runtime action.",
+  return async ({ environmentId, instanceId, action, refuse }) => {
+    const plan = planForAction(
+      resultValue(
+        await planProviderRuntime({ environmentId, input: { instanceId, action } }),
+        "Scient could not prepare the provider runtime action.",
+      ),
+      action,
     );
+    const refused = refuse?.(plan);
+    if (refused) throw new Error(refused);
     const started = resultValue(
       await startProviderRuntime({
         environmentId,
@@ -192,7 +209,10 @@ export function useProviderLifecycleController(input: {
       environmentId: input.environmentId,
       input: { instanceId, action },
     });
-    return resultValue(result, "Scient could not prepare the provider runtime action.");
+    return planForAction(
+      resultValue(result, "Scient could not prepare the provider runtime action."),
+      action,
+    );
   };
 
   const startRuntime = async (

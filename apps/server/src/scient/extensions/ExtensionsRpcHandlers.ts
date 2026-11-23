@@ -21,7 +21,12 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import {
+  ProviderInstanceRegistry,
+  type ProviderInstanceRegistryShape,
+} from "../../provider/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
+import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
@@ -99,6 +104,7 @@ export const changeFeedLayer = Layer.effect(
     const plugins = yield* ScientPluginRegistry;
     const receipts = yield* ExtensionDeliveryReceipts;
     const providers = yield* ProviderRegistry;
+    const instances = yield* ProviderInstanceRegistry;
     const revision = yield* Ref.make(0);
     const events = yield* PubSub.unbounded<ExtensionsChangedEvent>();
     const supportChanges = Stream.map(
@@ -125,6 +131,9 @@ export const changeFeedLayer = Layer.effect(
           : []),
         Stream.map(receipts.changes, () => undefined),
         supportChanges,
+        // A replaced instance can answer differently (a new runtime, a changed path) while its
+        // snapshot reads the same.
+        instances.streamChanges,
       ],
       { concurrency: "unbounded" },
     ).pipe(
@@ -158,6 +167,50 @@ export const validateConnectorAgents = Effect.fn("ExtensionsRpc.validateConnecto
   },
 );
 
+/**
+ * Announces each provider store's own changes for as long as the caller's scope is open, following
+ * every instance replacement to its new store, and reads each new store's inventory once.
+ */
+export const followProviderStoreChanges = Effect.fn("ExtensionsRpc.followProviderStoreChanges")(
+  function* (input: {
+    readonly providerRegistry: Pick<
+      ProviderRegistryShape,
+      "getProviders" | "getProviderPluginActionsForInstance"
+    >;
+    readonly generations: Pick<ProviderInstanceRegistryShape, "subscribeChanges">;
+    readonly notify: Effect.Effect<void>;
+  }) {
+    const scope = yield* Effect.scope;
+    // Subscribed before forking, so a replacement made meanwhile is not missed.
+    const generations = yield* input.generations.subscribeChanges;
+    // Weak, so a retired generation's store is released while the subscription stays open.
+    const read = new WeakSet<ProviderPluginActions>();
+    const attach = Effect.gen(function* () {
+      const stores: Array<Stream.Stream<void>> = [];
+      for (const provider of yield* input.providerRegistry.getProviders) {
+        if (!provider.enabled) continue;
+        const actions = yield* input.providerRegistry.getProviderPluginActionsForInstance(
+          provider.instanceId,
+        );
+        if (!actions) continue;
+        if (actions.store?.changes) stores.push(actions.store.changes);
+        if (actions.refreshInventory && !read.has(actions)) {
+          read.add(actions);
+          yield* actions
+            .refreshInventory({ force: false })
+            .pipe(Effect.ignore, Effect.forkIn(scope));
+        }
+      }
+      return Stream.mergeAll(stores, { concurrency: "unbounded" });
+    });
+    yield* Stream.concat(Stream.succeed(undefined), Stream.fromSubscription(generations)).pipe(
+      Stream.switchMap(() => Stream.unwrap(attach)),
+      Stream.runForEach(() => input.notify),
+      Effect.forkScoped,
+    );
+  },
+);
+
 export const providerStoreEntryError = (cause: { readonly message: string }) =>
   new ExtensionsError({
     // Provider stores currently identify a missing entry only by these messages.
@@ -178,6 +231,7 @@ export const makeExtensionsRpcHandlers = ({
   receipts,
   providerPlugins,
   providerRegistry,
+  providerInstances,
   changeFeed,
   pluginKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
@@ -187,6 +241,7 @@ export const makeExtensionsRpcHandlers = ({
   readonly receipts: ExtensionDeliveryReceiptsShape;
   readonly providerPlugins: ProviderPluginManagementShape;
   readonly providerRegistry: ProviderRegistryShape;
+  readonly providerInstances: Pick<ProviderInstanceRegistryShape, "subscribeChanges">;
   readonly changeFeed: ExtensionsChangeFeedShape;
   readonly pluginKeys?: PluginKeyBindings["Service"] | undefined;
 }) => {
@@ -301,24 +356,11 @@ export const makeExtensionsRpcHandlers = ({
       observeRpcStream(
         WS_METHODS.extensionsSubscribeChanges,
         Stream.unwrap(
-          Effect.gen(function* () {
-            for (const provider of yield* providerRegistry.getProviders) {
-              if (!provider.enabled) continue;
-              const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
-                provider.instanceId,
-              );
-              if (actions?.store?.changes)
-                yield* actions.store.changes.pipe(
-                  Stream.runForEach(() => changeFeed.notify),
-                  Effect.forkScoped,
-                );
-              if (actions?.refreshInventory)
-                yield* actions
-                  .refreshInventory({ force: false })
-                  .pipe(Effect.ignore, Effect.forkScoped);
-            }
-            return changeFeed.changes;
-          }),
+          followProviderStoreChanges({
+            providerRegistry,
+            generations: providerInstances,
+            notify: changeFeed.notify,
+          }).pipe(Effect.as(changeFeed.changes)),
         ),
         traceAttributes,
       ),

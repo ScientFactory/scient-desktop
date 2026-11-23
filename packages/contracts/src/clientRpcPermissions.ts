@@ -109,6 +109,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
   // SCIENT-FORK: an Antigravity plugin sign-in takes the same grant as an MCP sign-in.
   [WS_METHODS.pluginSignInOpen]: AuthProvidersManageScope,
+  // SCIENT-FORK:START — managed runtime changes, offered outside Settings too, take the server's grant.
+  [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
+  [WS_METHODS.serverStartProviderRuntime]: AuthProvidersManageScope,
+  [WS_METHODS.serverCancelProviderRuntime]: AuthProvidersManageScope,
+  // SCIENT-FORK:END
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
