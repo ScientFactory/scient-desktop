@@ -117,7 +117,7 @@ const reviewsReadTool = <P extends Schema.Struct.Fields>(description: string, pa
 const ScientSystematicReviewsTool = reviewsReadTool(READ_DESCRIPTION, readParameters);
 
 const UPDATE_DESCRIPTION =
-  "Change a systematic review when the user asks. create-review with a title in use returns that review. Records are Library sources: add them first, then log-search with sourceIds or collectionId (database, exact query, searchedOn, resultCount); the same database, query and date replaces that search. add-sources adds records found otherwise. mark-duplicate removes a duplicate (keep duplicateOf); mark-distinct dismisses a pair. screen: include, exclude or maybe at title-abstract, then full-text for those included (exclusions there need a reason). record-retrieval: sought, retrieved or not-retrieved (not assessed); a full-text decision implies retrieved. Decisions are credited to the agent; the latest counts; clear-decision reopens. skippedSourceIds were not applied.";
+  "Change a systematic review when the user asks. create-review reuses an existing title. First add Library sources. log-search takes sourceIds or collectionId, database, exact query, searchedOn and resultCount. Matching database, query and date replace a search. add-sources adds other records. mark-duplicate removes a duplicate (keep duplicateOf). mark-distinct dismisses a pair. screen include, exclude or maybe at title-abstract, then full-text for included records (reason required for full-text exclusions). record-retrieval sets sought, retrieved or not-retrieved (unassessed). Full-text decisions imply retrieved. Latest decision wins, credited to the agent. clear-decision reopens. skippedSourceIds were not applied.";
 
 /** Library mode: the pick between a review's versions from copies of the project. */
 export const ScientSystematicReviewLibraryAction = Schema.Union([
@@ -195,7 +195,7 @@ export const ScientSystematicReviewsLibraryToolkit = Toolkit.make(
     },
   ),
   reviewUpdateTool(
-    `${UPDATE_DESCRIPTION} A review with conflicts has versions from a copy of this project: resolve-conflict with a conflictId and the user's pick (keep, use-other or combine); dismiss-combine-report clears combineReport.`,
+    `${UPDATE_DESCRIPTION} For project-copy conflicts, resolve-conflict takes conflictId and the user's pick (keep, use-other or combine). dismiss-combine-report clears combineReport.`,
     ScientSystematicReviewLibraryAction,
     ScientSystematicReviewLibraryChangeResult,
   ),

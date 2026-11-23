@@ -314,7 +314,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
     description:
       mode === "project"
         ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${LIST_FILTERS}`
-        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${LIST_FILTERS} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset; allMerges: every receipt) instead; pass revision back. mergeId: one merge's receipt. recentChanges: bulk edits (undo unfinished parts' batchIds in reverse array order), merges, imports, joins, restores and Trash instead, newest first. libraryCopies: the Library's backup, restore and addition from another Library instead (run or undo them with scient_sources_organize).`,
+        : "List project pins (scope library for all). libraryCopies shows backup, restore and join status (actions via scient_sources_organize). total counts the scope. Use before literature or citation work and web search. Never edit .scient files directly. query matches citation key, title, authors, year, journal, identifiers and tags. All tags must match. collectionId includes subcollections. Use savedSearchId from scient_sources_collections. inTrash lists removed sources. citationStyles finds CSL styles by journal or name and shows the project style. duplicates lists possible pairs (offset) and undoable merges (mergeOffset). allMerges shows all receipts. Pass revision back. mergeId reads one receipt. recentChanges lists bulk edits, merges, imports, joins, restores and Trash, newest first. Undo unfinished bulk edit parts' batchIds in reverse array order.",
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)
@@ -476,7 +476,7 @@ const ScientSourceLibraryMetadataUpdateTool = Tool.make("scient_sources_update",
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
-    "Move one Source and its PDFs to the trash after the user explicitly asks (scient_sources_restore undoes it). Pass its current revision; if stale, re-read and redo. permanent deletes a trashed source with its revisions and unused PDFs, irreversibly: only when the user asks for that (revision from scient_sources_list inTrash); stillCitedBy names projects that keep citing it from their own copy. To take back sources added from another Library, use scient_sources_organize undo-join.",
+    "Trash one source and its PDFs after the user explicitly asks. scient_sources_restore undoes it. Pass current revision. If stale, re-read and redo. permanent irreversibly deletes a trashed source, its revisions and unused PDFs, only when the user asks. Its revision: scient_sources_list inTrash. stillCitedBy lists projects citing their own copy. Undo Library joins with scient_sources_organize undo-join.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -502,7 +502,7 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
 
 const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
   description:
-    "Put a removed Source back from the trash, with its PDFs, as a new revision credited to you. exists: the ID is already in the Library; duplicate: another source has its identifier (matchingSourceIds). Not for whole-Library backup/restore/cancel-restore/put-back (use scient_sources_organize; inspect with scient_sources_list libraryCopies or recentChanges).",
+    "Restore a trashed source and its PDFs as a new revision credited to you. Whole-Library restore, put-back-library and cancel-restore use scient_sources_organize. exists means its ID is present. duplicate lists matchingSourceIds sharing its identifier.",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: Schema.Struct({
     outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
@@ -522,7 +522,7 @@ const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
 
 const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
   description:
-    "Make a kept earlier revision of a Source (toRevision) current again, as a new revision credited to you; expectedRevision is its current revision (if stale, re-read). Metadata, note, tags, identifiers and attachments return; missingAttachmentCount counts PDFs deleted with the trash. Not for undoing a Library restore or join (use scient_sources_organize cancel-restore, put-back-library, or undo-join; inspect with scient_sources_list libraryCopies or recentChanges).",
+    "Make a source's kept toRevision current as a new revision credited to you. Undo a Library restore or join with scient_sources_organize. Pass current expectedRevision. Re-read if stale. Restores metadata, note, tags, identifiers and attachments. missingAttachmentCount counts PDFs deleted with Trash.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -548,7 +548,7 @@ const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
 
 const ScientSourceCheckTool = Tool.make("scient_sources_check", {
   description:
-    "Recheck one Source's DOI or PMID at its registry, for example before citing. Records the result (credited to you, when changed). registry: found, not-found, mismatch (now names another title), unavailable (earlier result kept) or none. editorialStatus reports retractions, withdrawals, concerns and corrections. Metadata changes only with refresh: it first replaces fields from the registry, or the PDF without DOI/PMID (can overwrite manual edits), and lists changedFields.",
+    "Recheck a source DOI or PMID at its registry, e.g. before citing. Changes credit you. registry gives found, not-found, mismatch (other title), unavailable (keeps prior result) or none. editorialStatus flags retractions, withdrawals, concerns and corrections. Only refresh replaces metadata (registry or PDF without DOI/PMID), can overwrite edits and lists changedFields.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     refresh: Schema.optionalKey(Schema.Boolean),
@@ -738,7 +738,7 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
 
 const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
   description:
-    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten; kept lists earlier text moved aside (tell the user). importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that. citationStyle sets the project's style for references and Word export (an ID from scient_sources_list citationStyles; null clears).",
+    "Write references.bib and references.json from the Library and report state. Cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). Preserve hand edits (edited lists added, changed or removed keys) and unmanaged files. Report moved-aside text (kept). importEdited adds new entries. replaceEdited restores Library text only when the user asks. citationStyle sets the style for references and Word export (ID via scient_sources_list citationStyles, null clears).",
   parameters: Schema.Struct({
     replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
     importEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
@@ -946,7 +946,7 @@ export const ScientSourcesZoteroBrowseResult = Schema.Struct({
 
 const ScientSourcesZoteroBrowseTool = Tool.make("scient_sources_zotero_browse", {
   description:
-    "Browse the user's Zotero library: whether it is reachable, its groups and collections and a page of references (by collection or query). sourceId marks ones already in this Library. If state is not ready, tell the user its message.",
+    "Browse Zotero status, groups, collections and a page of references by collection or query. sourceId marks items already in this Library. If state differs from ready, report message.",
   parameters: Schema.Struct({
     connection: Schema.optionalKey(ZoteroConnectionInput),
     library: Schema.optionalKey(ZoteroLibraryInput),
@@ -1040,7 +1040,7 @@ const ScientSourcesZoteroImportTool = zoteroImportTool("project");
 
 const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh", {
   description:
-    "Bring Zotero's changes into sources imported from it (all, or sourceIds); only changed or problem sources are listed. A field edited on both sides stays local and is reported in conflicts: ask the user, then pass it in useZotero or keepLocal.",
+    "Bring Zotero changes into imported sources (all or sourceIds). Reports only changed or problem sources. Edits on both sides stay local (conflicts). Ask the user, then use useZotero or keepLocal.",
   parameters: Schema.Struct({
     sourceIds: Schema.optionalKey(
       Schema.Array(NonEmptyString).pipe(
@@ -1068,7 +1068,7 @@ const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh"
 
 const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
   description:
-    "Send sources to the user's zotero.org library, or a group with canWrite, after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
+    "Send sources to zotero.org after the user asks. Create and link or update items in the user's library or a group with canWrite. Needs an Accounts Zotero key with write access. changed-in-zotero preserves Zotero edits. Refresh, then resend.",
   parameters: Schema.Struct({
     sourceIds: Schema.Array(NonEmptyString).pipe(
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
@@ -1292,18 +1292,15 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   libraryCopies: Schema.optionalKey(ScientSourcesLibraryCopies),
 });
 
-const LIBRARY_ORGANIZE_LEAD =
-  "Organize the Library: collections, saved searches, project pins, merges, packages, and whole-Library backup, restore, put-back and join after the user asks. ";
-
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${LIBRARY_ORGANIZE_LEAD}${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer (abandon: true drops one that stopped part way and blocks the move); export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes or saved searches; relativePath, or a dated folder in inFolder; using paths on this environment, never .scient or an existing package), import-package brings one in from the named folder; list-package-imports lists this project’s imports, dates, counts, Undo availability and everything kept or left as evidence; undo-import with its importId removes unchanged project additions, keeps all Library papers and returns retainedSourceIds. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes). The whole Library, with absolute folders on this environment: back-up-library copies it into a dated folder in inFolder; restore-library (fromFolder, a backup) or put-back-library (folder, a Library a restore kept, from recentChanges) takes its place when Scient next starts, unless cancel-restore with the restoreId libraryCopies shows; add-from-library adds what fromFolder's Library has and this one lacks (undo-join with its joinId).`,
+  "Back up, restore, put back or join the whole Library. Manage collections, saved searches, pins, merges and packages. Act after the user asks. Whole Library: absolute folders on this environment; progress and IDs in scient_sources_list libraryCopies or recentChanges. back-up-library makes a dated folder in inFolder. restore-library takes a backup (fromFolder), put-back-library a restore's kept.path; both apply at next start unless cancel-restore (the waiting restoreId). add-from-library adds missing sources from fromFolder; undo-join takes its joinId. Collections can overlap and keep records intact. create-collection reuses names (existing). parentCollectionId nests it. move-collection takes null for top level. delete-collection keeps sources (restore-collection undoes). save-search replaces filters by name. unknownSourceIds were skipped. pin adds a source here. note sets its project note. citationKey selects among pins. unpin takes citationKey. Replace notes with the noteBase you read. Reconcile stale notes; never resend blindly. merge combines duplicates (undo-merge takes mergeId). mark-distinct rules out pairs (clear-distinct undoes). move-back returns Library sources to this project. dismiss-move-summary clears its list notice. restore-pre-move restores the sealed copy on any computer. abandon true drops a partial copy blocking the move. export-package includes pins, project notes, reviews, records, PDFs and highlights. It leaves personal notes and saved searches here. Use relativePath or a dated folder in inFolder here, outside .scient and existing packages. import-package takes the folder. list-package-imports shows dates, counts, undo and evidence kept or left. undo-import uses importId, removes unchanged project additions and keeps Library papers (retainedSourceIds). With libraryMatch, link-pin (sourceId, librarySourceId) only if the user confirms the same work (unlink-pin undoes). keep-pin-separate records no match (clear-pin-separate undoes).",
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
-    "Apply one change to up to 500 sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections; or {themes: [{name, parent?, sourceIds}]} fills new or existing collections (parent made if missing). Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
+    "Change up to 500 sources after the user asks. Add or remove tags (case-insensitive), set type (other needs customType), add to or remove from collections, or fill collections with {themes: [{name, parent?, sourceIds}]} (creates missing collections and parents). Tag and type changes make a revision per source, credited to the agent. Per-source outcomes. Failures leave the rest running. Undo with change {undoBatchId: undo.batchId}. Later edits stay (conflicts). Retry the same undo after partial failure (skips finished parts). Remove one source with scient_sources_remove.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,
   failure: ScientSourcesToolError,
@@ -1364,7 +1361,7 @@ const importFileParameters = {
 const importFileTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_import_file", {
     description:
-      "Import a project reference file into the Library after the user asks: .bib (BibTeX, BibLaTeX), .ris, CSL-JSON .json or EndNote .xml. Keeps citation keys (several entries for one work: one source cited by each key), identifiers, tags and notes; entries already present are not imported again; identifiers stay unchecked. Up to 500 new entries per call: while remaining is above 0, call again. Tell the user about unreadable entries, notKept fields and citationKeysTaken.",
+      "Import project references after the user asks (.bib BibTeX/BibLaTeX, .ris, CSL-JSON .json or EndNote .xml). Keeps identifiers, tags, notes and keys (one source per work, even with several keys). Skips existing entries. Identifiers stay unchecked. Up to 500 new entries per call. Repeat while remaining > 0. Report unreadable, notKept and citationKeysTaken.",
     parameters:
       mode === "project"
         ? Schema.Struct(importFileParameters)
@@ -1384,7 +1381,7 @@ const ScientSourcesImportFileTool = importFileTool("project");
 
 const ScientSourcesExportTool = Tool.make("scient_sources_export", {
   description:
-    "Write the Library, or sourceIds, to a project file (.bib, .ris, CSL-JSON .json or EndNote .xml) under citation keys. Notes only with includeNotes; an existing file only with overwrite. Tell the user about notKept details. Not for full Library backups (use scient_sources_organize back-up-library).",
+    "Export citations by key (all or sourceIds) to a project .bib, .ris, CSL-JSON .json or EndNote .xml. includeNotes adds notes. overwrite permits replacement. Report notKept. Whole-Library backup uses scient_sources_organize back-up-library.",
   parameters: Schema.Struct({
     relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
     format: FileFormat,
@@ -1413,7 +1410,7 @@ const ScientSourcesExportTool = Tool.make("scient_sources_export", {
 
 const ScientSourceSavePageTool = Tool.make("scient_sources_save_page", {
   description:
-    "Save a web page to the Library after the user asks, keeping a passage in its note. Pass the page's meta tags (citation_*, dc.*, prism.*, og:*), for example via preview_evaluate. A stated DOI, PMID or arXiv ID is checked and its metadata used when the title agrees; otherwise it is saved as a web page. Saving again adds only the new passage. PDFs: scient_paper_get or scient_sources_add.",
+    "Save a web page after the user asks, keeping a passage in its Library note. Pass meta tags (citation_*, dc.*, prism.*, og:*), e.g. from preview_evaluate. Use registry metadata for a stated DOI, PMID or arXiv ID if titles agree. Otherwise save as a web page. Repeat saves add only new passages. PDFs use scient_paper_get or scient_sources_add.",
   parameters: Schema.Struct({
     url: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_096))),
     title: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(2_000)))),
