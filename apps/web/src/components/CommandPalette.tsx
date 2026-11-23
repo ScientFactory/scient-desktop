@@ -30,6 +30,12 @@ import { useOverleafPaletteItems } from "~/scient/overleaf/overleafPaletteItems"
 import { feedbackPaletteItems } from "~/scient/feedback/FeedbackCoordinator";
 import { insertOverleafAddProjectItem } from "~/scient/overleaf/OverleafNewProject";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — mount Scient result package verification.
+import {
+  ResultPackagePalette,
+  useResultPackagePaletteItem,
+} from "~/scient/results/handoff/resultPackagePalette";
+// SCIENT-FORK:END
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -389,7 +395,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     dispatchCommandPalette({ _tag: "OpenChildSearch", mode, context });
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
 
-  return (
+  // SCIENT-FORK:START — keep the verification dialog alive when the palette closes.
+  const palette = (
+    // SCIENT-FORK:END
     <ComposerHandleContext value={composerHandleRef}>
       <ThreadContextDragGhost />
       <CommandDialog
@@ -418,6 +426,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       </CommandDialog>
     </ComposerHandleContext>
   );
+  // SCIENT-FORK:START — mount the package dialog beside the palette.
+  return <ResultPackagePalette>{palette}</ResultPackagePalette>;
+  // SCIENT-FORK:END
 }
 
 function CommandPaletteDialog(props: {
@@ -1495,6 +1506,13 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  // SCIENT-FORK:START — offer package verification in Compute's active environment.
+  const verifyPackageItem = useResultPackagePaletteItem(
+    currentProjectEnvironmentId ?? primaryEnvironmentId,
+    currentProjectCwd,
+  );
+  if (verifyPackageItem !== null) actionItems.push(verifyPackageItem);
+  // SCIENT-FORK:END
 
   const activeProjectTitle =
     projects.length > 0
