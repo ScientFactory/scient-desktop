@@ -6,6 +6,63 @@ first. Project files keep their editable Files-panel behavior. Files elsewhere
 in the connected environment open in a read-only side panel or, for HTML, the
 integrated browser.
 
+## Inspect a dataset
+
+Open a CSV, TSV, Parquet file or workbook in **Files**. Search the rows, select
+a column header to sort. In a CSV, TSV, Parquet file or SQL data view, use
+**Filter rows…** to keep values at or above a number in one column. In Compute,
+open a table-like variable from
+**Variables** to inspect it in the same grid.
+
+When a table has a preview limit, the banner says which rows or columns are
+available. Hover over a type name in the grid or profile to see the source's
+type label.
+
+Choose **Column profile** to see types, missing counts and shares, distinct
+counts, and ranges or common values. The profile describes the table before
+your filters and sort. It says whether it used all rows or the first rows
+shown in its summary. Use **Cancel** to stop a profile in progress.
+
+- CSV and TSV profiles count empty fields as missing. Codes such as `NA`,
+  `?` and `-999` stay as text values. Column types come from the first rows.
+- Each statistic says **All rows** or gives the sample size.
+- Parquet uses file metadata for exact null counts and ranges when available.
+  DuckDB examines the whole file for distinct and common values. **≈** marks
+  an estimate. Choose **Show sample** to stop the full scan and see a sample.
+- Live Python tables are profiled in the kernel. If the full scan takes too
+  long, the profile shows a labelled sample.
+- Saved SQL view profiles count numeric NaN values separately from missing values.
+- **At least** means the profile reached its limit for tracking distinct
+  values or shortened long values. Common values can be limited to the
+  tracked values.
+
+## Save and reuse a data view
+
+1. Open a CSV, TSV or Parquet file. Apply your filter, search and sort.
+2. Open **Actions** and choose **Save as view…**. Pick the columns and a new
+   SQL file path in the project. The dialog suggests `views/`. The query reads
+   the data through its path from the project root.
+   When a CSV or TSV view includes a search, the query reads the original
+   text of each field. If Scient can't verify that the search selects the
+   same rows, the dialog offers to save without the search.
+3. Open the SQL file to see its rows. **Reads** lists the data files Scient can
+   trace. Open the source details to see more references. Choose **Show SQL**
+   to edit the query, then **Show table** to see the saved changes.
+4. Open **Actions** and choose **Export table…**. Choose CSV or Parquet
+   and enter a new project path. Scient creates missing destination folders
+   and updates the Files tree after writing.
+
+Open **Actions** in the dataset or view and choose **Use in analysis…**. Pick a saved script or
+notebook. Copy the read example into the analysis and save the code. Use
+**Run fresh with input** to record the file as a declared input for that run.
+The Python, R and Julia examples for SQL views use DuckDB in the selected
+analysis environment. Run them from the project root.
+
+Ask an agent to profile data with `scient_data_profile`. It can request named
+columns on a wide table. Use `scient_data_preview_view` to see a bounded set of
+rows from a saved query. Agents create a view by writing its SQL file and use
+`scient_data_materialize_view` to export it to a new path.
+
 ## Browse workspace files
 
 The Files tree loads folders as you open them. Useful project material remains

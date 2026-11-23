@@ -1,3 +1,11 @@
+export const COMPUTE_SESSION_FILE_EXTENSIONS = {
+  python: ".py",
+  r: ".r",
+  julia: ".jl",
+  sql: ".sql",
+  matlab: ".m",
+} as const;
+
 /**
  * One way to run a file. `{file}` is the source, `{quotedFile}` the same for inside double quotes
  * read with backslash escapes, `{fileFolder}` and `{fileStem}` its folder and its name without the
