@@ -124,7 +124,7 @@ Read with \`scient_skill_read_resource\` (this skill's name and the path):
 
 const pdfAuthoring = `---
 name: pdf-authoring
-description: PDF output. Make, edit or export a PDF of my paper, report, poster, grant, handout or form, including Markdown and HTML-to-PDF. Use latex-authoring for writing or troubleshooting .tex. Reading or extracting a PDF and building an ordinary webpage are other tasks.
+description: PDF output. Make, edit or export a PDF of my paper, report, poster, grant, handout or form, including Markdown and HTML-to-PDF. Use latex-authoring for writing or troubleshooting .tex. Use pdf-files, when available, to read or work directly on an existing PDF.
 ---
 
 # PDF authoring
@@ -2327,7 +2327,7 @@ Open the images with your image-view tool and actually look at them. If you can'
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.pdf-authoring",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 40,

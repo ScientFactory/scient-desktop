@@ -9,7 +9,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as DocumentLabRuntime from "../documents/DocumentLabRuntime.ts";
+
 import {
+  BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES,
   BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
   BUILT_IN_SKILL_RELEASES,
 } from "./BuiltInSkillReleases.ts";
@@ -198,23 +201,36 @@ export const layerFromCatalog = (
   defaultActiveById?: ReadonlyMap<string, boolean>,
 ) => Layer.sync(ScientSkillRegistry, () => makeRegistry(catalog, defaultActiveById));
 
-export const layer = Layer.effect(
+const buildRegistry = Effect.fn("ScientSkillRegistry.build")(function* (documentLab: boolean) {
+  const releases = documentLab
+    ? [...BUILT_IN_SKILL_RELEASES, ...BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES]
+    : BUILT_IN_SKILL_RELEASES;
+  const defaults = new Map(BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID);
+  if (documentLab) {
+    for (const release of BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES) {
+      defaults.set(release.id, true);
+    }
+  }
+
+  const catalog = createSkillCatalog(
+    releases.map((release) => ({
+      source: `built-in:${release.id}@${release.version}`,
+      release,
+    })),
+  );
+  yield* Effect.forEach(
+    catalog.diagnostics,
+    (diagnostic) => Effect.logWarning("Scient skill release was quarantined", { diagnostic }),
+    { discard: true },
+  );
+  return makeRegistry(catalog, defaults);
+});
+
+export const layer = Layer.effect(ScientSkillRegistry, buildRegistry(false));
+
+export const layerForEnvironment = Layer.effect(
   ScientSkillRegistry,
-  Effect.sync(() =>
-    createSkillCatalog(
-      BUILT_IN_SKILL_RELEASES.map((release) => ({
-        source: `built-in:${release.id}@${release.version}`,
-        release,
-      })),
-    ),
-  ).pipe(
-    Effect.tap((catalog) =>
-      Effect.forEach(
-        catalog.diagnostics,
-        (diagnostic) => Effect.logWarning("Scient skill release was quarantined", { diagnostic }),
-        { discard: true },
-      ),
-    ),
-    Effect.map((catalog) => makeRegistry(catalog, BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID)),
+  DocumentLabRuntime.DocumentLabRuntime.use((runtime) =>
+    runtime.status.pipe(Effect.flatMap((status) => buildRegistry(status.status === "ready"))),
   ),
-);
+).pipe(Layer.provide(DocumentLabRuntime.layer));

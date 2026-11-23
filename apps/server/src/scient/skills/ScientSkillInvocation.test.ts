@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { skillReleaseKey } from "@scientfactory/scient-skills";
 
-import { BUILT_IN_SKILL_RELEASES } from "./BuiltInSkillReleases.ts";
+import {
+  BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES,
+  BUILT_IN_SKILL_RELEASES,
+} from "./BuiltInSkillReleases.ts";
 import { prepareScientSkillTurn, SCIENT_SKILL_INDEX_MAX_BYTES } from "./ScientSkillInvocation.ts";
 
 const automaticRelease = BUILT_IN_SKILL_RELEASES.find(
@@ -162,6 +165,38 @@ describe("turn-local Scient skill routing", () => {
         false,
       );
     }
+  });
+
+  it("directs the provider to the Scient loader when a Document Lab skill is available", () => {
+    const release = BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES.find(
+      (candidate) => candidate.name === "excel-xlsx",
+    )!;
+    const descriptor = {
+      ...automatic,
+      id: release.id,
+      releaseKey: skillReleaseKey(release),
+      name: release.name,
+      description: release.description,
+    };
+    const projection = {
+      ...mcpProjection,
+      skillLoadToolName: "mcp__scient__scient_skill_load",
+      catalogIndex: "full" as const,
+    };
+    const text = "Audit the formulas in this workbook.";
+    const result = prepareScientSkillTurn(
+      text,
+      [descriptor],
+      new Map([[descriptor.releaseKey, release]]),
+      projection,
+    );
+    expect(result.runtimeInstruction).toContain(
+      "For Document Lab work, first load the matching built-in with `mcp__scient__scient_skill_load`.",
+    );
+    expect(result.runtimeInstruction).not.toContain("(selected by the user)");
+    expect(
+      prepareScientSkillTurn(text, skills, releases, projection).runtimeInstruction,
+    ).not.toContain("For Document Lab work");
   });
 
   it("points to search instead of truncating an index past its allowance", () => {

@@ -24,6 +24,7 @@ import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevi
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
+import * as DocumentLabRuntime from "../../../scient/documents/DocumentLabRuntime.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 import type { WorkspacePathsError } from "../../../workspace/WorkspacePaths.ts";
 import type { WorkspaceMutationError } from "../../../scient/workspace/WorkspaceFileMutations.ts";
@@ -423,6 +424,8 @@ export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer
           trigger: "agent",
         }),
       scient_latex_build: (input) => buildScientLatexForInvocation(input),
+      scient_document_runtime: () =>
+        DocumentLabRuntime.DocumentLabRuntime.use((runtime) => runtime.status),
       scient_document_export: (input) =>
         observeAnalyticsEffect(exportScientDocumentForInvocation(input).pipe(withAssetSigner), {
           kind: "pdf-export",
