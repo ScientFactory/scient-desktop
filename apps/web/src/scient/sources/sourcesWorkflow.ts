@@ -286,8 +286,16 @@ function withReadingState<
   };
 }
 
-function samePinState(row: OverviewRow, detail: ScientSourceDetailResult): boolean {
-  return !isLibraryRow(row) || (row.pinned !== false) === (detail.pinned !== false);
+/**
+ * The pin and its project note change without the record's revision, so a detail read before
+ * either changed is read again.
+ */
+export function samePinState(row: OverviewRow, detail: ScientSourceDetailResult): boolean {
+  return (
+    !isLibraryRow(row) ||
+    ((row.pinned !== false) === (detail.pinned !== false) &&
+      (row.projectNote ?? null) === (detail.projectNote ?? null))
+  );
 }
 
 function pruneSourceDetails(

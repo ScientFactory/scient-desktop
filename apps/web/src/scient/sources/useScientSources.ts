@@ -47,6 +47,7 @@ import {
   emptyZoteroPage,
   importOutcomeFromOperation,
   initialSourcesWorkflowState,
+  samePinState,
   sourcesWorkflowReducer,
   workflowPreflightImportCounts,
   workflowReviewedImportCounts,
@@ -227,7 +228,15 @@ export function useScientSources(input: {
   ): Promise<ScientSourceDetailResult> => {
     const cached = state.sourceDetails[sourceId];
     const summary = state.overview?.records.find((record) => record.sourceId === sourceId);
-    if (cached && summary?.revision === cached.revision) return cached;
+    // A review's own record may be its snapshot, so it is always asked for.
+    if (
+      !reviewId &&
+      cached &&
+      summary?.revision === cached.revision &&
+      samePinState(summary, cached)
+    ) {
+      return cached;
+    }
     const atDetailFetch = ++detailFetchRef.current;
     try {
       const detail = await readScientSource(input.environmentId, {

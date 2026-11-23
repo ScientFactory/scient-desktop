@@ -965,6 +965,36 @@ describe("sources workflow transient flags", () => {
     expect(shownSourceRecord(afterPin, "s1")).toBeNull();
   });
 
+  it("drops cached detail when the project note changes at the same revision", () => {
+    const overview = (projectNote: string | null): ScientSourcesOverviewResult => ({
+      ...overviewWith([{ sourceId: "s1", revision: 1, pinned: true, projectNote }]),
+      libraryBackend: true,
+    });
+    const withDetail = sourcesWorkflowReducer(
+      sourcesWorkflowReducer(initialSourcesWorkflowState, {
+        type: "overviewArrived",
+        request: 0,
+        overview: overview("Before"),
+      }),
+      {
+        type: "sourceDetailArrived",
+        sourceId: "s1",
+        atDetailFetch: 1,
+        detail: { ...detail({ sourceId: "s1", revision: 1 }), pinned: true, projectNote: "Before" },
+      },
+    );
+    expect(shownSourceRecord(withDetail, "s1")?.projectNote).toBe("Before");
+
+    // An agent or another window edits the note: pins.json changes, the record does not.
+    const edited = sourcesWorkflowReducer(withDetail, {
+      type: "overviewArrived",
+      request: 0,
+      overview: overview("After"),
+    });
+    expect(edited.sourceDetails["s1"]).toBeUndefined();
+    expect(shownSourceRecord(edited, "s1")).toBeNull();
+  });
+
   it("lets an error ride along with import preparation for skip messages", () => {
     const state = sourcesWorkflowReducer(initialSourcesWorkflowState, {
       type: "importPreparationChanged",
