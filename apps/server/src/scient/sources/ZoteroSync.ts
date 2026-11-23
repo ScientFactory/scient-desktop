@@ -202,6 +202,8 @@ export async function recordZoteroSync(input: {
   readonly notes?: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
   /** Persist whether the initial import sync write omitted original note HTML. */
   readonly recordImportOmission?: boolean;
+  /** The recorded initial-import omission decision of an earlier base, kept across rewrites. */
+  readonly importOmittedOriginalNoteHtml?: boolean;
 }): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const reference = zoteroReference(input.material.candidate);
   if (!reference) return { omittedOriginalNoteHtmlCount: 0 };
@@ -228,6 +230,9 @@ export async function recordZoteroSync(input: {
       note: notes.note,
       ...(zoteroNote !== undefined ? { zoteroNote } : {}),
       ...(notes.notes ? { notes: [...notes.notes] } : {}),
+      ...(input.importOmittedOriginalNoteHtml !== undefined
+        ? { importOmittedOriginalNoteHtml: input.importOmittedOriginalNoteHtml }
+        : {}),
       attachmentKeys: [...input.attachmentKeys],
       ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
     },
@@ -751,6 +756,7 @@ async function syncAfterSend(input: {
         : editableMetadataFromRecord(input.record),
     );
     const annotationLibraryId = input.reference?.libraryId ?? fresh.libraryId;
+    const previous = await readScientSourceZoteroSync(input.root, record.sourceId);
     await writeScientSourceZoteroSync(input.root, {
       formatVersion: 1,
       sourceId: record.sourceId,
@@ -765,6 +771,9 @@ async function syncAfterSend(input: {
         ? { zoteroNote: input.created.notes.zoteroNote }
         : {}),
       ...(input.created.notes.notes ? { notes: [...input.created.notes.notes] } : {}),
+      ...(previous?.importOmittedOriginalNoteHtml !== undefined
+        ? { importOmittedOriginalNoteHtml: previous.importOmittedOriginalNoteHtml }
+        : {}),
       attachmentKeys: [],
     });
     return;
@@ -783,6 +792,9 @@ async function syncAfterSend(input: {
       ? (previous.annotationLibraryId ?? previous.libraryId)
       : (input.reference?.libraryId ?? fresh.libraryId),
     notes: same ? previous : (input.created?.notes ?? { note: null, notes: [] }),
+    ...(previous?.importOmittedOriginalNoteHtml !== undefined
+      ? { importOmittedOriginalNoteHtml: previous.importOmittedOriginalNoteHtml }
+      : {}),
   });
 }
 

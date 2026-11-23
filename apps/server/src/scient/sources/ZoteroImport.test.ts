@@ -22,6 +22,7 @@ import {
   listScientSourceImports,
   listScientSourceRecords,
   readScientSourceZoteroSync,
+  removeScientSource,
   updateScientSourceMetadata,
   updateScientSourceNote,
   sourceAttachmentAbsolutePath,
@@ -376,7 +377,7 @@ describe("Zotero import", () => {
     },
   );
 
-  it("keeps byte-limit original note HTML disclosure when resuming after the sync write, even across an intervening Refresh", async () => {
+  it("keeps the initial original note HTML disclosure when resuming after the sync write", async () => {
     const body = `<p>${"漢".repeat(1_000)}</p>`.repeat(65);
     const largeChildren = Array.from({ length: 10 }, (_, index) =>
       zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
@@ -385,11 +386,22 @@ describe("Zotero import", () => {
       }),
     );
     const shortChildren = [zoteroItem("NOTE0001", { itemType: "note", note: "<p>Short note</p>" })];
+    const charHugeChildren = Array.from({ length: 10 }, (_, index) =>
+      zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${`<p>${"a".repeat(1_000)}</p>`.repeat(110)}`,
+      }),
+    );
 
     const interruptAfterSyncWrite = async (
       initialChildren: ReadonlyArray<ZoteroRawItem>,
       refreshedChildren: ReadonlyArray<ZoteroRawItem>,
       operationId: string,
+      options: {
+        readonly refresh: boolean;
+        readonly expectedOmitted: boolean;
+        readonly materialOmitsOnRetry?: boolean;
+      },
     ) => {
       const root = await project();
       const library = {
@@ -458,10 +470,33 @@ describe("Zotero import", () => {
 
       const [partial] = await listScientSourceRecords(root);
       expect(partial).toBeDefined();
+      expect(
+        (await readScientSourceZoteroSync(root, partial!.sourceId))?.importOmittedOriginalNoteHtml,
+      ).toBe(options.expectedOmitted);
       const entry = library.items.get("ABCD2345")!;
       library.items.set("ABCD2345", { ...entry, children: [...refreshedChildren] });
-      await refreshZoteroSources({ root, sourceIds: [partial!.sourceId], actor: "user", zotero });
+      if (options.refresh) {
+        const refreshed = await refreshZoteroSources({
+          root,
+          sourceIds: [partial!.sourceId],
+          actor: "user",
+          zotero,
+        });
+        expect(refreshed.items[0]?.outcome).toBe("updated");
+      }
+      if (options.materialOmitsOnRetry) {
+        const reread = await readZoteroItemMaterial(transport, "ABCD2345");
+        expect(reread.notBrought).toContainEqual({
+          kind: "note-cut",
+          name: "original",
+          count: 1,
+        });
+      }
       const savedBeforeResume = await readScientSourceZoteroSync(root, partial!.sourceId);
+      if (options.refresh) {
+        expect(savedBeforeResume?.notes).toHaveLength(refreshedChildren.length);
+      }
+      expect(savedBeforeResume?.importOmittedOriginalNoteHtml).toBe(options.expectedOmitted);
 
       await retrySourceImport({ root, operationId, itemKeys: ["ABCD2345"] });
       const completed = await advanceSourceImport({ root, operationId, zotero });
@@ -476,6 +511,7 @@ describe("Zotero import", () => {
       largeChildren,
       shortChildren,
       "resume-byte-cut-zotero",
+      { refresh: true, expectedOmitted: true },
     );
     expect(omittedOnImport.items[0]?.notBrought).toContainEqual({
       kind: "note-cut",
@@ -491,12 +527,109 @@ describe("Zotero import", () => {
       shortChildren,
       largeChildren,
       "resume-short-then-large-zotero",
+      { refresh: true, expectedOmitted: false },
     );
     expect(
       keptOnImport.items[0]?.notBrought?.some(
         (entry) => entry.kind === "note-cut" && entry.name === "original",
       ) ?? false,
     ).toBe(false);
+
+    // Direction 3: no Refresh; Zotero's notes pass the character allowance only after the
+    // interruption, so retry's own material would newly disclose an omission.
+    const keptThenCharHuge = await interruptAfterSyncWrite(
+      shortChildren,
+      charHugeChildren,
+      "resume-short-then-char-huge-zotero",
+      { refresh: false, expectedOmitted: false, materialOmitsOnRetry: true },
+    );
+    expect(
+      keptThenCharHuge.items[0]?.notBrought?.some(
+        (entry) => entry.kind === "note-cut" && entry.name === "original",
+      ) ?? false,
+    ).toBe(false);
+  });
+
+  it("records a fresh omission decision when re-importing a trashed source", async () => {
+    const root = await project();
+    const body = `<p>${"漢".repeat(1_000)}</p>`.repeat(65);
+    const largeChildren = Array.from({ length: 10 }, (_, index) =>
+      zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${body}`,
+      }),
+    );
+    const library = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem(
+              "ABCD2345",
+              {
+                title: "Long multi-byte notes",
+                abstractNote: "Already has an abstract.",
+                DOI: "10.1000/cjk-resume",
+              },
+              475425,
+            ),
+            children: largeChildren,
+          },
+        ],
+      ]),
+    };
+    const transport = fakeZoteroTransport(library);
+    const zotero = fakeZoteroAccess(transport);
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "trash-reimport-first",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const first = await advanceSourceImport({ root, operationId: "trash-reimport-first", zotero });
+    expect(first.items[0]?.notBrought).toContainEqual({
+      kind: "note-cut",
+      name: "original",
+      count: 1,
+    });
+    const [record] = await listScientSourceRecords(root);
+    expect(record).toBeDefined();
+    expect(
+      (await readScientSourceZoteroSync(root, record!.sourceId))?.importOmittedOriginalNoteHtml,
+    ).toBe(true);
+
+    await removeScientSource({
+      root,
+      sourceId: record!.sourceId,
+      expectedRevision: record!.revision,
+    });
+    const entry = library.items.get("ABCD2345")!;
+    library.items.set("ABCD2345", {
+      ...entry,
+      children: [zoteroItem("NOTE0001", { itemType: "note", note: "<p>Short note</p>" })],
+    });
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "trash-reimport-second",
+      scope: { kind: "library" },
+      zotero,
+    });
+    const second = await advanceSourceImport({
+      root,
+      operationId: "trash-reimport-second",
+      zotero,
+    });
+    expect(second.items[0]).toMatchObject({ state: "imported", sourceId: record!.sourceId });
+    expect(
+      second.items[0]?.notBrought?.some(
+        (line) => line.kind === "note-cut" && line.name === "original",
+      ) ?? false,
+    ).toBe(false);
+    const resaved = await readScientSourceZoteroSync(root, record!.sourceId);
+    expect(resaved?.importOmittedOriginalNoteHtml).toBe(false);
+    expect(resaved?.notes).toHaveLength(1);
   });
 
   it.each([

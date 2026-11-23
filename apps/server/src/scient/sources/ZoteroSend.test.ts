@@ -1316,6 +1316,48 @@ describe("Send to Zotero", () => {
     expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Read **twice**");
   });
 
+  it("keeps the recorded import omission decision when Send rewrites the sync base", async () => {
+    const mine = {
+      system: "zotero",
+      libraryId: String(USER),
+      itemKey: "MINE2345",
+      itemVersion: 10,
+      rawItemType: "journalArticle",
+    };
+    const { root, sourceId } = await sourceInScient({ externalReferences: [mine] });
+    const record = (await readScientSourceRecord(root, sourceId))!;
+    await writeScientSourceZoteroSync(root, {
+      formatVersion: 1,
+      sourceId,
+      libraryId: String(USER),
+      itemKey: "MINE2345",
+      itemVersion: 10,
+      syncedAt: "2026-11-15T10:00:00.000Z",
+      metadata: editableMetadataFromRecord(record),
+      note: null,
+      notes: [],
+      importOmittedOriginalNoteHtml: true,
+      attachmentKeys: [],
+    });
+    const org = zoteroOrg();
+    org.items.set(
+      "MINE2345",
+      zoteroItem("MINE2345", { version: 10, title: "Titled in Zotero" }, USER),
+    );
+
+    const sent = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+
+    expect(sent.items[0]?.outcome).toBe("updated");
+    expect((await readScientSourceZoteroSync(root, sourceId))?.importOmittedOriginalNoteHtml).toBe(
+      true,
+    );
+  });
+
   it("reports a link-only note on an existing item after switching from another saved Zotero base", async () => {
     const mine = {
       system: "zotero",

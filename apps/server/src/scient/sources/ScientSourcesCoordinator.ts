@@ -1833,8 +1833,11 @@ async function importZoteroOperationItem(input: {
       if (annotationLibraryId === undefined) {
         throw new Error("This source is not linked to a Zotero item.");
       }
-      let omittedOriginalNoteHtml = base?.importOmittedOriginalNoteHtml === true;
-      if (!base) {
+      // Only resuming this operation's own record reuses its initial sync write's decision; a
+      // fresh import (including over a trashed source) records its own baseline.
+      const savedDecision = partial ? base?.importOmittedOriginalNoteHtml : undefined;
+      let omittedOriginalNoteHtml = savedDecision === true;
+      if (!partial || !base) {
         const saved = await recordZoteroSync({
           root: input.root,
           record,
@@ -1869,7 +1872,13 @@ async function importZoteroOperationItem(input: {
       // A PDF Zotero has and could not hand over (a linked file read over the web, a file
       // that is gone) is said with the rest of what did not come, and so are its highlights.
       const unavailable = Math.min(material.pdfs.length, ZOTERO_PDFS_PER_ITEM) - files.length;
-      const notBrought = [...material.notBrought];
+      // A saved initial decision governs this line; what Zotero holds now does not rewrite it.
+      const notBrought =
+        savedDecision === undefined
+          ? [...material.notBrought]
+          : material.notBrought.filter(
+              (entry) => !(entry.kind === "note-cut" && entry.name === "original"),
+            );
       if (
         omittedOriginalNoteHtml &&
         !notBrought.some((entry) => entry.kind === "note-cut" && entry.name === "original")
