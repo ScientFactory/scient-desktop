@@ -4703,7 +4703,10 @@ export const layerWithOptions = (
               }
               // SCIENT-FORK:START — the handoff waits for an idle release already under way.
               const idleUnloaded = entry.idleUnloadedProviderThreads.get(input.threadId);
-              if (idleUnloaded !== undefined && heldProviderThreads.length === 0) {
+              if (
+                idleUnloaded !== undefined &&
+                !heldProviderThreads.some((held) => held.id === idleUnloaded.id)
+              ) {
                 heldProviderThreads.push(idleUnloaded);
               }
               const idleUnloadedProviderThreads = new Map(entry.idleUnloadedProviderThreads);
