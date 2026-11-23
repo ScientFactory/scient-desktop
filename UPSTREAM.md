@@ -724,6 +724,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`8ff66fc563357110fdb79a0f7e3a64530b70fe29` is recorded in
+[the 2026-11-23 25440f5bd5 receipt](docs/internals/t3-upstream-sync-20261123-25440f5bd5.md).
+Literal merge `f1092cfee955108534019e0bf1a5c6ac42a301d7` has owned base
+`b753d506f601e1a5f26a2e7287e0fa0cc4361726` and the frozen official target as parents, retaining
+the 48 official commits after `25440f5bd5`. T3's durable workflows stay off as shipped and agent
+feedback stays off in Scient; large files load in full in the file preview and a new thread opens
+its draft at once. T3's migrations 108-110 are Scient's 112-114. Release remains separate.
+
+The previous committed alignment through
 `25440f5bd5050e262bab4a01b21895f52476e3b7` is recorded in
 [the 2026-11-22 15d945faef receipt](docs/internals/t3-upstream-sync-20261122-15d945faef.md).
 Literal merge `d4b67d21b8e98b1965bb99f8b24b731fc6fbc6b2` has owned base
@@ -734,7 +743,7 @@ compressing images and survive a dropped connection; sidebar cards show the mach
 migrations 106 and 107 are Scient's 110 and 111. The alignment is Scient PR #1074. Release
 remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `15d945faef4c14099ba3d82bcdb84e91b5a3c3cd` is recorded in
 [the 2026-11-22 c1464d6774 receipt](docs/internals/t3-upstream-sync-20261122-c1464d6774.md).
 Literal merge `c9d735b520b813fbdf3b8da35d8bcaae769a1649` has owned base
