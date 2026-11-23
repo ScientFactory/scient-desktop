@@ -33,6 +33,7 @@ import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import { getDesktopOrigin } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -46,11 +47,49 @@ import * as DesktopWindow from "./DesktopWindow.ts";
 const MAIN_BOUNDS = { x: 100, y: 80, width: 1280, height: 840 };
 const TITLEBAR_HEIGHT = 40;
 
-function makeFakeWindow(id: number) {
+type SendHeadersListener = (
+  details: {
+    url: string;
+    webContentsId: number;
+    frame: { parent: null };
+    requestHeaders: Record<string, string>;
+  },
+  callback: (response: { requestHeaders?: Record<string, string> }) => void,
+) => void;
+
+// Electron keeps one onBeforeSendHeaders listener per session; a new one replaces it.
+function makeFakeSession() {
+  let listener: SendHeadersListener | null = null;
+  const session = {
+    webRequest: {
+      onBeforeSendHeaders: vi.fn((...args: readonly unknown[]) => {
+        listener = (args.at(-1) as SendHeadersListener | null) ?? null;
+      }),
+    },
+  };
+  const remoteRequestFrom = (webContentsId: number) => {
+    if (listener === null) return "no listener";
+    let sent: Record<string, string> | undefined;
+    listener(
+      {
+        url: "https://remote.example.com/api/auth/bootstrap",
+        webContentsId,
+        frame: { parent: null },
+        requestHeaders: { Origin: getDesktopOrigin(true), "Sec-Fetch-Site": "cross-site" },
+      },
+      (response) => {
+        sent = response.requestHeaders;
+      },
+    );
+    return sent === undefined ? "origin sent" : "origin stripped";
+  };
+  return { session, remoteRequestFrom };
+}
+
+function makeFakeWindow(id: number, session: ReturnType<typeof makeFakeSession>["session"]) {
   const webContents = {
     id,
-    // T3's remote request header policy installs on the window's session.
-    session: { webRequest: { onBeforeSendHeaders: vi.fn() } },
+    session,
     getURL: vi.fn(() => ""),
     getZoomFactor: vi.fn(() => 1),
     isDestroyed: vi.fn(() => false),
@@ -122,7 +161,12 @@ const layerDesktopEnvironment = DesktopEnvironment.layer({
 const makeHarness = Effect.fnUntraced(function* (
   settings: DesktopAppSettings.DesktopSettings = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
 ) {
-  const fakes = [makeFakeWindow(1), makeFakeWindow(2)] as const;
+  const session = makeFakeSession();
+  const fakes = [
+    makeFakeWindow(1, session.session),
+    makeFakeWindow(2, session.session),
+    makeFakeWindow(3, session.session),
+  ] as const;
   const createdOptions = yield* Ref.make<Electron.BrowserWindowConstructorOptions[]>([]);
   const mainWindow = yield* Ref.make(Option.none<Electron.BrowserWindow>());
   const revealed = yield* Ref.make<Electron.BrowserWindow[]>([]);
@@ -189,7 +233,7 @@ const makeHarness = Effect.fnUntraced(function* (
     Layer.merge(Layer.mergeAll(DesktopState.layer, settingsLayer)),
   );
 
-  return { fakes, createdOptions, mainWindow, revealed, layer } as const;
+  return { fakes, session, createdOptions, mainWindow, revealed, layer } as const;
 });
 
 describe("DesktopWindow.openNewWindow", () => {
@@ -334,6 +378,33 @@ describe("DesktopWindow.openNewWindow", () => {
         assert.equal((yield* Ref.get(harness.createdOptions)).length, 1);
         assert.deepEqual(yield* Ref.get(harness.revealed), [splash.window]);
         assert.isTrue(Option.isNone(yield* Ref.get(harness.mainWindow)));
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("strips the desktop origin for every open app window until the last one closes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const [main, added] = harness.fakes;
+
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.isTrue(yield* windows.openNewWindow());
+        assert.equal(harness.session.remoteRequestFrom(1), "origin stripped");
+        assert.equal(harness.session.remoteRequestFrom(2), "origin stripped");
+        assert.equal(harness.session.remoteRequestFrom(3), "origin sent");
+
+        added.listener("closed")();
+        assert.equal(harness.session.remoteRequestFrom(1), "origin stripped");
+
+        main.listener("closed")();
+        assert.equal(harness.session.remoteRequestFrom(1), "no listener");
+        yield* Effect.promise(() => Promise.resolve());
+
+        // Reopening after the last window closed (the macOS Dock) installs the policy again.
+        assert.isTrue(yield* windows.openNewWindow());
+        assert.equal(harness.session.remoteRequestFrom(3), "origin stripped");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

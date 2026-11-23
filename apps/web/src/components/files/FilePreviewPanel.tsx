@@ -231,7 +231,9 @@ import FileBrowserPanel from "./FileBrowserPanel";
 import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
-import { splitMarkdown } from "@t3tools/shared/markdownChunks";
+// SCIENT-FORK:START — a file with footnotes renders whole so they resolve
+import { splitScientFileMarkdown } from "~/scient/markdown/scientMarkdownPieces";
+// SCIENT-FORK:END
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -1721,7 +1723,9 @@ function RenderedMarkdownSurface({
 
   return (
     <ChunkedMarkdown
-      {...splitMarkdown(contents)}
+      // SCIENT-FORK:START
+      {...splitScientFileMarkdown(contents)}
+      // SCIENT-FORK:END
       cwd={cwd}
       relativePath={relativePath}
       threadRef={threadRef}

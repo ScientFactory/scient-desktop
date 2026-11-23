@@ -460,7 +460,10 @@ export const make = Effect.gen(function* () {
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
   );
-  let remoteRequestHeaderOwner: Electron.BrowserWindow | null = null;
+  // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+  const remoteRequestHeaderWindows = new Set<number>();
+  let detachRemoteRequestHeaders: (() => void) | null = null;
+  // SCIENT-FORK:END
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -1152,12 +1155,14 @@ export const make = Effect.gen(function* () {
 
     // Desktop IPC only answers the main window, so register it before its renderer can call in.
     yield* electronWindow.setMain(window);
-    remoteRequestHeaderOwner = window;
-    const detachRemoteRequestHeaders = installMainWindowRemoteRequestHeaderPolicy(
+    // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+    const webContentsId = window.webContents.id;
+    remoteRequestHeaderWindows.add(webContentsId);
+    detachRemoteRequestHeaders ??= installMainWindowRemoteRequestHeaderPolicy(
       window.webContents.session,
       {
         desktopOrigin: getDesktopOrigin(environment.isDevelopment),
-        mainWebContentsId: window.webContents.id,
+        mainWebContentsIds: remoteRequestHeaderWindows,
         clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
         devServerOrigin: Option.getOrUndefined(
           Option.map(environment.devServerUrl, (url) => url.origin),
@@ -1165,6 +1170,7 @@ export const make = Effect.gen(function* () {
         isDevelopment: environment.isDevelopment,
       },
     );
+    // SCIENT-FORK:END
     loadApplication();
     // SCIENT-FORK:START — one detached DevTools window per development launch.
     if (environment.isDevelopment && !additionalWindow) {
@@ -1179,10 +1185,13 @@ export const make = Effect.gen(function* () {
       // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
       flushWindowBounds.delete(window);
       // SCIENT-FORK:END
-      if (remoteRequestHeaderOwner === window) {
-        remoteRequestHeaderOwner = null;
-        detachRemoteRequestHeaders();
+      // SCIENT-FORK:START — Electron keeps one listener per session, so it covers every open app window.
+      remoteRequestHeaderWindows.delete(webContentsId);
+      if (remoteRequestHeaderWindows.size === 0) {
+        detachRemoteRequestHeaders?.();
+        detachRemoteRequestHeaders = null;
       }
+      // SCIENT-FORK:END
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
