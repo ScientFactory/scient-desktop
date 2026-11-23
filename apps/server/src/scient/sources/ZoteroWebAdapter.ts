@@ -25,6 +25,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const REQUEST_DEADLINE_MS = 60_000;
 /** Long enough for the largest file at under 1 MB a second. */
 const DOWNLOAD_DEADLINE_MS = 10 * 60_000;
+const UPLOAD_DEADLINE_MS = 10 * 60_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_PDF_BYTES = 512 * 1024 * 1024;
 const MAX_REDIRECTS = 4;
@@ -196,6 +197,7 @@ async function nodeUpload(
   contentType: string,
   body: ZoteroUploadBody,
   send: NodeHttpRequest,
+  signal: AbortSignal,
 ): Promise<number> {
   if (url.protocol !== "https:") throw new Error("Zotero files must use HTTPS.");
   const { size } = await NodeFSP.stat(body.path);
@@ -207,9 +209,13 @@ async function nodeUpload(
     file.destroy();
     await NodeStreamPromises.finished(file, { cleanup: true }).catch(() => undefined);
   };
+  const onAbort = () => {
+    fail(signal.reason ?? new Error("Timed out while sending a PDF to Zotero."));
+  };
   const fail = (error: unknown) => {
     if (settled) return;
     settled = true;
+    signal.removeEventListener("abort", onAbort);
     outgoing.destroy();
     void closeFile().then(() => reject(error));
   };
@@ -217,6 +223,7 @@ async function nodeUpload(
     url,
     {
       method: "POST",
+      signal,
       headers: {
         "Content-Type": contentType,
         "Content-Length": String(
@@ -233,11 +240,13 @@ async function nodeUpload(
       }).then(() => {
         if (settled) return;
         settled = true;
+        signal.removeEventListener("abort", onAbort);
         outgoing.destroy();
         void closeFile().then(() => resolve(response.statusCode ?? 0));
       }, fail);
     },
   );
+  signal.addEventListener("abort", onAbort, { once: true });
   outgoing.setTimeout(REQUEST_TIMEOUT_MS, () => {
     fail(new Error("Timed out while sending a PDF to Zotero."));
   });
@@ -250,6 +259,7 @@ async function nodeUpload(
   });
   outgoing.write(body.prefix);
   file.pipe(outgoing, { end: false });
+  if (signal.aborted) onAbort();
   return promise;
 }
 
@@ -257,7 +267,15 @@ async function nodeUpload(
 export function makeNodeZoteroWebHttp(
   send: NodeHttpRequest = NodeHttps.request,
   /** Tests only: shorter budgets. */
-  deadlines = { requestMs: REQUEST_DEADLINE_MS, downloadMs: DOWNLOAD_DEADLINE_MS },
+  deadlines: {
+    readonly requestMs: number;
+    readonly downloadMs: number;
+    readonly uploadMs?: number;
+  } = {
+    requestMs: REQUEST_DEADLINE_MS,
+    downloadMs: DOWNLOAD_DEADLINE_MS,
+    uploadMs: UPLOAD_DEADLINE_MS,
+  },
 ): ZoteroWebHttp {
   return {
     request: (request) =>
@@ -270,7 +288,12 @@ export function makeNodeZoteroWebHttp(
         "Timed out while downloading a Zotero file.",
         (signal) => nodeDownload(url, headers, destination, send, signal),
       ),
-    upload: (url, contentType, body) => nodeUpload(url, contentType, body, send),
+    upload: (url, contentType, body) =>
+      withRequestDeadline(
+        deadlines.uploadMs ?? deadlines.downloadMs,
+        "Timed out while sending a PDF to Zotero.",
+        (signal) => nodeUpload(url, contentType, body, send, signal),
+      ),
   };
 }
 

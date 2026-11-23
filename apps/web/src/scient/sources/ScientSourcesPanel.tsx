@@ -588,12 +588,20 @@ export function ScientSourcesPanel(props: {
   const selectedRecord = selectedSourceId ? shownSourceRecord(sources, selectedSourceId) : null;
 
   if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
-  const loadSource = sources.loadSource;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected source record from the server when missing
+  const loadSource = useStableCallback(sources.loadSource);
+  const isLibraryMode = sources.overview?.scopes !== undefined;
+  const selectedDetailKey =
+    selectedSourceId && selectedSummary
+      ? `${selectedSourceId}\0${selectedSummary.revision}\0${selectedSummary.pinned ?? ""}\0${selectedSummary.projectNote ?? ""}`
+      : null;
+  const needsProjectLoad =
+    !isLibraryMode && selectedSourceId !== null && selectedSummary !== null && !selectedRecord;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads or revalidates the selected source record from the server
   useEffect(() => {
-    if (!selectedSourceId || selectedRecord || !selectedSummary) return;
+    if (!selectedSourceId || !selectedDetailKey) return;
+    if (!isLibraryMode && !needsProjectLoad) return;
     void loadSource(selectedSourceId).catch(() => undefined);
-  }, [selectedSourceId, selectedRecord, selectedSummary, loadSource]);
+  }, [selectedSourceId, selectedDetailKey, isLibraryMode, needsProjectLoad, loadSource]);
   const zoteroCollectionChoices = zoteroCollectionLabels(sources.zoteroCollections);
   const selectedZoteroCollectionKey =
     sources.zoteroScope.kind === "collection" ? sources.zoteroScope.collectionKey : null;

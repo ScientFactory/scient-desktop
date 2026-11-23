@@ -502,6 +502,63 @@ describe("the weekly notice check", () => {
     ]);
   });
 
+  it("keeps a still-valid identifier on the same notice when a later partial feed omits it", async () => {
+    const { library, add, record } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/shared-retraction-doi" } as const;
+    const pmid = { scheme: "pmid", value: "77665544" } as const;
+    const sourceId = await add("Paper matched by both DOI and PMID", [doi, pmid], []);
+
+    const sharedNotice: ScientSourceEditorialNotice = {
+      kind: "retraction",
+      date: "2022-03-04",
+      doi: "10.1000/shared-retraction-notice",
+      source: "retraction-watch",
+    };
+    // Initial full pass matches the same retraction row on both DOI and PMID.
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"both-ids"',
+      checkedAt: "2026-11-15T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/shared-retraction-doi", [sharedNotice]],
+          ["pmid:77665544", [sharedNotice]],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+    // Later partial feed only reports the DOI match; PMID stays on the source and is not reinstated.
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"doi-only"',
+      checkedAt: "2026-11-22T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/shared-retraction-doi", [sharedNotice]],
+          ["pmid:77665544", []],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+    // Correct the DOI while keeping the PMID; registry refresh must still retain the retraction via PMID.
+    const current = await record(sourceId);
+    const edited = await updateScientSourceMetadata({
+      root: library,
+      sourceId,
+      expectedRevision: current.revision,
+      metadata: {
+        ...editableMetadataFromRecord(current),
+        identifiers: [{ scheme: "doi", value: "10.1000/other-clean-doi" }, pmid],
+      },
+      actor: "user",
+    });
+    let keptOnRefresh: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, edited.record, async (kept) => {
+      keptOnRefresh = kept;
+    });
+    expect(keptOnRefresh).toEqual([sharedNotice]);
+  });
+
   it("preserves legacy v2 confirmed watch ownership on registry refresh before v3 backfill runs", async () => {
     const { library, add, record } = await setup();
     const doi = { scheme: "doi", value: "10.1000/v2-confirmed" } as const;

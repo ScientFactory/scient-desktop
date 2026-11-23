@@ -19,7 +19,12 @@ import {
   readScientProjectPins,
 } from "@scientfactory/scient-sources/project-pins";
 import { importScientSource } from "@scientfactory/scient-sources/store";
-import { EnvironmentId, type AuthMcpClientAccess, type Project } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type AuthMcpClientAccess,
+  type Project,
+} from "@t3tools/contracts";
 import { afterEach, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
@@ -27,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EnvironmentAuth from "../../../auth/EnvironmentAuth.ts";
 import * as McpOAuth from "../../../auth/McpOAuth.ts";
@@ -35,9 +41,19 @@ import * as ServerConfig from "../../../config.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as Sqlite from "../../../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../../../policy/ManagedPolicy.ts";
+import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
 import { ProjectService } from "../../../project/ProjectService.ts";
+import * as VcsDriverRegistry from "../../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import { textPdf } from "../../../scient/annotations/annotationTestUtils.ts";
-import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { WorkspaceAuthorityScopeRevision } from "../../../scient/projectScope/WorkspaceBinding.ts";
+import * as WorkspaceAuthorityProjection from "../../../scient/projectScope/WorkspaceAuthorityProjection.ts";
+import * as WorkspaceBindingEvidence from "../../../scient/projectScope/WorkspaceBindingEvidence.ts";
+import {
+  WorkspaceBindingResolver,
+  layer as workspaceBindingResolverLayer,
+} from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import * as WorkspaceBindingStore from "../../../scient/projectScope/WorkspaceBindingStore.ts";
 import {
   workspaceResolverForTest,
   workspaceScopeForTest,
@@ -420,4 +436,202 @@ it.effect("a peer link is offered no Sources tool and cannot call one", () =>
       (yield* call("scient_sources_list", { projectId: projectA, scope: "library" })).error,
     ).toContain("acts as the calling Scient");
   }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a read-only outside project call verifies through the real resolver without writing binding rows",
+  () =>
+    Effect.gen(function* () {
+      const { base, a, b, c } = yield* Effect.promise(folders);
+      const config = yield* ServerConfig.ServerConfig.pipe(
+        Effect.provide(
+          ServerConfig.ServerConfig.layerTest(base, { prefix: "sources-outside-real-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      );
+      const libraryRoot = scientLibraryRootFor(config.stateDir);
+      const sourceId = yield* Effect.promise(async () => {
+        await ensureScientLibrary(libraryRoot);
+        const imported = await importScientSource({
+          root: scientLibraryLocation(libraryRoot),
+          operationId: NodeCrypto.randomUUID(),
+          candidate: paper("real-resolver", "Sepsis outcomes in adults", false),
+        });
+        await pinScientLibrarySource({
+          projectRoot: a,
+          library: scientLibraryLocation(libraryRoot),
+          sourceId: imported.record!.sourceId,
+          actor: "user",
+        });
+        return imported.record!.sourceId;
+      });
+      const idA = ProjectId.make("project-real-a");
+      const idB = ProjectId.make("project-real-b");
+      const idC = ProjectId.make("project-real-c");
+      const registered = new Map<ProjectId, Project>([
+        [idA, project(idA, a)],
+        [idB, project(idB, b)],
+        [idC, project(idC, c)],
+      ]);
+      const projectionLayer = Layer.succeed(
+        WorkspaceAuthorityProjection.WorkspaceAuthorityProjection,
+        WorkspaceAuthorityProjection.WorkspaceAuthorityProjection.of({
+          listRegisteredRoots: () =>
+            Effect.succeed(
+              [...registered.values()].map((entry) => ({
+                projectId: entry.id,
+                threadId: null,
+                workspaceRoot: entry.workspaceRoot,
+              })),
+            ),
+          getProjectContext: (projectId) =>
+            Effect.succeed(
+              Option.fromNullishOr(registered.get(projectId)).pipe(
+                Option.map((entry) => ({
+                  projectId: entry.id,
+                  workspaceRoot: entry.workspaceRoot,
+                  scopeRevision: WorkspaceAuthorityScopeRevision.make(1),
+                })),
+              ),
+            ),
+          getThreadContext: () => Effect.succeedNone,
+        }),
+      );
+      const baseLayer = Layer.mergeAll(
+        EnvironmentAuth.layer,
+        McpSessionRegistry.layer,
+        WorkspaceBindingStore.layer,
+      ).pipe(
+        Layer.provideMerge(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed(environmentId),
+          }),
+        ),
+        Layer.provideMerge(Sqlite.layerMemory),
+        Layer.provide(ServerSecretStore.layer),
+        Layer.provide(ManagedPolicy.layerTest()),
+        Layer.provideMerge(ServerEnvironment.layerIdentity),
+        Layer.provideMerge(Layer.succeed(ServerConfig.ServerConfig, config)),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCryptoLayer.layer)),
+      );
+      const vcsLayer = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer));
+      const evidenceLayer = WorkspaceBindingEvidence.layer.pipe(
+        Layer.provide(RepositoryIdentityResolver.layer),
+        Layer.provide(vcsLayer),
+      );
+      const resolverLayer = workspaceBindingResolverLayer.pipe(
+        Layer.provide(evidenceLayer),
+        Layer.provide(projectionLayer),
+        Layer.provideMerge(baseLayer),
+      );
+      const services = yield* Layer.build(resolverLayer);
+      const resolver = Context.get(services, WorkspaceBindingResolver);
+      const bindingStore = Context.get(services, WorkspaceBindingStore.WorkspaceBindingStore);
+      const sql = Context.get(services, SqlClient.SqlClient);
+
+      // Project A has an existing verified binding; B has none; C is revoked.
+      yield* resolver.resolveWorkspaceRoot(a);
+      const bindingC = yield* resolver.resolveWorkspaceRoot(c);
+      yield* bindingStore.revoke(bindingC.binding.bindingId);
+
+      const session = yield* Context.get(
+        services,
+        EnvironmentAuth.EnvironmentAuth,
+      ).issueMcpClientSession({
+        label: "Outside read-only real",
+        access: "read-only",
+        peerLink: false,
+        client: { deviceType: "bot" },
+      });
+      yield* HttpRouter.serve(
+        McpHttpServer.layerMcpTransport(McpHttpServer.ScientSourcesToolkitRegistrationLive).pipe(
+          Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+          Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+          Layer.provide(
+            Layer.mock(ProjectService)({
+              getById: (projectId) =>
+                Effect.succeed(Option.fromNullishOr(registered.get(projectId))),
+            }),
+          ),
+          Layer.provide(Layer.succeed(ScientSourcesBackend, "library")),
+          Layer.provide(Layer.succeedContext(services)),
+        ),
+        { disableListenLog: true, disableLogger: true },
+      ).pipe(Layer.build);
+
+      const http = yield* HttpClient.HttpClient;
+      const headers = {
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${session.token}`,
+        "mcp-protocol-version": "2025-06-18",
+      };
+      const post = (sessionId: string | undefined, method: string, params: unknown) =>
+        http
+          .post("/mcp", {
+            headers:
+              sessionId === undefined ? headers : { ...headers, "mcp-session-id": sessionId },
+            body: HttpBody.text(
+              JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+              "application/json",
+            ),
+          })
+          .pipe(
+            Effect.flatMap((response) =>
+              response.text.pipe(
+                Effect.map((text) => ({
+                  response,
+                  message: JSON.parse(
+                    text
+                      .split("\n")
+                      .find((line) => line.startsWith("data: ") || line.startsWith("{"))!
+                      .replace(/^data: /u, ""),
+                  ) as McpReply,
+                })),
+              ),
+            ),
+          );
+      const init = yield* post(undefined, "initialize", {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "outside", version: "1" },
+      });
+      const sessionId = init.response.headers["mcp-session-id"]!;
+
+      const bindingRows = () =>
+        sql.unsafe<Record<string, unknown>>(
+          "SELECT * FROM scient_workspace_bindings ORDER BY binding_id",
+        );
+      const rowsBefore = yield* bindingRows();
+      const filesBefore = yield* Effect.promise(() =>
+        Promise.all([tree(base), tree(config.stateDir)]),
+      );
+
+      const listA = yield* post(sessionId, "tools/call", {
+        name: "scient_sources_list",
+        arguments: { projectId: idA },
+      });
+      expect(listA.message.result.isError).not.toBe(true);
+      expect(JSON.parse(listA.message.result.content![0]!.text).records).toEqual([
+        expect.objectContaining({ sourceId }),
+      ]);
+      const listB = yield* post(sessionId, "tools/call", {
+        name: "scient_sources_list",
+        arguments: { projectId: idB },
+      });
+      expect(listB.message.result.isError).not.toBe(true);
+      const listC = yield* post(sessionId, "tools/call", {
+        name: "scient_sources_list",
+        arguments: { projectId: idC },
+      });
+      expect(listC.message.result.isError).toBe(true);
+      expect(listC.message.result.content![0]!.text).toContain(
+        "could not verify this project's folder",
+      );
+
+      expect(yield* bindingRows()).toEqual(rowsBefore);
+      expect(yield* Effect.promise(() => Promise.all([tree(base), tree(config.stateDir)]))).toEqual(
+        filesBefore,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );

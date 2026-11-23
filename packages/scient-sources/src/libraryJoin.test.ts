@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Joins real Libraries in temporary folders.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -38,6 +39,7 @@ import {
   listScientSourceRecords,
   readScientSourceRecord,
   readScientSourceTrashEntries,
+  readScientSourceZoteroSync,
   removeScientSource,
   setScientLibraryReadingState,
   updateScientSourceMetadata,
@@ -1671,5 +1673,112 @@ describe("what differs between the two Libraries, and taking one thing at a time
       }),
     ).toEqual({ outcome: "too-long" });
     expect((await readScientSourceRecord(ours.library, id("s2")))?.note).toHaveLength(99_990);
+  });
+
+  it("replaces or removes an abandoned Zotero base when a later backup adds the source", async () => {
+    const theirs = await built([{ op: "add", label: "fresh", pdf: false }]);
+    const id = workOf(theirs.model, "fresh").sourceId;
+    const record = (await readScientSourceRecord(theirs.library, id))!;
+    const baseOf = (itemVersion: number, attachmentKeys: ReadonlyArray<string>) => ({
+      formatVersion: 1 as const,
+      sourceId: id,
+      libraryId: "475425",
+      itemKey: "ABCD2345",
+      itemVersion,
+      syncedAt: "2026-11-21T08:00:00.000Z",
+      metadata: editableMetadataFromRecord(record),
+      note: null,
+      attachmentKeys: [...attachmentKeys],
+    });
+    await writeScientSourceZoteroSync(theirs.library, baseOf(2, ["OLD2345"]));
+    const newerBackup = await backUp(theirs.scenario);
+
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    // Simulate an interrupted join that left an older Zotero base without a live/trash/deleted record.
+    const zoteroDir = NodePath.join(ours.scenario.libraryRoot, "zotero");
+    await NodeFSP.mkdir(zoteroDir, { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(zoteroDir, `${id}.json`),
+      JSON.stringify(baseOf(1, ["STALE234"])),
+    );
+    await writeScientSourceZoteroSync(theirs.library, baseOf(5, ["NEW2345"]));
+    const updatedBackup = await backUp(theirs.scenario);
+
+    expect(
+      await joinScientLibrary({ library: ours.library, folder: updatedBackup, actor: "user" }),
+    ).toMatchObject({ outcome: "joined", added: 1 });
+    expect(await readScientSourceZoteroSync(ours.library, id)).toMatchObject({
+      itemVersion: 5,
+      attachmentKeys: ["NEW2345"],
+    });
+
+    // When a later backup has no Zotero base for the source, an abandoned orphan does not survive.
+    const oursTwo = await built([{ op: "add", label: "mine", pdf: false }]);
+    await NodeFSP.rm(NodePath.join(theirs.scenario.libraryRoot, "zotero", `${id}.json`), {
+      force: true,
+    });
+    const noBaseBackup = await backUp(theirs.scenario);
+    await NodeFSP.mkdir(NodePath.join(oursTwo.scenario.libraryRoot, "zotero"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(oursTwo.scenario.libraryRoot, "zotero", `${id}.json`),
+      JSON.stringify(baseOf(1, ["ORPHAN01"])),
+    );
+    expect(
+      await joinScientLibrary({ library: oursTwo.library, folder: noBaseBackup, actor: "user" }),
+    ).toMatchObject({ outcome: "joined", added: 1 });
+    expect(await readScientSourceZoteroSync(oursTwo.library, id)).toBeNull();
+    expect(newerBackup).toBeTruthy();
+  });
+
+  it("refuses a symlinked or non-regular Zotero sidecar in a kept Library without blocking", async () => {
+    // Prepare a kept Library via restore, then plant a symlinked sidecar (and FIFO on POSIX).
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    const firstBackup = await backUp(ours.scenario);
+    const added = await further(ours.scenario, ours.model, [
+      { op: "add", label: "extra", pdf: false },
+    ]);
+    const extraId = workOf(added, "extra").sourceId;
+    const prepared = await prepareScientLibraryRestore({
+      libraryRoot: ours.scenario.libraryRoot,
+      backup: firstBackup,
+    });
+    if (prepared.outcome !== "ready") throw new Error("Expected ready restore.");
+    const finished = await finishScientLibraryRestore(ours.scenario.libraryRoot);
+    if (finished.outcome !== "restored" || !finished.keptReplaced) {
+      throw new Error("Expected kept Library.");
+    }
+    const keptZoteroDir = NodePath.join(finished.keptReplaced.path, "zotero");
+    const sidecarPath = NodePath.join(keptZoteroDir, `${extraId}.json`);
+    const secret = NodePath.join(ours.scenario.root, "outside-secret.json");
+    await NodeFSP.writeFile(secret, JSON.stringify({ secret: true }));
+    await NodeFSP.mkdir(keptZoteroDir, { recursive: true });
+    await NodeFSP.symlink(secret, sidecarPath);
+
+    expect(
+      await joinScientLibrary({
+        library: ours.library,
+        folder: finished.keptReplaced.path,
+        actor: "user",
+      }),
+    ).toMatchObject({ outcome: "joined", added: 0, skipped: 1 });
+    expect(await readScientSourceRecord(ours.library, extraId)).toBeNull();
+    expect(await readScientSourceZoteroSync(ours.library, extraId)).toBeNull();
+
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- POSIX-only mkfifo check in test fixture.
+    if (NodeOS.platform() !== "win32") {
+      await NodeFSP.rm(sidecarPath, { force: true });
+      const mkfifo = NodeChildProcess.spawnSync("mkfifo", [sidecarPath]);
+      if (mkfifo.status === 0) {
+        expect(
+          await joinScientLibrary({
+            library: ours.library,
+            folder: finished.keptReplaced.path,
+            actor: "user",
+          }),
+        ).toMatchObject({ outcome: "joined", added: 0, skipped: 1 });
+        expect(await readScientSourceRecord(ours.library, extraId)).toBeNull();
+        expect(await readScientSourceZoteroSync(ours.library, extraId)).toBeNull();
+      }
+    }
   });
 });

@@ -396,7 +396,19 @@ export async function recordScientLibraryNoticeCheck(input: {
             merged.set(noticeIdentity(entry.notice), entry);
           }
           for (const entry of change.matched) {
-            merged.set(noticeIdentity(entry.notice), entry);
+            const nk = noticeIdentity(entry.notice);
+            const prior = merged.get(nk);
+            merged.set(
+              nk,
+              prior
+                ? {
+                    notice: entry.notice,
+                    identifiers: [
+                      ...new Set([...prior.identifiers, ...entry.identifiers]),
+                    ].toSorted(),
+                  }
+                : entry,
+            );
           }
           const { notices: _legacyNotices, identifiers: _legacyIds, ...rest } = before;
           changes.set(changeKey(change), { ...rest, matched: [...merged.values()] });

@@ -3,6 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
 
@@ -54,6 +55,7 @@ import {
   scientSourceCollectionChangedSince,
   scientSourceCollectionMadeAs,
 } from "./organize.ts";
+import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { readScientProjectPins } from "./projectPins.ts";
 import { SCIENT_SOURCE_MORE_FIELDS } from "./sourceMore.ts";
 import {
@@ -83,6 +85,14 @@ const HEADER_FILE = "join.json";
 const ANNOTATIONS_DIRECTORY = NodePath.join("annotations", "v1");
 const MAX_HEADER_BYTES = 128 * 1024 * 1024;
 const MAX_PART_BYTES = 8 * 1024 * 1024;
+const MAX_JOIN_SIDECAR_BYTES = 32 * 1024 * 1024;
+const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node filesystem adapter has no Effect runtime.
+const PLATFORM = NodeOS.platform();
+const OPEN_SAFE_READ_FLAGS =
+  NodeFS.constants.O_RDONLY |
+  (NodeFS.constants.O_NONBLOCK ?? 0) |
+  (PLATFORM === "darwin" ? DARWIN_O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0));
 /** Sources added under one hold of the Library's lock, so other changes get their turn. */
 const PART_SIZE = 100;
 
@@ -282,6 +292,76 @@ async function fileBytes(path: string): Promise<Buffer | null> {
 }
 
 /**
+ * Reads a bounded regular file under `otherRoot` without following symlinks or blocking on a FIFO.
+ * Missing directories or files return null; symlinks, special files and oversized files throw.
+ */
+async function safeOtherFileBytes(
+  otherRoot: string,
+  path: string,
+  maxBytes = MAX_JOIN_SIDECAR_BYTES,
+): Promise<Buffer | null> {
+  const canonicalRoot = await NodeFSP.realpath(otherRoot);
+  const relative = NodePath.relative(otherRoot, path);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(relative)
+  ) {
+    throw new Error(`${NodePath.basename(path)} escapes the other Library.`);
+  }
+  const resolvedPath = NodePath.join(canonicalRoot, relative);
+  try {
+    await assertScientProjectDirectory(canonicalRoot, NodePath.dirname(resolvedPath));
+  } catch (error) {
+    if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR")) return null;
+    throw error;
+  }
+  let pre: NodeFS.BigIntStats;
+  try {
+    pre = await NodeFSP.lstat(resolvedPath, { bigint: true });
+  } catch (error) {
+    if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR")) return null;
+    throw error;
+  }
+  if (pre.isSymbolicLink() || !pre.isFile()) {
+    throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
+  }
+  if (pre.size > BigInt(maxBytes)) {
+    throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+  }
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(resolvedPath, OPEN_SAFE_READ_FLAGS);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR")) return null;
+    if (isNodeError(error, "ELOOP")) {
+      throw new Error(`${NodePath.basename(path)} is not a safe regular file.`, { cause: error });
+    }
+    throw error;
+  }
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile()) {
+      throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
+    }
+    if (opened.size > BigInt(maxBytes)) {
+      throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+    }
+    if ((await NodeFSP.realpath(resolvedPath)) !== resolvedPath) {
+      throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
+    }
+    const bytes = await handle.readFile();
+    if (bytes.byteLength > maxBytes) {
+      throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * A file of the other Library, for copying into this one. From a backup it must be the file the
  * backup's own list names, byte for byte: a file changed or added since the backup was made is
  * refused, never copied.
@@ -291,14 +371,12 @@ async function checkedBytes(
   listed: ReadonlyMap<string, string> | null,
   path: string,
 ): Promise<Buffer | null> {
-  const bytes = await fileBytes(path);
-  if (!listed) return bytes;
   const relative = NodePath.relative(otherRoot, path).split(NodePath.sep).join("/");
+  if (listed && !listed.has(relative)) return null;
+  const bytes = await safeOtherFileBytes(otherRoot, path);
+  if (!listed) return bytes;
   if (!bytes) {
-    if (listed.has(relative)) {
-      throw new Error(`The backup's file ${relative} is missing.`);
-    }
-    return null;
+    throw new Error(`The backup's file ${relative} is missing.`);
   }
   if (listed.get(relative) !== hashOfBytes(bytes)) {
     throw new Error(`The backup's file ${relative} is not the one the backup lists.`);
@@ -717,8 +795,7 @@ async function exists(path: string): Promise<boolean> {
  * lock, as every writer of these files does, so that stays true until the flushed temporary
  * file is renamed into place: a kill never leaves half a file under the final name.
  */
-async function createUnderLock(path: string, bytes: Uint8Array): Promise<boolean> {
-  if (await exists(path)) return false;
+async function writeUnderLock(path: string, bytes: Uint8Array): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
@@ -729,11 +806,16 @@ async function createUnderLock(path: string, bytes: Uint8Array): Promise<boolean
     await handle.close();
     handle = null;
     await NodeFSP.rename(temporary, path);
-    return true;
   } finally {
     await handle?.close();
     await NodeFSP.rm(temporary, { force: true });
   }
+}
+
+async function createUnderLock(path: string, bytes: Uint8Array): Promise<boolean> {
+  if (await exists(path)) return false;
+  await writeUnderLock(path, bytes);
+  return true;
 }
 
 /** Copies a PDF by its hash, checking the bytes. A file already here is left. */
@@ -1026,9 +1108,13 @@ async function addSource(input: {
     await createUnderLock(NodePath.join(libraryRoot, "history", id, name), versionBytes);
   }
   // The record is written last, as the other Library keeps it; the decisions come before
-  // it exists, so no automatic merge ever sees it without them.
+  // it exists, so no automatic merge ever sees it without them. Any abandoned Zotero base
+  // left by an earlier interrupted join for this absent source is replaced or removed.
+  const zoteroPath = NodePath.join(libraryRoot, "zotero", `${id}.json`);
   if (zoteroBase) {
-    await createUnderLock(NodePath.join(libraryRoot, "zotero", `${id}.json`), zoteroBase);
+    await writeUnderLock(zoteroPath, zoteroBase);
+  } else {
+    await NodeFSP.rm(zoteroPath, { force: true });
   }
   await input.beforeRecord();
   if (!(await createUnderLock(recordPath, bytes))) return "it is here now";
@@ -1068,7 +1154,10 @@ async function settleStopped(
             exists(NodePath.join(libraryRoot, folder, name)),
           ),
         );
-        if (!anywhere.some(Boolean)) continue;
+        if (!anywhere.some(Boolean)) {
+          await NodeFSP.rm(NodePath.join(libraryRoot, "zotero", name), { force: true });
+          continue;
+        }
         const record = await readScientSourceRecord(library, planned.sourceId);
         // Only a source still exactly as planned is organised: a changed one is the person's.
         const asPlanned = record !== null && fingerprintOf(record) === planned.fingerprint;

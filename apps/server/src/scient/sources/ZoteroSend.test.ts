@@ -1048,6 +1048,39 @@ describe("Send to Zotero", () => {
     });
   });
 
+  it("leaves what Zotero changed between creating an item and reading it back for Refresh", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const org = zoteroOrg();
+    let edited = false;
+    const during = afterEachRequest(org, (request) => {
+      if (edited || request.method !== "POST" || !request.url.pathname.endsWith("/items")) return;
+      if (!org.items.has("NEWA2345")) return;
+      edited = true;
+      org.editInZotero("NEWA2345", { pages: "99-110" });
+    });
+
+    const created = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: during,
+    });
+    expect(created.items[0]).toMatchObject({ outcome: "created", itemKey: "NEWA2345" });
+    expect(
+      (
+        await sendSourcesToZotero({
+          root,
+          sourceIds: [sourceId],
+          actor: "user",
+          zotero: org.zotero,
+        })
+      ).items[0]?.outcome,
+    ).toBe("changed-in-zotero");
+
+    await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+    expect((await readScientSourceRecord(root, sourceId))?.pages).toBe("99-110");
+  });
+
   it("keeps a note changed in Zotero for Refresh when a Send updates the item", async () => {
     const { root, sourceId } = await sourceInScient();
     const org = zoteroOrg();

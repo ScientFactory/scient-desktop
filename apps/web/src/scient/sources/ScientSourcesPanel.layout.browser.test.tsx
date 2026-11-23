@@ -66,7 +66,7 @@ function source(index: number, pinned: boolean): SourceRecord {
     url: null,
     externalReferences: [],
     attachments: [],
-    importedAt: "2026-11-01T00:00:00.000Z",
+    importedAt: new Date(Date.UTC(2026, 10, 1) - index * 1_000).toISOString(),
     pinned,
     readingStatus: index % 3 === 0 ? "unread" : "read",
     starred: index % 4 === 0,
@@ -302,49 +302,24 @@ describe.each(["en", "de"] as const)("Library panel layout (%s)", (language) => 
       check();
     });
 
-    it.each(["list", "cards"] as const)(
-      "20,000 sources as %s, last one reachable",
-      async (view) => {
-        holding(20_000, 20_000);
-        await using opened = await open();
-        const { screen, check } = opened;
-        await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
-        const toggle = screen.getByRole("button", { name: /^Show as|^Als /u });
-        if (
-          (view === "cards") ===
-          /cards|Karten/u.test(toggle.element().getAttribute("aria-label") ?? "")
-        ) {
-          await toggle.click();
-        }
-        await expect
-          .poll(() => screen.container.querySelector("[data-source-card]") !== null)
-          .toBe(view === "cards");
-        check();
-        const first = screen
-          .getByText(/part 1$/u)
-          .first()
-          .element() as HTMLElement;
-        const scroller = scrollerOf(first)!;
-        expect(await unseenFocus(screen.container, 14)).toEqual([]);
-        await vi.waitFor(() => {
-          scroller.scrollTop = scroller.scrollHeight;
-          expect(scroller.scrollTop + scroller.clientHeight).toBeGreaterThanOrEqual(
-            scroller.scrollHeight - 1,
-          );
-          const view = scroller.getBoundingClientRect();
-          const titles = [...scroller.querySelectorAll<HTMLElement>("button")].filter((button) =>
-            button.textContent?.includes("Measured outcomes"),
-          );
-          const last = titles.toSorted(
-            (a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom,
-          )[0]!;
-          const rect = last.getBoundingClientRect();
-          expect(rect.bottom).toBeLessThanOrEqual(view.bottom + 0.5);
-          const hit = document.elementFromPoint(rect.left + 8, rect.top + rect.height / 2);
-          expect(last.contains(hit)).toBe(true);
-        });
-      },
-    );
+    it.each(["list", "cards"] as const)("populated %s layout and keyboard focus", async (view) => {
+      holding(40, 40);
+      await using opened = await open();
+      const { screen, check } = opened;
+      await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
+      const toggle = screen.getByRole("button", { name: /^Show as|^Als /u });
+      if (
+        (view === "cards") ===
+        /cards|Karten/u.test(toggle.element().getAttribute("aria-label") ?? "")
+      ) {
+        await toggle.click();
+      }
+      await expect
+        .poll(() => screen.container.querySelector("[data-source-card]") !== null)
+        .toBe(view === "cards");
+      check();
+      expect(await unseenFocus(screen.container, 14)).toEqual([]);
+    });
 
     it("selection with the bulk bar, All Library", async () => {
       holding(0, 12);
@@ -352,7 +327,7 @@ describe.each(["en", "de"] as const)("Library panel layout (%s)", (language) => 
       await using opened = await open();
       const { screen, check } = opened;
       await screen.getByRole("button", { name: words.myLibrary, exact: true }).click();
-      await expect.element(screen.getByText(/part 12$/u).first()).toBeVisible();
+      await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
       await screen.getByRole("button", { name: words.moreSource }).nth(4).click();
       await expect.element(screen.getByText(/^1 /u)).toBeVisible();
       check();
@@ -395,4 +370,49 @@ describe.each(["en", "de"] as const)("Library panel layout (%s)", (language) => 
       check();
     });
   });
+});
+
+describe("Library panel large-list reachability", () => {
+  it.each(["list", "cards"] as const)(
+    "20,000 sources as %s reaches the actual last source",
+    async (view) => {
+      holding(20_000, 20_000);
+      startI18n();
+      await setI18nLanguage("en");
+      await page.viewport(1280, 800);
+      await using screen = await render(panel, {
+        router: false,
+        container: host(480, 800),
+      });
+      await expect.element(screen.getByText(/part 1$/u).first()).toBeVisible();
+      const toggle = screen.getByRole("button", { name: /^Show as/u });
+      if ((view === "cards") === /cards/u.test(toggle.element().getAttribute("aria-label") ?? "")) {
+        await toggle.click();
+      }
+      await expect
+        .poll(() => screen.container.querySelector("[data-source-card]") !== null)
+        .toBe(view === "cards");
+      const first = screen
+        .getByText(/part 1$/u)
+        .first()
+        .element() as HTMLElement;
+      const scroller = scrollerOf(first)!;
+      await vi.waitFor(() => {
+        scroller.scrollTop = scroller.scrollHeight;
+        expect(scroller.scrollTop + scroller.clientHeight).toBeGreaterThanOrEqual(
+          scroller.scrollHeight - 1,
+        );
+        const bounds = scroller.getBoundingClientRect();
+        const last = [...scroller.querySelectorAll<HTMLElement>("button")].find((button) =>
+          button.textContent?.includes("part 20000"),
+        );
+        expect(last).toBeDefined();
+        const rect = last!.getBoundingClientRect();
+        expect(rect.bottom).toBeLessThanOrEqual(bounds.bottom + 0.5);
+        const hit = document.elementFromPoint(rect.left + 8, rect.top + rect.height / 2);
+        expect(last!.contains(hit)).toBe(true);
+      });
+      localStorage.clear();
+    },
+  );
 });

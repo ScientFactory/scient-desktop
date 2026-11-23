@@ -78,22 +78,29 @@ describe("metadata HTTP completion", () => {
   });
 
   it("gives a request one budget across its redirects", async () => {
+    const seen: string[] = [];
     await using fixture = await startHttpTransport((request, response) => {
       request.resume();
-      // Each answer in half the budget, the two together past it.
-      NodeTimers.setTimeout(
-        () =>
-          request.url === "/first"
-            ? response.writeHead(302, { Location: "https://registry.example/second" }).end()
-            : response.end("complete"),
-        120,
-      );
+      seen.push(request.url ?? "");
+      if (request.url === "/first") {
+        NodeTimers.setTimeout(
+          () => response.writeHead(302, { Location: "https://registry.example/second" }).end(),
+          50,
+        );
+      } else {
+        const timer = NodeTimers.setTimeout(() => response.end("complete"), 500);
+        response.once("close", () => NodeTimers.clearTimeout(timer));
+      }
     });
     const request = makeMetadataRequest(fixture.send);
 
     await expect(
-      request(new URL("https://registry.example/first"), agent, { deadlineMs: 200 }),
+      request(new URL("https://registry.example/first"), agent, {
+        deadlineMs: 250,
+        timeoutMs: 1_000,
+      }),
     ).rejects.toThrow("The metadata request timed out.");
+    expect(seen).toEqual(["/first", "/second"]);
   });
 
   it("follows complete HTTPS redirects and still refuses plain HTTP before opening a socket", async () => {

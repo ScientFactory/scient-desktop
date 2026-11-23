@@ -101,38 +101,84 @@ describe("Zotero Node HTTP completion", () => {
   it("gives a file one budget across its redirects and leaves no partial copy", async () => {
     await using directory = await temporaryDirectory();
     let slow = true;
+    const seen: string[] = [];
+    const partialOnDisk = Promise.withResolvers<void>();
     await using fixture = await startHttpTransport((request, response) => {
       request.resume();
+      seen.push(request.url ?? "");
       if (!slow) {
         response.end("%PDF-synthetic-complete");
         return;
       }
-      // Each answer in half the budget, the two together past it, the second part written.
       if (request.url === "/storage") {
         response.writeHead(200).write("%PDF-partial");
-        NodeTimers.setTimeout(() => response.end("-rest"), 120);
+        // Poll until the partial chunk is actually written into the temp directory before timing out.
+        const poll = NodeTimers.setInterval(() => {
+          void NodeFSP.readdir(directory.path)
+            .then(async (entries) => {
+              for (const entry of entries) {
+                const sub = NodePath.join(directory.path, entry);
+                const files = await NodeFSP.readdir(sub).catch(() => []);
+                for (const file of files) {
+                  const stat = await NodeFSP.stat(NodePath.join(sub, file)).catch(() => null);
+                  if (stat && stat.size > 0) {
+                    NodeTimers.clearInterval(poll);
+                    partialOnDisk.resolve();
+                    return;
+                  }
+                }
+              }
+            })
+            .catch(() => undefined);
+        }, 10);
+        response.once("close", () => NodeTimers.clearInterval(poll));
       } else {
         NodeTimers.setTimeout(
           () => response.writeHead(302, { Location: "https://storage.example/storage" }).end(),
-          120,
+          50,
         );
       }
     });
     const { transport } = makeZoteroWebLibrary({
       apiKey: headers["Zotero-API-Key"],
       account,
-      http: makeNodeZoteroWebHttp(fixture.send, BUDGET),
+      http: makeNodeZoteroWebHttp(fixture.send, { requestMs: 300, downloadMs: 300 }),
       temporaryDirectory: directory.path,
     });
 
     await expect(transport.attachmentFile(attachment)).rejects.toThrow(
       "Timed out while downloading a Zotero file.",
     );
+    await partialOnDisk.promise;
+    expect(seen).toEqual([`/users/42/items/${attachment.key}/file`, "/storage"]);
     expect(await NodeFSP.readdir(directory.path)).toEqual([]);
     slow = false;
     const downloaded = await transport.attachmentFile(attachment);
     expect(await NodeFSP.readFile(downloaded!.path, "utf8")).toBe("%PDF-synthetic-complete");
     await downloaded!.release();
+  });
+
+  it("ends a stalled or trickling PDF upload at its wall-clock deadline", async () => {
+    await using directory = await temporaryDirectory();
+    const path = NodePath.join(directory.path, "upload.pdf");
+    await NodeFSP.writeFile(path, "%PDF-synthetic-upload");
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      request.on("end", () => trickle(response));
+    });
+    const http = makeNodeZoteroWebHttp(fixture.send, {
+      requestMs: 200,
+      downloadMs: 200,
+      uploadMs: 200,
+    });
+
+    await expect(
+      http.upload(new URL("https://storage.example/upload"), "application/pdf", {
+        path,
+        prefix: "prefix:",
+        suffix: ":suffix",
+      }),
+    ).rejects.toThrow("Timed out while sending a PDF to Zotero.");
   });
 
   it.each(["local", "web"] as const)(

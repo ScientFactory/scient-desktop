@@ -11,6 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../../config.ts";
@@ -161,14 +162,13 @@ const makeResolverLayer = (state: ResolverState) => {
     }),
   );
   const storeLayer = WorkspaceBindingStore.layer.pipe(
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
   return workspaceBindingResolverLayer.pipe(
-    Layer.provide(
-      Layer.mergeAll(environmentLayer, authorityProjectionLayer, evidenceLayer, storeLayer),
-    ),
+    Layer.provideMerge(storeLayer),
+    Layer.provide(Layer.mergeAll(environmentLayer, authorityProjectionLayer, evidenceLayer)),
     Layer.provide(ServerConfig.layerTest("/projects/example", { prefix: "workspace-resolver-" })),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
@@ -647,6 +647,55 @@ describe("WorkspaceBindingResolver", () => {
       expect(diagnostics.binding).not.toHaveProperty("repositoryKey");
       expect(diagnostics.binding).not.toHaveProperty("repositoryIdentity");
       expect(diagnostics.binding).not.toHaveProperty("worktreeIdentity");
+    }).pipe(Effect.provide(makeResolverLayer(state)));
+  });
+
+  it.effect("resolves read-only roots without inserting or updating workspace bindings", () => {
+    const state = stateFor({ parentRoot: null });
+    const otherId = ProjectId.make("workspace-resolver-other");
+    state.projects.set(otherId, {
+      id: otherId,
+      workspaceRoot: "/projects/other",
+    } as OrchestrationProjectShell);
+    state.evidence.set(
+      "/projects/other",
+      observed("/projects/other", { observedAt: "2026-08-30T00:00:00.000Z" }),
+    );
+    return Effect.gen(function* () {
+      const resolver = yield* WorkspaceBindingResolver;
+      const store = yield* WorkspaceBindingStore.WorkspaceBindingStore;
+      const sql = yield* SqlClient.SqlClient;
+      const rows = () =>
+        sql.unsafe<Record<string, unknown>>(
+          "SELECT * FROM scient_workspace_bindings ORDER BY binding_id",
+        );
+
+      // No binding exists yet: read-only verifies the registered project and inserts 0 rows.
+      const fresh = yield* resolver.resolveWorkspaceRoot("/projects/example", { readOnly: true });
+      expect(fresh.binding.hostProjectId).toBe(PROJECT_ID);
+      expect(yield* rows()).toEqual([]);
+
+      // Existing binding: read-only does not update last_verified_at or authority_generation.
+      const persisted = yield* resolver.resolveWorkspaceRoot("/projects/example");
+      const before = yield* rows();
+      expect(before).toHaveLength(1);
+      state.evidence.set(
+        "/projects/example",
+        observed("/projects/example", { observedAt: "2026-09-01T12:00:00.000Z" }),
+      );
+      const reread = yield* resolver.resolveWorkspaceRoot("/projects/example", { readOnly: true });
+      expect(reread.binding.bindingId).toBe(persisted.binding.bindingId);
+      expect(yield* rows()).toEqual(before);
+
+      // Revoked binding: read-only refuses without mutating the table.
+      yield* store.revoke(persisted.binding.bindingId);
+      const afterRevoke = yield* rows();
+      expect(
+        yield* resolver
+          .resolveWorkspaceRoot("/projects/example", { readOnly: true })
+          .pipe(Effect.flip),
+      ).toMatchObject({ kind: "binding-revoked" });
+      expect(yield* rows()).toEqual(afterRevoke);
     }).pipe(Effect.provide(makeResolverLayer(state)));
   });
 });

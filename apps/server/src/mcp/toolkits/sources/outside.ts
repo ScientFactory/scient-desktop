@@ -93,6 +93,7 @@ const resolveOutsideProject = Effect.fn("ScientSourcesOutside.resolveProject")(f
   scope: McpInvocationScope,
   projects: ProjectService["Service"],
   requested: unknown,
+  readOnly: boolean,
 ) {
   const projectId = decodeProjectId(requested);
   const project = Option.isNone(projectId)
@@ -106,7 +107,7 @@ const resolveOutsideProject = Effect.fn("ScientSourcesOutside.resolveProject")(f
   }
   const resolver = yield* WorkspaceBindingResolver;
   const resolved = yield* resolver
-    .resolveWorkspaceRoot(project.value.workspaceRoot)
+    .resolveWorkspaceRoot(project.value.workspaceRoot, readOnly ? { readOnly: true } : undefined)
     .pipe(Effect.option);
   if (
     Option.isNone(resolved) ||
@@ -134,10 +135,11 @@ export const callAsOutsideClient = Effect.fn("ScientSourcesOutside.call")(functi
   const { [PROJECT_INPUT]: requested, ...rest } = Predicate.isObject(input.payload)
     ? input.payload
     : {};
+  const readOnly = !input.grants.has("sources:write");
   const project =
     requested === undefined
       ? null
-      : yield* resolveOutsideProject(input.scope, input.projects, requested);
+      : yield* resolveOutsideProject(input.scope, input.projects, requested, readOnly);
   return yield* handle(Predicate.isObject(input.payload) ? rest : input.payload).pipe(
     Effect.provideService(ScientSourcesOutsideCall, {
       capabilities: input.grants,

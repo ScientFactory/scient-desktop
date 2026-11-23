@@ -257,7 +257,7 @@ async function removeCreatedElsewhere(handle: NodeFSP.FileHandle): Promise<void>
     there.ino === created.ino &&
     there.size === 0n
   ) {
-    await NodeFSP.rm(where).catch(() => undefined);
+    await NodeFSP.unlink(where).catch(() => undefined);
   }
 }
 
@@ -319,7 +319,7 @@ async function writeVerifiedJson(
       tempFileId !== null &&
       (await sameVerifiedFile(canonicalRoot, temporaryPath, expectedDir, tempFileId))
     ) {
-      await NodeFSP.rm(temporaryPath, { force: true }).catch(() => undefined);
+      await NodeFSP.unlink(temporaryPath).catch(() => undefined);
     }
   }
 }

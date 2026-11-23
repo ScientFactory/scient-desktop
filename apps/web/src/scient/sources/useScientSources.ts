@@ -228,9 +228,11 @@ export function useScientSources(input: {
   ): Promise<ScientSourceDetailResult> => {
     const cached = state.sourceDetails[sourceId];
     const summary = state.overview?.records.find((record) => record.sourceId === sourceId);
-    // A review's own record may be its snapshot, so it is always asked for.
+    // Review snapshots and Library details (kept copies, review holder names) read project files
+    // whose changes do not bump the source's revision, so they always revalidate.
     if (
       !reviewId &&
+      state.overview?.scopes === undefined &&
       cached &&
       summary?.revision === cached.revision &&
       samePinState(summary, cached)
