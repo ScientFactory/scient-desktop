@@ -395,13 +395,14 @@ async function refreshOne(input: {
     action: "refresh",
   });
   const currentLibraryId = currentReference!.libraryId;
-  // A "0" baseline stamped by this record's originating import is its own once the concrete
-  // link superseded that legacy link: the owner was verified for this same item before the
-  // concrete reference was published. A legacy link still present was not superseded.
+  // A "0" baseline stamped by this record's originating import is its own once its verified
+  // personal owner was bound to it before the concrete link superseded the legacy link.
   const legacyOwnBase =
     savedBase?.libraryId === "0" &&
     savedBase.importOperationId !== undefined &&
     savedBase.importOperationId === input.record.origin?.operationId &&
+    savedBase.verifiedOwnerLibraryId === reference.libraryId &&
+    reference.libraryId !== "0" &&
     !input.record.externalReferences.some(
       (entry) =>
         entry.system === "zotero" && entry.libraryId === "0" && entry.itemKey === reference.itemKey,
@@ -411,6 +412,19 @@ async function refreshOne(input: {
     (sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner) || legacyOwnBase)
       ? savedBase
       : null;
+  if (
+    base?.libraryId === "0" &&
+    reference.libraryId === "0" &&
+    verifiedLocalOwner === currentLibraryId &&
+    currentLibraryId !== "0" &&
+    base.verifiedOwnerLibraryId !== currentLibraryId
+  ) {
+    // Bind the verified owner to the legacy baseline before publishing the concrete link.
+    await writeScientSourceZoteroSync(input.root, {
+      ...base,
+      verifiedOwnerLibraryId: currentLibraryId,
+    });
+  }
   const annotationLibraryId = base?.annotationLibraryId ?? base?.libraryId ?? reference.libraryId;
   const plan = planZoteroRefresh({
     record: input.record,
@@ -725,6 +739,23 @@ async function syncAfterSend(input: {
   const material = await readZoteroItemMaterial(input.library.transport, input.itemKey);
   const fresh = zoteroReference(material.candidate);
   if (!fresh) return;
+  if (
+    input.reference?.libraryId === "0" &&
+    input.verifiedLocalOwner === fresh.libraryId &&
+    fresh.libraryId !== "0"
+  ) {
+    const legacyBase = await readScientSourceZoteroSync(input.root, input.record.sourceId);
+    if (
+      legacyBase?.libraryId === "0" &&
+      legacyBase.itemKey === fresh.itemKey &&
+      legacyBase.verifiedOwnerLibraryId !== fresh.libraryId
+    ) {
+      await writeScientSourceZoteroSync(input.root, {
+        ...legacyBase,
+        verifiedOwnerLibraryId: fresh.libraryId,
+      });
+    }
+  }
   const linked = { ...fresh, itemVersion: input.sentVersion };
   let record = input.record;
   // Against the record as it is now: an edit made during the Send keeps itself and the link.

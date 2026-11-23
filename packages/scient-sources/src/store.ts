@@ -3718,9 +3718,11 @@ export async function writeScientSourceZoteroSync(
       };
     } else if (
       state.importOperationId === undefined ||
-      state.importOmittedOriginalNoteHtml === undefined
+      state.importOmittedOriginalNoteHtml === undefined ||
+      state.verifiedOwnerLibraryId === undefined
     ) {
-      // A later sync write keeps the initial import's provenance and omission decision.
+      // A later sync write keeps the initial import's provenance, omission decision, and
+      // verified legacy-owner binding only when they belong to that same import.
       const existing =
         (await snapshot(syncPath)) === "missing"
           ? null
@@ -3728,14 +3730,21 @@ export async function writeScientSourceZoteroSync(
               () => null,
             );
       const importOperationId = state.importOperationId ?? existing?.importOperationId;
+      const sameImport =
+        existing?.importOperationId !== undefined &&
+        existing.importOperationId === importOperationId;
       prepared = {
         ...state,
         ...(importOperationId !== undefined ? { importOperationId } : {}),
         ...(state.importOmittedOriginalNoteHtml === undefined &&
-        existing?.importOmittedOriginalNoteHtml !== undefined &&
-        existing.importOperationId !== undefined &&
-        existing.importOperationId === importOperationId
+        sameImport &&
+        existing?.importOmittedOriginalNoteHtml !== undefined
           ? { importOmittedOriginalNoteHtml: existing.importOmittedOriginalNoteHtml }
+          : {}),
+        ...(state.verifiedOwnerLibraryId === undefined &&
+        sameImport &&
+        existing?.verifiedOwnerLibraryId !== undefined
+          ? { verifiedOwnerLibraryId: existing.verifiedOwnerLibraryId }
           : {}),
       };
     } else {

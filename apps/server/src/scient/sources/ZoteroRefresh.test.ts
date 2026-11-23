@@ -9,6 +9,8 @@ import {
   detachScientSourcePdf,
   listScientSourceRecords,
   readScientSourceRecord,
+  removeScientSource,
+  revertScientSource,
   readScientSourceZoteroSync,
   updateScientSourceMetadata,
   updateScientSourceExternalReferences,
@@ -819,6 +821,65 @@ describe("Zotero refresh", () => {
 
     expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
     expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("Personal note");
+  });
+
+  it("does not plan from a re-import's legacy baseline after restoring the prior owner's revision", async () => {
+    const {
+      root,
+      record: first,
+      library,
+      zotero,
+    } = await importedFromZotero(original, [
+      zoteroItem("NOTE2345", { itemType: "note", note: "<p>Shared note</p>" }),
+    ]);
+    const firstRevision = first.revision;
+    const edited = await editHere(root, first.sourceId, { title: "Original title, edited" });
+    await removeScientSource({
+      root,
+      sourceId: first.sourceId,
+      expectedRevision: edited.revision,
+    });
+    library.items.set("ABCD2345", {
+      item: rawZoteroItem("ABCD2345", { ...original.data, version: 3 }),
+      children: [rawZoteroItem("NOTE2345", { itemType: "note", note: "<p>Shared note</p>" })],
+    });
+    await beginZoteroScopedImport({
+      root,
+      operationId: "import-second-owner",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "import-second-owner", zotero });
+    const [second] = await listScientSourceRecords(root);
+    expect(second?.sourceId).toBe(first.sourceId);
+    expect((await readScientSourceZoteroSync(root, first.sourceId))?.libraryId).toBe("0");
+
+    const reverted = await revertScientSource({
+      root,
+      sourceId: first.sourceId,
+      expectedRevision: second!.revision,
+      toRevision: firstRevision,
+      actor: "user",
+    });
+    expect(reverted.outcome).toBe("reverted");
+    expect(reverted.record.externalReferences[0]).toMatchObject({ libraryId: "475425" });
+    expect(reverted.record.origin?.operationId).toBe(second?.origin?.operationId);
+    library.items.set("ABCD2345", {
+      item: zoteroItem("ABCD2345", { ...original.data, version: 4 }),
+      children: [
+        zoteroItem("NOTE2345", { itemType: "note", note: "<p>Changed by first owner</p>" }),
+      ],
+    });
+
+    const result = await refreshZoteroSources({
+      root,
+      sourceIds: [first.sourceId],
+      actor: "user",
+      zotero,
+    });
+
+    expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, first.sourceId))?.note).toBe("Shared note");
   });
 
   // Constructed in Zotero's documented item format: public libraries do not hand out the PDFs.
