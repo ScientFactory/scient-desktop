@@ -5,7 +5,9 @@
   leaves punctuation, list markers and embedded text under the wrong base
   direction. Use explicit left-to-right runs for English phrases, identifiers,
   formulas and dates that need it. Set `w:rtl` on Hebrew runs where needed for
-  complex-script formatting. Keep run direction separate from alignment.
+  complex-script formatting. Let an RTL paragraph inherit its normal reading-
+  edge alignment unless the document calls for another layout. Check the
+  rendered edge: a hard-coded physical right setting can flip in LibreOffice.
 - Choose an installed font with Hebrew and Latin glyph coverage. Set
   `w:rFonts/@w:cs` for the Hebrew font and Hebrew language on
   `w:lang/@w:bidi` where needed. Check size and weight on the complex-script
