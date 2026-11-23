@@ -83,10 +83,13 @@ const make = Effect.gen(function* () {
     const toolchain = yield* toolchains.probe(false);
     if (!toolchain.kind || !toolchain.executable)
       return unavailable("Install the LaTeX toolchain to show this drawing.");
+    const toolchainExecutable = toolchain.executable;
     const discovered = {
       kind: toolchain.kind,
       executable:
-        resolveExecutable(toolchain.executable, platform, hostEnvironment) ?? toolchain.executable,
+        (yield* Effect.promise(async () =>
+          resolveExecutable(toolchainExecutable, platform, hostEnvironment),
+        )) ?? toolchainExecutable,
       version: toolchain.version ?? "unknown",
     };
     const compiler = selectLatexBuildEngine({ rootText: input.preamble }, toolchain.kind);

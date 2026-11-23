@@ -47,7 +47,7 @@ import {
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 
 const { workspaceSearch, filesystemMetadata, resolveFileLink } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),

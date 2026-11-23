@@ -8,7 +8,7 @@ import {
 import { materializeClipboardContent } from "./scient/clipboard/clipboardContent";
 import { mathAwareRange, replaceRenderedMathWithSource } from "./scient/clipboard/mathClipboard";
 // SCIENT-FORK:END
-import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownWindowsPaths";
+import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownLinks";
 
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];

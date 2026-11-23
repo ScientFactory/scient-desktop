@@ -7,6 +7,9 @@ import {
   composerMathRanges,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
+// SCIENT-FORK:START — chips skip formulas as the skills chosen on send do, footnotes included.
+import { scientFormulaRanges as markdownMathRanges } from "~/scient/math/scientFormulaRanges";
+// SCIENT-FORK:END
 
 export type ComposerPromptSegment =
   | {
@@ -89,7 +92,7 @@ function collectModelTokens(text: string, inlineTokens: ReadonlyArray<ComposerIn
     /\s/.test(text[mention.end] ?? ""),
   );
   if (mentions.length === 0) return [];
-  const taken = [...inlineTokens, ...composerMathRanges(text)];
+  const taken = [...inlineTokens, ...composerMathRanges(text, markdownMathRanges)];
   return mentions
     .filter(
       (mention) => !taken.some((range) => mention.start < range.end && mention.end > range.start),
@@ -98,7 +101,7 @@ function collectModelTokens(text: string, inlineTokens: ReadonlyArray<ComposerIn
 }
 
 export function collectComposerPromptInlineTokens(text: string) {
-  const inlineTokens = collectComposerInlineTokens(text);
+  const inlineTokens = collectComposerInlineTokens(text, { findMath: markdownMathRanges });
   const models = collectModelTokens(text, inlineTokens);
   const tokens =
     models.length === 0

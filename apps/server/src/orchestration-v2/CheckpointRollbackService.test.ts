@@ -608,9 +608,14 @@ it.effect.each([
   },
 );
 
-it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
-  "holds turn starts inside the worktree during rollback with restoreFiles $restoreFiles",
-  ({ restoreFiles }) =>
+it.effect.each([
+  { restoreFiles: true, status: "ready" },
+  { restoreFiles: false, status: "ready" },
+  // A failed capture still pins the conversation.
+  { restoreFiles: false, status: "error" },
+])(
+  "holds turn starts inside the worktree during rollback with restoreFiles $restoreFiles to a $status checkpoint",
+  ({ restoreFiles, status }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -645,7 +650,7 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
           providerInstanceId,
         },
         providerSession: undefined,
-        checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: 0 },
+        checkpoint: { id: checkpointId, scopeId, status, appRunOrdinal: 0 },
         scope: { id: scopeId, cwd: worktreePath },
         runsToRollback: [],
         targetAttempt: undefined,
@@ -1154,6 +1159,21 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           ["ready", "stale"],
         );
         assert.deepEqual(history.discardedRepositoryOrdinals, [3, 4, 5, 6]);
+      }),
+    );
+
+    it.effect("rewinds the conversation to a run whose snapshot capture failed", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE orchestration_v2_projection_checkpoints
+          SET status = 'error', payload_json = json_set(payload_json, '$.status', 'error')
+          WHERE checkpoint_id = ${history.checkpointId(2)}`;
+
+        yield* history.rollback(2, false);
+
+        assert.deepEqual(history.rollbackCounts, [4]);
+        assert.deepEqual(history.restored, []);
       }),
     );
 

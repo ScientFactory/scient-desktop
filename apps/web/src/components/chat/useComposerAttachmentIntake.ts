@@ -56,6 +56,7 @@ import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  joinPreparedImagesToDraft,
   movedPreparingImageThread,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
@@ -333,17 +334,26 @@ export function useComposerAttachmentIntake(input: {
           const draftStore = useComposerDraftStore.getState();
           let insertedAny = false;
           if (files.length > 0) {
-            const storedIds = new Set(
-              thread
-                ? draftStore.addFiles(thread, [...files])
-                : addComposerFilesToDraft([...files]),
+            // SCIENT-FORK:START — files stage with the images, so joining them is not an edit either.
+            const storedIds = joinPreparedImagesToDraft(
+              () =>
+                new Set(
+                  thread
+                    ? draftStore.addFiles(thread, [...files])
+                    : addComposerFilesToDraft([...files]),
+                ),
             );
+            // SCIENT-FORK:END
             const storedFiles = files.filter((file) => storedIds.has(file.id));
             if (storedFiles.length > 0 && !thread) {
-              insertedAny = insertAttachmentReferences(
-                storedFiles.map(fileContextReference),
-                options?.selection,
+              // SCIENT-FORK:START — files stage with the images, so joining them is not an edit either.
+              insertedAny = joinPreparedImagesToDraft(() =>
+                insertAttachmentReferences(
+                  storedFiles.map(fileContextReference),
+                  options?.selection,
+                ),
               );
+              // SCIENT-FORK:END
             }
             if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
               const attached = storedFiles[0]!;
@@ -370,16 +380,19 @@ export function useComposerAttachmentIntake(input: {
             file,
           }));
           const unrestoredImageNames: string[] = [];
-          const storedImageIds = new Set(
-            thread
-              ? draftStore.addImages(thread, nextImages, {
-                  onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
-                })
-              : nextImages.length === 1 && nextImages[0]
-                ? addComposerImage(nextImages[0])
-                : nextImages.length > 1
-                  ? addComposerImagesToDraft(nextImages)
-                  : [],
+          const storedImageIds = joinPreparedImagesToDraft(
+            () =>
+              new Set(
+                thread
+                  ? draftStore.addImages(thread, nextImages, {
+                      onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
+                    })
+                  : nextImages.length === 1 && nextImages[0]
+                    ? addComposerImage(nextImages[0])
+                    : nextImages.length > 1
+                      ? addComposerImagesToDraft(nextImages)
+                      : [],
+              ),
           );
           // Same tick as the draft insert above, with nothing that could render in between, so
           // the strip swaps each placeholder for its ready tile under one key in one render.
@@ -403,10 +416,12 @@ export function useComposerAttachmentIntake(input: {
             if (storedImages.length > 0) movedImages = { thread, images: storedImages };
           } else if (storedImages.length > 0 && imageAttachmentsGetChips) {
             insertedAny =
-              insertAttachmentReferences(
-                storedImages.map(imageContextReference),
-                undefined,
-                pendingInsertion,
+              joinPreparedImagesToDraft(() =>
+                insertAttachmentReferences(
+                  storedImages.map(imageContextReference),
+                  undefined,
+                  pendingInsertion,
+                ),
               ) || insertedAny;
           }
           return insertedAny;

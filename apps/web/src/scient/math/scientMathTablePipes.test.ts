@@ -3,7 +3,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { CHAT_MARKDOWN_REMARK_PLUGINS } from "../markdown/scientMarkdownPipeline";
+import { SCIENT_DOCUMENT_REMARK_PLUGINS } from "../markdown/scientMarkdownProfiles";
 import { SCIENT_MATH_TABLE_PIPE } from "./remarkScientMath";
 import { scientMathMarkdownText, scientMathRemarkPluginsForMessage } from "./scientMathText";
 
@@ -11,7 +11,7 @@ function parse(source: string) {
   const normalized = scientMathMarkdownText(source);
   const processor = unified()
     .use(remarkParse)
-    .use(scientMathRemarkPluginsForMessage(CHAT_MARKDOWN_REMARK_PLUGINS, source));
+    .use(scientMathRemarkPluginsForMessage(SCIENT_DOCUMENT_REMARK_PLUGINS, source));
   const tree = processor.parse(normalized);
   processor.runSync(tree, { value: normalized });
   return tree;

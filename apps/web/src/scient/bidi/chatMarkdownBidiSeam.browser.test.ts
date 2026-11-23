@@ -1,46 +1,31 @@
 import bidiCssSource from "./scient-bidi.css?raw";
 
-import { createElement } from "react";
+import { toJsxRuntime } from "hast-util-to-jsx-runtime";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { render } from "../../../test/render";
-import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
 import { describe, expect, it } from "vite-plus/test";
 
-import { rehypeScientBidi } from "./rehypeScientBidi";
-import {
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
-} from "../markdown/scientMarkdownPipeline";
+import { wordsHast } from "~/markdown/wordsHast";
 
-function renderUserPipeline(markdown: string) {
-  return createElement(
-    ReactMarkdown,
-    {
-      remarkPlugins: [remarkGfm],
-      rehypePlugins: [[rehypeScientBidi, { direction: "rtl", requestedDirection: "auto" }]],
-      skipHtml: false,
-    },
-    markdown,
+/** Chat's Words pipeline, with Scient's direction for a right-to-left message. */
+function renderChatPipeline(markdown: string, escapeHtml: boolean) {
+  return toJsxRuntime(
+    wordsHast(markdown, {
+      math: true,
+      breaks: false,
+      escapeHtml,
+      insights: false,
+      extensions: {},
+      scient: { math: true, contentDirection: "rtl", requestedContentDirection: "auto" },
+    }),
+    { Fragment, jsx, jsxs },
   );
 }
 
-function renderAssistantPipeline(markdown: string) {
-  return createElement(
-    ReactMarkdown,
-    {
-      remarkPlugins: [remarkGfm],
-      rehypePlugins: [
-        rehypeRaw,
-        [rehypeSanitize, defaultSchema],
-        [rehypeScientBidi, { direction: "rtl", requestedDirection: "auto" }],
-      ],
-      skipHtml: false,
-    },
-    markdown,
-  );
-}
+/** A user message: raw HTML stays literal. */
+const renderUserPipeline = (markdown: string) => renderChatPipeline(markdown, true);
+/** An assistant message: raw HTML is parsed and sanitized. */
+const renderAssistantPipeline = (markdown: string) => renderChatPipeline(markdown, false);
 
 describe("ChatMarkdown BiDi seam", () => {
   it("keeps computed column alignment consistent across mixed cell directions", async () => {
@@ -76,23 +61,14 @@ describe("ChatMarkdown BiDi seam", () => {
     }
   });
 
-  it("keeps raw parsing and sanitizing confined to the opted-in HTML plugin set", () => {
-    expect(
-      CHAT_MARKDOWN_REHYPE_PLUGINS.some(
-        (plugin) => typeof plugin === "function" && plugin.name === "rehypeRawWhenPresent",
-      ),
-    ).toBe(true);
-    expect(
-      CHAT_MARKDOWN_REHYPE_PLUGINS.some(
-        (plugin) => Array.isArray(plugin) && plugin[0] === rehypeSanitize,
-      ),
-    ).toBe(true);
-    expect(CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW).not.toContain(rehypeRaw);
-    expect(
-      CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW.some(
-        (plugin) => Array.isArray(plugin) && plugin[0] === rehypeSanitize,
-      ),
-    ).toBe(false);
+  it("keeps raw parsing and sanitizing confined to messages that opt into HTML", async () => {
+    const source = '<b>bold</b> <span onclick="x()">click</span>';
+    await using literal = await render(renderUserPipeline(source), { router: false });
+    expect(literal.container.querySelector("b")).toBeNull();
+    expect(literal.container.textContent).toContain("<b>bold</b>");
+    await using parsed = await render(renderAssistantPipeline(source), { router: false });
+    expect(parsed.container.querySelector("b")?.textContent).toBe("bold");
+    expect(parsed.container.innerHTML).not.toContain("onclick");
   });
 
   // regression: 3f2929e54b fix(web): thicken thin RTL flow arrows without boxing every glyph
@@ -159,8 +135,10 @@ describe("assistant Markdown plus Scient BiDi", () => {
 
     expect(html).toContain('dir="rtl"');
     expect(html).toContain("התשובה כאן");
+    // Words escapes the script as GFM's tag filter does; it is text, never an element.
     expect(html).not.toMatch(/<script(?:\s|>)/i);
     expect(html).not.toContain("onerror=");
-    expect(html).not.toContain("globalThis.__scientXss");
+    expect(html).not.toContain("globalThis.__scientXss = 2");
+    expect((globalThis as { __scientXss?: unknown }).__scientXss).toBeUndefined();
   });
 });

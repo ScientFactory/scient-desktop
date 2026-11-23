@@ -4,7 +4,8 @@ A thread is one conversation and its continuing work history inside a project.
 Use separate threads for separate questions or outcomes so their instructions,
 results, and follow-up work remain easy to find. You can run several threads in
 parallel; use an isolated worktree when simultaneous tasks should not edit the
-same project files.
+same project files. Threads in the same checkout share its branch, so Scient
+refuses a branch switch there while one of them is working.
 
 Pin a thread from its context menu to keep it in the pinned section above your active work.
 `mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
@@ -481,14 +482,15 @@ opens the same palette.
 
 ## Environment icons
 
-When you are connected to more than one environment, every thread that lives somewhere other than
-the machine you are on wears a small icon for that machine at the end of its row: a server, a cloud
-VM, a desktop, a laptop, a Mac mini, or a Mac Studio. In the hosted web app and the mobile app,
-where every environment is remote, each row wears its machine so you can tell them apart at a
-glance. The same icon appears wherever an environment is named: the thread tooltip, the command
-palette, the "Run on" picker, the pull request server filter, the provider settings device tabs,
-and the environment lists under **Settings → Environments**. On mobile it appears in the thread
-lists, the archive, the new-task environment picker, and the Environments and storage settings.
+On web and desktop, when you are connected to more than one environment, a thread's card names
+the environment it runs in under its title, with a small icon for that machine: a server, a cloud
+VM, a desktop, a laptop, a Mac mini, or a Mac Studio. With a single environment the card leaves the
+name out. The thread's environment, branch and worktree folder are always in its tooltip. In the mobile app, where every environment
+is remote, each row wears its machine so you can tell them apart at a glance. The same icon appears
+wherever an environment is named: the thread tooltip, the command palette, the "Run on" picker, the
+pull request server filter, the provider settings device tabs, and the environment lists under
+**Settings → Environments**. On mobile it appears in the thread lists, the archive, the new-task
+environment picker, and the Environments and storage settings.
 
 Servers pick the icon themselves from the hardware they run on. A Mac reports its model, a Linux
 machine reports its chassis type and whether it is a virtual machine, and anything without a usable

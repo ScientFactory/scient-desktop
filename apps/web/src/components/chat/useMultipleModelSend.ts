@@ -1,4 +1,4 @@
-import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
+import { collectSelectedScientSkillNames } from "~/scient/skills/selectedSkillNames";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { stripInlineContextReferences } from "../../lib/composerContextReferences";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";

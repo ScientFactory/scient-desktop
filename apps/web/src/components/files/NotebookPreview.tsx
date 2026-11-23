@@ -2,11 +2,8 @@
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
-import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "~/components/ChatMarkdown";
-// SCIENT-FORK:START — saved notebooks display rich fences as inert source.
-import { resolveScientRichFenceKind } from "~/scient/presentation/scientRichFenceKind";
-// SCIENT-FORK:END
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { Button } from "~/components/ui/button";
 import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import DocumentPages from "./DocumentPages";
@@ -14,27 +11,7 @@ import { FileSurfaceNotice } from "./fileSurfaceChrome";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
 
 // Saved notebooks must not load URLs or turn authored links into app actions.
-function inertNotebookMarkdown() {
-  function clean(nodes: RootContent[]): RootContent[] {
-    return nodes.flatMap((node): RootContent[] => {
-      if (node.type === "html" || node.type === "definition") return [];
-      if (node.type === "image" || node.type === "imageReference")
-        return [{ type: "text", value: node.alt ?? "" }];
-      if (node.type === "link" || node.type === "linkReference") return clean(node.children);
-      if (node.type === "inlineCode") return [{ type: "text", value: node.value }];
-      // SCIENT-FORK:START
-      if (node.type === "code" && resolveScientRichFenceKind(node.lang ?? ""))
-        return [{ ...node, lang: "text" }];
-      // SCIENT-FORK:END
-      if ("children" in node) node.children = clean(node.children) as typeof node.children;
-      return [node];
-    });
-  }
-  return (tree: Root) => {
-    tree.children = clean(tree.children) as Root["children"];
-  };
-}
-const NOTEBOOK_PLUGINS = [inertNotebookMarkdown];
+const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
 
 function NotebookSource(props: { readonly name: string; readonly text: string }) {
   const [height, setHeight] = useState(Math.min(360, props.text.split("\n").length * 20 + 16));
@@ -135,7 +112,7 @@ export default function NotebookPreview(props: {
                   text={cell.source}
                   cwd={undefined}
                   parseRawHtml={false}
-                  extraRemarkPlugins={NOTEBOOK_PLUGINS}
+                  extensions={NOTEBOOK_MARKDOWN}
                   className="px-4 py-3"
                 />
               ) : cell.source.trim() ? (

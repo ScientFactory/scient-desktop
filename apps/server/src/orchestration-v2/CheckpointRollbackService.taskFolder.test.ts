@@ -183,6 +183,7 @@ const layerFor = (state: State, options: Options) => {
           layerProjections,
           // SCIENT-FORK: Scient's capture settles a final uncaptured attempt by digest.
           layerNode,
+          ThreadCommandExecutor.layer,
         ),
       ),
     ),
