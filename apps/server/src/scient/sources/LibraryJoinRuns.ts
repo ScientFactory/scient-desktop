@@ -108,7 +108,11 @@ export async function undoLibraryJoin(
     case "undone":
       return {
         outcome: "join-undone" as const,
-        joinUndone: { trashed: undone.trashed, left: undone.left },
+        joinUndone: {
+          trashed: undone.trashed,
+          left: undone.left,
+          leftSourceIds: undone.leftSourceIds,
+        },
       };
     case "not-found":
       return { outcome: "join-not-found" as const };

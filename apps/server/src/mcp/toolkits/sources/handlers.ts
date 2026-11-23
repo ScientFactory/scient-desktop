@@ -1020,6 +1020,8 @@ const LIBRARY_COPY_MESSAGES = {
     "Nothing changes now: Scient swaps in this Library when it next starts. Until then cancel-restore with libraryCopies.restore.restoreId stops it. Tell the user.",
   "restore-preparing":
     "A restore copy is still being made; libraryCopies.restore shows when it is ready. It applies when Scient next starts.",
+  "join-undone":
+    "Sources in joinUndone.leftSourceIds changed since the join (edited, starred, pinned, filed or highlighted), so they stay. Name them to the user; remove one only if the user asks.",
   "join-started":
     "Adding runs on. scient_sources_list libraryCopies shows join.state, and undo-join with its joinId takes it back.",
 } as const;

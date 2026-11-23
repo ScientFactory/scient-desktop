@@ -307,7 +307,12 @@ describe("adding what another Library holds", () => {
         joinId: stopped!.joinId,
         actor: "user",
       }),
-    ).toEqual({ outcome: "undone", trashed: 0, left: 2 });
+    ).toEqual({
+      outcome: "undone",
+      trashed: 0,
+      left: 2,
+      leftSourceIds: expect.arrayContaining([first, second]),
+    });
     expect(await ids(ours.scenario)).toEqual(now);
   });
 
@@ -342,7 +347,12 @@ describe("adding what another Library holds", () => {
     });
     const undo = () =>
       undoScientLibraryJoin({ library: ours.library, joinId: joined.joinId, actor: "user" });
-    expect(await undo()).toEqual({ outcome: "undone", trashed: 2, left: 1 });
+    expect(await undo()).toEqual({
+      outcome: "undone",
+      trashed: 2,
+      left: 1,
+      leftSourceIds: [id("c")],
+    });
     expect(await undo()).toEqual({ outcome: "already-undone" });
     expect(await ids(ours.scenario)).toEqual(
       [id("c"), workOf(ours.model, "mine").sourceId].toSorted(),
@@ -383,6 +393,7 @@ describe("adding what another Library holds", () => {
       outcome: "undone",
       trashed: 0,
       left: 2,
+      leftSourceIds: [sourceId],
     });
     expect(await undoScientLibraryJoin({ library, joinId, actor: "user" })).toEqual({
       outcome: "already-undone",
@@ -436,7 +447,7 @@ describe("adding what another Library holds", () => {
       );
       resume.resolve();
       const [undone, changed] = await Promise.all([undoing, changing]);
-      expect(undone).toEqual({ outcome: "undone", trashed: 1, left: 0 });
+      expect(undone).toEqual({ outcome: "undone", trashed: 1, left: 0, leftSourceIds: [] });
       expect(changed.outcome).toBe("not-found");
       expect((await readScientSourcesOrganization(library)).collections).toEqual([]);
       expect(await ids(scenario)).toEqual([workOf(model, "mine").sourceId]);
@@ -459,6 +470,7 @@ describe("adding what another Library holds", () => {
       outcome: "undone",
       trashed: 1,
       left: 1,
+      leftSourceIds: [],
     });
     expect((await readScientSourcesOrganization(library)).collections).toMatchObject([
       { collectionId, name: "Methods" },
@@ -483,7 +495,7 @@ describe("adding what another Library holds", () => {
           afterCollectionRead: () => NodeFSP.writeFile(searchesPath, "{ damaged saved searches"),
         },
       }),
-    ).toEqual({ outcome: "undone", trashed: 1, left: 1 });
+    ).toEqual({ outcome: "undone", trashed: 1, left: 1, leftSourceIds: [] });
     expect(await NodeFSP.readFile(collectionPath)).toEqual(collectionBytes);
     expect(await listScientLibraryJoins(library)).toMatchObject([
       { joinId, state: "undone", added: 1, left: 1 },
@@ -714,7 +726,12 @@ describe("adding what another Library holds", () => {
 
     expect(
       await undoScientLibraryJoin({ library: ours.library, joinId: joined.joinId, actor: "user" }),
-    ).toEqual({ outcome: "undone", trashed: 1, left: 3 });
+    ).toEqual({
+      outcome: "undone",
+      trashed: 1,
+      left: 3,
+      leftSourceIds: expect.arrayContaining([id("a"), id("b"), id("c")]),
+    });
     expect(await ids(ours.scenario)).toEqual(
       [id("a"), id("b"), id("c"), workOf(ours.model, "mine").sourceId].toSorted(),
     );
@@ -988,10 +1005,10 @@ describe("adding what another Library holds", () => {
         joinId: stopped!.joinId,
         actor: "user",
       }),
-    ).toEqual({ outcome: "undone", trashed: 0, left: 1 });
+    ).toEqual({ outcome: "undone", trashed: 0, left: 1, leftSourceIds: [stoppedId] });
     expect(
       await undoScientLibraryJoin({ library: ours.library, joinId: second.joinId, actor: "user" }),
-    ).toEqual({ outcome: "undone", trashed: 0, left: 1 });
+    ).toEqual({ outcome: "undone", trashed: 0, left: 1, leftSourceIds: [pinned] });
     expect(await ids(ours.scenario)).toHaveLength(3);
   });
 

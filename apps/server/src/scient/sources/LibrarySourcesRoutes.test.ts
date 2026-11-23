@@ -747,7 +747,10 @@ describe("Library routes on the library backend", () => {
             await organizeLibrarySources(store, {
               change: { action: "undo-join", joinId: done.joinId },
             }),
-          ).toEqual({ outcome: "join-undone", joinUndone: { trashed: 1, left: 0 } });
+          ).toEqual({
+            outcome: "join-undone",
+            joinUndone: { trashed: 1, left: 0, leftSourceIds: [] },
+          });
           expect(await readScientSourceRecord(store.library, fresh.sourceId)).toBeNull();
           expect(await listed()).toMatchObject({ state: "undone", left: 0 });
           expect(

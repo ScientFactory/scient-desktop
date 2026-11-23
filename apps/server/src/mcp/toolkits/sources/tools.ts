@@ -1287,7 +1287,13 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   packageImports: Schema.optionalKey(ScientProjectPackageImports),
   packageImportDiagnostics: Schema.optionalKey(Schema.Array(Schema.String)),
   /** undo-join: sources moved to the Trash, and sources left because they changed since. */
-  joinUndone: Schema.optionalKey(Schema.Struct({ trashed: Schema.Int, left: Schema.Int })),
+  joinUndone: Schema.optionalKey(
+    Schema.Struct({
+      trashed: Schema.Int,
+      left: Schema.Int,
+      leftSourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+    }),
+  ),
   /** Backup, restore and adding from another Library: where each stands after the change. */
   libraryCopies: Schema.optionalKey(ScientSourcesLibraryCopies),
   /** What a started backup, restore or addition means for the user. */

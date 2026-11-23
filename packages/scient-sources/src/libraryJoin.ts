@@ -1456,6 +1456,8 @@ export type ScientLibraryJoinUndo =
       readonly trashed: number;
       /** Sources and created collections kept because later use or unreadable state prevents Undo. */
       readonly left: number;
+      /** The sources among `left`: edited, used, filed or highlighted since the join. */
+      readonly leftSourceIds: ReadonlyArray<string>;
     }
   /** `running`: that join, another one, or another Undo is under way. */
   | { readonly outcome: "not-found" | "already-undone" | "running" };
@@ -1489,6 +1491,7 @@ export async function undoScientLibraryJoin(input: {
     const directory = joinDirectory(libraryRoot, input.joinId);
     let trashed = 0;
     let left = 0;
+    const leftSourceIds: string[] = [];
     for (const part of await readParts(directory)) {
       const planned = new Map(part.sources.map((entry) => [entry.sourceId, entry.fingerprint]));
       // One hold of the lock for the part: nothing changes between the look and the removal.
@@ -1526,7 +1529,10 @@ export async function undoScientLibraryJoin(input: {
               })
             : null;
           if (removed?.outcome === "removed") trashed += 1;
-          else left += 1;
+          else {
+            left += 1;
+            leftSourceIds.push(sourceId);
+          }
         }
       });
     }
@@ -1571,7 +1577,7 @@ export async function undoScientLibraryJoin(input: {
       } satisfies JoinHeader,
       MAX_HEADER_BYTES,
     );
-    return { outcome: "undone", trashed, left };
+    return { outcome: "undone", trashed, left, leftSourceIds };
   });
   return undone === "busy" ? { outcome: "running" } : undone;
 }

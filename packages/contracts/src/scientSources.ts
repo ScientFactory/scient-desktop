@@ -727,7 +727,14 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   restoredSources: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   restoredPdfs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   /** undo-join: sources moved to the Trash, and sources left because they changed since. */
-  joinUndone: Schema.optionalKey(Schema.Struct({ trashed: Schema.Int, left: Schema.Int })),
+  joinUndone: Schema.optionalKey(
+    Schema.Struct({
+      trashed: Schema.Int,
+      left: Schema.Int,
+      /** The sources among `left`, changed since the join. */
+      leftSourceIds: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
   /** export-package: the folder written. */
   packagePath: Schema.optionalKey(NonEmptyString),
   packages: Schema.optionalKey(
