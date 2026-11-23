@@ -648,8 +648,15 @@ export const ExtensionCategory = Schema.Literals([
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
 /**
+ * The categories servers list. `physics-math` and `earth` are retired, their entries folded into
+ * Data, Papers, Biology and Code; they stay in `ExtensionCategory` so a client still decodes the
+ * catalog of a server from before.
+ */
+export type ListedExtensionCategory = Exclude<ExtensionCategory, "physics-math" | "earth">;
+
+/**
  * The categories every client decodes: those that existed before `knownCategories`. Servers
- * assume them for a request without the field; a client can count on a server listing them.
+ * assume them for a request without the field, and every server accepts them in a request.
  * Never extend it.
  */
 export const EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES: ReadonlyArray<ExtensionCategory> = [

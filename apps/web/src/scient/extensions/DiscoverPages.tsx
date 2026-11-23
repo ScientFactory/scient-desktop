@@ -322,8 +322,7 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                   onPointerEnter={() => prefetchCategory(section.category)}
                   onFocus={() => prefetchCategory(section.category)}
                 >
-                  {extensionCategoryTitle(section, messages)}{" "}
-                  <span className="text-xs text-muted-foreground">{section.total}</span>
+                  {extensionCategoryTitle(section, messages)}
                   <SectionTitleChevron />
                 </Link>
               ))}

@@ -5,7 +5,7 @@
  */
 import {
   storeCategories,
-  type ExtensionCategory,
+  type ListedExtensionCategory,
   type ExtensionIconDataUri,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -77,7 +77,7 @@ export interface AntigravityCatalogPlugin {
   readonly website?: string | undefined;
   readonly categories: ReadonlyArray<string>;
   /** Scient's Discover categories, from the reviewed map or the catalog's own labels. */
-  readonly scientCategories: ReadonlyArray<ExtensionCategory>;
+  readonly scientCategories: ReadonlyArray<ListedExtensionCategory>;
   readonly logoUrl?: string | undefined;
   readonly keywords: ReadonlyArray<string>;
   readonly includes: ReadonlyArray<string>;
@@ -163,7 +163,7 @@ function componentNames(value: unknown): ReadonlyArray<string> {
 }
 
 /** Reviewed Discover categories per catalog plugin (2026-11-21 catalogs); others fall back. */
-const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ExtensionCategory>>> = {
+const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ListedExtensionCategory>>> = {
   // Google: Workspace, science, developer.
   gmail: ["communication"],
   gcalendar: ["communication", "projects"],
@@ -176,10 +176,10 @@ const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ExtensionCat
   chemistry: ["chemistry"],
   genomics: ["biology"],
   "structural-biology": ["biology", "chemistry"],
-  robotics: ["physics-math", "code"],
+  robotics: ["code"],
   "data-agent-kit-plugin": ["data", "code"],
   looker: ["data"],
-  google_maps_platform: ["earth", "code"],
+  google_maps_platform: ["code"],
   egm: ["files"],
   "android-cli-plugin": ["code"],
   "chrome-devtools-plugin": ["code"],
@@ -274,7 +274,7 @@ export function antigravityCategories(
   name: string,
   categories: ReadonlyArray<string>,
   keywords: ReadonlyArray<string>,
-): ReadonlyArray<ExtensionCategory> {
+): ReadonlyArray<ListedExtensionCategory> {
   const reviewed = ANTIGRAVITY_CATEGORIES[name];
   if (reviewed) return reviewed;
   for (const labels of [categories, keywords]) {

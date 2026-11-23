@@ -3143,6 +3143,24 @@
     }
   },
   {
+    "key": "replicate",
+    "names": ["replicate"],
+    "website": "https://replicate.com",
+    "source": {
+      "kind": "svgl",
+      "url": "https://svgl.app/library/replicate_light.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 726,
+      "sourceHeight": 726,
+      "sourceFormat": "svg",
+      "outputBytes": 404
+    }
+  },
+  {
     "key": "resend",
     "names": ["resend"],
     "website": "https://resend.com",
@@ -4030,6 +4048,24 @@
       "sourceHeight": 333,
       "sourceFormat": "svg",
       "outputBytes": 3510
+    }
+  },
+  {
+    "key": "wandb",
+    "names": ["wandb", "weights & biases", "weights and biases"],
+    "website": "https://wandb.ai",
+    "source": {
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/wandb-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "svg",
+      "outputBytes": 3644
     }
   },
   {

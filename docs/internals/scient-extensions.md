@@ -1211,14 +1211,14 @@ rejected with a named reason.
 lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
 a short description, categories (`most-used`, then `papers`, `biology`,
-`code`, `ai-ml`, `data`, `cloud`, `physics-math`, `files`, `communication`, `projects`,
-`figures`, `chemistry`, `earth`, `social-science`, in that home-page order),
+`code`, `ai-ml`, `data`, `cloud`, `files`, `communication`, `projects`,
+`figures`, `chemistry`, `social-science`, in that home-page order),
 a website, the MCP Registry entry when
 the registry publishes that exact remote, and a bundled icon. Every
 URL is verified live before it is added (a POST `initialize` answered 200 with
-an initialize result, or 401 with `WWW-Authenticate`); the verification date
-is recorded in the file. Servers are never invented, and a category with no
-verified entry has no section. A curated server that is not in the registry is
+an initialize result, 401 with `WWW-Authenticate`, or 401 from a server that takes an API
+key); the verification date is recorded in the file. Servers are never invented, and a category
+with no verified entry has no section. A curated server that is not in the registry is
 named `scient.curated/<id>` with the verification date as its version; clients
 install it by URL.
 
@@ -1260,7 +1260,10 @@ a newer section is left out. A request without the field comes from a client tha
 and is answered with `EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES`. In the other direction, a
 newer client opens a category outside that list only once the machine's catalog has a section
 for it, since an older server rejects a category it does not know. Adding a category means
-adding its earlier categories in `clientCategories.ts`.
+adding its earlier categories in `clientCategories.ts`. `physics-math` and `earth` are retired:
+their entries moved to `data`, `papers`, `biology` and `code`, and no server lists them any more
+(`ListedExtensionCategory`). They stay in `ExtensionCategory` and in the before-list so a newer
+client still decodes an older server's catalog, and an older server's sections for them still show.
 
 **Icons.** Clients never load remote images. Registry icons are not fetched at runtime;
 Codex store logos use the bounded server-side path above. Every curated server ships with a bundled logo:
