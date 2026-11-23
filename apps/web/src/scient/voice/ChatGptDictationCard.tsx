@@ -37,25 +37,15 @@ export function ChatGptDictationCard({
             Scient Agent or Codex.
           </T>
         </p>
-        <p className="text-muted-foreground/70 text-xs">
-          <T>Recordings go to OpenAI, which keeps them for 30 days.</T>
-        </p>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {signedIn ? (
           <>
-            <Button
-              size="xs"
-              variant={selected ? "outline" : "default"}
-              disabled={selected}
-              onClick={onSelect}
-            >
-              {selected ? (
-                <T context="this dictation engine is the one in use">In use</T>
-              ) : (
+            {!selected ? (
+              <Button size="xs" onClick={onSelect}>
                 <T>Use ChatGPT</T>
-              )}
-            </Button>
+              </Button>
+            ) : null}
             {offeredOnFirstUse ? (
               <span className="text-muted-foreground text-xs">
                 <T>Offered the first time you dictate.</T>

@@ -15,7 +15,6 @@ const require = NodeModule.createRequire(new URL("../../scripts/package.json", i
 const { createPackage, uncacheAll } = await import(require.resolve("@electron/asar"));
 const binaries = [
   "resource-monitor/scient-resource-monitor",
-  "whisper-runtime/whisper-server",
   "synctex-runtime/synctex",
   "kde-capture/scient-kde-snap-shot",
   "hyprland-capture/scient-hyprland-snap-shot",
@@ -108,11 +107,11 @@ async function fixture(parent, name, duplicate = false) {
     write(resources, file, file);
     NodeFS.chmodSync(NodePath.join(resources, file), 0o755);
   }
-  for (const dir of ["whisper-runtime", "synctex-runtime"]) {
+  for (const dir of ["synctex-runtime"]) {
     write(resources, `${dir}/LICENSE`, "retained license");
     write(resources, `${dir}/receipt.json`, "{}");
   }
-  write(resources, "whisper-runtime/libwhisper.so", "retained shared library");
+  write(resources, "synctex-runtime/library.so", "retained shared library");
   write(source, icon, Buffer.from("89504e470d0a1a0a", "hex"));
   write(source, "app.js", "retained application code");
   if (duplicate) {
@@ -183,7 +182,7 @@ NodeTest.test("external input mode and baseline resource drift cannot silently p
     NodeAssert.throws(() => inspectLinuxPayload(clean.root), /not executable/);
     NodeFS.chmodSync(executable, 0o755);
     NodeFS.writeFileSync(
-      NodePath.join(baseline.root, "resources/whisper-runtime/libwhisper.so"),
+      NodePath.join(baseline.root, "resources/synctex-runtime/library.so"),
       "wrong library",
     );
     NodeAssert.throws(

@@ -142,6 +142,7 @@ function SelectPopup({
   matchTriggerWidth = true,
   anchor,
   collisionBoundary,
+  portalContainer,
   ...props
 }: SelectPrimitive.Popup.Props & {
   side?: SelectPrimitive.Positioner.Props["side"];
@@ -152,10 +153,11 @@ function SelectPopup({
   matchTriggerWidth?: boolean;
   anchor?: SelectPrimitive.Positioner.Props["anchor"];
   collisionBoundary?: SelectPrimitive.Positioner.Props["collisionBoundary"];
+  portalContainer?: SelectPrimitive.Portal.Props["container"];
 }) {
   const scrollScope = useContext(OverlayScrollScope);
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={portalContainer}>
       <SelectPrimitive.Positioner
         align={align}
         alignItemWithTrigger={alignItemWithTrigger}

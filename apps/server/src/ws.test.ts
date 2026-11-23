@@ -1,3 +1,6 @@
+import * as Speech from "./speech/SpeechService.ts";
+import * as SpeechCloud from "./transcription/CloudEngines.ts";
+import { TranscriptionJobs } from "./transcription/TranscriptionJobs.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { WebSocket } from "@effect/platform-node/NodeWS";
@@ -860,6 +863,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(TranscriptionJobs)({}),
   // SCIENT-FORK:START — unexpected access fails through Layer.mock.
   Layer.mock(AnalysisService.AnalysisService)({}),
   Layer.mock(ComputeSessionService.ComputeSessionService)({ runtimeDescriptors: [] }),
@@ -1119,6 +1123,15 @@ it.live.each([
     Effect.gen(function* () {
       const services = Layer.mergeAll(
         layerUnusedConfigRpcServices,
+        Layer.mock(Speech.SpeechService)({
+          openRecordingVad: async () => {
+            throw new Error("not used");
+          },
+          withRecordingWindow: async () => {
+            throw new Error("not used");
+          },
+        }),
+        Layer.mock(SpeechCloud.CloudEngines)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({
           profileReporter: Effect.succeed(() => Effect.void),
         }),

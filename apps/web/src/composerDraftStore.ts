@@ -20,7 +20,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderOptionSelections,
   PreviewAnnotationPayloadSchema,
-  PastedTextAttachmentSource,
+  ChatFileAttachmentSource,
   type PreviewAnnotationPayload,
   RuntimeMode,
   ThreadContextRecord,
@@ -231,7 +231,7 @@ export const PersistedComposerFileAttachment = Schema.Struct({
   sizeBytes: Schema.Number,
   attachmentId: Schema.String,
   environmentId: EnvironmentId,
-  source: Schema.optional(PastedTextAttachmentSource),
+  source: Schema.optional(ChatFileAttachmentSource),
 });
 export type PersistedComposerFileAttachment = typeof PersistedComposerFileAttachment.Type;
 
@@ -243,7 +243,7 @@ export const PersistedComposerDraftFileAttachment = Schema.Struct({
   sizeBytes: Schema.Number,
   attachmentId: Schema.optionalKey(Schema.String),
   environmentId: Schema.optionalKey(EnvironmentId),
-  source: Schema.optional(PastedTextAttachmentSource),
+  source: Schema.optional(ChatFileAttachmentSource),
 });
 export type PersistedComposerDraftFileAttachment = typeof PersistedComposerDraftFileAttachment.Type;
 const isPersistedComposerDraftFileAttachment = Schema.is(PersistedComposerDraftFileAttachment);

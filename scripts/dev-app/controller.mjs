@@ -685,11 +685,6 @@ async function runner(tokenHash) {
   if (!lock.acquired) fail("Another runner is already active.");
   const logFd = NodeFS.openSync(paths.logPath, "a");
   try {
-    NodeChildProcess.spawnSync(
-      process.execPath,
-      [NodePath.join(launch.checkout, "scripts", "stage-whisper-runtime.ts"), "--dev-cache-only"],
-      { cwd: launch.checkout, stdio: "ignore", timeout: 30_000, windowsHide: true },
-    );
     const binDir = NodePath.join(launch.checkout, "node_modules", ".bin");
     const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
     const child = NodeChildProcess.spawn(

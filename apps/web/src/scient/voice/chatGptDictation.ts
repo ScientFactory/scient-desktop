@@ -1,3 +1,4 @@
+import { getClientSettings, useClientSettings } from "../../hooks/useSettings";
 // Dictation with ChatGPT: the recording goes to the environment's Scient Agent or Codex, which
 // sends it to ChatGPT's own transcription service with its ChatGPT sign-in.
 import {
@@ -6,10 +7,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   ChatGptDictationError,
+  type DictationInput,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerProvider,
-  type VoiceTranscriptionLanguage,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -30,9 +31,9 @@ const UPDATE_TO_DICTATE_MESSAGE = new ChatGptDictationError({ reason: "update-re
 /** The first Scient Agent release with dictation; the server refuses an older one. */
 const SCIENT_AGENT_DICTATION_VERSION = "0.1.9";
 
-const chatGptDictationCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "environment-data:voice:dictate-with-chatgpt",
-  tag: WS_METHODS.voiceDictateWithChatGpt,
+export const dictationCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:voice:dictate",
+  tag: WS_METHODS.voiceDictate,
   concurrency: { mode: "parallel" },
 });
 
@@ -90,39 +91,84 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
     if (reason._tag === "Fail" && reason.error instanceof Error && reason.error.message)
       return reason.error.message;
   }
-  return m(msg("ChatGPT dictation isn't responding. Try again."));
+  return m(msg("Dictation isn't responding. Try again."));
 }
 
-/** Transcribes committed dictation with ChatGPT through one provider instance. */
-export function makeChatGptDictationTranscriber<E>(
-  run: (target: {
-    readonly environmentId: EnvironmentId;
-    readonly input: {
-      readonly instanceId: ProviderInstanceId;
-      readonly audioBase64: string;
-      readonly language?: VoiceTranscriptionLanguage;
-    };
-  }) => Promise<AtomCommandResult<{ readonly text: string }, E>>,
+export function makeDictationTranscriber<E>(
+  run: (
+    target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: DictationInput;
+    },
+    options?: { readonly signal: AbortSignal },
+  ) => Promise<AtomCommandResult<{ readonly text: string }, E>>,
   environmentId: EnvironmentId,
-  instanceId: ProviderInstanceId,
+  selection: DictationInput["selection"],
 ): VoiceJobTranscriber {
   return {
-    transcribe: async (request) => {
-      const result = await run({
+    transcribe: async (request, signal) => {
+      const target = {
         environmentId,
         input: {
-          instanceId,
+          selection,
+          ...(selection.kind === "local"
+            ? {
+                silenceFiltering: getClientSettings().speechSilenceFiltering,
+                removeFillerWords: getClientSettings().speechRemoveFillerWords,
+              }
+            : {}),
           audioBase64: request.audioBase64,
+          ...(selection.kind !== "chatgpt" && request.hints?.length
+            ? { hints: request.hints }
+            : {}),
           ...(request.language ? { language: request.language } : {}),
         },
-      });
+      };
+      const result = signal ? await run(target, { signal }) : await run(target);
       if (result._tag === "Failure") throw new Error(failureMessage(result.cause));
       return { text: result.value.text };
     },
   };
 }
 
+export function makeChatGptDictationTranscriber<E>(
+  run: Parameters<typeof makeDictationTranscriber<E>>[0],
+  environmentId: EnvironmentId,
+  instanceId: ProviderInstanceId,
+): VoiceJobTranscriber {
+  return makeDictationTranscriber(run, environmentId, { kind: "chatgpt", instanceId });
+}
+
+export function resolveChatGptConnection(
+  providers: readonly ServerProvider[],
+  pinned?: ProviderInstanceId | null,
+  active?: ProviderInstanceId,
+) {
+  const choices = providers.filter(
+    (provider) => provider.enabled && (provider.driver === "codex" || provider.driver === "scient"),
+  );
+  const signedIn = choices.filter(
+    (provider) => signedInToChatGpt(provider) && !agentTooOldToDictate(provider),
+  );
+  const codex = signedIn.filter((provider) => provider.driver === "codex");
+  const candidates = codex.length ? codex : signedIn;
+  const selected = pinned
+    ? choices.find((provider) => provider.instanceId === pinned)
+    : (choices.find((provider) => provider.instanceId === active && provider.driver === "codex") ??
+      (candidates.length === 1 ? candidates[0] : choices.length === 1 ? choices[0] : undefined));
+  return {
+    choices,
+    signedIn,
+    selected,
+    ready: selected !== undefined && signedIn.includes(selected),
+    ambiguous: !pinned && !selected && candidates.length > 1,
+  };
+}
+
 export interface ChatGptDictation {
+  readonly connection: ReturnType<typeof resolveChatGptConnection>;
+  readonly pinned: ProviderInstanceId | null;
+
   /** Null while no provider here can dictate with ChatGPT. */
   readonly transcriber: VoiceJobTranscriber | null;
   /** What to tell the user while `transcriber` is null. */
@@ -130,17 +176,26 @@ export interface ChatGptDictation {
 }
 
 /** ChatGPT dictation in this environment, through its Scient Agent or Codex. */
-export function useChatGptDictation(environmentId: EnvironmentId | undefined): ChatGptDictation {
+export function useChatGptDictation(
+  environmentId: EnvironmentId | undefined,
+  active?: ProviderInstanceId,
+): ChatGptDictation {
   const providersByEnvironment = useEnvironmentProviders();
-  const run = useAtomCommand(chatGptDictationCommand, { reportFailure: false });
+  const run = useAtomCommand(dictationCommand, { reportFailure: false });
   const providers =
     environmentId === undefined ? undefined : providersByEnvironment.get(environmentId);
-  const instanceId = chatGptDictationInstance(providers);
+  const pinned = useClientSettings((settings) => settings.voiceChatGptInstanceId) ?? null;
+  const connection = resolveChatGptConnection(providers ?? [], pinned, active);
+  const instanceId = connection.ready ? (connection.selected?.instanceId ?? null) : null;
   return {
+    connection,
+    pinned,
     transcriber:
       environmentId === undefined || instanceId === null
         ? null
         : makeChatGptDictationTranscriber(run, environmentId, instanceId),
-    unavailableMessage: chatGptDictationUnavailableMessage(providers),
+    unavailableMessage: connection.ambiguous
+      ? m(msg("Choose a ChatGPT connection in Transcription settings."))
+      : chatGptDictationUnavailableMessage(providers),
   };
 }

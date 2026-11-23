@@ -66,12 +66,17 @@ enum AppleSpeechEngine {
     return locale.identifier(.bcp47)
   }
 
-  static func transcribe(_ identifier: String, file: URL) async throws -> String {
+  static func transcribe(_ identifier: String, file: URL, hints: [String] = []) async throws -> String {
     try requireAvailable()
     guard file.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
     let audioFile = try AVAudioFile(forReading: file)
     let transcriber = makeTranscriber(for: Locale(identifier: identifier))
     let analyzer = SpeechAnalyzer(modules: [transcriber])
+    if !hints.isEmpty {
+      let context = AnalysisContext()
+      context.contextualStrings = [.general: hints]
+      try await analyzer.setContext(context)
+    }
     let collector = Task { () throws -> [String] in
       var texts: [String] = []
       for try await result in transcriber.results where result.isFinal {

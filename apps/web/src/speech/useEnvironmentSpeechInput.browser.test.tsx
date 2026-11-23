@@ -8,11 +8,10 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { getEnvironmentSpeechModels } from "@t3tools/client-runtime/voice-input";
 import {
   DEFAULT_CLIENT_SETTINGS,
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   type EnvironmentSpeechModel,
   type ProjectId,
-  type SpeechCustomWords,
+  type TranscriptionWord,
   type SpeechPostProcessingOptions,
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
@@ -57,7 +56,7 @@ const mocks = vi.hoisted(() => ({
   cleanupDraft: vi.fn(),
   cleanupOptions: [] as SpeechPostProcessingOptions[],
   recordingOptions: [] as SpeechTranscriptionOptions[],
-  projectWords: {} as Record<string, SpeechCustomWords>,
+  projectWords: {} as Record<string, readonly TranscriptionWord[]>,
   transcripts: [] as Array<string | Error>,
   committed: vi.fn(),
   draft: "",
@@ -81,7 +80,6 @@ vi.mock("../state/session", () => ({
   },
 }));
 // SCIENT-FORK: these tests cover T3's first-run offer, which Scient turns off while T3 voice is dormant.
-vi.mock("../scient/voice/t3VoiceDormancy", () => ({ SCIENT_OFFERS_T3_VOICE_SETUP: true }));
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
   useEnvironment: (environmentId: string | null) =>
@@ -108,18 +106,12 @@ vi.mock("../hooks/useSettings", () => ({
     const settings = { ...DEFAULT_CLIENT_SETTINGS, ...mocks.settings };
     return selector ? selector(settings) : settings;
   },
-  useEnvironmentSettings: (
-    environmentId: string,
-    selector: (settings: Record<string, unknown>) => unknown,
-  ) =>
-    selector({
-      ...DEFAULT_SERVER_SETTINGS,
-      projectSettingsOverrides: Object.fromEntries(
-        Object.entries(environmentId === THREAD_ENV ? mocks.projectWords : {}).map(
-          ([projectId, words]) => [projectId, { speechProjectCustomWords: words }],
-        ),
-      ),
-    }),
+}));
+vi.mock("../scient/transcription/readDictationWords", () => ({
+  readDictationWords: async (environmentId: string, projectId: string) => {
+    const words = environmentId === THREAD_ENV ? (mocks.projectWords[projectId] ?? []) : [];
+    return { words, hints: words.map((word) => word.preferred ?? word.term) };
+  },
 }));
 vi.mock("./runEnvironmentSpeech", () => ({ runEnvironmentSpeech: Effect.runPromise }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
@@ -204,8 +196,9 @@ function mockPlatform(
       stop: async () => {},
     },
     transcriber: {
-      prepare: async () => {
-        mocks.recordingOptions.push(input.getTranscriptionOptions());
+      prepare: async ({ signal }: { signal: AbortSignal }) => {
+        const { applySpelling, ...options } = await input.getTranscriptionOptions(signal);
+        mocks.recordingOptions.push(options);
         return {
           locale: "en",
           transcribe: async () => {
@@ -216,7 +209,7 @@ function mockPlatform(
             );
             const next = mocks.transcripts.shift() ?? "dictated";
             if (next instanceof Error) throw next;
-            return next;
+            return applySpelling?.(next) ?? next;
           },
         };
       },
@@ -283,6 +276,7 @@ function Probe(props: {
     projectId: props.projectId as ProjectId | undefined,
     projectName: props.projectName,
     cleanup: props.cleanup,
+    offerSetup: true,
     ownerKey: props.ownerKey ?? "draft",
     persistentDraft: props.persistent
       ? {
@@ -335,7 +329,7 @@ it.each([
   expect(mocks.voice.available).toBe(true);
   await act(() => mocks.voice.start());
   expect(screen.router?.state.location).toMatchObject({
-    pathname: "/settings/voice",
+    pathname: "/settings/transcription",
     hash: "voice-transcription-destination",
   });
   expectNoAudioSent();
@@ -477,7 +471,7 @@ it.each([
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
-it("finishes an off-screen recording with the keyboard while Settings is open", async () => {
+it("does not expose legacy recording controls in the Settings modal", async () => {
   setup({ destination: "env-a" });
   mocks.storedDraft = "Earlier text";
   await using screen = await render(
@@ -496,10 +490,10 @@ it("finishes an off-screen recording with the keyboard while Settings is open", 
     </>,
   );
   await expect.element(page.getByRole("dialog", { name: "Settings" })).toHaveFocus();
-  await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
-  await expect.element(page.getByRole("button", { name: "Finish voice input" })).toHaveFocus();
-  await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() => expect(mocks.storedDraft).toBe("Earlier text dictated"));
+  await expect
+    .element(page.getByRole("button", { name: "Finish voice input" }))
+    .not.toBeInTheDocument();
+  expect(mocks.transcribeCalls).toEqual([]);
 });
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
@@ -918,14 +912,16 @@ it.each([
     chooseTranscriptCleanup(true);
     mocks.settings.speechCorrectionWord = "sorry";
     if (!authorized) mocks.canDictate.delete(THREAD_ENV);
-    mocks.projectWords = { "proj-1": [{ term: "Acme", aliases: ["ack me"] }] };
+    mocks.projectWords = {
+      "proj-1": [{ term: "Acme", variants: ["ack me"], source: "user", language: "und" }],
+    };
     await using _screen = await render(
       <Probe {...(cleanup === undefined ? {} : { cleanup })} projectId="proj-1" />,
     );
     await act(() => mocks.voice.start());
     await act(() => mocks.voice.stop());
     expect(mocks.cleanupCalls).toEqual([]);
-    expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual(mocks.projectWords["proj-1"]);
+    expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["Acme"]);
     expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
     expect(mocks.transcribeCalls).toEqual(["env-a"]);
     expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
@@ -934,27 +930,31 @@ it.each([
 
 it("sends the project's vocabulary and name as hints, and the cue only with cleanup on", async () => {
   setup({ destination: "env-a" });
-  mocks.settings.speechCustomWords = [{ term: "Effect", aliases: ["a fact"] }];
   mocks.settings.speechCorrectionWord = "scratch that";
   // Stored on the draft's environment under its project, never read from the audio destination.
-  mocks.projectWords = { "proj-1": [{ term: "effect", aliases: ["affect"] }] };
+  mocks.projectWords = {
+    "proj-1": [{ term: "effect", variants: ["affect"], source: "user", language: "und" }],
+  };
+  mocks.transcripts.push("an affect");
   await using screen = await render(<Probe projectId="proj-1" projectName="Acme App" />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual([
-    { term: "effect", aliases: ["affect"] },
-  ]);
-  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["Acme App"]);
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["effect", "Acme App"]);
+  expect(mocks.committed).toHaveBeenCalledWith("an effect", expect.anything());
   expect(mocks.cleanupCalls).toEqual([]);
 
   chooseTranscriptCleanup(true);
   await screen.rerender(<Probe projectId="proj-1" projectName="Acme App" />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
-  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["scratch that", "Acme App"]);
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual([
+    "scratch that",
+    "effect",
+    "Acme App",
+  ]);
   expect(mocks.cleanupOptions.at(-1)).toMatchObject({
     speechCorrectionWord: "scratch that",
-    speechCustomWords: [{ term: "effect", aliases: ["affect"] }],
+    speechHints: ["effect"],
   });
   expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBe("scratch that");
   chooseTranscriptCleanup(false);

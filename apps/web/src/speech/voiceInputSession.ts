@@ -1,3 +1,4 @@
+import { readDictationWords } from "../scient/transcription/readDictationWords";
 import {
   postProcessEnvironmentTranscript,
   VoiceInputController,
@@ -14,13 +15,12 @@ import type {
   ClientSettings,
   EnvironmentId,
   EnvironmentSpeechStatus,
-  SpeechCustomWords,
+  ProjectId,
   SpeechPostProcessingOptions,
   SpeechStreamText,
-  SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, EnvironmentInternalError } from "@t3tools/contracts";
-import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
+import { dictationSpelling } from "@t3tools/shared/speech";
 import * as Schema from "effect/Schema";
 import { useEffect, useSyncExternalStore } from "react";
 
@@ -48,7 +48,7 @@ type DraftInput = {
 export type VoiceRecordingContext = {
   readonly environmentId: EnvironmentId;
   readonly projectName: string | null;
-  readonly projectWords: SpeechCustomWords;
+  readonly projectId: ProjectId | null;
   readonly clientSettings: ClientSettings;
   readonly cleanup: boolean;
   readonly cleanupPrepared: PreparedConnection | null;
@@ -129,6 +129,7 @@ export class VoiceInputSession {
     const hasAudioConsent = bindAudioGrant(key.grantId);
     let recordingPreferences:
       | {
+          readonly applySpelling: (text: string) => string;
           readonly cleanup: SpeechPostProcessingOptions | null;
           readonly cleanupGrant: string | null;
           readonly cleanupPrepared: PreparedConnection | null;
@@ -140,24 +141,31 @@ export class VoiceInputSession {
       getStreamingEnabled: () =>
         this.target?.readContext().clientSettings.speechStreaming ??
         DEFAULT_CLIENT_SETTINGS.speechStreaming,
-      getTranscriptionOptions: (): SpeechTranscriptionOptions => {
+      getTranscriptionOptions: async (signal: AbortSignal) => {
         const context = this.target?.readContext();
         if (!context) throw new Error(m(msg("Voice input has no draft to record into.")));
         const settings = context.clientSettings;
         const cleanupGrant = context.cleanup ? readCleanupGrant() : null;
         const cleanupEnabled = cleanupGrant !== null;
         const cue = cleanupEnabled && context.cleanupPrepared ? settings.speechCorrectionWord : "";
-        const { speechCustomWords, speechHints } = resolveSpeechVocabulary({
-          personal: settings.speechCustomWords,
-          project: context.projectWords,
-          hints: [cue, context.projectName ?? ""],
-        });
+        const { words, hints } = await readDictationWords(
+          context.environmentId,
+          context.projectId,
+          settings.speechLanguage,
+          signal,
+        );
+        signal.throwIfAborted();
+        const applySpelling = dictationSpelling(words);
+        const speechHints = [...new Set([cue.trim(), ...hints, context.projectName?.trim() ?? ""])]
+          .filter((term) => term.length > 0 && term.length <= 160)
+          .slice(0, 16);
         recordingPreferences = {
+          applySpelling,
           cleanupGrant,
           cleanupPrepared: context.cleanupPrepared,
           cleanup: cleanupEnabled
             ? {
-                speechCustomWords,
+                speechHints: hints,
                 speechPostProcessingPrompt: settings.speechPostProcessingPrompt,
                 ...(cue.trim() ? { speechCorrectionWord: cue } : {}),
               }
@@ -166,11 +174,11 @@ export class VoiceInputSession {
         return {
           speechLanguage: settings.speechLanguage,
           speechTranslateToEnglish: settings.speechTranslateToEnglish,
-          speechCustomWords,
           ...(speechHints.length > 0 ? { speechHints } : {}),
           speechRemoveFillerWords: settings.speechRemoveFillerWords,
           ...(cue.trim() ? { speechCorrectionWord: cue } : {}),
           speechSilenceFiltering: settings.speechSilenceFiltering,
+          applySpelling,
         };
       },
       getMicrophoneId: chooseRecordingMicrophone,
@@ -216,7 +224,7 @@ export class VoiceInputSession {
           () => hasAudioConsent() && preferences.cleanupGrant === readCleanupGrant(),
         ),
         options,
-      ).then((result) => result.text);
+      ).then((result) => preferences.applySpelling(result.text));
     };
     this.controller = new VoiceInputController({
       resolve: m,

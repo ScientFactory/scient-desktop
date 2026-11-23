@@ -1,3 +1,7 @@
+vi.mock("./catalogDictation", () => ({
+  useCatalogDictation: () => ({ enabled: true, setup: {} }),
+}));
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { VoicePhase } from "./useScientVoiceController.ts";

@@ -32,7 +32,7 @@ the stable scheduler and production gate.
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
 - Desktop builds cache the Windows dependency store, compiled resource
-  monitor and, on macOS, the pinned whisper.cpp and SyncTeX runtimes. They omit
+  monitor and, on macOS, the pinned SyncTeX runtime. They omit
   unused Claude SDK platform executables and package only the target Windows
   `node-pty` architecture. These optimizations do not relax the exact-source CI,
   signing, assembly, or publication gates. The macOS runtime cache is keyed by the
@@ -55,7 +55,7 @@ the stable scheduler and production gate.
   Both Linux-hosted packaging targets install `libsecret-1-dev` and `pkg-config`:
   the desktop build task compiles the Linux browser helper on its host, including
   when the eventual installer target is Windows. ImageMagick stays Linux-target-only.
-  The Windows 2025 prerequisite lane builds publication and voice helpers from
+  The Windows 2025 prerequisite lane builds publication helpers from
   the same source commit and records their target architecture and checksums.
   The Linux packager verifies that receipt before staging the helpers outside
   ASAR, alongside SyncTeX and the resource monitor. Missing target prerequisites
@@ -80,11 +80,11 @@ the stable scheduler and production gate.
   The job extracts the real AppImage, checks archived branding and external
   runtimes, verifies x64 executable ELF metadata and dynamic-library resolution
   (static helpers require no interpreter or needed libraries), executes
-  SyncTeX/Whisper and the resource-monitor protocol, and
+  SyncTeX, the packaged speech worker, and the resource-monitor protocol. It also
   verifies desktop survival/shutdown and archived-icon registration under
   isolated XDG state, Xvfb, and a private D-Bus session. Capture helper execution
   is checked without claiming live KDE/Hyprland compositor acceptance.
-  A second AppImage from the same retained stage restores only the five
+  A second AppImage from the same retained stage restores the four
   duplicate ASAR trees for a controlled compressed-size comparison; retained
   archive bytes and external resource bytes/modes must match. This measures
   the cleanup on identical inputs, not a download comparison between releases.
@@ -100,12 +100,17 @@ the stable scheduler and production gate.
   dependencies, checking native loads, terminals, CLI,
   HTTP startup, and shutdown. This qualifies the Linux payload; WSL distro and
   Windows/Linux interoperability acceptance remain separate platform checks.
-- Windows loose-file validation retains an 80-file core budget. Pinned voice
+- Windows loose-file validation retains an 80-file core budget. Pinned transcribe-cpp
   and Windows/WSL Cursor inventories are admitted separately only after their
   exact file sets pass validation; missing or extra component files fail even
   below the total cap. Foreign native targets fail independently of the budget.
   Dependency updates that change these inventories require reviewing the runtime
   loaders and updating the inventories and regression fixtures together.
+
+The packaged speech probe installs a pinned catalog model in an isolated
+profile and checks CPU fallback, inference and cancellation through the native worker.
+Use `node scripts/qualify-packaged-speech.mjs <executable> <resources>` to
+exercise a host-native unpacked artifact.
 
 Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor
@@ -119,7 +124,8 @@ maps for debugging; archive filtering does not delete them or change map
 generation. Packaged launchers do not enable source-map loading. Preserve the
 corresponding source revision and build output when diagnosing bundled stacks.
 
-Whisper, resource monitor, SyncTeX, and `scient-file-publication` run from external Electron resources.
+Resource monitor, SyncTeX, and `scient-file-publication` run from external Electron resources.
+The T3 speech worker loads its native library from the unpacked server payload.
 Overleaf volume probes use that same publication helper.
 Their `apps/desktop/prod-resources` staging trees are excluded from `app.asar`
 on every platform; Linux also excludes the KDE and Hyprland capture staging

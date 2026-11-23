@@ -451,14 +451,15 @@ describe("Droid per-turn request limits", () => {
           droid.factory,
         );
         const runtime = yield* factory(runtimeInput);
-        // A catalog written before key hints: reloading it reads the stored key.
+        // A catalog written before key hints. Keys brokered through Accounts make the reload read
+        // none; if it does read one, the hold keeps that read pending while the request runs.
         holdNextKeyRead = true;
         const file = decodeJson(NodeFS.readFileSync(config.settingsPath, "utf8")) as {
           customModels: { connections: Array<Record<string, unknown>> };
         };
         for (const connection of file.customModels.connections) delete connection.apiKeySuffix;
         NodeFS.writeFileSync(config.settingsPath, encodeJson(file));
-        yield* Deferred.await(reading).pipe(Effect.timeout("5 seconds"));
+        yield* Deferred.await(reading).pipe(Effect.timeout("1 second"), Effect.ignore);
         const readsBefore = keyReads;
         // The reload now waits on that key read; a brokered request does not.
         const result = yield* runtime

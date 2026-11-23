@@ -1,44 +1,19 @@
 import { assert, it } from "@effect/vitest";
-import failedReleaseFiles from "../fixtures/windows-payload-0622.json" with { type: "json" };
 import {
   analyzeWindowsPayloadInventory,
   unexpectedWindowsNativeFiles,
-  WINDOWS_VOICE_FILES,
   windowsCursorFiles,
   windowsTranscribeFiles,
 } from "./windows-payload.ts";
 
-const componentFiles = [
-  ...WINDOWS_VOICE_FILES.map((file) => `resources/whisper-runtime/${file}`),
-  ...windowsCursorFiles("x64").map((file) => `resources/node_modules/@cursor/${file}`),
-];
-
-it("reproduces the real 109-file release failure and admits the corrected inventory under the original core budget", () => {
-  assert.lengthOf(failedReleaseFiles, 109);
-  const failed = analyzeWindowsPayloadInventory({ files: failedReleaseFiles, arch: "x64" });
-  // That release shipped the upstream whisper.cpp archive, whose parakeet.dll
-  // and SDL2.dll the runtime built from source neither has nor needs.
-  const upstreamOnlyVoiceFiles = ["parakeet.dll", "SDL2.dll"].map(
-    (file) => `resources/whisper-runtime/${file}`,
-  );
-  assert.includeMembers(failed.unexpectedFiles, upstreamOnlyVoiceFiles);
-  assert.lengthOf(failed.unexpectedFiles, 4 + upstreamOnlyVoiceFiles.length);
-  assert.lengthOf(failed.missingFiles, 0);
-  const correctedFiles = failedReleaseFiles.filter(
-    (file) => !failed.unexpectedFiles.includes(file),
-  );
-  const corrected = analyzeWindowsPayloadInventory({ files: correctedFiles, arch: "x64" });
-  assert.deepStrictEqual(corrected.counts, {
-    voice: 15,
-    cursor: 22,
-    preview: 0,
-    transcribe: 0,
-    core: 66,
-  });
-  assert.lengthOf(corrected.unexpectedFiles, 0);
-  assert.equal(corrected.allowance, 37);
-  assert.isAtMost(correctedFiles.length, 80 + corrected.allowance);
-});
+const cursorFiles = windowsCursorFiles("x64").map(
+  (file) => `resources/node_modules/@cursor/${file}`,
+);
+const speechFiles = windowsTranscribeFiles("x64").map(
+  (file) =>
+    `resources/server.asar.unpacked/node_modules/@transcribe-cpp/win32-x64-cpu-vulkan/${file}`,
+);
+const componentFiles = [...cursorFiles, ...speechFiles];
 
 // regression: 175444cee1 fix(desktop): validate Windows payload components and native targets
 it.each(componentFiles)("rejects a missing required component file: %s", (missing) => {
@@ -50,7 +25,6 @@ it.each(componentFiles)("rejects a missing required component file: %s", (missin
 });
 
 it.each([
-  "resources/whisper-runtime/extra.dll",
   "resources/node_modules/@cursor/sdk-win32-x64/extra.txt",
   "resources/conversation-preview/extra.txt",
 ])("rejects unapproved component files even below the total cap: %s", (extra) => {
@@ -59,21 +33,19 @@ it.each([
 });
 
 it("admits T3's transcription engine as its own component", () => {
-  const engine = windowsTranscribeFiles("x64").map(
-    (file) =>
-      `resources/server.asar.unpacked/node_modules/@transcribe-cpp/win32-x64-cpu-vulkan/${file}`,
-  );
+  const omitted = analyzeWindowsPayloadInventory({ files: cursorFiles, arch: "x64" });
+  assert.deepStrictEqual(omitted.missingFiles, speechFiles);
   const result = analyzeWindowsPayloadInventory({
-    files: [...componentFiles, ...engine],
+    files: componentFiles,
     arch: "x64",
   });
   assert.equal(result.counts.transcribe, 13);
-  assert.equal(result.allowance, 37 + 13);
+  assert.equal(result.allowance, 22 + 13);
   const partial = analyzeWindowsPayloadInventory({
-    files: [...componentFiles, ...engine.slice(1)],
+    files: [...cursorFiles, ...speechFiles.slice(1)],
     arch: "x64",
   });
-  assert.deepStrictEqual(partial.missingFiles, [engine[0]]);
+  assert.deepStrictEqual(partial.missingFiles, [speechFiles[0]]);
 });
 
 it("admits only the explicitly staged preview inventory", () => {
@@ -88,7 +60,7 @@ it("admits only the explicitly staged preview inventory", () => {
   });
   assert.lengthOf(result.missingFiles, 0);
   assert.lengthOf(result.unexpectedFiles, 0);
-  assert.equal(result.allowance, 39);
+  assert.equal(result.allowance, 37);
 });
 
 it.each(["x64", "arm64"] as const)(
@@ -119,7 +91,7 @@ it("does not grant additional allowance to a large dependency spill", () => {
     files: [...componentFiles, ...spill],
     arch: "x64",
   });
-  assert.equal(result.allowance, 37);
+  assert.equal(result.allowance, 35);
   assert.equal(result.counts.core, 20_000);
 });
 

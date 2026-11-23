@@ -1,4 +1,3 @@
-import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useRef, type RefObject } from "react";
 
@@ -15,7 +14,7 @@ function shouldFinishDictationOnRelease(mode: "auto" | "hold" | "toggle", elapse
 
 type SpeechActions = {
   available: boolean;
-  state: VoiceInputState;
+  state: { phase: string };
   start(): Promise<void>;
   stop(): Promise<void>;
   cancel(): void;
@@ -29,6 +28,7 @@ export type DictationKeyHandlers = {
 
 type ShortcutInput = {
   keybindings: ResolvedKeybindingsConfig;
+  enabled?: boolean;
   speech: SpeechActions;
   disabled: boolean;
   terminalOpen: boolean;
@@ -53,11 +53,12 @@ function ownsShortcut(id: symbol) {
     return phase !== "idle" && phase !== "error";
   });
   if (busy) return busy[0] === id;
+  const available = entries.filter(([, read]) => read().speech.available && !read().disabled);
   const focused =
-    entries.find(([, read]) => read().ownsFocus?.()) ??
-    entries.find(([, read]) => read().targetRef?.current?.contains(document.activeElement));
+    available.find(([, read]) => read().ownsFocus?.()) ??
+    available.find(([, read]) => read().targetRef?.current?.contains(document.activeElement));
   if (focused) return focused[0] === id;
-  return entries.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
+  return available.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
 }
 
 const targetScope = (field: HTMLElement | null | undefined) =>
@@ -92,6 +93,7 @@ function inOtherShortcutTarget(id: symbol, event: Event) {
 export function useDictationShortcut(input: ShortcutInput) {
   const id = useRef(Symbol("dictation-target"));
   const subscribeKeys = input.subscribeKeys;
+  const enabled = input.enabled !== false;
   const mode = useClientSettings((settings) => settings.voiceShortcutMode);
   const current = useRef(input);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed actions to the window keyboard listener and shortcut registry
@@ -110,7 +112,7 @@ export function useDictationShortcut(input: ShortcutInput) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the window keyboard listeners and dictation target registry entry
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!enabled || typeof window === "undefined") return;
     let disposed = false;
     shortcutTargets.set(id.current, () => current.current);
     const finish = (event: KeyboardEvent | null) => {
@@ -202,7 +204,7 @@ export function useDictationShortcut(input: ShortcutInput) {
       window.removeEventListener("keyup", finish, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [mode, subscribeKeys]);
+  }, [enabled, mode, subscribeKeys]);
 
   return shortcutLabelForCommand(input.keybindings, "composer.dictation", {
     context: { terminalFocus: false, terminalOpen: input.terminalOpen },

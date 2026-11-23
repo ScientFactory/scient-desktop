@@ -1,7 +1,7 @@
 import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 import { T, useLocale, Var } from "gt-react";
 
-import { languageLabel } from "./SpeechLanguageSelect";
+import { languageLabel } from "../../lib/languageLabel";
 
 const commonLanguages = [
   "en",

@@ -1,5 +1,7 @@
 import type { EnvironmentSpeechModel } from "@t3tools/contracts";
 import catalog from "./catalog.json" with { type: "json" };
+// SCIENT-FORK: models the generated catalog does not carry, such as ivrit.ai's Hebrew Whisper.
+import scientModels from "./scientSpeechModels.json" with { type: "json" };
 
 export type SpeechModel = {
   readonly id: string;
@@ -20,7 +22,10 @@ export type SpeechModel = {
 };
 
 // Scores remain required by the wire schema but are not displayed.
-export const SPEECH_MODELS: readonly SpeechModel[] = catalog.models.map((model) => ({
+export const SPEECH_MODELS: readonly SpeechModel[] = [
+  ...scientModels.models,
+  ...catalog.models,
+].map((model) => ({
   ...model,
   accuracy: 0,
   speed: 0,

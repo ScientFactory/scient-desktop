@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - native inference and IPC cleanup need killable Promise boundaries outside the Effect runtime.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
+import type { TranscriptionResult } from "transcribe-cpp";
 import type { SpeechStreamText } from "@t3tools/contracts";
 import { createSpeechAudio } from "./audio.ts";
 
@@ -146,12 +147,19 @@ process.on("message", async (message) => {
       if (message.acceleration.startsWith("gpu:") && !device)
         throw new Error("The selected speech GPU is unavailable.");
       model = await TranscribeModel.load(message.path, device ? { device } : { backend: message.acceleration });
+      if (message.role === "vad") {
+        process.send({ type: "t3-speech-reply", ok: true, backend: model.backend });
+        return;
+      }
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         languages: model.capabilities.languages,
         supportsStreaming: model.capabilities.supportsStreaming,
         supportsLongForm: model.supports("long_form"),
         supportsTranslation: model.capabilities.supportsTranslate,
-        supportsVocabulary: model.supports("vocabulary") });
+        supportsLanguageDetection: model.capabilities.supportsLanguageDetect,
+        supportsVocabulary: model.supports("vocabulary"),
+        supportsInitialPrompt: model.supports("initial_prompt"),
+        supportsContextPrompt: model.supports("context_prompt") });
     } else if (message.kind === "begin") {
       await begin(message, true);
       process.send({ type: "t3-speech-reply", ok: true });
@@ -170,6 +178,43 @@ process.on("message", async (message) => {
       if (vad) await vad.streamReset();
       audio = undefined;
       process.send({ type: "t3-speech-reply", ok: true });
+    } else if (message.kind === "score") {
+      if (!vad) {
+        if (model.vadInfo?.sampleRate !== 16000 || model.vadInfo.frameSamples !== 512)
+          throw new Error("Unsupported Silero model frames.");
+        vad = model.createVadSession({ nThreads: 1 });
+      }
+      const { probs } = await vad.streamFeed(message.pcm);
+      process.send({ type: "t3-speech-reply", ok: true, probabilities: Array.from(probs) });
+    } else if (message.kind === "window") {
+      const options = message.options;
+      const terms = message.hints.vocabulary ?? [];
+      const promptText = message.hints.prompt?.trim();
+      const supportsVocabulary = model.supports("vocabulary");
+      const supportsContextPrompt = model.supports("context_prompt");
+      const supportsInitialPrompt = model.supports("initial_prompt");
+      if (supportsVocabulary && terms.length) options.vocabulary = terms;
+      if (supportsContextPrompt || supportsInitialPrompt) {
+        let prompt = "";
+        const parts = [
+          ...(supportsVocabulary ? [] : terms.map((value) => ({ value, separator: ", " }))),
+          ...(promptText ? promptText.split(/\\s+/u).map((value) => ({ value, separator: " " })) : []),
+        ];
+        for (const { value, separator } of parts) {
+          const candidate = prompt ? prompt + separator + value : value;
+          let length = Buffer.byteLength(candidate);
+          try { if (typeof model.tokenize === "function") length = model.tokenize(candidate).length; } catch {}
+          if (length <= 96) prompt = candidate;
+          else if (separator === " ") break;
+        }
+        if (prompt && supportsContextPrompt) options.prompt = prompt;
+        else if (prompt && supportsInitialPrompt) options.family = { kind: "whisper", initialPrompt: prompt };
+      }
+      if (model.supports("temperature_fallback")) {
+        options.family = { kind: "whisper", conditionOnPrevTokens: false, ...options.family };
+      }
+      const result = await model.transcribe(message.pcm, options);
+      process.send({ type: "t3-speech-reply", ok: true, result });
     } else if (message.kind === "transcribe") {
       await begin(message, false);
       await feed(message.pcm, true);
@@ -179,6 +224,7 @@ process.on("message", async (message) => {
     }
   } catch (error) {
     process.send({ type: "t3-speech-reply", ok: false,
+      errorName: error?.constructor?.name,
       error: error instanceof Error ? error.stack ?? error.message : String(error) });
   }
 });
@@ -190,11 +236,17 @@ type Reply = {
   readonly type: "t3-speech-reply";
   readonly ok: boolean;
   readonly text?: string;
+  readonly result?: TranscriptionResult;
+  readonly probabilities?: readonly number[];
+  readonly errorName?: string;
   readonly error?: string;
   readonly supportsStreaming?: boolean;
   readonly supportsLongForm?: boolean;
   readonly supportsTranslation?: boolean;
   readonly supportsVocabulary?: boolean;
+  readonly supportsInitialPrompt?: boolean;
+  readonly supportsContextPrompt?: boolean;
+  readonly supportsLanguageDetection?: boolean;
   readonly backend?: string;
   readonly languages?: unknown;
   readonly revision?: number;
@@ -304,12 +356,21 @@ export async function loadNativeSpeechModel(
   signal: AbortSignal,
   moduleUrl?: string,
   acceleration = "auto",
+  gracefulStop = false,
+  role: "asr" | "vad" = "asr",
 ) {
   try {
-    return await loadNativeSpeechModelOnce(path, signal, moduleUrl, acceleration);
+    return await loadNativeSpeechModelOnce(
+      path,
+      signal,
+      moduleUrl,
+      acceleration,
+      gracefulStop,
+      role,
+    );
   } catch (error) {
     if (acceleration !== "auto" || signal.aborted) throw error;
-    return await loadNativeSpeechModelOnce(path, signal, moduleUrl, "cpu");
+    return await loadNativeSpeechModelOnce(path, signal, moduleUrl, "cpu", gracefulStop, role);
   }
 }
 
@@ -318,6 +379,8 @@ async function loadNativeSpeechModelOnce(
   signal: AbortSignal,
   moduleUrl?: string,
   acceleration = "auto",
+  gracefulStop = false,
+  role: "asr" | "vad" = "asr",
 ) {
   signal.throwIfAborted();
   const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("model"), {
@@ -331,6 +394,7 @@ async function loadNativeSpeechModelOnce(
     },
   });
   let stopped = false;
+  let stopRequested = false;
   let pending: ReturnType<typeof Promise.withResolvers<Reply>> | undefined;
   const exited = Promise.withResolvers<void>();
   const fail = (error: Error) => {
@@ -340,10 +404,15 @@ async function loadNativeSpeechModelOnce(
   };
   child.on("error", (error) => {
     fail(error);
-    exited.resolve();
+    if (child.pid === undefined) {
+      clearTimeout(escalation);
+      signal.removeEventListener("abort", stop);
+      exited.resolve();
+    }
   });
   child.on("exit", (code, exitSignal) => {
     fail(new Error(`Speech process exited (${exitSignal ?? code}).`));
+    clearTimeout(escalation);
     signal.removeEventListener("abort", stop);
     exited.resolve();
   });
@@ -359,12 +428,25 @@ async function loadNativeSpeechModelOnce(
     const request = pending;
     pending = undefined;
     if (reply.ok) request?.resolve(reply);
-    else request?.reject(new Error(reply.error ?? "Native speech failed."));
+    else {
+      const error = new Error(reply.error ?? "Native speech failed.");
+      if (reply.errorName) error.name = reply.errorName;
+      request?.reject(error);
+    }
   });
+  let escalation: ReturnType<typeof setTimeout> | undefined;
   function stop() {
+    if (stopRequested || child.exitCode !== null || child.signalCode !== null) return;
+    stopRequested = true;
     fail(new Error("Speech process stopped."));
     // Never call native dispose while inference is active. The OS owns cleanup of the isolated process.
-    child.kill("SIGKILL");
+    if (gracefulStop) {
+      child.kill("SIGTERM");
+      escalation = setTimeout(() => child.kill("SIGKILL"), 1_000);
+      escalation.unref();
+    } else {
+      child.kill("SIGKILL");
+    }
   }
   signal.addEventListener("abort", stop, { once: true });
   if (signal.aborted) stop();
@@ -387,7 +469,7 @@ async function loadNativeSpeechModelOnce(
   };
   let loaded: Reply;
   try {
-    loaded = await send({ kind: "load", path, moduleUrl, acceleration });
+    loaded = await send({ kind: "load", path, moduleUrl, acceleration, role });
   } catch (error) {
     await dispose();
     throw error;
@@ -401,6 +483,13 @@ async function loadNativeSpeechModelOnce(
     supportsLongForm: loaded.supportsLongForm === true,
     supportsTranslation: loaded.supportsTranslation === true,
     supportsVocabulary: loaded.supportsVocabulary === true,
+    supportsInitialPrompt: loaded.supportsInitialPrompt === true,
+    supportsContextPrompt: loaded.supportsContextPrompt === true,
+    supportsLanguageDetection: loaded.supportsLanguageDetection === true,
+    supportsWindowHints:
+      loaded.supportsVocabulary === true ||
+      loaded.supportsInitialPrompt === true ||
+      loaded.supportsContextPrompt === true,
     begin: async (options: NativeSpeechOptions, filterSilence: boolean, vadPath?: string) => {
       await send({ kind: "begin", options, filterSilence, vadPath });
     },
@@ -445,9 +534,37 @@ async function loadNativeSpeechModelOnce(
       if (typeof result.text !== "string") throw new Error("Invalid speech process response.");
       return { text: result.text };
     },
+    scoreFrames: async (pcm: Float32Array) => {
+      const { probabilities } = await send({ kind: "score", pcm });
+      if (!probabilities) throw new Error("Missing Silero frame.");
+      return probabilities;
+    },
+    recognizeWindow: async (
+      pcm: Float32Array,
+      options: NativeWindowOptions = {},
+    ): Promise<TranscriptionResult> => {
+      const { result } = await send({
+        kind: "window",
+        pcm,
+        hints: {
+          vocabulary: options.vocabulary?.filter((term) => term.trim().length > 0).slice(0, 32),
+          prompt: options.prompt,
+        },
+        options: { language: options.language, timestamps: "auto" },
+      });
+      if (!result) throw new Error("Invalid speech process response.");
+      return result;
+    },
+    isStopped: () => stopped,
     dispose,
   };
 }
+
+export type NativeWindowOptions = {
+  readonly language?: string | undefined;
+  readonly vocabulary?: readonly string[] | undefined;
+  readonly prompt?: string | undefined;
+};
 
 type NativeSpeechOptions = {
   readonly timestamps: "none";

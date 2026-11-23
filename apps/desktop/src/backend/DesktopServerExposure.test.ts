@@ -543,7 +543,6 @@ describe("DesktopServerExposure", () => {
       setUpdateChannel: () => Effect.die("unexpected update channel change"),
       setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
       setWslDistro: () => Effect.die("unexpected WSL distro change"),
-      setVoiceSelectedModelId: () => Effect.die("unexpected voice model change"),
       setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
       setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
       applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),

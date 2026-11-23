@@ -275,6 +275,7 @@ describe("Scient skill session planning", () => {
         ["systematic-review", "automatic"],
         ["teach", "explicit"],
         ["to-questionnaire", "automatic"],
+        ["transcripts", "automatic"],
         ["workspace-readiness-review", "automatic"],
       ]);
 
@@ -316,6 +317,7 @@ describe("Scient skill session planning", () => {
         "systematic-review",
         "teach",
         "to-questionnaire",
+        "transcripts",
       ]);
     }),
   );

@@ -2,6 +2,9 @@
 import * as NodeCrypto from "node:crypto";
 import {
   CustomModelError,
+  requiresDedicatedCustomModelKey,
+  DEDICATED_CUSTOM_MODEL_KEY_MESSAGE,
+  type AccountsError,
   validateCustomModelConnection,
   supportsModelConnections,
   type CustomModelConnection,
@@ -28,7 +31,7 @@ export const withCustomModelKeyHints = Effect.fn("CustomModels.keyHints")(functi
 ) {
   const connections: CustomModelConnection[] = [];
   for (const connection of settings.connections) {
-    if (!connection.credentialId || connection.apiKeySuffix !== undefined) {
+    if (connection.accountId || !connection.credentialId || connection.apiKeySuffix !== undefined) {
       connections.push(connection);
       continue;
     }
@@ -44,6 +47,12 @@ export const withCustomModelKeyHints = Effect.fn("CustomModels.keyHints")(functi
   }
   return { ...settings, connections };
 });
+export type CustomModelAccountResolver = (
+  accountId: NonNullable<CustomModelConnection["accountId"]>,
+  origin: string,
+  protocol: CustomModelConnection["protocol"],
+) => Effect.Effect<{ token: Redacted.Redacted<string> }, AccountsError>;
+
 export type ResolvedModelConnection = CustomModelConnection &
   (
     | { readonly apiKey: Redacted.Redacted<string> | null; readonly credentialError?: never }
@@ -103,17 +112,35 @@ const validateCustomModelSave = Effect.fn("CustomModels.validateSave")(function*
     return yield* failure(
       "Droid can't use an API key that contains spaces, tabs or other control characters. Paste the key again without them, or remove Droid under Use with.",
     );
+  const dedicated = requiresDedicatedCustomModelKey(input.connection, current.providerInstances);
+  if (input.useDedicatedKey && (!dedicated || key === undefined))
+    return yield* failure("Enter a key to keep just for this connection.");
+  if (dedicated && input.accountId) return yield* failure(DEDICATED_CUSTOM_MODEL_KEY_MESSAGE);
+  if (dedicated && existing?.accountId && !input.removeKey && !input.useDedicatedKey)
+    return yield* failure(DEDICATED_CUSTOM_MODEL_KEY_MESSAGE);
+  if (existing?.accountId && key !== undefined && !input.useDedicatedKey)
+    return yield* failure("Replace this key in Accounts.");
+  if (input.accountId && (key !== undefined || input.removeKey))
+    return yield* failure("Choose one way to update the API key.");
   if (key !== undefined && input.removeKey)
     return yield* failure("Choose either replacing or removing the API key.");
   // A retained credential must never silently move to another origin.
   if (
-    existing?.credentialId &&
+    (existing?.credentialId || existing?.accountId) &&
     key === undefined &&
     !input.removeKey &&
-    new URL(existing.baseUrl).origin !== new URL(input.connection.baseUrl).origin
+    !input.accountId &&
+    (new URL(existing.baseUrl).origin !== new URL(input.connection.baseUrl).origin ||
+      (existing.accountId &&
+        (existing.protocol === "anthropic-messages") !==
+          (input.connection.protocol === "anthropic-messages")))
   )
-    return yield* failure("Re-enter the API key when changing the endpoint host.");
-  return { existing, key };
+    return yield* failure(
+      existing.accountId
+        ? "Choose a saved key for the new endpoint."
+        : "Re-enter the API key when changing the endpoint host.",
+    );
+  return { existing, key, attachedToDroid };
 });
 
 /** Snapshot the selected secret under the write lock; discovery itself happens outside it. */
@@ -121,34 +148,32 @@ export const prepareCustomModelSave = Effect.fn("CustomModels.prepareSave")(func
   current: ServerSettings,
   input: CustomModelSaveInput,
   secrets: ServerSecretStore["Service"],
+  resolveAccount?: CustomModelAccountResolver,
 ) {
-  const { existing, key } = yield* validateCustomModelSave(current, input);
-  const credentialId = input.removeKey ? null : (existing?.credentialId ?? null);
-  let apiKey = key === undefined ? null : Redacted.make(key);
-  let credentialError: string | undefined;
-  if (key === undefined && credentialId) {
-    const stored = yield* secrets
-      .get(customModelSecretName(credentialId))
-      .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
-    const usable = Option.isSome(stored) ? usableStoredKey(stored.value) : undefined;
-    if (Option.isNone(stored))
-      credentialError = "Saved API key is unavailable. Re-enter or remove it.";
-    else if (usable === undefined)
-      credentialError = "Saved API key can't be used. Re-enter or remove it.";
-    else apiKey = Redacted.make(usable);
-  }
+  const { existing, key, attachedToDroid } = yield* validateCustomModelSave(current, input);
+  const credentialId = input.removeKey || input.accountId ? null : (existing?.credentialId ?? null);
+  const retained = !input.removeKey && !input.accountId && key === undefined ? existing : undefined;
+  const accountId = input.accountId ?? retained?.accountId;
+  const resolved = retained
+    ? yield* resolveCustomModelKey(retained, secrets, resolveAccount)
+    : { apiKey: key === undefined ? null : Redacted.make(key) };
   // A broken key must not prevent editing or detaching models. Do not use an
   // unauthenticated network lookup as a substitute for that credential.
   const connection: ResolvedModelConnection = {
     ...input.connection,
     credentialId,
-    ...(credentialError ? { credentialError } : { apiKey }),
+    ...(accountId ? { accountId } : {}),
+    ...(resolved.credentialError
+      ? { credentialError: "Saved API key is unavailable. Re-enter or remove it." }
+      : resolved),
   };
   return {
     connection,
+    attachedToDroid,
     previous:
       key === undefined &&
       !input.removeKey &&
+      !input.accountId &&
       existing?.baseUrl === input.connection.baseUrl &&
       existing.protocol === input.connection.protocol
         ? existing
@@ -168,7 +193,7 @@ export const saveCustomModel = Effect.fn("CustomModels.save")(function* (
   const credentialId =
     key !== undefined
       ? NodeCrypto.randomUUID()
-      : input.removeKey
+      : input.removeKey || input.accountId
         ? null
         : (existing?.credentialId ?? null);
   const connection: CustomModelConnection = {
@@ -178,10 +203,17 @@ export const saveCustomModel = Effect.fn("CustomModels.save")(function* (
       ...(metadata.has(model.id) ? { reasoningMetadata: metadata.get(model.id)! } : {}),
     })),
     credentialId,
+    ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(!input.accountId && key === undefined && !input.removeKey && existing?.accountId
+      ? {
+          accountId: existing.accountId,
+          ...(existing.accountKeyVersion ? { accountKeyVersion: existing.accountKeyVersion } : {}),
+        }
+      : {}),
     apiKeySuffix:
       key !== undefined
         ? keySuffix(key)
-        : input.removeKey
+        : input.removeKey || input.accountId
           ? null
           : (existing?.apiKeySuffix ?? null),
   };
@@ -212,13 +244,14 @@ export const resolveCustomModels = Effect.fn("CustomModels.resolve")(function* (
   settings: CustomModelsSettings,
   instanceId: ProviderInstanceId,
   secrets: ServerSecretStore["Service"],
+  resolveAccount?: CustomModelAccountResolver,
 ): Effect.fn.Return<ReadonlyArray<ResolvedModelConnection>, CustomModelError> {
   const connections: ResolvedModelConnection[] = [];
   for (const connection of settings.connections) {
     const models = connection.models.filter((model) => model.instanceIds.includes(instanceId));
     if (!models.length) continue;
     // SCIENT-FORK:START — Scient Accounts: share the owning key resolver with linked accounts.
-    const resolved = yield* resolveCustomModelKey(connection, secrets);
+    const resolved = yield* resolveCustomModelKey(connection, secrets, resolveAccount);
     connections.push({ ...connection, models, ...resolved });
     // SCIENT-FORK:END
   }
@@ -229,7 +262,21 @@ export const resolveCustomModels = Effect.fn("CustomModels.resolve")(function* (
 export const resolveCustomModelKey = Effect.fn("CustomModels.resolveKey")(function* (
   connection: CustomModelConnection,
   secrets: ServerSecretStore["Service"],
+  resolveAccount?: CustomModelAccountResolver,
 ) {
+  if (connection.accountId) {
+    const result =
+      resolveAccount && URL.canParse(connection.baseUrl)
+        ? yield* resolveAccount(
+            connection.accountId,
+            new URL(connection.baseUrl).origin,
+            connection.protocol,
+          ).pipe(Effect.option)
+        : Option.none();
+    return Option.isSome(result)
+      ? { apiKey: result.value.token }
+      : { credentialError: `Choose a saved API key for ${connection.name} in Custom models.` };
+  }
   const stored = yield* (
     connection.credentialId
       ? secrets.get(customModelSecretName(connection.credentialId))

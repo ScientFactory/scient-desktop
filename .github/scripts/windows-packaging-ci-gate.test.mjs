@@ -37,9 +37,12 @@ NodeTest.test(
   () => {
     for (const path of [
       "scripts/build-desktop-artifact.ts",
-      "scripts/stage-whisper-runtime.ts",
       "scripts/lib/scient-synctex-build.ts",
       "scripts/qualify-linux-packaged-runtime.mjs",
+      "scripts/qualify-packaged-speech.mjs",
+      "apps/server/src/speech/native.ts",
+      "apps/server/src/speech/catalog.json",
+      "apps/server/src/speech-packaging-probe.ts",
       "apps/desktop/src/main.ts",
       "native/kde-snap-shot/src/main.rs",
       "apps/server/package.json",
@@ -110,7 +113,6 @@ NodeTest.test(
     for (const path of [
       "apps/desktop/resources/docs/help.html",
       "apps/desktop/resources/README.md",
-      "apps/desktop/prod-resources/whisper-runtime/test/model.bin",
       "apps/desktop/gnome-extension/captureService.test.js",
       "native/kde-snap-shot/tests/qml/tst_feedback.qml",
       "native/conversation-preview/README.md",

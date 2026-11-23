@@ -1,3 +1,4 @@
+import { openRecordingCapture } from "../scient/recordings/recordingCaptureStore";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
@@ -1388,6 +1389,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             [
               { id: "new-thread", label: gt("New thread") },
               { id: "copy-path", label: gt("Copy path") },
+              ...(group.environmentId === primaryEnvironmentId
+                ? [
+                    { id: "recordings", label: gt("Recordings") },
+                    { id: "record-audio", label: gt("Record audio") },
+                  ]
+                : []),
               ...(canPinProject(group)
                 ? [
                     group.pinned
@@ -1405,6 +1412,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         switch (clicked.value) {
           case "new-thread":
             startThreadInProjectFolder(group);
+            return;
+          case "record-audio":
+            if (isMobile) setOpenMobile(false);
+            openRecordingCapture(group.id);
+            return;
+          case "recordings":
+            if (isMobile) setOpenMobile(false);
+            void router.navigate({ to: "/recordings", search: { project: group.id } });
             return;
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });

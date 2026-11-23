@@ -166,7 +166,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(88);
+      expect(scientTools).toHaveLength(93);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_network",
         "scient_account_add",
@@ -256,6 +256,11 @@ it.live(
         "scient_sources_zotero_import",
         "scient_sources_zotero_refresh",
         "scient_sources_zotero_send",
+        "scient_transcription_cancel",
+        "scient_transcription_engines",
+        "scient_transcription_list",
+        "scient_transcription_start",
+        "scient_transcription_status",
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",

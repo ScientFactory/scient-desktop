@@ -26,6 +26,10 @@ import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 
+type RecordingOptions = SpeechTranscriptionOptions & {
+  readonly applySpelling?: (text: string) => string;
+};
+
 const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export function createBrowserVoiceInputPlatform(input: {
@@ -34,7 +38,9 @@ export function createBrowserVoiceInputPlatform(input: {
   /** The exact OpenRouter model the grant names; required with that provider. */
   readonly cloudModel?: CloudSpeechModelId | undefined;
   readonly hasAudioConsent: () => boolean;
-  readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
+  readonly getTranscriptionOptions: (
+    signal: AbortSignal,
+  ) => RecordingOptions | Promise<RecordingOptions>;
   readonly getStatusListener?: () => ((status: EnvironmentSpeechStatus) => void) | undefined;
   readonly getStreamingEnabled: () => boolean;
   readonly getMicrophoneId: () => string | Promise<string>;
@@ -45,7 +51,9 @@ export function createBrowserVoiceInputPlatform(input: {
 }) {
   return createBrowserPcmCapture(input, async (options, canStream) => {
     const onStatus = input.getStatusListener?.();
-    const recordingOptions = input.getTranscriptionOptions();
+    const { applySpelling = (text: string) => text, ...recordingOptions } =
+      await input.getTranscriptionOptions(options.signal);
+    throwIfVoiceTranscriptionAborted(options.signal);
     const streamingEnabled = input.getStreamingEnabled();
     const transcribeRecording = async (
       uri: string,
@@ -73,7 +81,7 @@ export function createBrowserVoiceInputPlatform(input: {
           { signal: transcriptionSignal },
         );
         throwIfVoiceTranscriptionAborted(transcriptionSignal);
-        return result.text;
+        return applySpelling(result.text);
       } catch (cause) {
         throwIfVoiceTranscriptionAborted(transcriptionSignal);
         if (isVoiceTranscriptionError(cause)) throw cause;
@@ -132,17 +140,21 @@ export function createBrowserVoiceInputPlatform(input: {
     }
     const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(input.prepared), options);
     if (!canStream()) return batch;
+    const streaming = openSpeechStream({
+      url,
+      canSend: input.hasAudioConsent,
+      options: recordingOptions,
+      signal: options.signal,
+      onText: input.onText,
+      onError: (error) => input.onError(error.message),
+    });
     return {
       locale: nativeStreaming ? language : batchLocale,
       transcribe: transcribeRecording,
-      streaming: openSpeechStream({
-        url,
-        canSend: input.hasAudioConsent,
-        options: recordingOptions,
-        signal: options.signal,
-        onText: input.onText,
-        onError: (error) => input.onError(error.message),
-      }),
+      streaming: {
+        ...streaming,
+        finish: () => streaming.finish().then(applySpelling),
+      },
     };
   });
 }
@@ -162,7 +174,9 @@ async function waitForAppleSpeech<T>(request: Promise<T>, signal: AbortSignal): 
 /** Records like the environment path, then transcribes in the desktop main process; audio stays on this Mac. */
 export function createAppleSpeechVoiceInputPlatform(input: {
   readonly hasAudioConsent: () => boolean;
-  readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
+  readonly getTranscriptionOptions: (
+    signal: AbortSignal,
+  ) => RecordingOptions | Promise<RecordingOptions>;
   readonly getMicrophoneId: () => string | Promise<string>;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
@@ -170,7 +184,8 @@ export function createAppleSpeechVoiceInputPlatform(input: {
 }) {
   return createBrowserPcmCapture(input, async ({ signal }) => {
     const appleSpeech = window.desktopBridge?.appleSpeech;
-    const { speechLanguage } = input.getTranscriptionOptions();
+    const { speechLanguage, speechHints, applySpelling } =
+      await input.getTranscriptionOptions(signal);
     // The packaged app pins `navigator.language` to en-US, so "auto" asks the OS.
     const system = window.desktopBridge?.getPreferredSystemLanguages?.() ?? [];
     if (!appleSpeech) throw new Error("Apple Speech is not available.");
@@ -206,12 +221,16 @@ export function createAppleSpeechVoiceInputPlatform(input: {
             message: m(msg("Voice transcription was cancelled.")),
           });
         const result = await waitForAppleSpeech(
-          appleSpeech.transcribe({ locale, pcm }),
+          appleSpeech.transcribe({
+            locale,
+            pcm,
+            ...(speechHints?.length ? { hints: speechHints } : {}),
+          }),
           transcriptionSignal,
         );
         throwIfVoiceTranscriptionAborted(transcriptionSignal);
         if (!result.ok) throw new Error("Apple Speech could not transcribe.");
-        return result.value;
+        return applySpelling?.(result.value) ?? result.value;
       },
     };
   });

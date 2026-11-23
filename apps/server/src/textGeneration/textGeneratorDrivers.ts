@@ -28,6 +28,7 @@ export interface TextGeneratorDriver {
     connection: TextGeneratorConnection,
     model: string,
     prompt: string,
+    outputSchema?: unknown,
   ) => Effect.Effect<string, TextGeneratorRequestError, HttpClient.HttpClient>;
   readonly listModels: (
     connection: TextGeneratorConnection,
@@ -137,10 +138,21 @@ const OpenAIModelList = Schema.Struct({
 
 const openAICompatible: TextGeneratorDriver = {
   kind: "openaiCompatible",
-  generate: (connection, model, prompt) => {
+  generate: (connection, model, prompt, outputSchema) => {
     const { label } = connection;
     let request = HttpClientRequest.post(endpoint(connection, "/chat/completions")).pipe(
-      HttpClientRequest.bodyJsonUnsafe({ model, messages: [{ role: "user", content: prompt }] }),
+      HttpClientRequest.bodyJsonUnsafe({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        ...(outputSchema
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: { name: "transcript_correction", schema: outputSchema, strict: true },
+              },
+            }
+          : {}),
+      }),
     );
     if (connection.apiKey) request = HttpClientRequest.bearerToken(request, connection.apiKey);
     return sendJson(label, request, ChatCompletion).pipe(
@@ -174,9 +186,15 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const AnthropicMessage = Schema.Struct({
   stop_reason: Schema.NullOr(Schema.String),
   content: Schema.Array(
-    Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
+    Schema.Struct({
+      type: Schema.String,
+      text: Schema.optional(Schema.String),
+      name: Schema.optional(Schema.String),
+      input: Schema.optional(Schema.Unknown),
+    }),
   ),
 });
+const encodeToolInput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const AnthropicModelPage = Schema.Struct({
   data: Schema.Array(
     Schema.Struct({ id: Schema.String, display_name: Schema.optional(Schema.String) }),
@@ -193,13 +211,19 @@ const anthropicRequest = (request: HttpClientRequest.HttpClientRequest, apiKey: 
 
 const anthropic: TextGeneratorDriver = {
   kind: "anthropic",
-  generate: (connection, model, prompt) => {
+  generate: (connection, model, prompt, outputSchema) => {
     const { label } = connection;
     const request = anthropicRequest(
       HttpClientRequest.post(endpoint(connection, "/messages")).pipe(
         HttpClientRequest.bodyJsonUnsafe({
           model,
           max_tokens: 8192,
+          ...(outputSchema
+            ? {
+                tools: [{ name: "transcript_correction", input_schema: outputSchema }],
+                tool_choice: { type: "tool", name: "transcript_correction" },
+              }
+            : {}),
           messages: [{ role: "user", content: prompt }],
         }),
       ),
@@ -212,6 +236,23 @@ const anthropic: TextGeneratorDriver = {
             new TextGeneratorRequestError({ detail: `${label} reached its output limit.` }),
           );
         }
+        const structured = outputSchema
+          ? message.content.find(
+              (block) =>
+                block.type === "tool_use" &&
+                block.name === "transcript_correction" &&
+                block.input !== undefined,
+            )
+          : undefined;
+        if (structured)
+          return encodeToolInput(structured.input).pipe(
+            Effect.mapError(
+              () =>
+                new TextGeneratorRequestError({
+                  detail: `${label} returned invalid structured output.`,
+                }),
+            ),
+          );
         const text = message.content
           .flatMap((block) => (block.type === "text" && block.text ? [block.text] : []))
           .join("")

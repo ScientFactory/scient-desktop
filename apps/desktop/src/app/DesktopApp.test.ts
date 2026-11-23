@@ -80,7 +80,6 @@ import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as LoopbackTunnel from "../preview/LoopbackTunnel.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 // SCIENT-FORK:START — services Scient's desktop program adds.
-import * as DesktopVoice from "./DesktopVoice.ts";
 import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
 import * as AppleSpeech from "../speech/AppleSpeech.ts";
@@ -245,7 +244,6 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           Layer.mock(MacPermissions.MacPermissions, {}),
           // SCIENT-FORK:START — services Scient's desktop program adds.
           Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
-          Layer.mock(DesktopVoice.DesktopVoice, {}),
           // SCIENT-FORK:END
           Layer.mock(AppleSpeech.AppleSpeech, {}),
           Layer.mock(LoopbackTunnel.LoopbackTunnel, {}),

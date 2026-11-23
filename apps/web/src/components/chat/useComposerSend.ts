@@ -217,12 +217,6 @@ type DraftEnvironmentRouting = ReturnType<typeof useDraftEnvironmentRouting>;
 type UsageLimitsPanel = ReturnType<typeof useUsageLimitsPanel>;
 type TimelineFollow = ReturnType<typeof useReadingFollow>;
 
-/** A dictation sent after its thread left the screen: its prompt and the composer it came from. */
-type DetachedSendOverride = {
-  readonly prompt: string;
-  readonly sendContext: ReturnType<ChatComposerHandle["getSendContext"]>;
-};
-
 export interface ComposerSendInput {
   readonly serverProjection: ThreadStructure | null;
   readonly hasHeldQueuedRuns: boolean;
@@ -531,12 +525,11 @@ export function useComposerSend(input: ComposerSendInput) {
     // SCIENT-FORK:START — explicit steer bypasses normal server admission.
     options?: { steer?: boolean; directPrompt?: string },
     // SCIENT-FORK:END
-    detachedOverride?: DetachedSendOverride,
   ) => {
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
-    let promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
+    let promptAtSend = promptRef.current;
     // The composer and its prompt belong to whichever thread is on screen.
     const isCurrentRouteThread = () => currentRouteThreadKeyRef.current === routeThreadKey;
     const pendingApprovalIdsAtSend = pendingApprovalsRef.current.map(
@@ -570,9 +563,7 @@ export function useComposerSend(input: ComposerSendInput) {
     // Capture before queue recovery yields: submitting releases the typing hold,
     // but a revealed question must not replace this draft's attachment snapshot.
     // Read before any wait; the composer on screen may belong to another thread after it.
-    let sendCtx = detachedOverride
-      ? detachedOverride.sendContext
-      : composerRef.current?.getSendContext();
+    let sendCtx = composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && directPrompt === null && !queuedRunEdit.isEditing
@@ -653,8 +644,7 @@ export function useComposerSend(input: ComposerSendInput) {
       releasedFromImageHold = true;
       const draftAfterHold = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       if (!draftAfterHold) return;
-      // A dictation sent after leaving the thread carries its transcript outside the draft.
-      promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
+      promptAtSend = draftAfterHold.prompt;
       if (sendCtx) {
         sendCtx = {
           ...sendCtx,
@@ -864,9 +854,9 @@ export function useComposerSend(input: ComposerSendInput) {
     let draftClearedForSend = false;
     const isCurrentDraft = () =>
       draftClearedForSend ||
-      // A detached dictation send left its thread on purpose, and a send held for its images may
-      // finish after the thread left the screen; only their draft must be unchanged.
-      ((detachedOverride !== undefined || releasedFromImageHold || isCurrentRouteThread()) &&
+      // A send held for its images may finish after the thread left the screen; only its draft
+      // must be unchanged.
+      ((releasedFromImageHold || isCurrentRouteThread()) &&
         (directPrompt !== null ||
           composerSubmissionMatchesDraft(
             draftSnapshotForSend,
@@ -2217,22 +2207,5 @@ export function useComposerSend(input: ComposerSendInput) {
     });
     return sendWithEnvironmentRefreshLatest(...args);
   };
-  // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
-  // only time a detached send runs, so the draft keeps the environment it was dictated for.
-  const captureDetachedSend = useStableCallback(() => {
-    // SCIENT-FORK: in a thread with people in it the message may be theirs, and only this
-    // thread's composer can tell; the dictation then stays in its draft.
-    if (postToRoom.applies()) return null;
-    const send = sendFromRender;
-    return (
-      e?: { preventDefault: () => void },
-      dispatchMode?: ComposerDispatchMode,
-      submissionIntent?: ComposerSubmissionIntent,
-      directAnnotation?: Parameters<typeof send>[3],
-      detachedOverride?: DetachedSendOverride,
-      // SCIENT-FORK: a held steer keeps its request.
-      options?: { steer?: boolean },
-    ) => send(e, dispatchMode, submissionIntent, directAnnotation, options, detachedOverride);
-  });
-  return { onSend: onSendWithRouting, captureDetachedSend };
+  return { onSend: onSendWithRouting };
 }

@@ -1,7 +1,7 @@
+import { RecordingCapture } from "../scient/recordings/RecordingCapture";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
-import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -25,7 +25,7 @@ function ChatRouteLayout() {
         <Outlet />
       )}
       {modalOpen ? <Outlet /> : null}
-      <GlobalVoiceInputIndicator hidden={modalOpen} />
+      <RecordingCapture />
     </>
   );
 }

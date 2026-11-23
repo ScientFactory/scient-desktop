@@ -1,3 +1,4 @@
+import { DictationRecognitionHints } from "./transcriptionWords.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -290,11 +291,11 @@ export const SpeechCorrectionCue = Schema.String.check(Schema.isMaxLength(50));
 
 /** Recognition preferences that travel with every recording. */
 export const SpeechTranscriptionOptions = Schema.Struct({
+  speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechLanguage: SpeechLanguage,
   speechTranslateToEnglish: Schema.Boolean,
-  speechCustomWords: SpeechCustomWords,
   /** Recognition-only terms, such as the project name; never rewrite the transcript. */
-  speechHints: Schema.optionalKey(Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(8))),
+  speechHints: Schema.optionalKey(DictationRecognitionHints),
   speechRemoveFillerWords: Schema.Boolean,
   /** Preserve this cue for separately consented transcript cleanup. */
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
@@ -304,14 +305,14 @@ export type SpeechTranscriptionOptions = typeof SpeechTranscriptionOptions.Type;
 export const DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS: SpeechTranscriptionOptions = {
   speechLanguage: "auto",
   speechTranslateToEnglish: false,
-  speechCustomWords: [],
   speechRemoveFillerWords: true,
   speechSilenceFiltering: true,
 };
 export const SPEECH_MAX_OPTIONS_BYTES = 128_000;
 
 export const SpeechPostProcessingOptions = Schema.Struct({
-  speechCustomWords: SpeechCustomWords,
+  speechCustomWords: Schema.optionalKey(SpeechCustomWords),
+  speechHints: Schema.optionalKey(DictationRecognitionHints),
   speechPostProcessingPrompt: SpeechPostProcessingPromptSettings,
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
 });

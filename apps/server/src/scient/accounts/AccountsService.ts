@@ -25,6 +25,7 @@ import type {
   AccountFillValues,
   AccountFilledTab,
   AccountId,
+  CustomModelProtocol,
   AccountSaveInput,
   AccountSaveResult,
   AccountSetControlsInput,
@@ -100,6 +101,8 @@ export interface SessionAccounts {
 export type { AccountAuthorization };
 
 /** An Accounts error with its reason and a message written for the agent or the user. */
+export const SPEECH_KEY_OUTSIDE_PROJECT = "The key is not available in this project.";
+
 export const fail = (reason: AccountsError["reason"], message: string) =>
   new AccountsError({ reason, message });
 
@@ -122,6 +125,7 @@ export interface AccountsServiceShape {
   readonly passwordStore: (
     input: CliPasswordStoreInput,
   ) => Effect.Effect<CliPasswordStoreResult, AccountsError>;
+  readonly migrateCustomModelKeys?: Effect.Effect<void>;
   readonly snapshot: Effect.Effect<AccountsSnapshot, AccountsError>;
   readonly changes: Stream.Stream<AccountsSnapshot>;
   readonly save: (input: AccountSaveInput) => Effect.Effect<AccountSaveResult, AccountsError>;
@@ -317,6 +321,26 @@ export interface AccountsServiceShape {
     action: AccountUseAction,
     options?: { readonly detail?: string },
   ) => Effect.Effect<AccountAuthorization, AccountsError>;
+  /** Resolves a saved API key for an owner-configured Custom models connection. */
+  readonly resolveCustomModelAccountKey: (
+    accountId: AccountId,
+    origin: string,
+    protocol?: CustomModelProtocol,
+  ) => Effect.Effect<{ name: string; token: Redacted.Redacted<string> }, AccountsError>;
+  /** Resolves a sealed speech key for its exact HTTP origin. */
+  /** Internal migration writer. The stable ID is assigned by the legacy slot owner. */
+  readonly saveLegacySpeechKey?: (
+    accountId: AccountId,
+    origin: string,
+    name: string,
+    token: Redacted.Redacted<string>,
+  ) => Effect.Effect<void, AccountsError>;
+  readonly resolveSpeechKey: (
+    accountId: AccountId,
+    origin: string,
+    usage?: { provider: "compatible" | "openai" | "xai" | "openrouter"; jobId: string },
+    projectId?: ProjectId,
+  ) => Effect.Effect<{ name: string; token: Redacted.Redacted<string> }, AccountsError>;
   /** Resolves the named secret fields from wherever each lives. Call only after `authorize`. */
   readonly resolveSecrets: (
     accountId: AccountId,

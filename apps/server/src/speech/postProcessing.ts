@@ -1,3 +1,4 @@
+import { legacyDictationVocabulary } from "@t3tools/shared/speech";
 import {
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   type EnvironmentSpeechPostProcessingRequest,
@@ -12,7 +13,6 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/TranscriptionPostProcessing.ts";
-import { applySpeechAliases } from "./customWords.ts";
 import { SpeechOperationError } from "./SpeechService.ts";
 
 export class SpeechPostProcessing extends Context.Service<
@@ -41,6 +41,7 @@ const make = Effect.gen(function* () {
           DEFAULT_SPEECH_POST_PROCESSING_PROMPT;
         // Providers run in a working directory; cleanup must not read a checkout.
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-voice-cleanup-" });
+        const vocabulary = legacyDictationVocabulary(input.options);
         const generated = yield* textGeneration.generateTranscriptionPostProcessing({
           cwd,
           prompt: buildTranscriptionPostProcessingPrompt(
@@ -48,16 +49,12 @@ const make = Effect.gen(function* () {
             input.transcript,
             input.draft,
             input.options.speechCorrectionWord,
+            vocabulary.hints,
           ),
           modelSelection: resolveSpeechPostProcessingModelSelection(settings, providers),
         });
         const text = generated.transcription.trim();
-        return {
-          text:
-            text.length > 0
-              ? applySpeechAliases(text, input.options.speechCustomWords)
-              : input.transcript,
-        };
+        return { text: text ? vocabulary.spell(text) : input.transcript };
       },
       Effect.scoped,
       Effect.mapError((cause) => new SpeechOperationError({ operation: "post-processing", cause })),

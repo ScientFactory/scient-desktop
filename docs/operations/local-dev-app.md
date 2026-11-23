@@ -377,13 +377,6 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   production credentials into the repository or dev state; the identity home's
   `seed` is the only path that brings the owner's installed-app accounts into dev
   state, and only on the owner's request.
-- One folder is shared by every development app on the machine:
-  `~/.scient-next/dev-shared/`. It holds only public, checksum-verified
-  downloads and one preference (the voice helper, voice models, and the voice
-  model last chosen), so a new candidate does not set voice up again. It never
-  holds sessions, settings, credentials, or databases; the owner's identity lives
-  in `~/.scient-next/dev-identity` instead. See
-  [`scient-voice.md`](../internals/scient-voice.md).
 
 ## Status, Recovery, And Removal
 

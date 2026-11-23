@@ -2,6 +2,7 @@ import { deriveProviderInstanceConfigMap } from "./provider/ProviderInstanceRegi
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AccountId,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
@@ -43,6 +44,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { customModelRuntimeChange } from "./customModelCapabilities.ts";
 import { customModelSecretName } from "./customModels.ts";
 import { ScientServerSettings } from "./scientServerSettings.ts";
 import * as Stream from "effect/Stream";
@@ -268,6 +270,149 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         },
       ],
     });
+
+  // SCIENT-FORK:START — Uses the settings suite's scoped server and secret-store fixtures.
+  it.effect("keeps typed agent keys without holding the settings write lock", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const scient = yield* ScientServerSettings;
+        const instanceId = ProviderInstanceId.make("antigravity_d30");
+        yield* settings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("antigravity"),
+            environment: [{ name: "SYNTHETIC_KEY", value: "synthetic", sensitive: true }],
+            config: {},
+          },
+        });
+        let called = false;
+        yield* settings.setRemovedAgentKeeper!((removed) =>
+          scient
+            .customModelAccounts!.invalidate(
+              new Set([AccountId.make("acc_removal_test")]),
+              "rotation",
+            )
+            .pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  called = removed.some((row) => row.instanceId === instanceId);
+                }),
+              ),
+            ),
+        );
+        const removed = yield* settings.updateProviderInstance({ operation: "remove", instanceId });
+        assert.isTrue(called);
+        assert.isUndefined(removed.providerInstances[instanceId]);
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    ),
+  );
+
+  it.effect("rejects a migration binding when the connection protocol changed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scient = yield* ScientServerSettings;
+        const first = yield* scient.saveCustomModel({
+          revision: 0,
+          connection: { ...modelConnection, models: [] },
+        });
+        const original = first.connections[0]!;
+        yield* scient.saveCustomModel({
+          revision: first.revision,
+          connection: { ...original, protocol: "anthropic-messages" },
+        });
+        assert.isFalse(
+          yield* scient.customModelAccounts!.setBinding(original, {
+            accountId: AccountId.make("acc_stale_protocol"),
+            credentialId: null,
+          }),
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    ),
+  );
+
+  it.effect("announces a late Accounts resolver to a provider without resolving a key", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const scient = yield* ScientServerSettings;
+        const accountId = AccountId.make("acc_late_accounts");
+        const saved = yield* scient.saveCustomModel({
+          revision: 0,
+          connection: { ...modelConnection, models: [] },
+        });
+        yield* scient.customModelAccounts!.setBinding(saved.connections[0]!, {
+          accountId,
+          credentialId: null,
+        });
+        const changes = yield* settings.subscribeChanges;
+        let reads = 0;
+        yield* scient.customModelAccounts!.install(
+          () =>
+            Effect.sync(() => {
+              reads++;
+              return { token: Redacted.make("synthetic") };
+            }),
+          Effect.void,
+        );
+        const ready = yield* changes.pipe(
+          Stream.filter((next) => !!next.customModels.connections[0]?.accountKeyVersion),
+          Stream.runHead,
+          Effect.timeout("2 seconds"),
+        );
+        assert.equal(
+          Option.getOrUndefined(ready)?.customModels.connections[0]?.accountId,
+          accountId,
+        );
+        assert.equal(reads, 0);
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    ),
+  );
+
+  it.effect("revokes every attached provider's old key generation after an Accounts mutation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scient = yield* ScientServerSettings;
+        const accountId = AccountId.make("acc_synthetic_models");
+        const instanceId = ProviderInstanceId.make("pi");
+        const otherInstanceId = ProviderInstanceId.make("omp");
+        const saved = yield* scient.saveCustomModel({
+          revision: 0,
+          connection: {
+            ...modelConnection,
+            models: [
+              {
+                ...modelConnection.models[0]!,
+                configurationMode: "manual",
+                contextWindow: 16_384,
+                maxOutputTokens: 4096,
+                imageInput: "disabled",
+                reasoningOverride: { supported: false, levels: [] },
+                instanceIds: [instanceId, otherInstanceId],
+              },
+            ],
+          },
+        });
+        const connection = saved.connections[0]!;
+        const accounts = scient.customModelAccounts!;
+        assert.isTrue(yield* accounts.setBinding(connection, { accountId, credentialId: null }));
+        const loaded = scient.committedCustomModels().connections;
+        yield* accounts.invalidate(new Set([AccountId.make("acc_unrelated_models")]), "unrelated");
+        assert.equal(
+          customModelRuntimeChange(loaded, scient.committedCustomModels().connections, instanceId),
+          "unchanged",
+        );
+        yield* accounts.invalidate(new Set([accountId]), "rotated");
+        const current = scient.committedCustomModels().connections;
+        assert.equal(current[0]!.accountId, accountId);
+        assert.equal(current[0]!.accountKeyVersion, "rotated");
+        assert.equal(customModelRuntimeChange(loaded, current, instanceId), "revoke");
+        assert.equal(customModelRuntimeChange(loaded, current, otherInstanceId), "revoke");
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    ),
+  );
+  // SCIENT-FORK:END
 
   it.effect(
     "persists, preserves, and removes OpenRouter accounting keys through the secret store",
@@ -787,6 +932,66 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+  // SCIENT-FORK:START — Uses the settings suite's scoped server and secret-store fixtures.
+  it.effect("keeps released clients reading and writing their legacy mirror after migration", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          transcriptionWords: [{ term: "C#", language: "und", source: "user" }],
+          speechProjectCustomWords: [
+            { term: "C#", aliases: ["C sharp"] },
+            { term: "שלום", aliases: ["שלם"] },
+          ],
+        }),
+      );
+      assert.deepEqual((yield* service.getSettings).transcriptionWords, [
+        { term: "C#", variants: ["C sharp"], language: "und", source: "user" },
+        { term: "שלום", preferred: "שלום", variants: ["שלם"], language: "und", source: "user" },
+      ]);
+      const previous = (yield* service.getSettings).speechProjectCustomWords;
+      assert.equal(previous.length, 2);
+      const added = yield* service.updateSettings({
+        speechProjectCustomWords: [...previous, { term: "O'Reilly", aliases: ["oh really"] }],
+      });
+      assert.equal(added.transcriptionWords.length, 3);
+      const removed = yield* service.updateSettings({ speechProjectCustomWords: previous });
+      assert.deepEqual(removed.speechProjectCustomWords, previous);
+      assert.equal(removed.transcriptionWords.length, 3);
+      yield* service.updateSettings({ transcriptionWords: [] });
+      assert.deepEqual((yield* service.getSettings).transcriptionWords, []);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+  it.effect("commits imported speech words and their receipt together", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const id = "b".repeat(64);
+      const patch = {
+        migrateLegacySpeechWords: { id, words: [{ term: "שלום", aliases: ["שלם"] }] },
+      };
+      yield* service.updateSettings({
+        transcriptionWords: [{ term: "C#", language: "und", source: "user" }],
+      });
+      yield* service.updateSettings(patch);
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.deepEqual(persisted.legacySpeechWordsReceipts, [id]);
+      assert.deepEqual(persisted.transcriptionWords, [
+        { term: "C#", language: "und", source: "user" },
+        { term: "שלום", preferred: "שלום", variants: ["שלם"], language: "und", source: "user" },
+      ]);
+      yield* service.updateSettings({ transcriptionWords: [] });
+      const retried = yield* service.updateSettings(patch);
+      assert.deepEqual(retried.transcriptionWords, []);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+  // SCIENT-FORK:END
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -970,23 +1175,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         yield* fs.makeDirectory(path.dirname(firstSettingsPath), { recursive: true });
         yield* fs.makeDirectory(path.dirname(secondSettingsPath), { recursive: true });
         yield* fs.writeFileString(firstSettingsPath, `{ "responseStreamingMode": "turn" }`);
-        yield* fs.writeFileString(secondSettingsPath, `{ "responseStreamingMode": "paragraph" }`);
+        yield* fs.writeFileString(
+          secondSettingsPath,
+          `{ "responseStreamingMode": "paragraph", "enableProviderUpdateChecks": false }`,
+        );
         yield* fs.remove(config.settingsPath, { force: true });
         yield* fs.symlink(firstSettingsPath, config.settingsPath);
         yield* service.start;
 
         const repointChanges = yield* service.subscribeChanges;
-        yield* fs.remove(config.settingsPath);
-        yield* fs.symlink(secondSettingsPath, config.settingsPath);
-        const repointed = yield* repointChanges.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        const stagedLink = config.settingsPath + ".next";
+        yield* fs.symlink(secondSettingsPath, stagedLink);
+        yield* fs.rename(stagedLink, config.settingsPath);
+        const repointed = yield* repointChanges.pipe(
+          Stream.filter((settings) => !settings.enableProviderUpdateChecks),
+          Stream.runHead,
+          Effect.timeout("2 seconds"),
+        );
         assert.equal(Option.getOrUndefined(repointed)?.responseStreamingMode, "paragraph");
 
         const editChanges = yield* service.subscribeChanges;
         yield* writeFileStringAtomically({
           filePath: secondSettingsPath,
-          contents: `{ "responseStreamingMode": "turn" }`,
+          contents: `{ "responseStreamingMode": "turn", "enableProviderUpdateChecks": false }`,
         });
-        const edited = yield* editChanges.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        const edited = yield* editChanges.pipe(
+          Stream.filter(
+            (settings) =>
+              !settings.enableProviderUpdateChecks && settings.responseStreamingMode === "turn",
+          ),
+          Stream.runHead,
+          Effect.timeout("2 seconds"),
+        );
         assert.equal(Option.getOrUndefined(edited)?.responseStreamingMode, "turn");
       }),
     ).pipe(TestClock.withLive, Effect.provide(makeServerSettingsLayer())),

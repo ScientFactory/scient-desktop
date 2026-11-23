@@ -1,5 +1,7 @@
 import {
   SPEECH_MAX_OPTIONS_BYTES,
+  LEGACY_WORDS_TRANSITION_ENABLED,
+  type TranscriptionWord,
   type SpeechCustomWords,
   type SpeechBenchmarkTier,
   SpeechTranscriptionOptions,
@@ -156,41 +158,52 @@ export function chooseSetupSpeechModel<
   return undefined;
 }
 
-const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleLowerCase();
+const unspacedScripts = "\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}";
+const wordCharacter = `[[\\p{L}\\p{M}\\p{N}\\p{Pc}]--[${unspacedScripts}]]`;
+const spellingKey = (text: string) => text.normalize("NFC").toLowerCase();
 
-/**
- * Project spellings win over personal ones. Hint terms, such as the project name or the
- * correction cue, only steer recognition, so they travel apart from the dictionary.
- */
-export function resolveSpeechVocabulary(input: {
-  readonly personal: SpeechCustomWords;
-  readonly project: SpeechCustomWords;
-  readonly hints?: ReadonlyArray<string>;
-}): { readonly speechCustomWords: SpeechCustomWords; readonly speechHints: string[] } {
-  const seen = new Set<string>();
-  const speechCustomWords = [...input.project, ...input.personal]
-    .flatMap(({ term, aliases }) => {
-      if (seen.has(vocabularyKey(term))) return [];
-      seen.add(vocabularyKey(term));
-      const uniqueAliases = aliases.filter((alias) => {
-        if (seen.has(vocabularyKey(alias))) return false;
-        seen.add(vocabularyKey(alias));
-        return true;
-      });
-      return [{ term, aliases: uniqueAliases }];
-    })
-    .slice(0, 100);
-  const known = new Set(
-    speechCustomWords.flatMap(({ term, aliases }) => [term, ...aliases].map(vocabularyKey)),
-  );
-  // A hint that is already a dictionary entry keeps that entry and its aliases in place.
-  const speechHints = (input.hints ?? []).flatMap((hint) => {
-    const term = hint.replace(/\s+/g, " ").trim();
-    if (term.length === 0 || term.length > 50 || known.has(vocabularyKey(term))) return [];
-    known.add(vocabularyKey(term));
-    return [term];
-  });
-  return { speechCustomWords, speechHints };
+export function dictationSpelling(words: readonly TranscriptionWord[]): (text: string) => string {
+  const spellings = new Map<string, string>();
+  for (const word of words) {
+    const preferred = word.preferred ?? word.term;
+    for (const spelling of [word.term, preferred, ...(word.variants ?? [])]) {
+      const key = spellingKey(spelling);
+      if (!spellings.has(key)) spellings.set(key, preferred);
+    }
+  }
+  if (spellings.size === 0) return (text) => text;
+  const pattern = [...new Set([...spellings.keys()].flatMap((key) => [key, key.normalize("NFD")]))]
+    .sort((left, right) => right.length - left.length)
+    .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const match = new RegExp(`(?<!${wordCharacter})(?:${pattern})(?!${wordCharacter})`, "giv");
+  return (text) =>
+    text.replace(match, (spelling) => spellings.get(spellingKey(spelling)) ?? spelling);
+}
+
+export function legacyDictationWords(input: { readonly speechCustomWords?: SpeechCustomWords }) {
+  const legacy = LEGACY_WORDS_TRANSITION_ENABLED ? input.speechCustomWords : undefined;
+  return (legacy ?? []).map(({ term, aliases }) => ({
+    term: term.trim(),
+    variants: aliases.map((alias) => alias.trim()),
+    language: "und",
+    source: "user" as const,
+  }));
+}
+
+export function legacyDictationVocabulary(input: {
+  readonly speechCustomWords?: SpeechCustomWords;
+  readonly speechHints?: readonly string[];
+}) {
+  const words = legacyDictationWords(input);
+  if (words.length === 0) return { hints: input.speechHints ?? [], spell: dictationSpelling([]) };
+  const hints = new Map<string, string>();
+  for (const term of [...(input.speechHints ?? []), ...words.map((word) => word.term)]) {
+    const key = spellingKey(term);
+    if (!hints.has(key)) hints.set(key, term);
+    if (hints.size === 16) break;
+  }
+  return { hints: [...hints.values()], spell: dictationSpelling(words) };
 }
 
 /** Binary requests contain a four-byte JSON length, UTF-8 options, then unencoded PCM. */
@@ -217,4 +230,14 @@ export function decodeSpeechPcmRequest(body: Uint8Array) {
     new TextDecoder("utf-8", { fatal: true }).decode(body.subarray(4, 4 + length)),
   );
   return { pcm: body.subarray(4 + length), options };
+}
+
+export function recordingSpeechModelIds(language: string): readonly string[] {
+  return [
+    ...(language.split("-")[0] === "he" ? ["vladkens/ivrit-whisper-large-v3-turbo-gguf"] : []),
+    "handy-computer/whisper-large-v3-gguf",
+    "handy-computer/whisper-large-v3-turbo-gguf",
+    "handy-computer/whisper-medium-gguf",
+    "handy-computer/whisper-small-gguf",
+  ];
 }

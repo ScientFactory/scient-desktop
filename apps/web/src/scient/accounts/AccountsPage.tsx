@@ -140,14 +140,16 @@ export function AccountRow({
   aside,
   menu,
   detail,
+  onRemove,
 }: {
   account: AccountSummary;
+  onRemove?: () => void;
   environmentId: EnvironmentId;
   canWrite: boolean;
   onEdit: () => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
   /** The line under the name, in place of what the account's kind says. */
-  detail?: string;
+  detail?: ReactNode;
   /** Beside the access chip, such as which profile Main uses for the site. */
   aside?: ReactNode;
   /** More items for the row's menu. */
@@ -167,6 +169,7 @@ export function AccountRow({
   const messages = useMessages();
   const target = { type: "account", accountId: account.accountId } as const;
   const details = account.details;
+  const speechOnly = details.kind === "api-key" && details.speechOnly === true;
   const site = details.kind === "website" ? details.sites[0] : undefined;
   const check = useAccountCommand(accountsState.check, environmentId);
   const statusLabel = accountStatusLabel(
@@ -229,7 +232,7 @@ export function AccountRow({
                         .filter(Boolean)
                         .join(" · ") || messages(KIND_LABELS.website)
                     : [
-                        messages(KIND_LABELS[details.kind]),
+                        speechOnly ? gt("Speech only") : messages(KIND_LABELS[details.kind]),
                         "sites" in details
                           ? details.sites.join(", ")
                           : details.kind === "database"
@@ -281,12 +284,14 @@ export function AccountRow({
             </Button>
           ) : null}
           {aside}
-          <AccessChip
-            environmentId={environmentId}
-            target={target}
-            access={account.controls.access}
-            disabled={!canWrite || busy}
-          />
+          {!speechOnly ? (
+            <AccessChip
+              environmentId={environmentId}
+              target={target}
+              access={account.controls.access}
+              disabled={!canWrite || busy}
+            />
+          ) : null}
           <ControlsMenu disabled={!canWrite || busy}>
             {university ? (
               <MenuItem onClick={() => void signIn(account.accountId)}>
@@ -359,42 +364,51 @@ export function AccountRow({
                 </T>
               </MenuItem>
             ) : null}
-            <MenuCheckboxItem
-              variant="switch"
-              checked={account.controls.visibility === "readable"}
-              onCheckedChange={(readable) =>
-                void controls({ target, visibility: readable ? "readable" : "hidden" })
-              }
-            >
-              <T>Agents can read it</T>
-            </MenuCheckboxItem>
-            {details.kind !== "website" ? (
-              <MenuItem
-                onClick={() =>
-                  void controls({
-                    target,
-                    permission: account.controls.permission === "read-only" ? "full" : "read-only",
-                  })
-                }
-              >
-                {account.controls.permission === "full"
-                  ? gt("Permission: Full")
-                  : gt("Permission: Read only")}
-              </MenuItem>
+            {!speechOnly ? (
+              <>
+                <MenuCheckboxItem
+                  variant="switch"
+                  checked={account.controls.visibility === "readable"}
+                  onCheckedChange={(readable) =>
+                    void controls({ target, visibility: readable ? "readable" : "hidden" })
+                  }
+                >
+                  <T>Agents can read it</T>
+                </MenuCheckboxItem>
+                {details.kind !== "website" ? (
+                  <MenuItem
+                    onClick={() =>
+                      void controls({
+                        target,
+                        permission:
+                          account.controls.permission === "read-only" ? "full" : "read-only",
+                      })
+                    }
+                  >
+                    {account.controls.permission === "full"
+                      ? gt("Permission: Full")
+                      : gt("Permission: Read only")}
+                  </MenuItem>
+                ) : null}
+                <ScopeSubmenu
+                  environmentId={environmentId}
+                  target={target}
+                  scope={account.controls.scope}
+                />
+              </>
             ) : null}
-            <ScopeSubmenu
-              environmentId={environmentId}
-              target={target}
-              scope={account.controls.scope}
-            />
             <MenuItem
               onClick={async () => {
+                if (onRemove) {
+                  onRemove();
+                  return;
+                }
                 setBusy(true);
                 await remove({ accountId: account.accountId });
                 setBusy(false);
               }}
             >
-              <T>Remove</T>
+              {onRemove ? gt("Remove…") : gt("Remove")}
             </MenuItem>
           </ControlsMenu>
         </div>
@@ -770,11 +784,12 @@ const keyDetail = (row: ApiKeyRow) =>
     .join(" · ");
 
 /** Every key, wherever it is stored. Keeping one in Accounts makes it the copy its users follow. */
-function ApiKeysDialog({
+export function ApiKeysDialog({
   rows,
   roots,
   environmentId,
   canWrite,
+  consumersIncomplete = false,
   onEdit,
   onActivity,
   onKept,
@@ -784,6 +799,7 @@ function ApiKeysDialog({
   roots: ReadonlyArray<string>;
   environmentId: EnvironmentId;
   canWrite: boolean;
+  consumersIncomplete?: boolean;
   onEdit: (account: AccountSummary) => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
   onKept: (file: string, name: string) => void;
@@ -801,6 +817,12 @@ function ApiKeysDialog({
       ? [{ value: row.account.accountId, name: row.name }]
       : [],
   );
+  const [affectedKey, setAffectedKey] = useState<{
+    row: Extract<ApiKeyRow, { stored: "accounts" }>;
+    kind: "replace" | "remove";
+  } | null>(null);
+  const [removingBusy, setRemovingBusy] = useState(false);
+  const removeKey = useAccountCommand(accountsState.remove, environmentId);
   const open = (href: ApiKeyRow["uses"][number]["href"]) => {
     onClose();
     void navigate({ to: href });
@@ -837,9 +859,26 @@ function ApiKeysDialog({
             canWrite={canWrite}
             onEdit={() => onEdit(row.account)}
             onActivity={onActivity}
-            detail={keyDetail(row) || messages(KIND_LABELS["api-key"])}
+            detail={
+              <>
+                {row.service || messages(KIND_LABELS["api-key"])}
+                {row.uses.length ? (
+                  <span className="block whitespace-normal">
+                    {gt("Used by {consumers}", {
+                      consumers: new Intl.ListFormat(undefined, { type: "conjunction" }).format([
+                        ...new Set(row.uses.map(({ label }) => label)),
+                      ]),
+                    })}
+                  </span>
+                ) : null}
+              </>
+            }
+            onRemove={() => setAffectedKey({ row, kind: "remove" })}
             menu={
               <>
+                <MenuItem onClick={() => setAffectedKey({ row, kind: "replace" })}>
+                  <T>Replace key…</T>
+                </MenuItem>
                 {[...new Map(row.uses.map((use) => [use.label, use.href])).entries()].map(
                   ([label, href]) => (
                     <MenuItem key={label} onClick={() => open(href)}>
@@ -922,6 +961,83 @@ function ApiKeysDialog({
           />
         ),
       )}
+      {affectedKey !== null ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !removingBusy) setAffectedKey(null);
+          }}
+        >
+          <DialogPopup>
+            <DialogHeader>
+              <DialogTitle>
+                {affectedKey.kind === "remove"
+                  ? gt("Remove {name}?", { name: affectedKey.row.name })
+                  : gt("Replace {name}?", { name: affectedKey.row.name })}
+              </DialogTitle>
+            </DialogHeader>
+            <DialogPanel>
+              {consumersIncomplete ? (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  <T>
+                    Could not check everything that uses this key. Try again before removing it.
+                  </T>
+                </p>
+              ) : null}
+              {affectedKey.row.uses.length ? (
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  <p>
+                    {affectedKey.kind === "remove"
+                      ? gt("These connections will need a key again.")
+                      : gt("These connections will use the replacement key.")}
+                  </p>
+                  <ul className="list-disc pl-5">
+                    {affectedKey.row.uses.map((use) => (
+                      <li
+                        key={
+                          use.href +
+                          ":" +
+                          (use.consumerId ?? use.link?.variable ?? use.consumerName ?? use.label)
+                        }
+                      >
+                        {use.consumerName ? use.label + " · " + use.consumerName : use.label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <div className="mt-4 flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  disabled={removingBusy}
+                  onClick={() => setAffectedKey(null)}
+                >
+                  <T>Cancel</T>
+                </Button>
+                <Button
+                  variant={affectedKey.kind === "remove" ? "destructive" : "default"}
+                  disabled={removingBusy || (consumersIncomplete && affectedKey.kind === "remove")}
+                  onClick={async () => {
+                    if (affectedKey.kind === "replace") {
+                      setAffectedKey(null);
+                      onEdit(affectedKey.row.account);
+                      return;
+                    }
+                    setRemovingBusy(true);
+                    const result = await removeKey({
+                      accountId: affectedKey.row.account.accountId,
+                    });
+                    setRemovingBusy(false);
+                    if (result.ok) setAffectedKey(null);
+                  }}
+                >
+                  {affectedKey.kind === "remove" ? gt("Remove key") : gt("Continue")}
+                </Button>
+              </div>
+            </DialogPanel>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
     </ListDialog>
   );
 }
@@ -1027,6 +1143,7 @@ function AccountsContent({
     keyLinks: snapshot.keyLinks,
     instances: serverSettings?.providerInstances ?? {},
     customModelKeys: snapshot.customModelKeys,
+    keyConsumers: snapshot.keyConsumers,
     plainKeys,
     driverName: (driver) =>
       PROVIDER_DISPLAY_NAMES[driver as keyof typeof PROVIDER_DISPLAY_NAMES] ?? driver,
@@ -1201,6 +1318,16 @@ function AccountsContent({
             onOpen={() => setDialog("passwords")}
           />
         ) : null}
+        {snapshot.detachedKeyLinks?.length ? (
+          <SettingsRow
+            title={gt("Provider variables kept their saved values")}
+            description={gt("These variables no longer follow an Accounts key: {variables}.", {
+              variables: snapshot.detachedKeyLinks
+                .map(({ instanceId, variable }) => instanceId + " · " + variable)
+                .join(", "),
+            })}
+          />
+        ) : null}
         {keys.length ? (
           <ListRow
             icon={<KeyRoundIcon />}
@@ -1326,6 +1453,7 @@ function AccountsContent({
           roots={projectRoots}
           environmentId={environmentId}
           canWrite={canWrite}
+          consumersIncomplete={snapshot.keyConsumersIncomplete === true}
           onEdit={setEditing}
           onActivity={setActivity}
           onKept={(file, name) =>

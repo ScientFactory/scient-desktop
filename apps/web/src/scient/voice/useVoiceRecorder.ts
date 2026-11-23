@@ -1,3 +1,4 @@
+import { chooseRecordingMicrophone } from "../../speech/browserMicrophones";
 import { useStableCallback } from "~/hooks/useStableCallback";
 // Microphone capture lifecycle for local voice dictation.
 //
@@ -227,9 +228,12 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
     setStatus("requesting-permission");
     let stream: MediaStream | null;
     try {
+      const microphoneId = await chooseRecordingMicrophone();
+      if (generation !== generationRef.current || !mountedRef.current) return false;
       stream = await acquireCurrentMicrophone(
         media,
         () => generation === generationRef.current && mountedRef.current,
+        microphoneId,
       );
     } catch (error) {
       if (generation !== generationRef.current || !mountedRef.current) return false;

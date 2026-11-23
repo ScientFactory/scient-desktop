@@ -49,6 +49,40 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it.each(["local-whisper", "chatgpt", "other"] as const)(
+  "uses server spelling in %s dictation and supplies correction context",
+  async (engineClass) => {
+    const transcribe = vi.fn(async () => ({ text: "C sharp and שלם." }));
+    const correct = vi.fn(async () => ({
+      text: "C sharp and שלם.",
+      provider: ProviderDriverKind.make("codex"),
+    }));
+    const { input, deliver } = fixture({
+      engineClass,
+      voiceBridge: { transcribe },
+      loadVocabulary: async () => ({
+        words: [
+          { term: "C#", variants: ["C sharp"], language: "und", source: "user" },
+          { term: "שלום", variants: ["שלם"], language: "und", source: "user" },
+        ],
+        hints: ["C#"],
+      }),
+      correction: { environmentId: EnvironmentId.make("synthetic"), corrector: { correct } },
+    });
+    await startVoiceJob(input).done;
+    if (engineClass !== "chatgpt") {
+      expect(transcribe).toHaveBeenCalledWith(
+        expect.objectContaining({ hints: ["C#"] }),
+        expect.any(AbortSignal),
+      );
+    }
+    expect(correct).toHaveBeenCalledWith(
+      expect.objectContaining({ transcript: "C# and שלום.", hints: ["C#"] }),
+    );
+    expect(deliver).toHaveBeenCalledWith("C# and שלום.", false);
+  },
+);
+
 describe("voice job analytics lifecycle", () => {
   it("closes cancellation during the final audio flush as preparing, without starting the engine", async () => {
     const pending = deferred<typeof clip | null>();
@@ -261,4 +295,24 @@ describe("voice job analytics lifecycle", () => {
     });
     expect(f.deliver).toHaveBeenCalledWith("private local transcript", false);
   });
+});
+
+it("polls the server for a worker wait only after two seconds and stops when cancelled", async () => {
+  vi.useFakeTimers();
+  const pending = deferred<{ text: string }>();
+  const wait = vi.fn(async () => true);
+  const transcribe = vi.fn<VoiceJobInput["voiceBridge"]["transcribe"]>(() => pending.promise);
+  const { input, deliver } = fixture({ voiceBridge: { transcribe, waitingForWorker: wait } });
+  const job = startVoiceJob(input);
+  await vi.advanceTimersByTimeAsync(1999);
+  expect(wait).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(wait).toHaveBeenCalledOnce();
+  await cancelVoiceJob(job.id);
+  expect(transcribe.mock.calls[0]?.[1]?.aborted).toBe(true);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(wait).toHaveBeenCalledOnce();
+  pending.resolve({ text: "Fixture transcript" });
+  await job.done;
+  expect(deliver).not.toHaveBeenCalled();
 });

@@ -377,6 +377,11 @@
       "path": "apps/server/src/orchestration-v2/scient-provider/StalledRetryFailure.ts",
       "anchor": "OMP_EVIDENCE_FAILURE_CODES",
       "purpose": "Name a stalled retry over an Oh My Pi or Scient Agent code that only says where a failure's evidence came from."
+    },
+    {
+      "path": "apps/server/src/transcription/TranscriptionJobs.ts",
+      "anchor": "[\"omp\", \"droid\", \"antigravity\"].some((driver) => provider?.driver === driver)",
+      "purpose": "Correction passes treat Scient Agent (Oh My Pi), Droid and Antigravity alike when choosing a text model."
     }
   ]
 }

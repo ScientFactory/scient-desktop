@@ -3,6 +3,8 @@ import {
   WS_METHODS,
   WsAccountsRpcGroup,
   type AccountLinkKeyInput,
+  type AccountSpeechConsumer,
+  type AccountsSnapshot,
   type AccountRestoreKeptKeysInput,
   type AccountPaperForSourceInput,
   type AccountPaperForSourceResult,
@@ -89,8 +91,10 @@ export const makeAccountsRpcHandlers = ({
   papers,
   plainKeys,
   restoreKeptKeys,
+  speechConsumers,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
+  readonly speechConsumers?: Effect.Effect<readonly AccountSpeechConsumer[]>;
   /** The socket's authenticated session; another computer's copies are bound to it. */
   readonly caller?: AccountsCallerSession;
   readonly check: (
@@ -132,6 +136,10 @@ export const makeAccountsRpcHandlers = ({
     ) => Effect.Effect<void, AccountsError>;
   };
 }) => {
+  const withSpeechConsumers = (snapshot: AccountsSnapshot) =>
+    speechConsumers
+      ? Effect.map(speechConsumers, (consumers) => ({ ...snapshot, speechConsumers: consumers }))
+      : Effect.succeed(snapshot);
   const observedSessions = new Set<string>();
   const attributes = { "rpc.aggregate": "accounts" };
   return WsAccountsRpcGroup.of({
@@ -141,6 +149,7 @@ export const makeAccountsRpcHandlers = ({
       observeRpcEffect(
         WS_METHODS.accountsSnapshot,
         Effect.gen(function* () {
+          yield* accounts.migrateCustomModelKeys ?? Effect.void;
           const snapshot = yield* accounts.snapshot;
           const ended = endedWebsiteSessions(
             snapshot.accounts,
@@ -150,7 +159,7 @@ export const makeAccountsRpcHandlers = ({
             input.browserSessionSourceId,
             input.defaultProfileId,
           );
-          if (ended.length === 0) return snapshot;
+          if (ended.length === 0) return yield* withSpeechConsumers(snapshot);
           // Kept like any other look at the site, so every reader sees the session end.
           yield* Effect.forEach(
             ended,
@@ -158,12 +167,16 @@ export const makeAccountsRpcHandlers = ({
               accounts.recordCheck(accountId, { state: "signed-out" }).pipe(Effect.ignore),
             { discard: true },
           );
-          return yield* accounts.snapshot;
+          return yield* accounts.snapshot.pipe(Effect.flatMap(withSpeechConsumers));
         }),
         attributes,
       ),
     [WS_METHODS.accountsSubscribeChanges]: () =>
-      observeRpcStream(WS_METHODS.accountsSubscribeChanges, accounts.changes, attributes),
+      observeRpcStream(
+        WS_METHODS.accountsSubscribeChanges,
+        accounts.changes.pipe(Stream.mapEffect(withSpeechConsumers)),
+        attributes,
+      ),
     [WS_METHODS.accountsSave]: (input) =>
       observeRpcEffect(WS_METHODS.accountsSave, accounts.save(input), attributes),
     [WS_METHODS.accountsRemove]: (input) =>
@@ -659,6 +672,8 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         authorize: unavailable,
         resolveBound: unavailable,
         listBindable: unavailable,
+        resolveCustomModelAccountKey: unavailable,
+        resolveSpeechKey: unavailable,
         resolveSecrets: unavailable,
         recordUse: Effect.fn("AccountsService.recordUse")(function* () {}),
       }),

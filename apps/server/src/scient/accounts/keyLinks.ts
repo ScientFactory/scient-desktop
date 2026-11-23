@@ -83,9 +83,11 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
       (link) => {
         const account = snapshot.accounts.find((item) => item.accountId === link.accountId);
         const key = `${link.instanceId}\u0000${link.variable}`;
-        if (!account || seen.get(key) === account.updatedAt) return Effect.void;
+        if (!account) return Effect.void;
+        const version = account.accountId + ":" + account.updatedAt;
+        if (seen.get(key) === version) return Effect.void;
         return apply(link).pipe(
-          Effect.tap(() => Effect.sync(() => seen.set(key, account.updatedAt))),
+          Effect.tap(() => Effect.sync(() => seen.set(key, version))),
           Effect.ignore,
         );
       },

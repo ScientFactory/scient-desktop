@@ -21,11 +21,30 @@ import {
 
 export const TranscriptionPostProcessingOutput = Schema.Struct({ transcription: Schema.String });
 
+const StructuredCorrectionOutput = Schema.Struct({
+  segments: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      start: Schema.Number,
+      end: Schema.Number,
+      text: Schema.String,
+      uncertain: Schema.Boolean,
+      protected: Schema.Boolean,
+    }),
+  ),
+  suggestions: Schema.Array(Schema.Struct({ term: Schema.String, language: Schema.String })),
+});
+
+const encodeStructuredCorrection = Schema.encodeEffect(
+  Schema.fromJsonString(StructuredCorrectionOutput),
+);
+
 export type Operation = keyof ProviderTextGeneration;
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
   readonly cwd: string;
+  readonly structuredCorrection?: "initial" | "repair";
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
@@ -180,6 +199,26 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
 
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
     Effect.fn(`${name}.generateTranscriptionPostProcessing`)(function* (input) {
+      if (input.structuredCorrection) {
+        const result = yield* run({
+          operation: "generateTranscriptionPostProcessing",
+          cwd: input.cwd,
+          prompt: input.prompt,
+          outputSchema: StructuredCorrectionOutput,
+          modelSelection: input.modelSelection,
+          structuredCorrection: input.structuredCorrection,
+        });
+        const transcription = yield* encodeStructuredCorrection(result).pipe(
+          Effect.mapError(
+            () =>
+              new TextGenerationError({
+                operation: "generateTranscriptionPostProcessing",
+                detail: "Could not encode structured correction output.",
+              }),
+          ),
+        );
+        return { transcription };
+      }
       return yield* run({
         operation: "generateTranscriptionPostProcessing",
         cwd: input.cwd,

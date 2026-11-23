@@ -622,27 +622,42 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
 
 const htmlFullscreenStates = new WeakMap<
   Electron.BrowserWindow,
-  { owned: boolean; leaving: boolean }
+  { owned: boolean; leaving: boolean; recording: boolean; previousBackground?: string }
 >();
 
 const htmlFullscreenState = (window: Electron.BrowserWindow) => {
   const existing = htmlFullscreenStates.get(window);
   if (existing !== undefined) return existing;
-  const state = { owned: false, leaving: false };
+  const state: {
+    owned: boolean;
+    leaving: boolean;
+    recording: boolean;
+    previousBackground?: string;
+  } = { owned: false, leaving: false, recording: false };
   window.on("leave-full-screen", () => {
     // Leaving OS fullscreen any other way, such as F11, hands the window back to the user.
     if (!state.leaving) state.owned = false;
     state.leaving = false;
+    if (!state.recording) restoreHtmlFullscreenBackground(window, state);
   });
   htmlFullscreenStates.set(window, state);
   return state;
 };
 
+function restoreHtmlFullscreenBackground(
+  window: Electron.BrowserWindow,
+  state: { previousBackground?: string },
+) {
+  if (state.previousBackground === undefined || window.isDestroyed()) return;
+  window.setBackgroundColor(state.previousBackground);
+  delete state.previousBackground;
+}
+
 // The main window keeps HTML fullscreen inside itself so preview guests stay in their webview,
 // so the app's own fullscreen elements, such as chat videos, take the screen here.
 export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
-  payload: Schema.Boolean,
+  payload: Schema.Union([Schema.Boolean, Schema.Literal("recording")]),
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.syncHtmlFullscreen")(function* (fullscreen, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -657,6 +672,13 @@ export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
     }
     const window = main.value;
     const state = htmlFullscreenState(window);
+    state.recording = fullscreen === "recording";
+    if (state.recording) {
+      state.previousBackground ??= window.getBackgroundColor();
+      window.setBackgroundColor("#000000");
+    } else if ((!state.owned && !state.leaving) || fullscreen) {
+      restoreHtmlFullscreenBackground(window, state);
+    }
     if (fullscreen) {
       // macOS reports fullscreen until its exit animation ends, and Electron queues the re-entry.
       if (state.owned || (window.isFullScreen() && !state.leaving)) return;
@@ -666,6 +688,7 @@ export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
       state.owned = false;
       state.leaving = window.isFullScreen();
       window.setFullScreen(false);
+      if (!state.leaving) restoreHtmlFullscreenBackground(window, state);
     }
   }),
 });

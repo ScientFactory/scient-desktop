@@ -352,7 +352,6 @@ function layerTest(input: {
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
     setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
     setWslDistro: () => Effect.die("unexpected WSL distro change"),
-    setVoiceSelectedModelId: () => Effect.die("unexpected voice model change"),
     // SCIENT-FORK:END scient-window
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),

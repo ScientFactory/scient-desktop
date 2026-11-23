@@ -53,9 +53,13 @@ vi.mock("../../state/environments", async (original) => ({
 }));
 vi.mock("../accounts/useAccounts", () => ({
   useAccounts: () => ({ data: null }),
+  usePasswordStorePermission: () => true,
   useAccountCommand: () => mocks.accountCommand,
 }));
-vi.mock("../accounts/University", () => ({ UniversityCrest: () => null }));
+vi.mock("../accounts/University", () => ({
+  UniversityCrest: () => null,
+  UniversityPicker: () => null,
+}));
 vi.mock("../accounts/PaperRequests", () => ({ PaperQueueBand: () => null }));
 vi.mock("./useManagedBibliography", () => ({ useManagedBibliography: () => ({ status: null }) }));
 vi.mock("./useLibraryMoveStatus", () => ({ useLibraryMoveStatus: () => ({ line: null }) }));

@@ -69,7 +69,9 @@ vi.mock("../localEnvironment", () => ({ isLocalEnvironmentDisabled: () => true }
 vi.mock("../state/use-orchestration-command", () => ({
   useOrchestrationCommand: () => lab.command,
 }));
-vi.mock("../scient/voice/voiceClient", () => ({ getVoiceBridge: () => ({}) }));
+vi.mock("../scient/voice/catalogDictation", () => ({
+  useCatalogDictation: () => ({ enabled: true, setup: {} }),
+}));
 vi.mock("../scient/voice/useScientVoiceController", async (original) => {
   const { useSyncExternalStore } = await import("react");
   return {

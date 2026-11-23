@@ -1144,7 +1144,9 @@ export function keptAgentKeys(accounts: ReadonlyArray<AccountSummary>, agent: st
 /** A place that uses a key, and the settings page where it does. */
 export interface KeyUse {
   readonly label: string;
-  readonly href: "/settings/providers" | "/settings/custom-models";
+  readonly href: "/settings/providers" | "/settings/custom-models" | "/settings/voice";
+  readonly consumerName?: string;
+  readonly consumerId?: string;
   /** The agent variable that follows the key. */
   readonly link?: { readonly instanceId: string; readonly variable: string };
 }
@@ -1191,6 +1193,7 @@ export function apiKeyRows(input: {
     >
   >;
   readonly customModelKeys: AccountsSnapshot["customModelKeys"];
+  readonly keyConsumers?: AccountsSnapshot["keyConsumers"];
   readonly plainKeys: ReadonlyArray<AccountPlainKey>;
   readonly driverName: (driver: string) => string;
   readonly resolve?: MessageResolver;
@@ -1200,6 +1203,20 @@ export function apiKeyRows(input: {
   const keys = input.accounts.filter((account) => account.details.kind === "api-key");
   const used = (accountId: string, use: KeyUse) =>
     uses.set(accountId, [...(uses.get(accountId) ?? []), use]);
+  for (const consumer of input.keyConsumers ?? []) {
+    used(consumer.accountId, {
+      label:
+        consumer.kind === "custom-model"
+          ? resolve(msg("Custom models"))
+          : resolve(msg("Transcription")),
+      href: consumer.kind === "custom-model" ? "/settings/custom-models" : "/settings/voice",
+      consumerName: consumer.name,
+      consumerId: consumer.id,
+    });
+  }
+  const migratedIds = new Set(
+    (input.keyConsumers ?? []).filter(({ kind }) => kind === "custom-model").map(({ id }) => id),
+  );
   const others: ApiKeyRow[] = [];
   for (const [instanceId, instance] of Object.entries(input.instances))
     for (const variable of instance.environment ?? []) {
@@ -1222,7 +1239,9 @@ export function apiKeyRows(input: {
           ...link,
         });
     }
-  for (const connection of input.customModelKeys) {
+  for (const connection of input.customModelKeys.filter(
+    ({ connectionId }) => !migratedIds.has(connectionId),
+  )) {
     const use = { label: resolve(msg("Custom models")), href: "/settings/custom-models" } as const;
     const account = keys.find(({ secrets }) => {
       const source = secrets.token?.source;

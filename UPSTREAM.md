@@ -2019,17 +2019,11 @@ mounts through upstream reconciliation;
 `scient-onboarding-seams.json` is the machine-readable inventory. See
 [Scient getting started](docs/internals/scient-onboarding.md).
 
-Local voice dictation is isolated under `packages/scient-voice`,
-`apps/web/src/scient/voice`, and `apps/desktop/src/app/DesktopVoice.ts`. The
-inherited-host seams are limited to typed IPC/preload registration, one
-composer mount plus busy-state footer layout and an icon-only provider trigger,
-one ready-model-only citation-comment
-mount, and one desktop-packaging call into `scripts/lib/scient-voice-build.ts`.
-Dictation with ChatGPT adds one `voiceDictation` entry to the inherited Codex
-driver, built by the Scient-owned `apps/server/src/scient/voice/CodexChatGptDictation.ts`.
-Future T3 merges should preserve those narrow mounts rather than moving voice
-orchestration into inherited T3 components. See
-[Scient local voice architecture](docs/internals/scient-voice.md).
+Scient owns the composer and citation dictation controls and the Transcription
+settings surface. These use T3's environment speech service and native worker.
+Electron owns microphone permission and old model file cleanup. ChatGPT
+dictation uses the Scient adapter in the Codex driver. Preserve these mounts
+during upstream reconciliation. See [Transcription](docs/internals/transcription.md).
 
 Scient's comfortable-reading defaults reuse T3's appearance settings and font
 application pipeline. Shared reading sizes and fixed-pixel/shadow-root exceptions

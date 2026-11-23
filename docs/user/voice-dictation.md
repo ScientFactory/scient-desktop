@@ -1,23 +1,12 @@
 # Voice dictation
 
-Scient desktop transcribes a short voice recording with ChatGPT or on the local
-computer. You can optionally ask the selected AI provider to correct the
+Scient desktop transcribes a short voice recording with a local model, ChatGPT, or a configured cloud speech engine. You can optionally ask the selected AI provider to correct the
 resulting transcript text before Scient inserts or sends it.
 
 1. Select the microphone in the chat composer.
-2. On first use, Scient shows how it can transcribe:
-   - **ChatGPT**, listed first when Scient Agent or Codex is signed in to
-     ChatGPT. Nothing is downloaded. See [Dictate with ChatGPT](#dictate-with-chatgpt).
-   - A local model: **Multilingual Small** for faster setup,
-     **Multilingual Medium** for higher expected accuracy, or
-     **Multilingual Turbo** for the most demanding dictation on a powerful
-     computer. Scient downloads and verifies the selected model; a model you
-     already downloaded is used as it is. You can cancel setup and resume the
-     download later.
-
-   Scient remembers your choice and doesn't ask again. Without a ChatGPT
-   sign-in, a local model that is already set up is used without asking.
-
+2. On first use, choose a model. Scient suggests a local model for your
+   language and offers ChatGPT if you are signed in. A local model is downloaded
+   once. You can cancel and resume the download later.
 3. Allow microphone access when macOS, Windows, or Linux asks.
 4. While recording, choose cancel, insert the transcript, or transcribe and
    send. `Esc` cancels and `Enter` inserts.
@@ -40,19 +29,17 @@ Scient or an AI provider.
 
 If Scient Agent or Codex is signed in to ChatGPT, you can dictate with ChatGPT
 instead of a local model: choose **ChatGPT** the first time you use the
-microphone, or later in **Settings → Voice**. Nothing is downloaded, and it
+microphone, or later in **Settings → Transcription**. Nothing is downloaded, and it
 works the same on any computer, however old. Each recording is uploaded with
 your ChatGPT sign-in to ChatGPT's own dictation service, the one the ChatGPT and
 Codex apps use, and the text comes back to your draft.
 
-The recording leaves your computer and goes to OpenAI, which keeps it for 30
-days, as it does for dictation in its own apps. Your ChatGPT plan's terms apply.
 Nothing is sent until you choose ChatGPT. Dictation with ChatGPT needs an
 internet connection, and through Scient Agent it needs version 0.1.9 or newer.
 If the sign-in ends, Scient asks you to sign in again rather than switching to
 a local model.
 
-**Correct transcripts with an LLM** in **Settings → Voice** is off by default.
+**Clean up** in **Settings → Transcription** is off by default.
 When it remains off, a local model's transcript stays on your computer. When
 you turn it on, Scient sends the transcript text—not the recording—to the
 selected, authenticated AI provider, together with the selected language when
@@ -61,14 +48,37 @@ immediately. If the provider is unavailable, unsupported, not authenticated,
 times out, or returns an invalid correction, Scient falls back to the exact
 original transcript.
 
-The model download, dictation with ChatGPT and an enabled provider correction
-are therefore the possible network paths for voice dictation. Provider correction follows that
-provider's own service and data-handling terms.
+To use a cloud speech engine, choose its card in **Settings → Transcription**.
+The card shows where audio goes. Speech keys are managed in **Accounts & secrets**.
 
 Voice dictation is available in the desktop app. The macOS voice runtime
 requires macOS 12 or newer. A recording is limited to three minutes. If no
 speech is detected, Scient leaves the draft unchanged.
 
-To change models later, open **Settings → Voice**. The page shows which model
-is recommended for the current machine, which model is in use, download
+To change models later, open **Settings → Transcription**. The page shows which model
+is recommended for your language, which model is in use, download
 progress, and removal controls.
+
+## Recordings defaults
+
+To transcribe a recording, [install FFmpeg](https://ffmpeg.org/download.html)
+on the computer running the Scient server, including for cloud transcription.
+Put `ffmpeg` and `ffprobe` on that computer's PATH and restart Scient. For a
+remote environment, install them on the remote host and restart its server.
+
+In **Settings → Transcription → Recordings**, choose a model for each language
+or use the recommended recording models. The dictation model is set separately.
+Thorough correction still requires an estimate before each job.
+
+For a selected project, enter a notes recipe to generate `notes.md` beside the
+completed transcript. An empty recipe leaves automatic notes off. When notes
+are enabled, Scient sends the transcript text to the configured correction
+model. The original audio stays at its source.
+
+## Cloud speech engines
+
+In **Engines & accounts**, select **Add a provider…**. The picker can use a
+sealed bearer key from **Accounts & secrets** or a saved **Custom models**
+connection for the provider's exact origin. A connection test sends a short
+silent sample. Choose **Use for dictation** to allow that engine to receive
+recordings and any supported Words hints.
