@@ -195,6 +195,41 @@ describe("buildVegaLiteRenderPlan", () => {
     expect(buildVegaLiteRenderPlan(faceted)).toEqual({ responsive: false, spec: faceted });
   });
 
+  it.each([{ autosize: "pad" }, { autosize: { type: "none" } }, { config: { autosize: "fit-y" } }])(
+    "does not supply a container width that conflicts with %j",
+    (sizing) => {
+      const spec = parseVegaLiteSource(JSON.stringify({ ...JSON.parse(BAR_SPEC), ...sizing })).spec;
+      const plan = buildVegaLiteRenderPlan(spec);
+      expect(plan).toEqual({ responsive: false, spec });
+      const warnings = compileAndParse(plan.spec);
+      expect(warnings).not.toContain(
+        'Width "container" only works well with autosize "fit" or "fit-x".',
+      );
+    },
+  );
+
+  it.each(["row", "column", "facet"])(
+    "keeps %s facets free of host sizing conflicts",
+    (channel) => {
+      const bar = JSON.parse(BAR_SPEC);
+      const faceted = {
+        ...bar,
+        encoding: { ...bar.encoding, [channel]: { field: "group", type: "nominal" } },
+      };
+      const spec = parseVegaLiteSource(JSON.stringify(faceted)).spec;
+      const plan = buildVegaLiteRenderPlan(spec);
+      expect(plan).toEqual({ responsive: false, spec });
+      expect(compileAndParse(plan.spec)).toEqual([]);
+
+      const authoredWidth = parseVegaLiteSource(
+        JSON.stringify({ ...faceted, width: "container" }),
+      ).spec;
+      expect(compileAndParse(buildVegaLiteRenderPlan(authoredWidth).spec)).toEqual([
+        'Width "container" only works for single views and layered views.',
+      ]);
+    },
+  );
+
   it("gives a layered hover selection one view without changing the authored source", () => {
     const source = structuredClone(LAYERED_HOVER_SPEC) as never;
     const plan = buildVegaLiteRenderPlan(source);

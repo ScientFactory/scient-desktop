@@ -47,7 +47,9 @@ image.
 While an answer is still streaming, Scient shows the JSON as an ordinary code
 block. Rendering begins after the answer settles. Invalid JSON, an unsupported
 specification, unavailable network data, or a browser graphics problem produces
-a recovery message for that chart without breaking the rest of the answer.
+a short recovery message on the chart. If a chart draws with warnings, open
+**More** and choose **Chart warnings** to read them. Choose **Back** to return
+to the chart actions. Use **Show source** in More to inspect the JSON.
 
 ## Data and network access
 

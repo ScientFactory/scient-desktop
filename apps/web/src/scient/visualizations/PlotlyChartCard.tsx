@@ -8,8 +8,6 @@ import {
   FileBracesIcon,
   FileImageIcon,
   ImageIcon,
-  RefreshCwIcon,
-  TriangleAlertIcon,
 } from "lucide-react";
 import { T, msg, useGT, useLocale } from "gt-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -27,10 +25,10 @@ import {
 import {
   VisualCardDetails,
   VisualCardToolbar,
-  VisualCardMenuPopup,
   VisualCardToolbarMenuItems,
 } from "../presentation/VisualCardToolbar";
 
+import { ChartActionsMenuPopup, ChartRenderError } from "./ChartDiagnostics";
 import { PlotlyChartDialog } from "./PlotlyChartDialog";
 import { PlotlyInteractionToolbar, readPlotlyInteractionMode } from "./PlotlyInteractionToolbar";
 import {
@@ -389,7 +387,7 @@ export function PlotlyChartCard({
                 <T>More Plotly actions</T>
               </TooltipPopup>
             </Tooltip>
-            <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
+            <ChartActionsMenuPopup warnings={visibleWarnings}>
               <VisualCardDetails
                 title={displayTitle}
                 detail={parsed?.hasWebGl ? "WebGL" : undefined}
@@ -450,7 +448,7 @@ export function PlotlyChartCard({
                 {activeAction === "download-png" ? gt("Creating PNG…") : gt("Download current PNG")}
               </MenuItem>
               <VisualCardToolbarMenuItems />
-            </VisualCardMenuPopup>
+            </ChartActionsMenuPopup>
           </Menu>
         </VisualCardToolbar>
       </div>
@@ -465,30 +463,11 @@ export function PlotlyChartCard({
       ) : null}
 
       {visibleStatus.kind === "error" ? (
-        <div className="space-y-3 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-medium text-sm">
-                <T>Unable to render this Plotly figure</T>
-              </p>
-              <p className="mt-1 text-muted-foreground text-xs">{visibleStatus.message}</p>
-            </div>
-            {parseError == null ? (
-              <Button
-                onClick={() => setRetryVersion((version) => version + 1)}
-                size="xs"
-                type="button"
-                variant="outline"
-              >
-                <RefreshCwIcon />
-                <T>Retry</T>
-              </Button>
-            ) : null}
-          </div>
-          <pre className="scient-plotly-source max-h-72 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed">
-            <code>{source}</code>
-          </pre>
-        </div>
+        <ChartRenderError
+          label={<T>Unable to render this Plotly figure</T>}
+          message={visibleStatus.message}
+          onRetry={parseError == null ? () => setRetryVersion((version) => version + 1) : undefined}
+        />
       ) : (
         <div className="scient-plotly-stage relative p-2">
           {waitingForSlot ? (
@@ -525,23 +504,7 @@ export function PlotlyChartCard({
         </div>
       )}
 
-      {visibleWarnings.length > 0 ? (
-        <details className="border-t border-border/60 bg-amber-500/5 px-3 py-2 text-xs">
-          <summary className="flex cursor-pointer list-none items-center gap-2 text-amber-700 dark:text-amber-300">
-            <TriangleAlertIcon className="size-3.5" />
-            {gt("{count, plural, one {{count} figure warning} other {{count} figure warnings}}", {
-              count: visibleWarnings.length,
-            })}
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 ps-6 text-muted-foreground">
-            {visibleWarnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-
-      {sourceVisible && visibleStatus.kind !== "error" ? (
+      {sourceVisible ? (
         <div className="border-t border-border/60 bg-background/45 p-3">
           <pre className="scient-plotly-source max-h-72 overflow-auto text-xs leading-relaxed">
             <code>{source}</code>

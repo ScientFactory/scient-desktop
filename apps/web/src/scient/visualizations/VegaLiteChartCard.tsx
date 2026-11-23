@@ -8,9 +8,7 @@ import {
   FileBracesIcon,
   FileImageIcon,
   ImageIcon,
-  RefreshCwIcon,
   RotateCcwIcon,
-  TriangleAlertIcon,
 } from "lucide-react";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -29,11 +27,11 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 import {
   VisualCardDetails,
   VisualCardToolbar,
-  VisualCardMenuPopup,
   VisualCardToolbarMenuItems,
 } from "../presentation/VisualCardToolbar";
 
 import { useNearViewport } from "../presentation/useNearViewport";
+import { ChartActionsMenuPopup, ChartRenderError } from "./ChartDiagnostics";
 import { VegaLiteChartDialog } from "./VegaLiteChartDialog";
 import {
   copyVegaLitePng,
@@ -350,7 +348,7 @@ export function VegaLiteChartCard({
                 <T>More chart actions</T>
               </TooltipPopup>
             </Tooltip>
-            <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
+            <ChartActionsMenuPopup warnings={ready ? visibleStatus.warnings : []}>
               <VisualCardDetails title={displayTitle} />
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
                 {copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
@@ -409,7 +407,7 @@ export function VegaLiteChartCard({
                 {activeAction === "download-png" ? gt("Creating PNG…") : gt("Download current PNG")}
               </MenuItem>
               <VisualCardToolbarMenuItems />
-            </VisualCardMenuPopup>
+            </ChartActionsMenuPopup>
           </Menu>
         </VisualCardToolbar>
       </div>
@@ -424,29 +422,11 @@ export function VegaLiteChartCard({
       ) : null}
 
       {visibleStatus.kind === "error" ? (
-        <div className="space-y-3 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-medium text-sm">
-                <T>Unable to render this chart</T>
-              </p>
-              <p className="mt-1 text-muted-foreground text-xs">{visibleStatus.message}</p>
-            </div>
-            {parseError == null ? (
-              <Button
-                onClick={() => setRetryVersion((version) => version + 1)}
-                size="xs"
-                variant="outline"
-              >
-                <RefreshCwIcon />
-                <T>Retry</T>
-              </Button>
-            ) : null}
-          </div>
-          <pre className="scient-vega-lite-source max-h-72 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed">
-            <code>{source}</code>
-          </pre>
-        </div>
+        <ChartRenderError
+          label={<T>Unable to render this chart</T>}
+          message={visibleStatus.message}
+          onRetry={parseError == null ? () => setRetryVersion((version) => version + 1) : undefined}
+        />
       ) : (
         <div className="relative min-h-52 overflow-auto p-2">
           {visibleStatus.kind !== "ready" ? (
@@ -472,23 +452,7 @@ export function VegaLiteChartCard({
         </div>
       )}
 
-      {ready && visibleStatus.warnings.length > 0 ? (
-        <details className="border-t border-border/60 bg-amber-500/5 px-3 py-2 text-xs">
-          <summary className="flex cursor-pointer list-none items-center gap-2 text-amber-700 dark:text-amber-300">
-            <TriangleAlertIcon className="size-3.5" />
-            {gt("{count, plural, one {{count} chart warning} other {{count} chart warnings}}", {
-              count: visibleStatus.warnings.length,
-            })}
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 ps-6 text-muted-foreground">
-            {visibleStatus.warnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-
-      {sourceVisible && visibleStatus.kind !== "error" ? (
+      {sourceVisible ? (
         <div className="border-t border-border/60 bg-background/45 p-3">
           <pre className="scient-vega-lite-source max-h-72 overflow-auto text-xs leading-relaxed">
             <code>{source}</code>
