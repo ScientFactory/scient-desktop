@@ -1823,6 +1823,8 @@ export const layerDeviceToolkit = Layer.mergeAll(
 // `orchestration` here, and `pull-requests` only when they run locally.
 const orchestrationTools = [
   ...Object.values(OrchestratorToolkit.tools),
+  // Durable workflow runs, shown to clients outside a thread (EnabledWhen), as the CLI.
+  ...Object.values(WorkflowToolkit.tools),
   ...Object.values(ThreadToolkit.tools),
   ...Object.values(AttachmentToolkit.tools),
   ...Object.values(ProjectToolkit.tools),
@@ -1857,6 +1859,8 @@ export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...Object.values(MessageToolkit.tools),
   // A deferring client lists tool_search; it needs no grant.
   ...Object.values(ToolSearchToolkit.tools),
+  // Feedback shows only while it is on (EnabledWhen) and needs no grant.
+  ...Object.values(FeedbackToolkit.tools),
 ];
 export const hostMcpToolGrants = {
   orchestration: orchestrationTools,
