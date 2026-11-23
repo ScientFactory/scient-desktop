@@ -33,6 +33,7 @@ const handlers: NotebookCellHandlers = {
 const place = {
   environmentId: "environment" as EnvironmentId,
   cwd: "/project",
+  path: "notebook.ipynb",
   threadRef: { environmentId: "environment", threadId: "thread" } as unknown as ScopedThreadRef,
 };
 

@@ -20,6 +20,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { computeEnvironment } from "~/state/compute";
+import { computeFileContextId, useComputeContextStore } from "../compute/computeContextStore";
 import ScientNotebookSurface from "./ScientNotebookSurface";
 import { useNotebookRunDrafts } from "./notebookRunDrafts";
 
@@ -68,7 +69,8 @@ vi.mock("~/state/use-atom-command", async (original) => ({
     if (command === computeEnvironment.startSession) return startSession;
     if (command === computeEnvironment.submitCells) return submitCells;
     if (command === computeEnvironment.notebookRead)
-      return async () => AsyncResult.success(notebook);
+      return async ({ input }: { input: { path: string } }) =>
+        AsyncResult.success(input.path === "missing-setup.ipynb" ? recoveryNotebook : notebook);
     if (command === computeEnvironment.notebookEdit)
       return async () => AsyncResult.success({ revision: "1.1", refused: [] });
     if (command === computeEnvironment.resultsSetup) return async () => AsyncResult.success(setup);
@@ -208,11 +210,101 @@ const notebook: NotebookView = {
 
 const screenshots = import.meta.env.VITE_NOTEBOOK_DESIGN_SCREENSHOTS as string | undefined;
 
+const recoveryNotebook: NotebookView = {
+  revision: "1.0",
+  language: "python",
+  cells: [
+    cell("setup", "code", "run_date = '20260716'"),
+    cell("heading", "markdown", "## Weather archive"),
+    {
+      ...cell("target", "code", "# Select the archive\n\nprint(run_date)"),
+      executionCount: 1,
+      outputs: [
+        {
+          outputType: "error",
+          mediaTypes: [],
+          bytes: 100,
+          json: JSON.stringify({
+            output_type: "error",
+            ename: "NameError",
+            evalue: "name 'run_date' is not defined",
+            traceback: ["NameError: name 'run_date' is not defined"],
+          }),
+        },
+      ],
+    },
+    cell("later", "code", "print('later')"),
+  ],
+};
+
+it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
+  "replays through a saved missing-name error without running later cells in %s",
+  async (theme) => {
+    startSession
+      .mockReset()
+      .mockImplementation(async ({ input }) =>
+        AsyncResult.success({ sessionId: input.sessionId, generation: 1 }),
+      );
+    submitCells.mockReset().mockResolvedValue(AsyncResult.success(null));
+    const root = document.documentElement;
+    const wasDark = root.classList.contains("dark");
+    const viewportSize = { width: innerWidth, height: innerHeight };
+    await using restoration = new AsyncDisposableStack();
+    restoration.defer(async () => {
+      root.classList.toggle("dark", wasDark);
+      await page.viewport(viewportSize.width, viewportSize.height);
+      useComputeContextStore.getState().removeContext(
+        computeFileContextId({
+          environmentId,
+          threadId: threadRef.threadId,
+          cwd: "/project",
+          relativePath: "missing-setup.ipynb",
+        }),
+      );
+    });
+    root.classList.toggle("dark", theme === "dark");
+    await page.viewport(900, 660);
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <div className="flex h-dvh w-full bg-background text-foreground">
+          <ScientNotebookSurface
+            environmentId={environmentId}
+            cwd="/project"
+            relativePath="missing-setup.ipynb"
+            threadRef={threadRef}
+            fileRevision="1.0"
+          />
+        </div>
+      </RegistryContext.Provider>,
+    );
+    const error = screen.getByText("NameError: name 'run_date' is not defined");
+    await expect.element(error).toBeVisible();
+    if (screenshots) await page.screenshot({ path: `${screenshots}/notebook-error-${theme}.png` });
+    expect(submitCells).not.toHaveBeenCalled();
+    const replay = screen.getByRole("button", { name: "Run from top through this cell" });
+    await expect.element(replay).toBeVisible();
+    if (screenshots) {
+      await page.viewport(360, 660);
+      (replay.query() as HTMLButtonElement | null)?.focus();
+      await page.screenshot({ path: `${screenshots}/notebook-error-narrow-${theme}.png` });
+    }
+    await replay.click();
+    await vi.waitFor(() => expect(submitCells).toHaveBeenCalledOnce());
+    expect(
+      submitCells.mock.calls[0]?.[0].input.cells.map((item: { cellId: string }) => item.cellId),
+    ).toEqual(["setup", "target"]);
+  },
+);
+
 it("replays through the selected cell and labels saved and empty output inline", async () => {
-  startSession.mockImplementationOnce(async ({ input }) =>
-    AsyncResult.success({ sessionId: input.sessionId, generation: 1 }),
-  );
-  submitCells.mockResolvedValueOnce(AsyncResult.success(null));
+  startSession
+    .mockReset()
+    .mockImplementationOnce(async ({ input }) =>
+      AsyncResult.success({ sessionId: input.sessionId, generation: 1 }),
+    );
+  submitCells.mockReset().mockResolvedValueOnce(AsyncResult.success(null));
   const registry = AtomRegistry.make();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
   await using screen = await render(

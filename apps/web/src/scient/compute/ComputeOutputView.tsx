@@ -36,6 +36,11 @@ type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 type ComputeDiagnosticOutput = Extract<ComputeOutput, { readonly _tag: "diagnostic" }>;
 type DiagnosticFrame = ComputeDiagnosticOutput["diagnostic"]["frames"][number];
 
+interface NotebookDiagnosticContext {
+  readonly path: string;
+  readonly onReplay?: (() => void) | undefined;
+}
+
 type ProjectedBlock =
   | { readonly kind: "stream"; readonly block: Extract<Block, { readonly kind: "stream" }> }
   | {
@@ -112,26 +117,63 @@ function projectBlocks(outputs: ReadonlyArray<ComputeOutput>): ReadonlyArray<Pro
 function ComputeDiagnosticFrames(props: {
   readonly frames: ReadonlyArray<DiagnosticFrame>;
   readonly threadRef: ScopedThreadRef;
+  readonly notebookPath?: string | undefined;
 }) {
+  const gt = useGT();
   if (props.frames.length === 0) return null;
   return (
     <div className="mt-1.5 flex flex-wrap gap-1">
-      {props.frames.slice(-6).map((frame) => (
-        <button
-          key={`${frame.relativePath}:${String(frame.line)}:${String(frame.column)}:${frame.functionName ?? ""}`}
-          type="button"
-          className="cursor-pointer rounded-[4px] bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          onClick={() =>
-            useRightPanelStore
-              .getState()
-              .openFile(props.threadRef, frame.relativePath, frame.line ?? undefined)
-          }
-        >
-          {frame.relativePath}
-          {frame.line === null ? "" : `:${String(frame.line)}`}
-          {frame.functionName === null ? "" : ` · ${frame.functionName}`}
-        </button>
-      ))}
+      {props.frames.slice(-6).map((frame) => {
+        const key = `${frame.relativePath}:${String(frame.line)}:${String(frame.column)}:${frame.functionName ?? ""}`;
+        if (frame.relativePath === props.notebookPath) {
+          return frame.line === null ? null : (
+            <span key={key} className="text-[11px] text-muted-foreground">
+              {gt("Line {line} in a notebook cell", { line: frame.line })}
+              {frame.functionName === null ? "" : ` · ${frame.functionName}`}
+            </span>
+          );
+        }
+        return (
+          <button
+            key={key}
+            type="button"
+            className="cursor-pointer rounded-[4px] bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={() =>
+              useRightPanelStore
+                .getState()
+                .openFile(props.threadRef, frame.relativePath, frame.line ?? undefined)
+            }
+          >
+            {frame.relativePath}
+            {frame.line === null ? "" : `:${String(frame.line)}`}
+            {frame.functionName === null ? "" : ` · ${frame.functionName}`}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function NotebookSetupRecovery(props: {
+  readonly errorName: unknown;
+  readonly message: unknown;
+  readonly onReplay: (() => void) | undefined;
+}) {
+  if (
+    props.onReplay === undefined ||
+    props.errorName !== "NameError" ||
+    typeof props.message !== "string" ||
+    !/^name '[^'\r\n]+' is not defined$/.test(props.message)
+  )
+    return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <p>
+        <T>An earlier cell may need to run.</T>
+      </p>
+      <Button size="xs" variant="outline" focus="edge" onClick={props.onReplay}>
+        <T>Run from top through this cell</T>
+      </Button>
     </div>
   );
 }
@@ -147,6 +189,7 @@ function ComputeDiagnostic(props: {
     readonly onSettled: () => void;
   };
   readonly onAskAgent?: ((text: string) => void) | undefined;
+  readonly notebook?: NotebookDiagnosticContext | undefined;
 }) {
   const { diagnostic } = props.output;
   const recovery = computeDependencyRecovery({
@@ -205,7 +248,16 @@ function ComputeDiagnostic(props: {
                 )}
               </div>
             ) : null}
-            <ComputeDiagnosticFrames frames={diagnostic.frames} threadRef={props.threadRef} />
+            <ComputeDiagnosticFrames
+              frames={diagnostic.frames}
+              threadRef={props.threadRef}
+              notebookPath={props.notebook?.path}
+            />
+            <NotebookSetupRecovery
+              errorName={diagnostic.errorName}
+              message={diagnostic.message}
+              onReplay={props.notebook?.onReplay}
+            />
             {traceback.length > 0 ? (
               <details className="mt-1 text-muted-foreground">
                 <summary className="cursor-pointer">
@@ -245,6 +297,7 @@ export function ComputeOutputView(props: {
   readonly clipped?: boolean;
   readonly threadRef: ScopedThreadRef;
   readonly source?: ComputeExecutionSource | null;
+  readonly notebook?: NotebookDiagnosticContext | undefined;
   readonly runtimeInspection?: ComputeRuntimeInspection | null;
   /** Puts an error in the chat as a quote of this run. */
   readonly onAskAgent?: ((text: string) => void) | undefined;
@@ -289,6 +342,7 @@ export function ComputeOutputView(props: {
                   ? {}
                   : { dependencyRecovery: props.dependencyRecovery })}
                 onAskAgent={props.onAskAgent}
+                notebook={props.notebook}
               />
             );
           case "figure":

@@ -17,7 +17,7 @@ import { computeDisplays } from "~/scient/compute/computeRichRepresentation";
 import { renderTerminalText } from "~/scient/compute/computeTerminalText";
 import { ComputeTerminalOutput } from "~/scient/compute/ComputeTerminalOutput";
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
-import { ComputeOutputView } from "~/scient/compute/ComputeOutputView";
+import { ComputeOutputView, NotebookSetupRecovery } from "~/scient/compute/ComputeOutputView";
 import {
   ScientImageActionMenu,
   type ScientImageAction,
@@ -70,8 +70,15 @@ export interface NotebookPlace {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
+  readonly path: string;
   /** Adds text from a cell's output to the chat as a quote of that cell, when a chat is open. */
   readonly askAboutCell?: ((cellId: string, text: string) => void) | undefined;
+  readonly replay?:
+    | {
+        readonly firstCodeCell: string;
+        readonly runThrough: (cellId: string) => void;
+      }
+    | undefined;
 }
 
 const RASTER_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
@@ -172,6 +179,7 @@ function Data(props: { readonly data: Readonly<Record<string, unknown>>; readonl
 function SavedOutputs(props: {
   readonly outputs: ReadonlyArray<NotebookOutput>;
   readonly label: string;
+  readonly onReplay?: (() => void) | undefined;
 }) {
   if (props.outputs.length === 0) return null;
   return (
@@ -199,6 +207,11 @@ function SavedOutputs(props: {
                 <div className="text-destructive">
                   <ComputeTerminalOutput terminal={renderTerminalText(text)} />
                 </div>
+                <NotebookSetupRecovery
+                  errorName={output.ename}
+                  message={output.evalue}
+                  onReplay={props.onReplay}
+                />
               </ComputeOutputBlock>
             );
           }
@@ -222,6 +235,7 @@ function StoredOutputs(props: {
   readonly controller: NotebookController;
   readonly cell: NotebookCellView;
   readonly near: boolean;
+  readonly onReplay: (() => void) | undefined;
 }) {
   const { controller, cell, near } = props;
   const [loaded, setLoaded] = useState<ReadonlyArray<NotebookOutput> | null>(null);
@@ -255,7 +269,7 @@ function StoredOutputs(props: {
       />
     );
   }
-  return <SavedOutputs outputs={loaded} label="figure" />;
+  return <SavedOutputs outputs={loaded} label="figure" onReplay={props.onReplay} />;
 }
 
 export function NotebookCellOutputs(props: {
@@ -264,23 +278,29 @@ export function NotebookCellOutputs(props: {
   readonly cell: NotebookCellView;
   readonly near: boolean;
 }) {
-  const { controller, cell, near } = props;
+  const { controller, cell, near, place } = props;
   const liveRun = useStore(controller.store, (state) => state.liveRuns[cell.id]);
   const running = useStore(controller.store, (state) => (state.activity[cell.id] ?? null) !== null);
   const showsRun =
     near &&
     liveRun !== undefined &&
     (running || (cell.run?.execution === liveRun.executionId && cell.outputs.length > 0));
+  const replay = place.replay;
+  const onReplay =
+    replay === undefined || cell.id === replay.firstCodeCell || cell.source.trim() === ""
+      ? undefined
+      : () => replay.runThrough(cell.id);
   return showsRun ? (
     <LiveOutputs
       controller={controller}
-      place={props.place}
+      place={place}
       cell={cell}
       near={near}
       run={liveRun}
+      onReplay={onReplay}
     />
   ) : (
-    <StoredOutputs controller={controller} cell={cell} near={near} />
+    <StoredOutputs controller={controller} cell={cell} near={near} onReplay={onReplay} />
   );
 }
 
@@ -291,6 +311,7 @@ function LiveOutputs(props: {
   readonly cell: NotebookCellView;
   readonly near: boolean;
   readonly run: { readonly sessionId: string; readonly executionId: string };
+  readonly onReplay: (() => void) | undefined;
 }) {
   const { environmentId, cwd, threadRef } = props.place;
   const live = useAtomValue(
@@ -299,7 +320,14 @@ function LiveOutputs(props: {
     ),
   );
   if (live === null) {
-    return <StoredOutputs controller={props.controller} cell={props.cell} near={props.near} />;
+    return (
+      <StoredOutputs
+        controller={props.controller}
+        cell={props.cell}
+        near={props.near}
+        onReplay={props.onReplay}
+      />
+    );
   }
   return (
     <div className="px-3 py-2">
@@ -310,6 +338,7 @@ function LiveOutputs(props: {
         executionId={props.run.executionId as never}
         outputs={live.output.outputs}
         threadRef={threadRef}
+        notebook={{ path: props.place.path, onReplay: props.onReplay }}
         onAskAgent={
           props.place.askAboutCell === undefined
             ? undefined

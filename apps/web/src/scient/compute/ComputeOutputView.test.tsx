@@ -83,6 +83,40 @@ describe("dependency recovery presentation", () => {
   });
 });
 
+it("labels notebook cell lines without turning them into file links", () => {
+  const markup = renderToStaticMarkup(
+    <ComputeOutputView
+      cwd="/synthetic"
+      environmentId={EnvironmentId.make("synthetic")}
+      executionId={ComputeExecutionId.make("failed-execution")}
+      session={
+        { languageId: ComputeLanguageId.make("python"), runtime: null } as ComputeSessionRecord
+      }
+      outputs={[
+        {
+          _tag: "diagnostic",
+          sequence: 1,
+          observedAt: "2026-11-23T00:00:00Z",
+          diagnostic: {
+            errorName: "NameError",
+            message: "name 'run_date' is not defined",
+            traceback: [],
+            frames: [
+              { relativePath: "analysis.ipynb", line: 3, column: null, functionName: null },
+              { relativePath: "setup.py", line: 6, column: null, functionName: null },
+            ],
+          },
+        },
+      ]}
+      threadRef={{} as ScopedThreadRef}
+      notebook={{ path: "analysis.ipynb" }}
+    />,
+  );
+  expect(markup).toContain("Line 3 in a notebook cell");
+  expect(markup).not.toContain("analysis.ipynb:3");
+  expect(markup).toContain("setup.py:6</button>");
+});
+
 describe("figure result projection", () => {
   it.each([true, false])(
     "renders the shared figure controls with or without a retained FIG: %s",

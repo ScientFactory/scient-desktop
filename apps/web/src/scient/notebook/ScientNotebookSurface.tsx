@@ -227,6 +227,12 @@ export default function ScientNotebookSurface(props: {
   const status = useStore(controller.store, (state) => state.status);
   const languageId = useStore(controller.store, (state) => state.language);
   const order = useStore(controller.store, (state) => state.order);
+  const firstCodeCell = useStore(controller.store, (state) =>
+    state.order.find((id) => {
+      const cell = state.cells[id];
+      return cell?.cellType === "code" && cell.source.trim() !== "";
+    }),
+  );
   const sections = useStore(controller.store, (state) => state.sections);
   const selected = useStore(controller.store, (state) => state.selected);
   const [dockedOutline, setDockedOutline] = useState(false);
@@ -334,6 +340,10 @@ export default function ScientNotebookSurface(props: {
     return ids.slice(from, to).filter((id) => cells[id]?.cellType === "code");
   };
   const runAllCells = useStableCallback(() => runCells(codeCellIds(), true));
+  const replayThroughCell = useStableCallback((cellId: string) => {
+    const index = controller.store.getState().order.indexOf(cellId);
+    if (index >= 0) runCells(codeCellIds(0, index + 1));
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the cell a command selected; a cell's editor places its own caret.
   useLayoutEffect(() => {
@@ -670,12 +680,6 @@ export default function ScientNotebookSurface(props: {
     />
   );
   const outOfDate = changed === "" ? [] : changed.split("\n");
-  const place = {
-    environmentId: props.environmentId,
-    cwd: props.cwd,
-    threadRef: props.threadRef,
-    askAboutCell: askAbout === null ? undefined : askAboutCell,
-  };
   const busy =
     submitting.size > 0 ||
     [...cellRuns.values()].some(
@@ -696,6 +700,17 @@ export default function ScientNotebookSurface(props: {
   );
   const runAllDisabled = busy || restarting || runningFresh;
   const freshRunDisabled = runAllDisabled || !canRerun || inputs === undefined || invalidOverrides;
+  const place = {
+    environmentId: props.environmentId,
+    cwd: props.cwd,
+    threadRef: props.threadRef,
+    path: props.relativePath,
+    askAboutCell: askAbout === null ? undefined : askAboutCell,
+    replay:
+      runAllDisabled || firstCodeCell === undefined
+        ? undefined
+        : { firstCodeCell, runThrough: replayThroughCell },
+  };
 
   return (
     <div ref={observeNotebookWidth} className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -737,7 +752,7 @@ export default function ScientNotebookSurface(props: {
                   </MenuItem>
                   <MenuItem
                     disabled={selectedIndex < 0}
-                    onClick={() => runCells(codeCellIds(0, selectedIndex + 1))}
+                    onClick={() => selected !== null && replayThroughCell(selected)}
                   >
                     <T>Run from top through this cell</T>
                   </MenuItem>
