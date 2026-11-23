@@ -35,7 +35,7 @@ describe("PlotlyChartCard server fallback", () => {
     expect(html).not.toContain("js-plotly-plot");
   });
 
-  it("shows malformed JSON as a recoverable source-first error", () => {
+  it("shows a compact parse error and keeps the source available to copy", () => {
     const html = renderToStaticMarkup(
       createElement(PlotlyChartCard, {
         language: "plotly",
@@ -49,6 +49,7 @@ describe("PlotlyChartCard server fallback", () => {
     expect(html).toContain("Unable to render this Plotly figure");
     expect(html).toContain("Invalid JSON at line 1");
     expect(html).toContain("&quot;data&quot;");
+    expect(html).not.toContain("<pre");
   });
 
   it("discloses network-backed figures without blocking them", () => {

@@ -286,8 +286,9 @@ it.effect("a glance at a university only looks, at most every two minutes", () =
   }),
 );
 
-const askOpenAthens = (answer: boolean | "unclear" | null) => {
+const askOpenAthens = (answer: "signed-in" | "signed-out" | "wait") => {
   const opened: string[] = [];
+  let looks = 0;
   const broker = PreviewAutomationBroker.of({
     connect: () => Effect.succeed(Stream.empty),
     focusHost: () => Effect.void,
@@ -297,7 +298,9 @@ const askOpenAthens = (answer: boolean | "unclear" | null) => {
         const input = request.input as { url?: string; expression?: string };
         if (request.operation === "open" && input.url) opened.push(input.url);
         if (request.operation !== "evaluate") return { tabId: "tab-hidden", tabs: [] } as A;
-        return (input.expression?.includes("fetch(") ? true : answer) as A;
+        // OpenAthens' quiet ask takes a few looks to come back.
+        looks += 1;
+        return (looks < 3 ? "wait" : answer) as A;
       }),
   });
   // The person signs in to their university themselves; Scient keeps no password for it.
@@ -313,14 +316,18 @@ const askOpenAthens = (answer: boolean | "unclear" | null) => {
   );
 };
 
-it.live("takes OpenAthens' own answer for an OpenAthens university", () =>
+it.effect("takes OpenAthens' own answer once its quiet ask is back", () =>
   Effect.gen(function* () {
-    const yes = yield* askOpenAthens(true);
-    expect(yes.opened).toEqual([OPEN_ATHENS_CHECK_PAGE]);
-    expect(yes.checks.at(-1)).toMatchObject({ state: "signed-in" });
-    const no = yield* askOpenAthens(false);
-    expect(no.checks.at(-1)).toMatchObject({ state: "signed-out" });
-    const unclear = yield* askOpenAthens("unclear");
-    expect(unclear.checks.at(-1)).toMatchObject({ state: "unknown" });
+    const yes = yield* askOpenAthens("signed-in").pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    const signedIn = yield* Fiber.join(yes);
+    expect(signedIn.opened).toEqual([OPEN_ATHENS_CHECK_PAGE]);
+    expect(signedIn.checks.at(-1)).toMatchObject({ state: "signed-in" });
+    const no = yield* askOpenAthens("signed-out").pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    expect((yield* Fiber.join(no)).checks.at(-1)).toMatchObject({ state: "signed-out" });
+    const never = yield* askOpenAthens("wait").pipe(Effect.forkChild);
+    yield* TestClock.adjust("30 seconds");
+    expect((yield* Fiber.join(never)).checks.at(-1)).toMatchObject({ state: "unknown" });
   }),
 );

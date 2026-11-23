@@ -56,6 +56,33 @@ describe("applyUsageLimitsUpdate", () => {
         update: { windows: [{ ...weekly, modelIds: ["opencode/b"] }] },
       })?.windows[0]?.modelIds,
     ).toEqual(["opencode/b"]);
+    const statusTracked = {
+      checkedAt,
+      unknownProviderIds: ["openai-codex"],
+      windows: [
+        {
+          ...weekly,
+          accountId: "anthropic:acct-1",
+          status: "warning" as const,
+          gating: true,
+          fetchedAt: checkedAt,
+        },
+      ],
+    };
+    expect(
+      applyUsageLimitsUpdate({
+        previous: statusTracked,
+        checkedAt,
+        update: { windows: [{ ...statusTracked.windows[0]! }] },
+      }),
+    ).toBe(statusTracked);
+    const updatedStatus = applyUsageLimitsUpdate({
+      previous: statusTracked,
+      checkedAt,
+      update: { windows: [{ ...statusTracked.windows[0]!, status: "exhausted" }] },
+    });
+    expect(updatedStatus?.windows[0]?.status).toBe("exhausted");
+    expect(updatedStatus?.unknownProviderIds).toEqual(["openai-codex"]);
   });
 
   it("upserts by id and keeps the reset a percent-only update omits", () => {

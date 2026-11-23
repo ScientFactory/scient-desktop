@@ -71,6 +71,7 @@ describe("new thread model fallback", () => {
     driver: ProviderDriverKind.make("claudeAgent"),
     auth: { status: "authenticated", type: "claudeProSubscription" },
     models: [{ slug: fallback.model, name: "Fable", isCustom: false, capabilities: null }],
+    usageLimits: { checkedAt: limited.checkedAt, windows: [window] },
   });
 
   const defaults = {
@@ -107,6 +108,7 @@ describe("new thread model fallback", () => {
     { installed: false },
     { auth: { status: "unauthenticated" as const } },
     { availability: "unavailable" as const },
+    { usageLimits: undefined },
     { usageLimits: limited.usageLimits },
   ])("rejects an unusable fallback: %j", (overrides) => {
     expect(
@@ -184,6 +186,9 @@ describe("new thread model fallback", () => {
       ["opencode", "console-custom"],
     ],
     ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
+    ["claudeAgent", ["seven_day_fable"], "claude-opus-5-5", false, undefined, undefined],
+    ["claudeAgent", ["seven_day_fable"], "claude-fable-5-1", true, undefined, undefined],
+    ["claudeAgent", ["monthly_spend"], "claude-opus-5-5", true, undefined, undefined],
   ] as const)(
     "matches %s pools %s to %s",
     (driver, ids, model, usesFallback, modelIds, providerIds) => {

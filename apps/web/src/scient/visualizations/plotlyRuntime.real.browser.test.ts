@@ -1,4 +1,5 @@
 import { expect, it } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import plotlyExpressLine from "./plotlyExpressLine.fixture.json";
 import { getPlotlyRuntimePromise, mountPlotlyView, type MountedPlotlyView } from "./plotlyRuntime";
@@ -38,6 +39,37 @@ it("draws a one-series Plotly Express figure written by plotly.py 7", async () =
 
   expect(view.graph.querySelector(".scatterlayer .trace")).not.toBeNull();
   expect(view.warnings).toEqual([]);
+});
+
+it("applies both toggle button arguments without validator warnings", async () => {
+  using view = await mount({
+    data: [{ type: "scatter", mode: "lines", x: [1, 2], y: [1, 2], line: { color: "red" } }],
+    layout: {
+      updatemenus: [
+        {
+          type: "buttons",
+          active: -1,
+          buttons: [
+            {
+              label: "Toggle color",
+              method: "restyle",
+              args: [{ "line.color": "blue" }],
+              args2: [{ "line.color": "red" }],
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  expect(view.warnings).toEqual([]);
+  const color = () => view.graph.querySelector<SVGPathElement>(".js-line")?.style.stroke;
+  const toggle = page.getByText("Toggle color", { exact: true });
+  expect(color()).toBe("rgb(255, 0, 0)");
+  await toggle.click();
+  await expect.poll(color).toBe("rgb(0, 0, 255)");
+  await toggle.click();
+  await expect.poll(color).toBe("rgb(255, 0, 0)");
 });
 
 it("draws a figure with an on-demand TeX macro and the figure queued after it", async () => {

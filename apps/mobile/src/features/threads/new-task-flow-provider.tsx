@@ -489,7 +489,7 @@ export function NewTaskFlowProvider(
     defaultSelection: selectedDefaultModel,
     explicitSelection:
       draftModelSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
-    fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
+    fallbackSelection: projectSettings.settings.fallbackModelSelection ?? null,
     providers: selectedEnvironmentServerConfig?.providers ?? [],
     ...(selectedEnvironmentServerConfig
       ? { settings: selectedEnvironmentServerConfig.settings }
