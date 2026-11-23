@@ -111,8 +111,8 @@ access.
 
 - **Discover** (`/settings/extensions`) — the curated catalog's sections, each
   showing a preview with its title linking to the category page (a field section shows its
-  account services, then its catalog preview, cut to whole two-column rows of at most eight;
-  Most used shows everything), then the
+  account services, less any whose `categoryPageOnly` names it, then its catalog preview, cut to
+  whole two-column rows of at most eight; Most used shows everything), then the
   built-in Scient plugins, shared plugins, Codex store previews, and a link to the full registry. Store headings open searchable, paged store pages. Search replaces the
   sections with one grid: matching installed connectors and plugins first, then
   curated matches, then registry matches as they arrive (see

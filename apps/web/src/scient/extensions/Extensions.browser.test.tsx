@@ -881,7 +881,11 @@ describe("Discover", () => {
 
   it("ends each field section on a full row, at most four rows, and leaves the rest to its page", async () => {
     await using fixture = setup();
-    const field = (category: "data" | "papers", title: string, count: number) => ({
+    const field = (
+      category: "data" | "papers" | "communication",
+      title: string,
+      count: number,
+    ) => ({
       category,
       title,
       total: count,
@@ -894,7 +898,12 @@ describe("Discover", () => {
     });
     state.catalog = {
       ...catalog,
-      sections: [...catalog.sections, field("data", "Data", 5), field("papers", "Papers", 6)],
+      sections: [
+        ...catalog.sections,
+        field("data", "Data", 5),
+        field("papers", "Papers", 6),
+        field("communication", "Chat", 3),
+      ],
     };
     await fixture.render(<DiscoverPage />);
     // Five picks and no account services: the fifth waits on the category page.
@@ -909,8 +918,15 @@ describe("Discover", () => {
     expect(papers).toHaveLength(8);
     expect(papers).toContain("Zotero");
     expect(papers.slice(-5)).toEqual(["Papers 1", "Papers 2", "Papers 3", "Papers 4", "Papers 5"]);
+    // Telegram leaves the chat preview to its first pick; it stays on the page and in Most used.
+    const chat = fixture.rowNames(fixture.section("Chat"));
+    expect(chat).toHaveLength(8);
+    expect(chat).not.toContain("Telegram");
+    expect(chat.at(-1)).toBe("Chat 1");
     // Most used still shows every item.
-    expect(fixture.rowNames(fixture.section("Popular"))).toContain("Local tool");
+    expect(fixture.rowNames(fixture.section("Popular"))).toEqual(
+      expect.arrayContaining(["Telegram", "Local tool"]),
+    );
   });
 
   it("offers + for servers not added and ⋯ for added ones", async () => {
