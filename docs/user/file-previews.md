@@ -54,7 +54,7 @@ shown in its summary. Use **Cancel** to stop a profile in progress.
 
 Open **Actions** in the dataset or view and choose **Use in analysis…**. Pick a saved script or
 notebook. Copy the read example into the analysis and save the code. Use
-**Run fresh with input** to record the file as a declared input for that run.
+**Run fresh with input** to record the file as an input file for that run.
 The Python, R and Julia examples for SQL views use DuckDB in the selected
 analysis environment. Run them from the project root.
 

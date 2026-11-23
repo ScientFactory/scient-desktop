@@ -608,14 +608,16 @@ run the package's code.
 Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
 
 - Open **Notebook outline** in the toolbar and choose a heading to jump to it. The outline marks the
-  selected section. Use **Cell actions** to collapse a heading's section or hide a code cell's
-  source or outputs. The file keeps those folds when you reopen it in Scient or JupyterLab.
+  selected section. Click a code cell's language label to fold its code to one line, and again to
+  show it. Use **Cell actions** to collapse a heading's section or hide a cell's outputs. The file
+  keeps those folds when you reopen it in Scient or JupyterLab.
 - Point at a cell's number to run it, or choose **Run all**. Cells run in order and stop at the
   first failure; a summary under the toolbar shows the first failed cell, how many later cells were
   skipped, and a button to jump directly to it. Click code to edit it at the pointer, or click a
   Text cell to edit its Markdown.
 - If a cell needs setup from earlier cells, select it and choose **Run from top through this cell**
-  from the Run menu. A Python error for an undefined name can also offer replay or a jump to the
+  from the Run menu. When the selected cell reads a name that only an earlier, unrun cell defines,
+  that action is first in the menu. A Python error for an undefined name can also offer replay or a jump to the
   defining cell when live evidence shows it failed. Full tracebacks stay collapsed under
   **Details**.
 - Text, figures, observed written file links and errors appear below the cell that produced them.
@@ -638,8 +640,9 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
    apply when you choose **Run fresh with input** from a data file. The bar can show the values
    the last clean run used. Expressions in the parameters cell run before the overrides apply,
    so move calculations that depend on changed values to a later cell.
-3. Check **Declared inputs** below the parameters. The list starts with the last published run's
-   declarations. Add or remove files for the next fresh run.
+3. To record data files with the run, choose **Input files…** from the Run menu. The list starts
+   with the last published run's files. Add or remove files for the next fresh run; the
+   confirmation names the files it records.
 4. Choose **Run with changes** and confirm. Scient starts a fresh kernel and runs the saved notebook
    from top to bottom. It saves the overrides in an `injected-parameters` cell and updates the
    notebook outputs after success. A failed or stopped run keeps the previous outputs.
@@ -659,11 +662,12 @@ Use `{"threshold":{"min":0.3,"max":0.7,"step":0.1}}` for a slider or
 
 ### Explore saved settings
 
-Use **Run for each value** in the Run menu to save alternatives for one parameter. Edit the proposed
-values, one per line, before starting. Scient reports which settings it saved and which failed.
+Choose **Run for each … value** in the Run menu to save alternatives for one parameter. Scient
+proposes values from the parameter's control hint. Edit them, up to 20, one per line, before
+starting. Scient reports which settings it saved and which failed.
 Open **Reader view** to choose among the saved settings and see their
 values, tables and figures. Inline result values linked from the notebook's Markdown follow the
-selected revision. Expand a code cell to inspect it.
+selected revision. Code starts folded; click a cell's language label to show it.
 
 **Reset** returns to the published run. The line under the parameters shows the time of the
 selected saved run or tells you when no saved run matches. When a setting was made with earlier
