@@ -6,6 +6,7 @@ import {
   type ParsedVegaLiteSource,
   type VegaLiteRenderPlan,
   prepareVegaLiteSpecForRuntime,
+  vegaLiteAutosizeType,
   vegaLiteDescription,
 } from "./vegaLiteSpec";
 
@@ -59,6 +60,33 @@ function normalizeWarning(values: ReadonlyArray<unknown>): string {
     .join(" ")
     .replace(/^WARN\s*/u, "")
     .trim();
+}
+
+function isRedundantFitWarning(
+  warning: string,
+  parsed: ParsedVegaLiteSource,
+  renderPlan: VegaLiteRenderPlan,
+  compiled: VegaSpec,
+): boolean {
+  // Vega-Lite 6.4.3 warns about skipping a discrete axis even if fit was requested only on the other axis.
+  const fit =
+    warning === 'Dropping "fit-y" because spec has discrete height.'
+      ? "fit-x"
+      : warning === 'Dropping "fit-x" because spec has discrete width.'
+        ? "fit-y"
+        : null;
+  if (fit == null || vegaLiteAutosizeType(compiled.autosize) !== fit) return false;
+
+  const { spec } = renderPlan;
+  const containerWidth = "width" in spec && spec.width === "container";
+  const containerHeight = "height" in spec && spec.height === "container";
+  if (fit === "fit-x" ? containerHeight : containerWidth) return false;
+
+  const authoredFit =
+    vegaLiteAutosizeType(parsed.spec.autosize) ??
+    vegaLiteAutosizeType(parsed.spec.config?.autosize);
+  if (authoredFit != null) return authoredFit === fit;
+  return fit === "fit-x" ? containerWidth : containerHeight;
 }
 
 export function normalizedVegaLiteError(cause: unknown): Error {
@@ -536,10 +564,13 @@ export async function mountVegaLiteView(input: {
     await restoreVegaLiteViewState(result.view, input.initialState);
     if (vegaLiteDescription(input.parsed.spec) == null) result.view.description(input.title);
     result.view.globalCursor(false);
+    const { vgSpec } = result;
     return {
       initialState,
       result,
-      warnings,
+      warnings: warnings.filter(
+        (warning) => !isRedundantFitWarning(warning, input.parsed, input.renderPlan, vgSpec),
+      ),
     };
   } catch (cause) {
     result?.finalize();

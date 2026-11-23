@@ -25,6 +25,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function vegaLiteAutosizeType(autosize: unknown): unknown {
+  return isRecord(autosize) ? autosize.type : autosize;
+}
+
 function sourceLocation(source: string, offset: number): { line: number; column: number } {
   let line = 1;
   let lineStart = 0;
@@ -139,7 +143,18 @@ export function parseVegaLiteSource(
 }
 
 function isSingleOrLayerSpec(spec: Record<string, unknown>): boolean {
-  return "mark" in spec || "layer" in spec;
+  if ("layer" in spec) return true;
+  if (!("mark" in spec)) return false;
+
+  // Vega-Lite turns these encoding channels into a multi-view facet.
+  const { encoding } = spec;
+  return (
+    !isRecord(encoding) ||
+    !["row", "column", "facet"].some((channel) => {
+      const definition = encoding[channel];
+      return isRecord(definition) && "field" in definition;
+    })
+  );
 }
 
 interface UnitLayerCandidate {
@@ -378,7 +393,13 @@ function scopeComposedLayerSelections(root: Record<string, unknown>): void {
 /** Builds a disposable render copy without changing the canonical fenced source. */
 export function buildVegaLiteRenderPlan(spec: TopLevelSpec): VegaLiteRenderPlan {
   const source = spec as unknown as Record<string, unknown>;
-  const needsResponsiveDefaults = source.width == null && isSingleOrLayerSpec(source);
+  const configuredAutosize = spec.config?.autosize;
+  const authoredAutosize =
+    vegaLiteAutosizeType(spec.autosize) ?? vegaLiteAutosizeType(configuredAutosize);
+  const needsResponsiveDefaults =
+    source.width == null &&
+    (authoredAutosize == null || authoredAutosize === "fit" || authoredAutosize === "fit-x") &&
+    isSingleOrLayerSpec(source);
   const needsSelectionScoping = hasUnscopedLayerSelection(source);
   const responsive = source.width === "container" || needsResponsiveDefaults;
   if (!needsResponsiveDefaults && !needsSelectionScoping) {
@@ -388,7 +409,7 @@ export function buildVegaLiteRenderPlan(spec: TopLevelSpec): VegaLiteRenderPlan 
   const prepared = structuredClone(source);
   if (needsResponsiveDefaults) {
     prepared.width = "container";
-    if (prepared.autosize == null) {
+    if (prepared.autosize == null && configuredAutosize == null) {
       prepared.autosize = { type: "fit", contains: "padding", resize: true };
     }
   }

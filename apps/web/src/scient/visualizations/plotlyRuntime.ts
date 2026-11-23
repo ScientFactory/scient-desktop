@@ -352,16 +352,14 @@ function validationWarnings(
 ): ReadonlyArray<string> {
   const issues = normalizedValidationIssues(runtime, figure);
   return issues.flatMap((issue) => {
-    const path = Array.isArray(issue.path)
-      ? issue.path.map(String)
-      : typeof issue.path === "string"
-        ? issue.path.split(/[.[\]]+/u).filter(Boolean)
-        : [];
+    const path = plotlyIssuePath(issue);
     const isCommandArgumentNoise =
       issue.code === "dynamic" &&
       issue.container === "layout" &&
-      (path[0] === "sliders" || path[0] === "updatemenus") &&
-      path.includes("args");
+      ((path[0] === "sliders" && path.includes("args")) ||
+        (path[0] === "updatemenus" &&
+          path[2] === "buttons" &&
+          (path[4] === "args" || path[4] === "args2")));
     // Plotly's Python library writes attributes a trace type ignores, so every
     // figure it makes would otherwise carry "did not get coerced" warnings.
     if (isCommandArgumentNoise || issue.code === "unused") return [];
