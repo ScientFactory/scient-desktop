@@ -566,7 +566,7 @@ describe("jupyter bridge output mapping", () => {
         });
         yield* bridge.say({
           type: "execution-complete",
-          payload: { outcome: "succeeded" },
+          payload: { outcome: "succeeded", executionCount: 3 },
           requestId: "run-1",
         });
 
@@ -578,6 +578,7 @@ describe("jupyter bridge output mapping", () => {
         }
         expect(output.output.text).toBe("hi\n");
         expect(output.output.stream).toBe("stdout");
+        expect(seen[2]).toMatchObject({ _tag: "completed", executionCount: 3 });
       }),
     ),
   );

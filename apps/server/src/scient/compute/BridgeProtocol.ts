@@ -339,6 +339,9 @@ export type WarningPayload = typeof WarningPayload.Type;
 
 export const ExecutionCompletePayload = Schema.Struct({
   outcome: ComputeExecutionOutcome,
+  executionCount: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  ),
   writes: Schema.optional(ComputeRuntimeWriteReport),
 });
 export type ExecutionCompletePayload = typeof ExecutionCompletePayload.Type;

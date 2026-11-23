@@ -594,7 +594,12 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
               true,
             );
 
-            yield* execute(harness, "state-write", "answer = 41");
+            const stateWrite = yield* execute(harness, "state-write", "answer = 41");
+            expect(stateWrite.at(-1)).toMatchObject({
+              _tag: "completed",
+              outcome: "succeeded",
+              executionCount: 2,
+            });
             const stateRead = yield* execute(harness, "state-read", "answer + 1");
             yield* Effect.logInfo("real-kernel: state retention complete");
             expect(stateRead.some((event) => outputText(event)?.includes("42") === true)).toBe(

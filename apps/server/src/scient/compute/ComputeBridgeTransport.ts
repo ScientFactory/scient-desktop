@@ -20,7 +20,6 @@ import {
   type ComputeRequestId,
   type ComputeRuntimeIdentity,
   type ComputeRuntimePackageEvidence,
-  type ComputeRuntimeWriteReport,
   type ComputeTransport,
   type ComputeTransportEvent,
   type ComputeTransportOpenRequest,
@@ -50,6 +49,7 @@ import {
   validateBridgeSequence,
   type BridgeMessage,
   type DisplayPayload,
+  type ExecutionCompletePayload,
   type KernelPortsPayload,
   type TablePayload,
 } from "./BridgeProtocol.ts";
@@ -838,11 +838,7 @@ export function makeComputeBridgeTransport(
             if (MutableRef.get(activeRequestId) !== message.requestId) {
               return yield* transportError("receive", "Bridge completed an unknown execution.");
             }
-            const payload = message.payload as {
-              outcome: "succeeded" | "failed" | "cancelled";
-              executionCount?: number | null;
-              writes?: ComputeRuntimeWriteReport;
-            };
+            const payload = message.payload as ExecutionCompletePayload;
             yield* emit({
               _tag: "completed",
               sequence: message.sequence,
