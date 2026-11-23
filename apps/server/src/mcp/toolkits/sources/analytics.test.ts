@@ -77,8 +77,8 @@ it.effect("records calls of Scient's tools like T3's, without arguments", () => 
               ...disabledAnalyticsService,
               record: (event, properties) =>
                 event === "mcp.tool.invoked" && count < recorded.length
-                  ? Deferred.succeed(recorded[count++]!, properties ?? {}).pipe(Effect.asVoid)
-                  : Effect.void,
+                  ? Deferred.succeed(recorded[count++]!, properties ?? {}).pipe(Effect.as(true))
+                  : Effect.succeed(true),
             }),
           ),
         ),

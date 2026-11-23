@@ -93,9 +93,11 @@ function queuedRunEditStub(
     isSaving: false,
     draftTarget: scopeThreadRef(EnvironmentId.make("unused"), ThreadId.make("unused")),
     editingAttachments: null,
+    removedEditingAttachments: [],
     beginEdit: vi.fn(),
     cancelEdit: vi.fn(),
     removeEditingAttachment: vi.fn(),
+    restoreEditingAttachment: vi.fn(),
     saveEdit: vi.fn(async () => {}),
     ...overrides,
   };

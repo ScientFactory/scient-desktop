@@ -4618,6 +4618,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         options.runtimeGuidance?.(mcpAvailable ? wanted?.capabilities : undefined),
         // SCIENT-FORK:START — host text reuses the package runtime identity fields.
         (options.runtimeInstructions ?? buildRuntimeInstructions)({
+          agentFeedback: mcpAvailable ? (turnInput.agentFeedback ?? "off") : "off",
           harness: "OpenCode",
           model: turnInput.modelSelection.model,
           runtimePolicy: turnInput.runtimePolicy,

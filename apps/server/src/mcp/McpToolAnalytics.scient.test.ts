@@ -118,8 +118,8 @@ it.effect("names a browser tool's failure and counts every browser call toward i
               ...disabledAnalyticsService,
               record: (event, properties) =>
                 event === "mcp.tool.invoked"
-                  ? Deferred.succeed(recorded, properties ?? {}).pipe(Effect.asVoid)
-                  : Effect.void,
+                  ? Deferred.succeed(recorded, properties ?? {}).pipe(Effect.as(true))
+                  : Effect.succeed(true),
             }),
           ),
         ),
@@ -187,8 +187,8 @@ it.effect(
                   ...disabledAnalyticsService,
                   record: (event, properties) =>
                     event === "mcp.tool.invoked"
-                      ? Queue.offer(recorded, properties ?? {}).pipe(Effect.asVoid)
-                      : Effect.void,
+                      ? Queue.offer(recorded, properties ?? {}).pipe(Effect.as(true))
+                      : Effect.succeed(true),
                 }),
               ),
             ),
@@ -293,8 +293,8 @@ it.effect("an HTML refusal reports its own code and reason, to the agent and to 
                 ...disabledAnalyticsService,
                 record: (event, properties) =>
                   event === "mcp.tool.invoked"
-                    ? Queue.offer(recorded, properties ?? {}).pipe(Effect.asVoid)
-                    : Effect.void,
+                    ? Queue.offer(recorded, properties ?? {}).pipe(Effect.as(true))
+                    : Effect.succeed(true),
               }),
             ),
           ),

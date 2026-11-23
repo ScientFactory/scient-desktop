@@ -112,6 +112,8 @@ import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as MilestoneHub from "./milestones/MilestoneHub.ts";
+import * as WorkflowForge from "./workflows/WorkflowForge.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -1037,6 +1039,9 @@ export const buildAppUnderTest = (options?: {
               reclaim: Effect.void,
               status: Stream.make(null),
             }),
+            // T3's workflow runtime: one milestone hub and no forge, as no fixture runs workflows.
+            MilestoneHub.layer,
+            Layer.succeed(WorkflowForge.WorkflowForge, WorkflowForge.unavailable),
           ),
         ),
         Layer.provideMerge(orchestrationEventStoreLayer),
@@ -1331,7 +1336,7 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(UsageService.layerTest),
         Layer.provide(
           Layer.mock(AnalyticsService.AnalyticsService)({
-            record: () => Effect.void,
+            record: () => Effect.succeed(true),
             recordOwners: () => Effect.void,
             flush: Effect.void,
             ...options?.layers?.analyticsService,

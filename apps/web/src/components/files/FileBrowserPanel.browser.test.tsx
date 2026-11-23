@@ -581,6 +581,10 @@ describe("Files panel search", () => {
 
     row.click();
     await expect.poll(() => props.onOpenFile.mock.calls.length).toBe(1);
+
+    // The selection stays put, so reopening the selected file must not depend on a selection change.
+    row.click();
+    await expect.poll(() => props.onOpenFile.mock.calls.length).toBe(2);
   });
 
   // SCIENT-FORK:START — Overleaf in the Files panel

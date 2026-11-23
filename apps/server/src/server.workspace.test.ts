@@ -1395,6 +1395,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                 Effect.sync(() => {
                   effects.push(`analytics:${event}`);
                   analyticsProperties.push(properties);
+                  return true;
                 }),
             },
           },
@@ -1486,7 +1487,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             },
             analyticsService: {
               record: (event, properties) =>
-                Effect.sync(() => analyticsEvents.push({ event, properties })),
+                Effect.sync(() => {
+                  analyticsEvents.push({ event, properties });
+                  return true;
+                }),
             },
           },
         });

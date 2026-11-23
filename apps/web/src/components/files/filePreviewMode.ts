@@ -4,7 +4,6 @@ import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLang
 // SCIENT-FORK:END
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { isHostPath, workspaceRelativeFilePath } from "@t3tools/shared/path";
-import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { msg } from "gt-react";
 
@@ -20,24 +19,13 @@ export const isMarkdownPreviewFile = (path: string): boolean =>
 
 export const isLatexPreviewFile = (path: string): boolean => /\.(?:tex|latex|ltx)$/i.test(path);
 
-// SCIENT-FORK:START — richer source and citation owners retain their bounded source view.
-export function shouldUseLargeTextPreview(input: {
-  readonly path: string | null;
-  readonly draft: boolean;
-  readonly truncated: boolean;
-  readonly citationRevealActive: boolean;
-}): boolean {
-  return (
-    input.path !== null &&
-    input.truncated &&
-    !input.draft &&
-    !input.citationRevealActive &&
-    filePreviewKind({ name: input.path }) === "text" &&
-    computeSourceLanguageForPath(input.path) === null &&
-    !isLatexPreviewFile(input.path) &&
-    !/\.bib$/i.test(input.path)
-  );
-}
+// SCIENT-FORK:START — compute, LaTeX, BibTeX and citation reveals keep their bounded source view
+// instead of streaming a large file in full.
+export const keepsBoundedSourceView = (path: string, citationRevealActive: boolean): boolean =>
+  citationRevealActive ||
+  computeSourceLanguageForPath(path) !== null ||
+  isLatexPreviewFile(path) ||
+  /\.bib$/i.test(path);
 // SCIENT-FORK:END
 
 export function filePreviewReadErrorMessage(

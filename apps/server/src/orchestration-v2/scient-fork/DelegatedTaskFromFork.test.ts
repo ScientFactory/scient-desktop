@@ -100,6 +100,7 @@ const helperFields = {
   sectionId: "inherited",
   conversationImport: "reset",
   forkLineage: "reset",
+  workflowRun: "reset",
 } as const satisfies Record<keyof OrchestrationV2AppThread, "inherited" | "reset" | "set">;
 
 it.effect("starts a delegated task from a forked conversation as a plain helper", () =>

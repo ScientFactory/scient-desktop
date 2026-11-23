@@ -606,9 +606,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
             AnalyticsService.AnalyticsService.of({
               ...disabledAnalyticsService,
               record: (event, properties) =>
-                Deferred.succeed(recorded, { event, properties: properties ?? {} }).pipe(
-                  Effect.asVoid,
-                ),
+                Deferred.succeed(recorded, { event, properties: properties ?? {} }),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
@@ -742,7 +740,7 @@ it.effect("handoff analytics read only the caller's active run and its message",
             AnalyticsService.AnalyticsService.of({
               // SCIENT-FORK: Scient's analytics service carries its controls too.
               ...disabledAnalyticsService,
-              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.asVoid),
+              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.as(true)),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
@@ -953,7 +951,7 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
                 Deferred.succeed(recorded[recordedCount++]!, {
                   event,
                   properties: properties ?? {},
-                }).pipe(Effect.asVoid),
+                }),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),

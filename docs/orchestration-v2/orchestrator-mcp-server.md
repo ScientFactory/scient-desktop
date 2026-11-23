@@ -498,6 +498,13 @@ status and does not cancel work. `output` carries what the run submitted
 against its `outputSchema`; with `untilOutput`, a completed run that has not
 submitted yet is waited on until it has.
 
+### `scient_workflow`
+
+Starts, lists, reads, signals, resumes and cancels [workflow runs](../internals/workflows.md), and
+lists the questions runs ask a person. It is advertised to clients outside a thread only, such as
+the `scient workflow` CLI, so it costs no thread any context; an agent in a thread drives workflows
+through that CLI. `start` is idempotent on `idempotencyKey` and `signal` on `signalId`.
+
 ### `scient_thread_interrupt`
 
 Interrupts a selected active run through the normal V2 `run.interrupt` command.

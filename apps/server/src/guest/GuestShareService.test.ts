@@ -146,7 +146,9 @@ const layerAnalytics = Layer.effectContext(
         AnalyticsService.AnalyticsService.of({
           ...disabledAnalyticsService,
           record: (event, properties) =>
-            Ref.update(recorded, (events) => [...events, { event, ...properties }]),
+            Ref.update(recorded, (events) => [...events, { event, ...properties }]).pipe(
+              Effect.as(true),
+            ),
           flush: Effect.void,
           recordOwners: () => Effect.void,
         }),
