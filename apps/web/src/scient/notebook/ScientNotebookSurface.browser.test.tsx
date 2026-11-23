@@ -526,14 +526,23 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
       await page.screenshot({ path: `${screenshots}/reader-unsaved-360-${theme}.png` });
     await screen.getByRole("button", { name: "Reset" }).click();
     await expect.element(screen.getByRole("row", { name: "4 2" })).toBeVisible();
-    const disclosures = screen.getByRole("button", { name: "Code", exact: true });
+    // Reader code starts folded to its language row; the label unfolds it.
+    const disclosures = screen.getByRole("button", { name: "Show code" });
+    const cardOf = (toggle: typeof disclosures) => toggle.element().closest(".group\\/code-box")!;
     const parameterCode = disclosures.first();
+    const parameterCard = cardOf(parameterCode);
+    expect(parameterCode.element().textContent).toMatch(/1 line$/);
     await parameterCode.click();
-    const parameterSource = parameterCode.element().parentElement!.querySelector("pre")!;
+    await expect
+      .element(page.elementLocator(parameterCard).getByRole("button", { name: "Hide code" }))
+      .toHaveAttribute("aria-expanded", "true");
+    const parameterSource = parameterCard.querySelector("pre")!;
     await expect.element(page.elementLocator(parameterSource)).toHaveTextContent("threshold = 0.5");
-    const computeCode = disclosures.nth(1);
+    const computeCode = screen.getByRole("button", { name: "Show code" }).first();
+    const computeCardElement = cardOf(computeCode);
     await computeCode.click();
-    const computeCard = page.elementLocator(computeCode.element().parentElement!);
+    await vi.waitFor(() => expect(computeCardElement.querySelector("pre")).not.toBeNull());
+    const computeCard = page.elementLocator(computeCardElement);
     const code = computeCard.element().querySelector("pre")!;
     const wrap = computeCard.getByRole("button", { name: "Disable line wrap" });
     await expect.element(wrap).toHaveAttribute("aria-pressed", "true");

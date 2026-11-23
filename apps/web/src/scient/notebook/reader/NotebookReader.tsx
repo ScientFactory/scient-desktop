@@ -116,24 +116,28 @@ function SavedOutputs(props: { readonly alternative: Alternative }) {
 function ReaderCode({ source, language }: { readonly source: string; readonly language: string }) {
   const theme = useRenderedAppearance();
   const [wrapped, setWrapped] = useState(true);
+  // Readers come for the prose and results; code starts folded to one row.
+  const [folded, setFolded] = useState(true);
   return (
-    <div
-      className={cn("mt-1 border border-(--markdown-code-block-border)", notebookCodeCardSurface)}
-    >
+    <div className={cn("border border-(--markdown-code-block-border)", notebookCodeCardSurface)}>
       <NotebookCodeHeader
         language={language}
         theme={theme}
         wrapped={wrapped}
         onWrapChange={setWrapped}
         readCode={() => source}
+        folded={folded}
+        onFoldChange={setFolded}
       />
-      <NotebookCodeSource
-        source={source}
-        language={language}
-        theme={theme}
-        wrapped={wrapped}
-        lineNumbers
-      />
+      {folded ? null : (
+        <NotebookCodeSource
+          source={source}
+          language={language}
+          theme={theme}
+          wrapped={wrapped}
+          lineNumbers
+        />
+      )}
     </div>
   );
 }
@@ -277,7 +281,9 @@ export function NotebookReader(props: {
                 parseRawHtml={false}
                 extensions={NOTEBOOK_MARKDOWN}
               />
-            ) : cell.source === "" ? null : (
+            ) : cell.source === "" ? null : cell.cellType === "code" ? (
+              <ReaderCode key={cell.id} source={cell.source} language={notebook.language} />
+            ) : (
               <Collapsible key={cell.id}>
                 <CollapsibleTrigger
                   className="group"
@@ -294,19 +300,15 @@ export function NotebookReader(props: {
                     aria-hidden
                     className="rtl:rotate-180 group-aria-expanded:rotate-90 rtl:group-aria-expanded:rotate-90"
                   />
-                  {cell.cellType === "code" ? <T>Code</T> : <T>Raw cell</T>}
+                  <T>Raw cell</T>
                 </CollapsibleTrigger>
                 <CollapsiblePanel animate={false}>
-                  {cell.cellType === "code" ? (
-                    <ReaderCode source={cell.source} language={notebook.language} />
-                  ) : (
-                    <pre
-                      className="scient-content-scrollbar mt-1 overflow-x-auto rounded-lg bg-muted/40 p-2 text-sm"
-                      dir="auto"
-                    >
-                      {cell.source}
-                    </pre>
-                  )}
+                  <pre
+                    className="scient-content-scrollbar mt-1 overflow-x-auto rounded-lg bg-muted/40 p-2 text-sm"
+                    dir="auto"
+                  >
+                    {cell.source}
+                  </pre>
                 </CollapsiblePanel>
               </Collapsible>
             ),

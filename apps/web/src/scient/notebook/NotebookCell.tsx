@@ -319,6 +319,8 @@ function CodeCellTopRow(props: {
   readonly theme: "light" | "dark";
   readonly wrapped: boolean;
   readonly silentResult: boolean;
+  readonly folded: boolean;
+  readonly onFoldChange: (folded: boolean) => void;
   readonly onWrapChange: (wrapped: boolean) => void;
   readonly readCode: () => string;
   readonly editsDisabled?: boolean | undefined;
@@ -336,6 +338,8 @@ function CodeCellTopRow(props: {
       onWrapChange={props.onWrapChange}
       readCode={props.readCode}
       status={props.silentResult ? <T>No output</T> : undefined}
+      folded={props.folded}
+      onFoldChange={props.onFoldChange}
     >
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
         {props.onAsk !== null ? (
@@ -504,9 +508,6 @@ export function NotebookCell(props: {
                   {cell.parameterCell ? <T>Untag parameters</T> : <T>Tag as parameters</T>}
                 </MenuItem>
               )}
-              <MenuItem onClick={() => controller.setFold(cellId, "source", !sourceFolded)}>
-                {sourceFolded ? <T>Show code</T> : <T>Hide code</T>}
-              </MenuItem>
               <MenuItem onClick={() => controller.setFold(cellId, "outputs", !outputsFolded)}>
                 {outputsFolded ? <T>Show outputs</T> : <T>Hide outputs</T>}
               </MenuItem>
@@ -593,6 +594,8 @@ export function NotebookCell(props: {
               theme={theme}
               wrapped={wrapped}
               silentResult={silentResult}
+              folded={sourceFolded}
+              onFoldChange={(folded) => controller.setFold(cellId, "source", folded)}
               onWrapChange={setWrapped}
               readCode={() => cell.source}
               editsDisabled={props.editsDisabled}
@@ -602,14 +605,16 @@ export function NotebookCell(props: {
               menu={cellMenu}
             />
           ) : null}
-          {sourceFolded ? (
-            <div className="px-2 pb-1.5">
+          {sourceFolded && isCode ? null : sourceFolded ? (
+            <div className="px-2 py-1">
               <Button
-                variant="ghost"
+                variant="ghost-muted"
                 size="xs"
+                aria-expanded={false}
                 onClick={() => controller.setFold(cellId, "source", false)}
               >
-                <T>Show code</T>
+                <ChevronRight aria-hidden className="rtl:rotate-180" />
+                <T>Show text</T>
               </Button>
             </div>
           ) : rendered ? (

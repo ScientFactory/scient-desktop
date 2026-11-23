@@ -191,6 +191,25 @@ describe("Code cell chrome, line numbers, and wrapping", () => {
     await vi.waitFor(() => expect(cellBox().height).toBeCloseTo(unwrappedHeight, 0));
   });
 
+  it("folds the code to its language row with one click and back", async () => {
+    const { screen } = await mountCell(420);
+    await using _screen = screen;
+
+    await screen.getByRole("button", { name: "Hide code" }).click();
+    const show = screen.getByRole("button", { name: "Show code" });
+    await expect.element(show).toHaveAttribute("aria-expanded", "false");
+    expect(show.element().textContent).toMatch(/2 lines$/);
+    expect(screen.container.querySelector("[data-notebook-cell-box] pre")).toBeNull();
+    // One row: no second "Show code" control below the label.
+    expect(screen.getByRole("button", { name: "Show code" }).all()).toHaveLength(1);
+
+    await show.click();
+    await expect
+      .element(screen.getByRole("button", { name: "Hide code" }))
+      .toHaveAttribute("aria-expanded", "true");
+    expect(screen.container.querySelector("[data-notebook-cell-box] pre")).not.toBeNull();
+  });
+
   it("keeps line numbers out of selected code text while preserving line count", async () => {
     const { screen } = await mountCell(420);
     await using _screen = screen;

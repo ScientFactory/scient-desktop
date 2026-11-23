@@ -1,3 +1,5 @@
+import { useGT } from "gt-react";
+import { ChevronRight } from "lucide-react";
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
@@ -10,7 +12,12 @@ import {
 import { CodeBlockActions } from "~/scient/presentation/CodeBlockActions";
 
 export const notebookCodeCardSurface =
-  "@container/code-box min-w-0 rounded-lg bg-(--markdown-code-block-background)";
+  "group/code-box @container/code-box min-w-0 rounded-lg bg-(--markdown-code-block-background)";
+
+function lineCount(source: string): number {
+  const body = source.endsWith("\n") ? source.slice(0, -1) : source;
+  return body === "" ? 0 : body.split("\n").length;
+}
 
 export function NotebookCodeHeader(props: {
   readonly language: string;
@@ -19,35 +26,81 @@ export function NotebookCodeHeader(props: {
   readonly onWrapChange: (wrapped: boolean) => void;
   readonly readCode: () => string;
   readonly status?: ReactNode;
+  /** With a handler, the language label folds and unfolds the code. */
+  readonly folded?: boolean;
+  readonly onFoldChange?: (folded: boolean) => void;
   readonly children?: ReactNode;
 }) {
+  const gt = useGT();
   const fileName = syntheticFileNameForLanguageId(props.language);
   const hasIcon = hasSpecificPierreIconForFileName(fileName);
-  return (
-    <div className="scient-markdown-code-header flex min-h-7 items-center justify-between gap-1.5 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
-      <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground/80">
-        {hasIcon ? (
-          <PierreEntryIcon
-            pathValue={fileName}
-            kind="file"
-            theme={props.theme}
-            className="size-3.5 shrink-0 opacity-85"
-          />
-        ) : null}
-        <span className={cn("truncate", hasIcon && "hidden @[19rem]/code-box:inline")}>
-          {props.language}
-        </span>
-        {props.status === undefined ? null : (
-          <span className="truncate font-sans">{props.status}</span>
-        )}
+  const folded = props.folded === true;
+  const status = folded
+    ? gt("{count, plural, one {# line} other {# lines}}", { count: lineCount(props.readCode()) })
+    : props.status;
+  const label = (
+    <>
+      {props.onFoldChange === undefined ? null : (
+        <ChevronRight
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 transition-transform rtl:rotate-180",
+            !folded &&
+              "rotate-90 opacity-0 group-focus-within/code-box:opacity-100 group-hover/code-box:opacity-100 rtl:rotate-90",
+          )}
+        />
+      )}
+      {hasIcon ? (
+        <PierreEntryIcon
+          pathValue={fileName}
+          kind="file"
+          theme={props.theme}
+          className="size-3.5 shrink-0 opacity-85"
+        />
+      ) : null}
+      <span className={cn("truncate", hasIcon && "hidden @[19rem]/code-box:inline")}>
+        {props.language}
       </span>
+      {status === undefined ? null : <span className="truncate font-sans">{status}</span>}
+    </>
+  );
+  const labelClass =
+    "inline-flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground/80";
+  return (
+    <div
+      className={cn(
+        "scient-markdown-code-header flex min-h-7 items-center justify-between gap-1.5 pt-1.5 pr-1.5 pl-3 select-none",
+        folded ? "pb-1.5" : "pb-0",
+      )}
+    >
+      {props.onFoldChange === undefined ? (
+        <span className={labelClass}>{label}</span>
+      ) : (
+        <button
+          type="button"
+          aria-expanded={!folded}
+          aria-label={folded ? gt("Show code") : gt("Hide code")}
+          className={cn(
+            labelClass,
+            "-ml-1.5 rounded-sm px-1.5 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onFoldChange?.(!folded);
+          }}
+        >
+          {label}
+        </button>
+      )}
       <div className="flex shrink-0 items-center gap-0.5">
         {props.children}
-        <CodeBlockActions
-          wrapped={props.wrapped}
-          onWrapChange={props.onWrapChange}
-          readCode={props.readCode}
-        />
+        {folded ? null : (
+          <CodeBlockActions
+            wrapped={props.wrapped}
+            onWrapChange={props.onWrapChange}
+            readCode={props.readCode}
+          />
+        )}
       </div>
     </div>
   );
