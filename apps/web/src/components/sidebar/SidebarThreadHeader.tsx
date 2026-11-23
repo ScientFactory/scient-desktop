@@ -1,5 +1,5 @@
 import { useGT } from "gt-react";
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -21,7 +21,6 @@ export interface SidebarThreadHeaderProps {
   groupingToggle?: ReactNode;
   hideNewThreadButton?: boolean;
   // SCIENT-FORK:END
-  onNewProject: () => void;
   onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
@@ -44,7 +43,6 @@ export function SidebarThreadHeader({
   groupingToggle,
   hideNewThreadButton,
   // SCIENT-FORK:END
-  onNewProject,
   onNewThread,
   newThreadDisabled,
   newThreadShortcutLabel,
@@ -116,14 +114,7 @@ export function SidebarThreadHeader({
         {/* SCIENT-FORK:START */}
         {groupingToggle}
         {/* SCIENT-FORK:END */}
-        {hasProjects ? (
-          <>
-            {projectScope}
-            <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
-              <FolderPlusIcon />
-            </SidebarHeaderIconButton>
-          </>
-        ) : null}
+        {hasProjects ? projectScope : null}
         <SidebarHeaderIconButton
           label={gt("New thread")}
           tooltip={

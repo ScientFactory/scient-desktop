@@ -1,18 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Static audit for the inherited chat-markdown seam.
 import * as NodeFS from "node:fs";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
+import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
-import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
-import { remarkScientMath, remarkScientMathRefinements } from "./remarkScientMath";
-import { normalizeScientMathDelimiters } from "./scientMathText";
-import { remarkScientSingleDollarMath } from "./scientSingleDollarMath";
+import { wordsHast } from "~/markdown/wordsHast";
 
 const chatMarkdownSource = NodeFS.readFileSync(
   new URL("../../components/ChatMarkdown.tsx", import.meta.url),
@@ -20,9 +11,7 @@ const chatMarkdownSource = NodeFS.readFileSync(
 );
 
 describe("ChatMarkdown math seam", () => {
-  // Plugin order, normalization and the authored-intent hook are owned by
-  // scientMarkdownProfiles.test.ts and ChatMarkdown.scient.browser.test.tsx. No rendered chat
-  // case observes the streaming and focusable props yet, so this text check stays.
+  // No rendered chat case observes the streaming and focusable props yet, so this text check stays.
   it("routes math code nodes to the Scient components, with streaming state", () => {
     expect(chatMarkdownSource).toContain("const tex = nodeToPlainText(children);");
     expect(chatMarkdownSource).toMatch(
@@ -34,56 +23,48 @@ describe("ChatMarkdown math seam", () => {
   });
 });
 
-/**
- * Chat sanitization strips classes except language-*; inline math must reach it as bare
- * language-math code and display math inside pre. Preserve original source for delimiter intent.
- */
-function renderChatShapedPipeline(markdown: string, sourceText?: string): string {
-  return renderToStaticMarkup(
-    createElement(
-      ReactMarkdown,
-      {
-        remarkPlugins: [
-          remarkGfm,
-          remarkScientMath,
-          remarkScientSingleDollarMath,
-          [remarkScientMathRefinements, { sourceText }],
-        ],
-        rehypePlugins: [rehypeRaw, [rehypeSanitize, defaultSchema]],
+/** Chat's sanitized tree for a message, as ChatMarkdown builds it, as HTML. */
+function chatHtml(
+  markdown: string,
+  options: { breaks?: boolean; direction?: "ltr" | "rtl" } = {},
+): string {
+  return toHtml(
+    wordsHast(markdown, {
+      math: true,
+      breaks: options.breaks ?? false,
+      escapeHtml: false,
+      insights: false,
+      extensions: {},
+      scient: {
+        math: true,
+        contentDirection: options.direction ?? "ltr",
+        requestedContentDirection: "auto",
       },
-      markdown,
-    ),
+    }),
   );
 }
 
-/** The full chat surface for backslash-delimited input: normalize, then parse with the original riding along. */
-function renderNormalized(markdown: string): string {
-  return renderChatShapedPipeline(normalizeScientMathDelimiters(markdown), markdown);
-}
-
-const INLINE_MATH_SHAPE = '<code class="language-math"';
+const INLINE_MATH_SHAPE = '<code class="language-math math-inline"';
+const DISPLAY_MATH_SHAPE = '<code class="language-math math-display"';
 
 describe("dollar-form math", () => {
-  it("renders double-dollar inline math as a bare code element", () => {
-    const html = renderChatShapedPipeline("a $$x^2$$ b");
+  it("renders double-dollar math beside prose inline", () => {
+    const html = chatHtml("a $$x^2$$ b");
 
     expect(html).toContain(INLINE_MATH_SHAPE);
-    expect(html).not.toContain("<pre>");
+    expect(html).not.toContain("<pre");
   });
 
   it("promotes a sole own-line expression to display math", () => {
-    for (const markdown of ["$$x + y$$", "$$\nE = mc^2\n$$"]) {
-      const html = renderChatShapedPipeline(markdown);
-      expect(html).toContain("<pre>");
-      expect(html).toContain(INLINE_MATH_SHAPE);
+    for (const markdown of ["$$x + y$$", "$$\nE = mc^2\n$$", "Then\n$$x + y$$\nholds."]) {
+      const html = chatHtml(markdown);
+      expect(html).toContain(DISPLAY_MATH_SHAPE);
+      expect(html).not.toContain(INLINE_MATH_SHAPE);
     }
   });
 
   it("renders a math fence as display math, matching GitHub", () => {
-    const html = renderChatShapedPipeline("```math\nE = mc^2\n```");
-
-    expect(html).toContain("<pre>");
-    expect(html).toContain(INLINE_MATH_SHAPE);
+    expect(chatHtml("```math\nE = mc^2\n```")).toContain(DISPLAY_MATH_SHAPE);
   });
 });
 
@@ -100,14 +81,14 @@ describe("single-dollar math from model output", () => {
       "$f(x)$",
       "$a*b*c$",
     ]) {
-      const html = renderChatShapedPipeline(`value: ${markdown} end`);
+      const html = chatHtml(`value: ${markdown} end`);
       expect(html).toContain(INLINE_MATH_SHAPE);
-      expect(html).not.toContain("<pre>");
+      expect(html).not.toContain("<pre");
     }
   });
 
   it("renders valid math after an escaped dollar in the same run", () => {
-    const html = renderChatShapedPipeline("literal \\$5 then $x+1$ renders");
+    const html = chatHtml("literal \\$5 then $x+1$ renders");
 
     expect(html).toContain(INLINE_MATH_SHAPE);
     expect(html).toContain("x+1");
@@ -115,258 +96,199 @@ describe("single-dollar math from model output", () => {
   });
 
   it("keeps a sole single-dollar paragraph inline", () => {
-    const html = renderChatShapedPipeline("$x^2$");
+    const html = chatHtml("$x^2$");
 
     expect(html).toContain(INLINE_MATH_SHAPE);
-    expect(html).not.toContain("<pre>");
+    expect(html).not.toContain("<pre");
   });
 
   it("keeps an unclosed single-dollar span literal while streaming", () => {
-    const streaming = renderChatShapedPipeline("solve $x^2");
-    const closed = renderChatShapedPipeline("solve $x^2$ now");
-
-    expect(streaming).not.toContain("language-math");
-    expect(closed).toContain(INLINE_MATH_SHAPE);
+    expect(chatHtml("solve $x^2")).not.toContain("language-math");
+    expect(chatHtml("solve $x^2$ now")).toContain(INLINE_MATH_SHAPE);
   });
 
-  it("recognizes spans per table cell, never across cells", () => {
-    const math = renderChatShapedPipeline("| a | b |\n| - | - |\n| $x^2$ | $y_1$ |");
-    const prices = renderChatShapedPipeline("| a | b |\n| - | - |\n| $5 | $6 |");
+  it("recognizes spans per table cell, and prices in cells stay text", () => {
+    const math = chatHtml("| a | b |\n| - | - |\n| $x^2$ | $y_1$ |");
+    const prices = chatHtml("| a | b |\n| - | - |\n| $5 | $6 |");
 
     expect(math.match(/language-math/g)).toHaveLength(2);
     expect(prices).not.toContain("language-math");
   });
-});
 
-describe("single-dollar text that must stay text", () => {
-  it("keeps shell fragments with separators literal", () => {
-    const html = renderChatShapedPipeline("echo $HOME/bin:$PATH");
+  it("keeps a formula with a pipe in one table cell", () => {
+    const html = chatHtml("| a | b |\n| - | - |\n| $x | y$ | 2 |");
 
-    expect(html).not.toContain("language-math");
-    expect(html).toContain("$HOME/bin:$PATH");
-  });
-
-  it("keeps adjacent shell variables literal", () => {
-    const html = renderChatShapedPipeline("use $HOME/$USER here");
-
-    expect(html).not.toContain("language-math");
+    expect(html.match(/<td/g)).toHaveLength(2);
+    expect(html).toContain('data-scient-math-source="$x | y$"');
   });
 });
 
 describe("dollar text that must stay text", () => {
-  it("keeps shell and environment identifiers literal", () => {
-    for (const markdown of ["$PATH$", "$HOME$", "$HOME and $PATH."]) {
-      const html = renderChatShapedPipeline(`echo ${markdown} done`);
+  it("keeps shell fragments and variables literal", () => {
+    for (const markdown of [
+      "echo $HOME/bin:$PATH",
+      "use $HOME/$USER here",
+      "echo $PATH$ done",
+      "echo $HOME$ done",
+      "echo $HOME and $PATH. done",
+    ]) {
+      const html = chatHtml(markdown);
       expect(html).not.toContain("language-math");
+      expect(html).toContain(markdown);
     }
   });
 
   it("keeps prices literal", () => {
-    const html = renderChatShapedPipeline("It costs $5 and $10 today.");
-
-    expect(html).not.toContain("language-math");
-    expect(html).toContain("$5 and $10");
+    for (const markdown of ["It costs $5 and $10 today.", "from $3.50 to $4.00"]) {
+      const html = chatHtml(markdown);
+      expect(html).not.toContain("language-math");
+      expect(html).toContain(markdown);
+    }
   });
 
   it("respects escaped dollars", () => {
-    const html = renderChatShapedPipeline("costs \\$50 and \\$60 total");
+    const html = chatHtml("costs \\$50 and \\$60 total");
 
     expect(html).not.toContain("language-math");
     expect(html).toContain("$50 and $60");
   });
 
   it("leaves an unmatched dollar alone", () => {
-    const html = renderChatShapedPipeline("only one $ here");
-
-    expect(html).not.toContain("language-math");
+    expect(chatHtml("only one $ here")).not.toContain("language-math");
   });
 
   it("never recognizes math inside inline code", () => {
-    const html = renderChatShapedPipeline("run `echo $x$` now");
-
-    expect(html).not.toContain("language-math");
+    expect(chatHtml("run `echo $x$` now")).not.toContain("language-math");
   });
 });
 
 describe("backslash delimiters keep their authored intent", () => {
   it("renders \\(...\\) mid-sentence as inline math", () => {
-    const html = renderNormalized("The value \\(x\\) appears mid-sentence.");
+    const html = chatHtml("The value \\(x\\) appears mid-sentence.");
 
     expect(html).toContain(INLINE_MATH_SHAPE);
-    expect(html).not.toContain("<pre>");
+    expect(html).not.toContain("<pre");
   });
 
   it("renders \\[...\\] mid-paragraph as display math, breaking the paragraph", () => {
-    const html = renderNormalized("Consider \\[E = mc^2\\] within a paragraph of prose.");
+    const html = chatHtml("Consider \\[E = mc^2\\] within a paragraph of prose.");
 
-    expect(html).toContain("<pre>");
-    expect(html).toContain("Consider");
-    expect(html).toContain("within a paragraph of prose.");
+    expect(html).toContain(DISPLAY_MATH_SHAPE);
+    expect(html).toContain('<p dir="ltr">Consider</p>');
+    expect(html).toContain('<p dir="ltr">within a paragraph of prose.</p>');
   });
 
   it("renders own-line \\[...\\] inside a prose paragraph as display math", () => {
-    const html = renderNormalized("The energy is\n\\[E = mc^2\\]\nwhere m is mass.");
+    const html = chatHtml("The energy is\n\\[E = mc^2\\]\nwhere m is mass.");
 
-    expect(html).toContain("<pre>");
+    expect(html).toContain(DISPLAY_MATH_SHAPE);
     expect(html).toContain("The energy is");
     expect(html).toContain("where m is mass.");
   });
 
   it("keeps a sole \\(...\\) paragraph inline", () => {
-    const html = renderNormalized("\\(x\\)");
+    const html = chatHtml("\\(x\\)");
 
     expect(html).toContain(INLINE_MATH_SHAPE);
-    expect(html).not.toContain("<pre>");
+    expect(html).not.toContain("<pre");
   });
 
   it("renders a sole \\[...\\] paragraph as display math", () => {
-    const html = renderNormalized("\\[E = mc^2\\]");
-
-    expect(html).toContain("<pre>");
+    expect(chatHtml("\\[E = mc^2\\]")).toContain(DISPLAY_MATH_SHAPE);
+    expect(chatHtml("\\[\nE = mc^2\n\\]")).toContain(DISPLAY_MATH_SHAPE);
   });
 
-  it("keeps authored intent on the hard-break surface without stray breaks", () => {
-    // Mirrors CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: the refinements run
-    // before remark-breaks, so split paragraphs must not leak edge newlines.
-    const source = "The energy is\n\\[E = mc^2\\]\nwhere m is mass.";
-    const html = renderToStaticMarkup(
-      createElement(
-        ReactMarkdown,
-        {
-          remarkPlugins: [
-            remarkGfm,
-            remarkScientMath,
-            [remarkScientMathRefinements, { sourceText: source }],
-            remarkBreaks,
-          ],
-          rehypePlugins: [rehypeRaw, [rehypeSanitize, defaultSchema]],
-        },
-        normalizeScientMathDelimiters(source),
-      ),
-    );
+  it("keeps authored intent with line breaks on, without stray breaks", () => {
+    const html = chatHtml("The energy is\n\\[E = mc^2\\]\nwhere m is mass.", { breaks: true });
 
-    expect(html).toContain("<pre>");
+    expect(html).toContain(DISPLAY_MATH_SHAPE);
     expect(html).not.toContain("<br");
   });
 });
 
-describe("literal regions survive normalization end to end", () => {
+describe("literal regions stay literal", () => {
   it("keeps backslash delimiters literal in fenced, tilde-fenced, and indented code", () => {
     for (const markdown of ["```\n\\(x\\)\n```", "~~~\n\\(x\\)\n~~~", "text\n\n    \\(x\\)\n"]) {
-      const html = renderNormalized(markdown);
+      const html = chatHtml(markdown);
       expect(html).not.toContain("language-math");
       expect(html).toContain("\\(x\\)");
     }
   });
 
   it("never turns raw HTML code content into math", () => {
-    // Ordinary markdown escaping still consumes the backslashes here, exactly
-    // as it did before math support; the content just must not become math.
-    const html = renderNormalized("before <code>\\(x\\)</code> after");
+    const html = chatHtml("before <code>$x$</code> after");
 
     expect(html).not.toContain("language-math");
-    expect(html).toContain("<code>(x)</code>");
+    expect(html).toContain(">$x$</code>");
   });
 
   it("never rewrites delimiter lookalikes inside raw HTML attributes", () => {
-    const html = renderNormalized('See <a href="/path/\\(v1\\)/doc">link</a> now.');
+    const html = chatHtml('See <a href="/path/\\(v1\\)/doc">link</a> now.');
 
-    expect(html).not.toContain("$$");
-    expect(html).toContain("\\(v1\\)");
+    expect(html).not.toContain("language-math");
+    expect(html).toContain('href="/path/%5C(v1%5C)/doc"');
   });
 
   it("still recognizes math in prose between raw HTML tags", () => {
-    const html = renderNormalized("<span>\\(x\\)</span> trails <b>bold</b>");
-
-    expect(html).toContain(INLINE_MATH_SHAPE);
-  });
-
-  it("renders normalized backslash delimiters as math outside those regions", () => {
-    const inline = renderNormalized("Euler: \\(e^{i\\pi} = -1\\) holds.");
-    const display = renderNormalized("\\[\nE = mc^2\n\\]");
-
-    expect(inline).toContain(INLINE_MATH_SHAPE);
-    expect(inline).not.toContain("<pre>");
-    expect(display).toContain("<pre>");
+    expect(chatHtml("<span>\\(x\\)</span> trails <b>bold</b>")).toContain(INLINE_MATH_SHAPE);
   });
 });
 
 describe("incomplete and oversized math stays literal", () => {
   it("keeps an unclosed display block literal until its closer arrives", () => {
-    const streaming = renderChatShapedPipeline("before\n\n$$\nx + y");
-    const closed = renderChatShapedPipeline("before\n\n$$\nx + y\n$$");
+    const streaming = chatHtml("before\n\n$$\nx + y");
 
     expect(streaming).not.toContain("language-math");
     expect(streaming).toContain("$$");
-    expect(closed).toContain(INLINE_MATH_SHAPE);
+    expect(chatHtml("before\n\n$$\nx + y\n$$")).toContain(DISPLAY_MATH_SHAPE);
   });
 
   it("keeps an unclosed backslash display block literal until its closer arrives", () => {
-    const streaming = renderNormalized("prose \\[E = mc");
-    const closed = renderNormalized("prose \\[E = mc^2\\] done");
-
-    expect(streaming).not.toContain("language-math");
-    expect(closed).toContain("<pre>");
+    expect(chatHtml("prose \\[E = mc")).not.toContain("language-math");
+    expect(chatHtml("prose \\[E = mc^2\\] done")).toContain(DISPLAY_MATH_SHAPE);
   });
 
-  it("keeps an unclosed math fence literal until its closer arrives", () => {
-    const streaming = renderChatShapedPipeline("```math\nx + y");
-    const closed = renderChatShapedPipeline("```math\nx + y\n```");
+  it("keeps an unclosed math fence as code until its closer arrives", () => {
+    const streaming = chatHtml("```math\nx + y");
 
     expect(streaming).not.toContain("language-math");
-    expect(closed).toContain(INLINE_MATH_SHAPE);
+    expect(streaming).toContain("<pre");
+    expect(chatHtml("```math\nx + y\n```")).toContain(DISPLAY_MATH_SHAPE);
   });
 
   it("keeps oversized TeX literal in every form", () => {
     const oversized = "x + ".repeat(300);
-    const inline = renderChatShapedPipeline(`a $$${oversized}$$ b`);
-    const display = renderChatShapedPipeline(`$$\n${oversized}\n$$`);
+    const inline = chatHtml(`a $$${oversized}$$ b`);
+    const display = chatHtml(`$$\n${oversized}\n$$`);
 
     expect(inline).not.toContain("language-math");
+    expect(inline).toContain(`a $$${oversized}$$ b`);
     expect(display).not.toContain("language-math");
+    expect(display).toContain(`<pre><code>$$\n${oversized}\n$$</code></pre>`);
   });
 });
 
 describe("task lists and math coexist", () => {
   it("keeps checkboxes and marker structure alongside math", () => {
-    const html = renderChatShapedPipeline("- [ ] solve $$x^2$$\n- [x] done");
+    const html = chatHtml("- [ ] solve $$x^2$$\n- [x] done");
 
     expect(html).toContain('type="checkbox"');
     expect(html).toContain(INLINE_MATH_SHAPE);
   });
 
   it("keeps checkboxes when a task item carries display-intent math", () => {
-    const html = renderNormalized("- [ ] solve \\[x^2 = 4\\]\n- [x] done");
+    const html = chatHtml("- [ ] solve \\[x^2 = 4\\]\n- [x] done");
 
     expect(html).toContain('type="checkbox"');
-    expect(html).toContain("<pre>");
+    expect(html).toContain(DISPLAY_MATH_SHAPE);
   });
 });
 
 describe("math inside RTL prose", () => {
   it("keeps Hebrew paragraph direction while the equation stays an isolated math node", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ReactMarkdown,
-        {
-          remarkPlugins: [
-            remarkGfm,
-            remarkScientMath,
-            remarkScientSingleDollarMath,
-            [remarkScientMathRefinements, {}],
-          ],
-          rehypePlugins: [
-            rehypeRaw,
-            [rehypeSanitize, defaultSchema],
-            [rehypeScientBidi, { direction: "rtl", requestedDirection: "auto" }],
-          ],
-        },
-        "הנוסחה $x^2 + 1$ מופיעה במשפט הזה.",
-      ),
-    );
+    const html = chatHtml("הנוסחה $x^2 + 1$ מופיעה במשפט הזה.", { direction: "rtl" });
 
-    expect(html).toContain('dir="rtl"');
-    expect(html).toContain(INLINE_MATH_SHAPE);
-    expect(html).toContain("x^2 + 1");
+    expect(html).toContain('<p dir="rtl">');
+    expect(html).toContain(`${INLINE_MATH_SHAPE} data-scient-math-source="$x^2 + 1$" dir="ltr">`);
   });
 });

@@ -49,7 +49,7 @@ import {
   DocumentBindingSubscriptionInput,
 } from "@scientfactory/document-artifacts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
@@ -173,7 +173,7 @@ import {
   VcsStatusInput,
   VcsBranchStatus,
   VcsStatusSubscriptionInput,
-  VcsStatusResult,
+  VcsRefreshStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
@@ -455,6 +455,22 @@ import {
   TextGeneratorError,
 } from "./settings.ts";
 import {
+  WorkflowAnswerInput,
+  WorkflowRequestError,
+  WorkflowDefinitionChangeResult,
+  WorkflowDefinitionDeleteInput,
+  WorkflowDefinitionFiles,
+  WorkflowDefinitionGetInput,
+  WorkflowDefinitionSaveInput,
+  WorkflowRunCancelInput,
+  WorkflowRunDetail,
+  WorkflowRunGetInput,
+  WorkflowRunResumeInput,
+  WorkflowCounts,
+  WorkflowRunsSnapshot,
+  WorkflowRunsSubscribeInput,
+} from "./workflow.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -472,6 +488,7 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
+import { AgentFeedbackAnswerInput, AgentFeedbackRequestError } from "./agentFeedback.ts";
 import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
@@ -697,6 +714,9 @@ import {
   WsVoiceDictateWithChatGptRpc,
 } from "./scient/chatGptDictation.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+import { SCIENT_PLUGIN_SIGN_IN_WS_METHODS, WsPluginSignInOpenRpc } from "./scient/pluginSignIn.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient editor flush RPCs.
 import {
   SCIENT_EDITOR_FLUSH_WS_METHODS,
@@ -789,6 +809,9 @@ export const WS_METHODS = {
   // SCIENT-FORK:START — Scient Agent voice methods: live calls and ChatGPT dictation.
   ...SCIENT_LIVE_VOICE_WS_METHODS,
   ...SCIENT_CHATGPT_DICTATION_WS_METHODS,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+  ...SCIENT_PLUGIN_SIGN_IN_WS_METHODS,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   ...SCIENT_WORKSPACE_ENTRY_WS_METHODS,
@@ -928,6 +951,17 @@ export const WS_METHODS = {
 
   // Scient-owned optional voice transcript correction.
   voiceCorrectTranscript: "voice.correctTranscript",
+
+  workflowsSubscribe: "workflows.subscribe",
+  workflowsCounts: "workflows.counts",
+  workflowsGet: "workflows.get",
+  workflowsAnswer: "workflows.answer",
+  workflowsResume: "workflows.resume",
+  workflowsCancel: "workflows.cancel",
+  workflowsGetDefinition: "workflows.getDefinition",
+  workflowsSaveDefinition: "workflows.saveDefinition",
+  workflowsDeleteDefinition: "workflows.deleteDefinition",
+
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -935,6 +969,7 @@ export const WS_METHODS = {
   scheduledTasksRunNow: "scheduledTasks.runNow",
   scheduledTasksRotateWebhookToken: "scheduledTasks.rotateWebhookToken",
   secretsAnswerRequest: "secrets.answerRequest",
+  agentFeedbackAnswerRequest: "agentFeedback.answerRequest",
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
@@ -1042,7 +1077,9 @@ const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, 
 
 const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
-  success: Schema.Struct({}),
+  success: Schema.Struct({
+    serverTime: Schema.optionalKey(IsoDateTime),
+  }),
   error: EnvironmentAuthorizationError,
 });
 
@@ -2176,7 +2213,7 @@ const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
     ...VcsStatusInput.fields,
     localOnly: Schema.optional(Schema.Boolean),
   }),
-  success: VcsStatusResult,
+  success: VcsRefreshStatusResult,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
@@ -2665,6 +2702,59 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsWorkflowsSubscribeRpc = Rpc.make(WS_METHODS.workflowsSubscribe, {
+  payload: WorkflowRunsSubscribeInput,
+  success: WorkflowRunsSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsWorkflowsCountsRpc = Rpc.make(WS_METHODS.workflowsCounts, {
+  payload: WorkflowRunsSubscribeInput,
+  success: WorkflowCounts,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsWorkflowsGetRpc = Rpc.make(WS_METHODS.workflowsGet, {
+  payload: WorkflowRunGetInput,
+  success: WorkflowRunDetail,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsAnswerRpc = Rpc.make(WS_METHODS.workflowsAnswer, {
+  payload: WorkflowAnswerInput,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsResumeRpc = Rpc.make(WS_METHODS.workflowsResume, {
+  payload: WorkflowRunResumeInput,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsCancelRpc = Rpc.make(WS_METHODS.workflowsCancel, {
+  payload: WorkflowRunCancelInput,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsGetDefinitionRpc = Rpc.make(WS_METHODS.workflowsGetDefinition, {
+  payload: WorkflowDefinitionGetInput,
+  success: WorkflowDefinitionFiles,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorkflowsSaveDefinitionRpc = Rpc.make(WS_METHODS.workflowsSaveDefinition, {
+  payload: WorkflowDefinitionSaveInput,
+  success: WorkflowDefinitionChangeResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorkflowsDeleteDefinitionRpc = Rpc.make(WS_METHODS.workflowsDeleteDefinition, {
+  payload: WorkflowDefinitionDeleteInput,
+  success: WorkflowDefinitionChangeResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2714,6 +2804,11 @@ const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsAgentFeedbackAnswerRequestRpc = Rpc.make(WS_METHODS.agentFeedbackAnswerRequest, {
+  payload: AgentFeedbackAnswerInput,
+  error: Schema.Union([AgentFeedbackRequestError, EnvironmentAuthorizationError]),
 });
 
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
@@ -2784,6 +2879,15 @@ export const WsConversationRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
+  WsWorkflowsSubscribeRpc,
+  WsWorkflowsCountsRpc,
+  WsWorkflowsGetRpc,
+  WsWorkflowsAnswerRpc,
+  WsWorkflowsResumeRpc,
+  WsWorkflowsCancelRpc,
+  WsWorkflowsGetDefinitionRpc,
+  WsWorkflowsSaveDefinitionRpc,
+  WsWorkflowsDeleteDefinitionRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,
@@ -2792,6 +2896,7 @@ export const WsConversationRpcGroup = RpcGroup.make(
   WsScheduledTasksRotateWebhookTokenRpc,
   WsGuestShareCreateRpc,
   WsSecretsAnswerRequestRpc,
+  WsAgentFeedbackAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsServerSearchAcpRegistryRpc,
@@ -3022,6 +3127,9 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsLiveVoiceCallRpc,
   WsLiveVoiceMuteRpc,
   WsVoiceDictateWithChatGptRpc,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+  WsPluginSignInOpenRpc,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush RPCs.
   WsEditorsFlushConnectRpc,

@@ -35,6 +35,8 @@ import * as IssueService from "../../../issue/IssueService.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+// SCIENT-FORK: the custom models agent tools test models through their agents.
+import * as ProviderInstanceRegistry from "../../../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -67,6 +69,9 @@ import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 import * as TaskFolders from "../../../workspace/TaskFolders.ts";
+import * as FeedbackStore from "../../../feedback/FeedbackStore.ts";
+import * as MilestoneHub from "../../../milestones/MilestoneHub.ts";
+import * as Workflows from "../../../workflows/Workflows.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -130,6 +135,11 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(OverleafSync.OverleafSync)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(TaskFolders.TaskFolders)({}),
+  Layer.mock(Workflows.Workflows)({}),
+  Layer.mock(FeedbackStore.FeedbackStore)({}),
+  Layer.mock(MilestoneHub.MilestoneHub)({}),
+  // SCIENT-FORK: the custom models agent tools test models through their agents.
+  Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),

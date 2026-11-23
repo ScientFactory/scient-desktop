@@ -210,7 +210,8 @@ it.effect(
         `an unselected turn still claimed a user selection:\n${unselectedText}`,
       );
       assert.isTrue(unselectedText.startsWith(unselected.text));
-      assert.include(unselectedText, "[Scient skill scope for this turn: complete; 1 skill;");
+      assert.include(unselectedText, "[Scient skills for this turn (complete; 1 skill;");
+      assert.include(unselectedText, `- ${automatic.name}:`);
     }).pipe(Effect.provide(testLayer)),
 );
 

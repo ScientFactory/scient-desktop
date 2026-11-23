@@ -241,6 +241,75 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
+  it.effect("repoints a recorded Windows launcher outside PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const baseDir = path.join(root, "home");
+      const runtimeDir = path.join(baseDir, "runtime");
+      const launcher = path.join(root, "custom bin", "t3.cmd");
+      const launchedAs = path.join(runtimeDir, "versions", "1.0.0", "t3.exe");
+      const targetEntryPath = path.join(runtimeDir, "versions", "2.0.0", "t3.exe");
+      yield* fs.makeDirectory(runtimeDir, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.writeFileString(launcher, `@echo off\r\n"${launchedAs}" %*`);
+      yield* fs.writeFileString(path.join(runtimeDir, "launchers"), `${launcher}\r\n`);
+
+      const repointed = yield* repointLauncher({ launchedAs, baseDir, targetEntryPath });
+
+      assert.equal(Option.getOrUndefined(repointed), launcher);
+      // SCIENT-FORK: Scient's launcher runs the entry through its own Node.
+      assert.equal(
+        yield* fs.readFileString(launcher),
+        `@echo off\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"C:\\Scient\\node.exe" "${targetEntryPath}" %*`,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      Effect.provideService(HostProcess.ExecutablePath, "C:\\Scient\\node.exe"),
+    ),
+  );
+
+  // SCIENT-FORK:START — a launcher Scient rewrote is found again by the next update.
+  it.effect("repoints a recorded Scient launcher outside PATH a second time", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const baseDir = path.join(root, "home");
+      const runtimeDir = path.join(baseDir, "runtime");
+      const launcher = path.join(root, "custom bin", "t3.cmd");
+      const entry = (version: string) => path.join(runtimeDir, "versions", version, "bin.mjs");
+      yield* fs.makeDirectory(runtimeDir, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.writeFileString(
+        launcher,
+        `@echo off\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"C:\\Scient\\node.exe" "${entry("1.0.0")}" %*`,
+      );
+      yield* fs.writeFileString(path.join(runtimeDir, "launchers"), `${launcher}\r\n`);
+
+      const repointed = yield* repointLauncher({
+        launchedAs: "C:\\Scient\\node.exe",
+        baseDir,
+        targetEntryPath: entry("2.0.0"),
+      }).pipe(Effect.provideService(HostProcess.Arguments, ["node", entry("1.0.0")]));
+
+      assert.equal(Option.getOrUndefined(repointed), launcher);
+      assert.equal(
+        yield* fs.readFileString(launcher),
+        `@echo off\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"C:\\Scient\\node.exe" "${entry("2.0.0")}" %*`,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      Effect.provideService(HostProcess.ExecutablePath, "C:\\Scient\\node.exe"),
+    ),
+  );
+  // SCIENT-FORK:END
+
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "finds the script that ran this executable and rewrites it, keeping aliases and arguments",
     () =>

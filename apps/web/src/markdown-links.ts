@@ -80,12 +80,46 @@ export function isLocalEditorFileHref(href: string): boolean {
   }
 }
 
+// Every message resolves its links and code spans more than once while rendering.
+const MAX_MEMOIZED = 4_000;
+const inlineCodeMetas = new Map<string, MarkdownFileLinkMeta | null>();
+const linkMetas = new Map<string, MarkdownFileLinkMeta | null>();
+
+function memoized(
+  cache: Map<string, MarkdownFileLinkMeta | null>,
+  key: string,
+  resolve: () => MarkdownFileLinkMeta | null,
+): MarkdownFileLinkMeta | null {
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  if (cache.size >= MAX_MEMOIZED) cache.clear();
+  const meta = resolve();
+  cache.set(key, meta);
+  return meta;
+}
+
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
   baseDir: string | undefined = cwd,
   // SCIENT-FORK:START — links resolve against the editable workspace root.
   workspaceRoot: string | null | undefined = cwd,
+  // SCIENT-FORK:END
+): MarkdownFileLinkMeta | null {
+  return memoized(
+    inlineCodeMetas,
+    // SCIENT-FORK: the workspace root is part of what a code span resolves against.
+    `${cwd ?? ""}\u0000${baseDir ?? ""}\u0000${String(workspaceRoot)}\u0000${codeText}`,
+    () => resolveInlineCodeFileLinkMetaUncached(codeText, cwd, baseDir, workspaceRoot),
+  );
+}
+
+function resolveInlineCodeFileLinkMetaUncached(
+  codeText: string,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+  // SCIENT-FORK:START — links resolve against the editable workspace root.
+  workspaceRoot: string | null | undefined,
   // SCIENT-FORK:END
 ): MarkdownFileLinkMeta | null {
   const candidate = inlineCodeFilePathCandidate(codeText);
@@ -133,6 +167,23 @@ export function resolveMarkdownFileLinkMeta(
   baseDir: string | undefined = cwd,
   // SCIENT-FORK:START — links resolve against the editable workspace root.
   workspaceRoot: string | null | undefined = cwd,
+  // SCIENT-FORK:END
+): MarkdownFileLinkMeta | null {
+  if (href === undefined) return null;
+  return memoized(
+    linkMetas,
+    // SCIENT-FORK: the workspace root is part of what a link resolves against.
+    `${cwd ?? ""}\u0000${baseDir ?? ""}\u0000${String(workspaceRoot)}\u0000${href}`,
+    () => resolveMarkdownFileLinkMetaUncached(href, cwd, baseDir, workspaceRoot),
+  );
+}
+
+function resolveMarkdownFileLinkMetaUncached(
+  href: string | undefined,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+  // SCIENT-FORK:START — links resolve against the editable workspace root.
+  workspaceRoot: string | null | undefined,
   // SCIENT-FORK:END
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);

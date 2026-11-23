@@ -59,7 +59,7 @@ describe("app startup failures", () => {
       throw new Error("@vitejs/plugin-react can't detect preamble. Something is wrong.");
     });
     const reload = vi.fn();
-    vi.stubGlobal("window", { location: { reload } });
+    vi.stubGlobal("window", { location: { reload }, addEventListener: vi.fn() });
 
     await import("./bootstrap");
     await vi.dynamicImportSettled();

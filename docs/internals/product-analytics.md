@@ -252,6 +252,10 @@ measured performance on every supported platform.
 
 ## Instrumentation and honest coverage
 
+T3's `agent.feedback` event (agent-written problem reports) is never sent from Scient:
+the feature is held off by `apps/server/src/scient/ScientAgentFeedbackGate.ts` until the
+gateway contract and privacy page cover it.
+
 ### Product insights (revision 3)
 
 `panel.viewed`, `settings.viewed`, `feature.viewed` and `usage.viewed` measure

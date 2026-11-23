@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 import { beforeAll } from "vite-plus/test";
+import { awaitDroidHomeIdleOnClose } from "./DroidLiveHome.testkit.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -67,6 +68,8 @@ it.effect.skipIf(!binary)(
       yield* Effect.promise(
         () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
       );
+      // Droid's exit courier outlives it; the stub stays up until HOME is idle.
+      yield* awaitDroidHomeIdleOnClose(root);
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Missing fixture port");
       const baseUrl = `http://127.0.0.1:${address.port}`;

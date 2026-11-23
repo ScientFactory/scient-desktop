@@ -23,8 +23,9 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpBody, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
+  AuthSessionId,
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -52,10 +53,12 @@ import {
   ScientMcpProtocol2026,
 } from "./ScientMcpProtocol.ts";
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
+import * as MilestoneEvents from "../milestones/MilestoneEvents.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -96,15 +99,24 @@ import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSessi
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
+import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
+import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
+import * as Feedback from "../feedback/FeedbackService.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
+// SCIENT-FORK:START — agents manage Settings → Custom models.
+import { CustomModelsToolkit } from "../scient/customModels/agent/tools.ts";
+import * as CustomModelsHandlers from "../scient/customModels/agent/handlers.ts";
+// SCIENT-FORK:END
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import { WorkflowToolkit } from "./toolkits/workflow/tools.ts";
+import * as WorkflowHandlers from "./toolkits/workflow/handlers.ts";
 import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -365,12 +377,36 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
-  const linksEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
+  const settingsFlags = serverSettings.getSettings.pipe(
+    Effect.map((settings) => ({
+      linkedEnvironments: settings.linkedEnvironmentsEnabled,
+      agentFeedback: settings.agentFeedback.mode,
+    })),
+    Effect.orElseSucceed(() => ({ linkedEnvironments: false, agentFeedback: "off" as const })),
   );
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+  const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
+  // Auth runs once per request, so a response that streams on, such as `events/stream`, ends
+  // when the outside client's session is revoked or expires.
+  const endWithSession = (
+    response: HttpServerResponse.HttpServerResponse,
+    client: McpInvocationContext.McpClientCaller | undefined,
+  ) => {
+    const body = response.body;
+    if (client === undefined || Option.isNone(sessions) || body._tag !== "Stream") return response;
+    const invalidated = sessions.value
+      .awaitInvalidation(AuthSessionId.make(client.sessionId))
+      .pipe(Effect.ignore);
+    return HttpServerResponse.setBody(
+      response,
+      HttpBody.stream(
+        Stream.interruptWhen(body.stream, invalidated),
+        body.contentType,
+        body.contentLength,
+      ),
+    );
+  };
   // Every request reads it, and a remote added mid-thread shows the tools within a minute.
   const forgeOfThread = yield* Cache.make({
     capacity: 1_000,
@@ -417,14 +453,20 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(withSenderThread(invocation, request), request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const linkedEnvironments = yield* linksEnabled;
+    const { linkedEnvironments, agentFeedback } = yield* settingsFlags;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
     const forge =
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
-    return { ...limited, linkedEnvironments, origin, ...(forge === undefined ? {} : { forge }) };
+    return {
+      ...limited,
+      linkedEnvironments,
+      agentFeedback,
+      origin,
+      ...(forge === undefined ? {} : { forge }),
+    };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -438,6 +480,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
+      Effect.map((response) => endWithSession(response, admitted.client)),
       Effect.map((response) =>
         linkExpiresAt === undefined
           ? response
@@ -460,7 +503,6 @@ export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
 // Page text and the ARIA tree both shrink to this before either drops below it.
 const SNAPSHOT_TEXT_FLOOR_CHARS = 2_000;
-const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
 const MAX_SNAPSHOT_LOG_ENTRIES = 40;
 const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
 const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
@@ -493,10 +535,6 @@ type SnapshotMetadata = {
   readonly url: string;
   readonly title: string;
   readonly visibleText: string;
-  readonly interactiveElements: ReadonlyArray<{
-    readonly name: string;
-    readonly [key: string]: unknown;
-  }>;
   readonly consoleEntries: ReadonlyArray<unknown>;
   readonly networkEntries: ReadonlyArray<unknown>;
   readonly actionTimeline: ReadonlyArray<unknown>;
@@ -513,7 +551,7 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const { accessibilityTree, ...withoutTree } = metadata;
   const ariaTree = typeof accessibilityTree === "string" ? accessibilityTree : undefined;
   if (accessibilityTree !== undefined && ariaTree === undefined) {
-    omitted.push("accessibilityTree (use interactiveElements locators or preview_evaluate)");
+    omitted.push("accessibilityTree (use preview_evaluate)");
   }
   const tail = <A>(entries: ReadonlyArray<A>, label: string) => {
     if (entries.length > MAX_SNAPSHOT_LOG_ENTRIES) {
@@ -531,41 +569,23 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   ) {
     omitted.push(`url or title after ${MAX_SNAPSHOT_IDENTIFIER_CHARS} characters`);
   }
-  if (
-    metadata.interactiveElements.some(
-      (element) => element.name.length > MAX_SNAPSHOT_ELEMENT_NAME_CHARS,
-    )
-  ) {
-    omitted.push(`element names longer than ${MAX_SNAPSHOT_ELEMENT_NAME_CHARS} characters`);
-  }
   const bounded = {
     ...withoutTree,
     url: cutText(metadata.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
     title: cutText(metadata.title, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-    interactiveElements: metadata.interactiveElements.map((element) => ({
-      ...element,
-      name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
-    })),
     consoleEntries: tail(metadata.consoleEntries, "console entries"),
     networkEntries: tail(metadata.networkEntries, "network entries"),
     actionTimeline: tail(metadata.actionTimeline, "action timeline entries"),
   };
 
   // Per-field character caps can still exceed the total byte ceiling.
-  const shedOrder = [
-    "actionTimeline",
-    "networkEntries",
-    "consoleEntries",
-    "interactiveElements",
-  ] as const;
+  const shedOrder = ["actionTimeline", "networkEntries", "consoleEntries"] as const;
   const lists: Record<(typeof shedOrder)[number], ReadonlyArray<unknown>> = {
-    interactiveElements: bounded.interactiveElements,
     consoleEntries: bounded.consoleEntries,
     networkEntries: bounded.networkEntries,
     actionTimeline: bounded.actionTimeline,
   };
   const dropped: Record<(typeof shedOrder)[number], number> = {
-    interactiveElements: 0,
     consoleEntries: 0,
     networkEntries: 0,
     actionTimeline: 0,
@@ -580,22 +600,18 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   });
   let text = encodeJsonText(value());
   while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
-    // Logs shed first, oldest first. Below the floors, locator-bearing elements and tree go last.
+    // Logs shed first, oldest first. Below the floors, the locator-bearing tree goes last.
     const key =
-      shedOrder.find(
-        (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
-      ) ??
+      shedOrder.find((candidate) => lists[candidate].length > 0) ??
       (visibleTextChars > SNAPSHOT_TEXT_FLOOR_CHARS
         ? "visibleText"
         : ariaTreeChars > SNAPSHOT_TEXT_FLOOR_CHARS
           ? "accessibilityTree"
           : visibleTextChars > 0
             ? "visibleText"
-            : lists.interactiveElements.length > 0
-              ? "interactiveElements"
-              : ariaTreeChars > 0
-                ? "accessibilityTree"
-                : undefined);
+            : ariaTreeChars > 0
+              ? "accessibilityTree"
+              : undefined);
     if (key === undefined) break;
     if (key === "visibleText") {
       visibleTextChars = halveToFloor(visibleTextChars);
@@ -604,12 +620,7 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     } else {
       const keep = Math.floor(lists[key].length / 2);
       dropped[key] += lists[key].length - keep;
-      lists[key] =
-        keep === 0
-          ? []
-          : key === "interactiveElements"
-            ? lists[key].slice(0, keep)
-            : lists[key].slice(-keep);
+      lists[key] = keep === 0 ? [] : lists[key].slice(-keep);
     }
     text = encodeJsonText(value());
   }
@@ -1737,6 +1748,7 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 ).pipe(Layer.provide(OrchestratorMcpService.layer), Layer.provide(ThreadMetadataMcpService.layer));
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
+const layerWorkflowToolkit = toolkitRegistration(WorkflowToolkit, WorkflowHandlers.layer);
 
 const layerMessageToolkit = toolkitRegistration(MessageToolkit, MessageHandlers.layer);
 
@@ -1759,7 +1771,24 @@ const layerThemeToolkit = toolkitRegistration(ThemeToolkit, ThemeHandlers.layer)
   Layer.provide(ThreadCommandExecutor.layer),
 );
 
+// SCIENT-FORK: agents manage Settings → Custom models.
+const layerCustomModelsToolkit = toolkitRegistration(
+  CustomModelsToolkit,
+  CustomModelsHandlers.layer,
+).pipe(Layer.provide(ThreadCommandExecutor.layer));
+
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
+
+// Reports may name any tool this server advertises, read when a report arrives.
+const layerFeedbackToolkit = toolkitRegistration(FeedbackToolkit, FeedbackHandlers.layer).pipe(
+  Layer.provide(
+    Layer.unwrap(
+      Effect.map(McpServer.McpServer, (server) =>
+        Feedback.layer(() => server.tools.map(({ tool }) => tool.name)),
+      ),
+    ),
+  ),
+);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
@@ -1799,6 +1828,8 @@ const orchestrationTools = [
   ...Object.values(ProjectToolkit.tools),
   ...Object.values(EnvironmentToolkit.tools),
   ...Object.values(ThemeToolkit.tools),
+  // SCIENT-FORK: agents manage Settings → Custom models.
+  ...Object.values(CustomModelsToolkit.tools),
 ];
 const previewTools = [
   ...Object.values(PreviewToolkit.tools),
@@ -1905,10 +1936,14 @@ export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
+  layerWorkflowToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,
+  layerFeedbackToolkit,
   layerEnvironmentToolkit,
   layerThemeToolkit,
+  // SCIENT-FORK: agents manage Settings → Custom models.
+  layerCustomModelsToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
@@ -1924,7 +1959,15 @@ const layerToolExposure = Layer.effect(
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
       () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+        server.tools
+          // Search finds only what this caller could list; these predicates read the request's scope.
+          .filter(({ annotations }) => {
+            const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+            return (
+              enabledWhen === undefined || enabledWhen({ protocolVersion: "", capabilities: {} })
+            );
+          })
+          .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),
@@ -1958,4 +2001,23 @@ export const layerToolSearch = Layer.mergeAll(
   layerDeferredListing,
 ).pipe(Layer.provide(layerToolExposure));
 
-export const layer = layerMcpTransport(Layer.mergeAll(layerTools, layerToolSearch));
+/**
+ * Milestones as MCP events (SEP-3415) for outside clients to poll or stream. Protocol-level, so no
+ * thread lists them.
+ */
+export const layerMilestoneEvents = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const annotations = Context.make(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromThreads);
+    const events = yield* MilestoneEvents.make;
+    for (const options of events.threads) {
+      yield* McpServer.registerEvent({ ...options, annotations });
+    }
+    for (const options of events.workflows) {
+      yield* McpServer.registerEvent({ ...options, annotations });
+    }
+  }),
+);
+
+export const layer = layerMcpTransport(
+  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents),
+);

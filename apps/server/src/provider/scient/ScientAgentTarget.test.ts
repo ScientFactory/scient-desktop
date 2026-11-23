@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { ompTarget } from "../omp/OmpTarget.ts";
 import {
+  scientAgentEnableSources,
   scientAgentHostCommands,
   scientAgentProcessEnvironment,
   scientAgentTarget,
@@ -163,5 +164,15 @@ describe("scientAgentHostCommands", () => {
     ]);
     expect(scientAgentHostCommands(runtimeInfo())).toEqual([]);
     expect(scientAgentHostCommands("omp/18.4.8\n")).toEqual([]);
+  });
+});
+
+describe("scientAgentEnableSources", () => {
+  it("reads the discovery sources a release can load, and none from an older one", () => {
+    expect(
+      scientAgentEnableSources(runtimeInfo({ enableSources: ["claude-plugins", "codex-plugins"] })),
+    ).toEqual(["claude-plugins", "codex-plugins"]);
+    expect(scientAgentEnableSources(runtimeInfo())).toEqual([]);
+    expect(scientAgentEnableSources("omp/18.4.8\n")).toEqual([]);
   });
 });

@@ -32,7 +32,6 @@ async function mountSidebarTop(_fixture: _Fixture, onNewThread: () => void) {
           hideNewThreadButton
           hasProjects={false}
           projectScope={null}
-          onNewProject={() => {}}
           onNewThread={onNewThread}
           newThreadDisabled={false}
           newThreadShortcutLabel="⌘N"

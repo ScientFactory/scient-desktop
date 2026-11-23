@@ -285,7 +285,9 @@ export class LocalWhisperRuntime {
     if (this.activeRequests > 0) {
       throw new WhisperRuntimeError("busy", "Offline voice transcription is active.");
     }
-    await stopAndWaitForChild(this.stopProcess());
+    // A helper still stopping, as after an aborted transcription, may hold the model open.
+    const child = this.stopProcess();
+    await Promise.all([...new Set([child, ...this.stopping])].map(stopAndWaitForChild));
   }
 
   private async transcribeNow(

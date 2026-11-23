@@ -78,10 +78,13 @@ room.
 3. An upgrade without approved copy advances silently. Missing copy never
    blocks application startup or publication by itself.
 4. The sidebar card remains available across restarts until the user dismisses
-   it or closes its dialog.
-5. The dialog includes all catalog entries at or below the installed version,
-   sorted newest first. Selecting a history row opens that release’s full
-   detail.
+   it or closes the dialog it opened. Closing a list opened from Settings does
+   not dismiss the card.
+5. The dialog includes every catalog entry, sorted newest first, whatever the
+   installed version, so Stable and Beta builds show the same list. Selecting a
+   history row opens that release’s full detail. The list opens from the sidebar
+   card and from Settings → About → Release history. The dialog is mounted at
+   app level, so it does not depend on the sidebar being open.
 6. A handled release is not shown again, and downgrading does not move the
    handled-version marker backward.
 

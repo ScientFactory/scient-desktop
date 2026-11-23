@@ -369,6 +369,19 @@ export const ServerProvider = Schema.Struct({
   // SCIENT-FORK:START — Scient Extensions native inventory.
   accountAppsAvailable: Schema.optional(Schema.Boolean),
   usesClaudePlugins: Schema.optional(Schema.Boolean),
+  /** Scient Agent loads the skills and MCP servers of Codex's installed plugins. */
+  usesCodexPlugins: Schema.optional(Schema.Boolean),
+  /**
+   * The Claude Code and Codex homes whose installed plugins this agent loads: a Claude
+   * instance's own home, and for Scient Agent the homes it reads. An install reaches an agent
+   * only through its home.
+   */
+  pluginHomes: Schema.optional(
+    Schema.Struct({
+      claude: Schema.optional(TrimmedNonEmptyString),
+      codex: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
   /** Opaque live-instance generation; replacement resets inventory. Never persisted. */
   nativeInventoryGeneration: Schema.optionalKey(TrimmedNonEmptyString),
   /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */
@@ -795,6 +808,13 @@ export const ServerEventLoopStall = Schema.Struct({
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
 
+/** The boolean `T3CODE_FEATURE_FLAGS` a server started with. Unset flags are off. */
+export const ServerFeatureFlags = Schema.Struct({
+  secretProviders: Schema.optionalKey(Schema.Boolean),
+  tanstackSource: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerFeatureFlags = typeof ServerFeatureFlags.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -832,6 +852,7 @@ export const ServerConfig = Schema.Struct({
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   threadFind: Schema.optionalKey(Schema.Boolean),
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
+  featureFlags: Schema.optionalKey(ServerFeatureFlags),
   /** Settings patches may carry `secretProviders`; older servers drop the key without an error. */
   secretProviderSettings: Schema.optionalKey(Schema.Boolean),
   /** Secret settings may point at a secret provider; older servers drop the reference. */

@@ -82,6 +82,7 @@ it.effect.each(["initial", "waiting"])(
         worktreePath: process.cwd(),
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+        deletedAt: null,
       },
       providerThread: { id: providerThreadId, providerSessionId, providerInstanceId },
       checkpoint: {
@@ -217,6 +218,7 @@ it.effect.each([
         branch,
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+        deletedAt: null,
       },
       providerThread,
       providerSession: undefined,
@@ -440,6 +442,7 @@ it.effect.each([
         worktreePath: shared === "root" ? null : process.cwd(),
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId, model: "test" },
+        deletedAt: null,
       },
       providerThread,
       providerSession: undefined,
@@ -608,9 +611,14 @@ it.effect.each([
   },
 );
 
-it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
-  "holds turn starts inside the worktree during rollback with restoreFiles $restoreFiles",
-  ({ restoreFiles }) =>
+it.effect.each([
+  { restoreFiles: true, status: "ready" },
+  { restoreFiles: false, status: "ready" },
+  // A failed capture still pins the conversation.
+  { restoreFiles: false, status: "error" },
+])(
+  "holds turn starts inside the worktree during rollback with restoreFiles $restoreFiles to a $status checkpoint",
+  ({ restoreFiles, status }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -638,6 +646,7 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
           branch: "feature/rollback-reservation",
           activeProviderThreadId: providerThreadId,
           modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+          deletedAt: null,
         },
         providerThread: {
           id: providerThreadId,
@@ -645,7 +654,7 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
           providerInstanceId,
         },
         providerSession: undefined,
-        checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: 0 },
+        checkpoint: { id: checkpointId, scopeId, status, appRunOrdinal: 0 },
         scope: { id: scopeId, cwd: worktreePath },
         runsToRollback: [],
         targetAttempt: undefined,
@@ -1157,6 +1166,21 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
       }),
     );
 
+    it.effect("rewinds the conversation to a run whose snapshot capture failed", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE orchestration_v2_projection_checkpoints
+          SET status = 'error', payload_json = json_set(payload_json, '$.status', 'error')
+          WHERE checkpoint_id = ${history.checkpointId(2)}`;
+
+        yield* history.rollback(2, false);
+
+        assert.deepEqual(history.rollbackCounts, [4]);
+        assert.deepEqual(history.restored, []);
+      }),
+    );
+
     it.effect(
       "rewinds stopped runs repeatedly without counting discarded provider turns again",
       () =>
@@ -1241,5 +1265,26 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
       }),
     );
     // SCIENT-FORK:END
+
+    it.effect("skips a pending rollback once the thread is deleted", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory;
+        const thread = yield* history.store.getThread(history.threadId);
+        yield* history.store.apply({
+          id: EventId.make("rollback-history-deleted"),
+          type: "thread.deleted",
+          threadId: history.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: history.now,
+          payload: { ...thread, deletedAt: history.now, updatedAt: history.now },
+        });
+
+        yield* history.rollback(2);
+
+        assert.deepEqual(history.rollbackCounts, []);
+        assert.deepEqual(history.restored, []);
+        assert.deepEqual(history.committed, []);
+      }),
+    );
   },
 );

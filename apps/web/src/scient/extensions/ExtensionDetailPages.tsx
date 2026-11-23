@@ -95,6 +95,7 @@ import {
   isCatalogOnlyEntry,
   MCP_SERVER_STATUS_TEXT,
   pluginGlyph,
+  providerAvailable,
   TEST_OUTCOME_LABELS,
   urlHost,
   workspaceLabel,
@@ -1027,7 +1028,13 @@ function ServerDetail({
   const gt = useGT();
   const messages = useMessages();
   const { catalog, providers, environmentId } = useExtensionsEnvironment();
+  const claude = providers.find(
+    (provider) => provider.driver === "claudeAgent" && providerAvailable(provider),
+  );
   const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
+  const antigravity = providers.find(
+    (provider) => provider.driver === "antigravity" && provider.enabled,
+  );
   const actions = useAddEntry(entry);
   const startChat = useConnectorAgentChat(environmentId);
   const name = entryName(entry);
@@ -1142,16 +1149,43 @@ function ServerDetail({
           [gt("Source"), entrySourceLabel(entry, messages)],
           fact(
             gt("Also available"),
-            entry.agentStores?.codex && codex ? (
-              <Link
-                to="/settings/extensions/item/store/$instanceId/$entryId"
-                params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
-                className={cn(GHOST_LINK_CLASS, "text-foreground")}
-              >
-                <T>
-                  Also in <Var>{codex.displayName ?? "Codex"}</Var>’s store
-                </T>
-              </Link>
+            (entry.agentStores?.claude && claude) ||
+              (entry.agentStores?.codex && codex) ||
+              (entry.agentStores?.antigravity && antigravity) ? (
+              <span className="grid gap-1">
+                {entry.agentStores?.claude && claude ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{ instanceId: claude.instanceId, entryId: entry.agentStores.claude }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>Also in Claude Code’s store</T>
+                  </Link>
+                ) : null}
+                {entry.agentStores?.codex && codex ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>
+                      Also in <Var>{codex.displayName ?? "Codex"}</Var>’s store
+                    </T>
+                  </Link>
+                ) : null}
+                {entry.agentStores?.antigravity && antigravity ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{
+                      instanceId: antigravity.instanceId,
+                      entryId: entry.agentStores.antigravity,
+                    }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>Also in the Antigravity Marketplace</T>
+                  </Link>
+                ) : null}
+              </span>
             ) : null,
           ),
         ]}
@@ -1529,6 +1563,7 @@ function ProviderPluginDetail({
   readonly workspace: string | undefined;
 }) {
   const gt = useGT();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderPluginActions(group.provider, group.label, plugin, workspace);
   const name = plugin.displayName ?? plugin.name;
   return (
@@ -1594,7 +1629,7 @@ function ProviderPluginDetail({
             gt("Works with"),
             <WorksWithValue
               key="works-with"
-              audience={providerExtensionAudience(group.provider, plugin)}
+              audience={providerExtensionAudience(group.provider, plugin, providers)}
             />,
           ],
           // Claude records a commit hash where others give a version; a hash tells a person nothing.
@@ -1665,6 +1700,7 @@ function ProviderServerDetail({
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderServerActions(group.provider, group.label, server);
   const canSignIn = server.canStartSignIn === true || Boolean(server.connectUrl);
   const statusText = MCP_SERVER_STATUS_TEXT[server.status];
@@ -1713,7 +1749,7 @@ function ProviderServerDetail({
             gt("Works with"),
             <WorksWithValue
               key="works-with"
-              audience={providerExtensionAudience(group.provider, server)}
+              audience={providerExtensionAudience(group.provider, server, providers)}
             />,
           ],
           [gt("Status"), status],

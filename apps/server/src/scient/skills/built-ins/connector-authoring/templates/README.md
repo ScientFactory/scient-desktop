@@ -1,8 +1,8 @@
 # {{DISPLAY_NAME}}
 
 A connector for Scient: a small program that gives agents tools for one service. As it
-comes, it is a working example that searches OpenAlex, a free index of scholarly works. Change
-it into the connector you need.
+comes, it contains an OpenAlex example. Verify current API access with a real read before
+calling it working. Change it into the connector you need.
 
 It needs nothing installed. Scient runs it on its own copy of Node, on macOS, Windows and
 Linux. It also runs on Node 20 or newer, and in Claude Desktop when exported as `.mcpb`.
@@ -14,7 +14,7 @@ Linux. It also runs on Node 20 or newer, and in Claude Desktop when exported as 
 | `manifest.json` | Name, how to start it, settings and keys it asks for, its tools. MCP Bundle format.     |
 | `server.mjs`    | The tools. This is the file you change.                                                 |
 | `mcp.mjs`       | The MCP side: messages over stdin and stdout, input checks, errors. Usually left as is. |
-| `http.mjs`      | Polite web requests: pacing, timeouts, retries, hidden keys in messages.                |
+| `http.mjs`      | Polite web requests: pacing, timeouts, read retries, omitted response bodies.           |
 | `session.mjs`   | The user's sign-in to a website, from Scient's Accounts. Delete it if unused.           |
 
 ## Placeholders
@@ -70,8 +70,9 @@ const events = await session.json("/lib/ajax/service.php?…", {}, { signal });
 ```
 
 `session.fetch` and `session.json` send the user's cookies, follow redirects, and throw the
-`SCIENT_SIGN_IN_EXPIRED` error when the site sends them to its sign-in page. Scient then signs in
-again and retries. The program never sees the password.
+`SCIENT_SIGN_IN_EXPIRED` error when the site sends them to its sign-in page. For explicitly read-only tools, Scient then signs in
+again and retries. The included MCP helper (`mcp.mjs`) suppresses this replay marker for other tools;
+check an uncertain write outcome before retrying. The program never sees the password.
 
 ### Libraries
 
@@ -84,3 +85,21 @@ connector. The official MCP SDK (`@modelcontextprotocol/sdk`) may replace `mcp.m
 
 `node server.mjs` waits for MCP messages on stdin and logs to stderr. Scient's check
 (`scient_connector_check`) is the real test.
+
+## Helper limits
+
+These helpers omit arbitrary response bodies and unexpected exception details from errors.
+ToolError strings and deliberate logs must still be written without secrets. `safeUrl` masks
+only recognized parameter names. Do not treat it as a general redactor.
+
+`search_works` is offset browsing, not a complete-export tool. At its boundary it returns
+`truncated: true` and a reason even when `has_more` is false. `get_work` still caps authors
+at 25 and abstracts at 4,000 characters; inspect the omission fields/markers.
+
+Do not use custom secret headers across redirects with the inherited session helper. It only
+strips standard authorization headers; an explicit permitted-origin rule needs separate work.
+The app's host can replay expiry markers. Only tools honestly marked read-only may emit one;
+the included MCP helper blocks it for the other tools. This is not an idempotency guarantee.
+
+Check OpenAlex's current authentication and quota documentation before relying on the
+example in a production connector.

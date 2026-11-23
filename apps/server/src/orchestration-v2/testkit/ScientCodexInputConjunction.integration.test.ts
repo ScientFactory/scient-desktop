@@ -847,9 +847,14 @@ const runConjunction = (refusal = false) =>
           assert.ok(retryPath);
           expectedRetryText = expectedRetryText.replace(previousPath, retryPath);
         }
+        // The first offer listed the session's skills; this later message in the same session says
+        // the list is unchanged. Everything else is the same captured request.
+        const skillNote = /\[Scient skills for this turn[\s\S]*?\]\n/u;
+        assert.include(priorText.text, "- project-method: Controlled conjunction evidence.");
+        assert.include(retryText.text, "unchanged since the list an earlier turn gave (1 skill;");
         assert.equal(
-          retryText.text,
-          expectedRetryText,
+          retryText.text.replace(skillNote, ""),
+          expectedRetryText.replace(skillNote, ""),
           "Retry delivers the complete same captured request with its own claimed file and image paths",
         );
         assert.deepEqual(

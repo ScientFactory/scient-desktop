@@ -231,6 +231,7 @@ const analyticsFixture = Effect.gen(function* () {
       Effect.gen(function* () {
         events.push({ name, properties });
         if (name !== "scient.operation.started") yield* Queue.offer(terminalEvents, name);
+        return true;
       }),
     flush: Effect.void,
   });

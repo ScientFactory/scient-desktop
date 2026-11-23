@@ -1674,6 +1674,7 @@ const analyticsFixture = () => {
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
+        return true;
       }),
     flush: Effect.void,
   });

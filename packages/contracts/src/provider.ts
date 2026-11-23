@@ -72,7 +72,9 @@ export type ProviderMcpSignInStartResult = typeof ProviderMcpSignInStartResult.T
 export const ProviderMcpSignInCompleteInput = Schema.Struct({
   ...ProviderMcpSignInStartInput.fields,
   /** The address the browser was sent to after approving, usually a localhost page. */
-  callbackUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+  // SCIENT-FORK:START — without it, wait for the agent to report its own callback page was opened.
+  callbackUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(16_384))),
+  // SCIENT-FORK:END
 });
 export type ProviderMcpSignInCompleteInput = typeof ProviderMcpSignInCompleteInput.Type;
 

@@ -206,6 +206,12 @@ export class AnalyticsOutbox {
         (now - 30 * 86400000) / 1000,
       ) as unknown as ReadonlyArray<{ id: string; name: string }>;
     this.#quarantine(expired, "retired");
+    // Scient holds agent feedback (apps/server ScientAgentFeedbackGate): a report an earlier build
+    // queued is dropped here, keeping only its id and name, and never sent.
+    const held = this.#database
+      .prepare("SELECT id, name FROM analytics_outbox WHERE name = 'agent.feedback'")
+      .all() as unknown as ReadonlyArray<{ id: string; name: string }>;
+    this.#quarantine(held, "held");
     this.#database
       .prepare(
         "DELETE FROM analytics_dead_letter WHERE julianday(failed_at) < julianday(?, 'unixepoch')",

@@ -3133,7 +3133,7 @@ function OpenCommandPaletteDialog(props: {
         void browseTo(completion.name);
       } else if (completion && !pinnedCloneDirectoryName) {
         setHighlightedItemValue(null);
-        setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
+        setQuery(`${browsePath.directoryPath}${completion.name}`);
       }
       return;
     }

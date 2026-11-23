@@ -345,12 +345,14 @@ jobs:
             apps/server/src/scient/providerLifecycle/antigravityBrowserHelperPreflight.ts \
             apps/server/scripts/qualify-antigravity-acp-catalog.ts \
             apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
+            apps/server/src/scient/providerLifecycle/antigravityRuntimeRelease.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/secrets/secretProviderDefinitions.ts \
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
@@ -425,6 +427,7 @@ jobs:
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
@@ -503,6 +506,7 @@ jobs:
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
@@ -600,6 +604,7 @@ jobs:
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/scient/ScientAgentFeedbackGate.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/serverSettings.ts \
             apps/server/src/policy \

@@ -149,6 +149,13 @@ import Migration0106 from "./Migrations/106_ThreadItemCounts.ts";
 import Migration0107 from "./Migrations/107_IssueTrackerAdditionalScopes.ts";
 import Migration0108 from "./Migrations/108_ProjectionProjectsTrackedFolders.ts";
 import Migration0109 from "./Migrations/109_TaskFolders.ts";
+// T3's migrations 106-107 follow Scient's immutable migration sequence.
+import Migration0110 from "./Migrations/110_WorktreePathKeyIndex.ts";
+import Migration0111 from "./Migrations/111_DeferredSlashCommandIndex.ts";
+// T3's migrations 108-110 follow Scient's immutable migration sequence.
+import Migration0112 from "./Migrations/112_AgentFeedback.ts";
+import Migration0113 from "./Migrations/113_IssueTrackerAccounts.ts";
+import Migration0114 from "./Migrations/114_Workflows.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -295,6 +302,13 @@ export const migrationEntries = [
   [107, "IssueTrackerAdditionalScopes", Migration0107],
   [108, "ProjectionProjectsTrackedFolders", Migration0108],
   [109, "TaskFolders", Migration0109],
+  // T3's migrations 106-107 follow Scient's immutable migration sequence.
+  [110, "WorktreePathKeyIndex", Migration0110],
+  [111, "DeferredSlashCommandIndex", Migration0111],
+  // T3's migrations 108-110 follow Scient's immutable migration sequence.
+  [112, "AgentFeedback", Migration0112],
+  [113, "IssueTrackerAccounts", Migration0113],
+  [114, "Workflows", Migration0114],
   // SCIENT-FORK:END
 ] as const;
 

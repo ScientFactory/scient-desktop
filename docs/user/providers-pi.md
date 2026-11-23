@@ -72,6 +72,11 @@ Capabilities are checked when you save; Scient does not refresh them during a co
 The connection's **Manage** action also lets you rename it, replace/remove its saved key, or delete it.
 Deleting a model keeps its connection and key; deleting a connection removes both and detaches all its models.
 
+You can also ask an agent in a thread to do this, for example "add `openrouter/free` with my
+OpenRouter key and test it". It lists your connections and their status in each agent, adds or
+changes a model, tests it and removes it. A new key goes in a private card, never in the chat. When
+a service doesn’t report a model’s limits, the agent says so and can set them by hand.
+
 If a saved key is missing or unreadable, only that connection's models become unavailable. Use
 **Test** for the setup error, then use **Manage** to re-enter the connection's key.
 

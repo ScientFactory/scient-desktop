@@ -806,6 +806,7 @@ describe("Scient Sources MCP handlers", () => {
         record: (name, properties) =>
           Effect.sync(() => {
             events.push({ name, properties });
+            return true;
           }),
         flush: Effect.void,
       });
@@ -1592,7 +1593,7 @@ describe("Scient Sources MCP handlers", () => {
     Effect.gen(function* () {
       const analytics = AnalyticsService.of({
         recordOwners: () => Effect.void,
-        record: () => Effect.void,
+        record: () => Effect.succeed(true),
         flush: Effect.void,
       });
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-file-"));

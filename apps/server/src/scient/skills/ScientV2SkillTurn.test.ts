@@ -331,7 +331,8 @@ it.live.each(
         assert.deepEqual(issuance.request.skillScope, initial.skillScope);
         const first = yield* Queue.take(offered).pipe(Effect.timeout("10 seconds"));
         assert.include(first.text, "User request first");
-        assert.include(first.text, "[Scient skill scope for this turn: complete; 1 skill;");
+        assert.include(first.text, "[Scient skills for this turn (complete; 1 skill;");
+        assert.include(first.text, "- project-method: Reviews bounded fixture evidence.");
         assert.deepEqual(
           first.scope.skillScope?.skills.map((skill) => skill.name),
           ["project-method"],
@@ -440,7 +441,11 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
       );
       assert.equal(prepared.baseText, baseText);
       assert.equal(prepared.text, `${baseText}\n\n${prepared.runtimeInstruction}`);
-      assert.include(prepared.runtimeInstruction!, "Scient skill scope for this turn");
+      assert.include(
+        prepared.runtimeInstruction!,
+        "Scient skills for this turn (complete; 1 skill;",
+      );
+      assert.include(prepared.runtimeInstruction!, `- ${release.name}:`);
       assert.include(prepared.runtimeInstruction!, "Scient selected skills for this turn");
       assert.include(prepared.runtimeInstruction!, "scient_skill_load");
       assert.notInclude(prepared.runtimeInstruction!, "authored marker");
@@ -448,7 +453,10 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
         prepared.textWithoutCatalogMarker,
         `${baseText}\n\n${prepared.runtimeInstructionWithoutCatalogMarker}`,
       );
-      assert.notInclude(prepared.runtimeInstructionWithoutCatalogMarker!, "Scient skill scope");
+      assert.notInclude(
+        prepared.runtimeInstructionWithoutCatalogMarker!,
+        "Scient skills for this turn",
+      );
       assert.include(prepared.runtimeInstructionWithoutCatalogMarker!, "Scient selected skills");
       assert.deepEqual(yield* registry.resolve(token), before);
       yield* prepared.publish;
@@ -457,6 +465,109 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
       assert.deepEqual(after?.skillScope?.releases, priorScope.releases);
       assert.notEqual(after?.skillScope?.catalog?.digest, before?.skillScope?.catalog?.digest);
     }).pipe(Effect.provide(registryLayer)),
+);
+
+const automaticSkill = (name: string, description: string, digestHex: string) => {
+  const base = BUILT_IN_SKILL_RELEASES.find((candidate) => candidate.name === "statistics-review")!;
+  const skillRelease = { ...base, name, description, digest: `sha256:${digestHex.repeat(64)}` };
+  return {
+    release: skillRelease,
+    descriptor: {
+      releaseKey: skillReleaseKey(skillRelease),
+      id: skillRelease.id,
+      name,
+      description,
+      origin: skillRelease.origin,
+      activationScope: "user" as const,
+      invocationPolicy: "automatic" as const,
+    },
+  };
+};
+
+it.effect("lists automatic skills once per provider session and catalog, then points back", () =>
+  Effect.gen(function* () {
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const threadId = ThreadId.make("skill-index-once");
+    const stats = automaticSkill("stats-check", "Check the statistics in a results section.", "a");
+    const numbers = automaticSkill(
+      "numbers-check",
+      "Recompute reported numbers from outputs.",
+      "b",
+    );
+    const plannerFor = (skills: ReadonlyArray<ReturnType<typeof automaticSkill>>) => ({
+      resolve: () =>
+        Effect.succeed({
+          delivery: "mcp" as const,
+          catalogStatus: "complete" as const,
+          skills: skills.map((skill) => skill.descriptor),
+          releases: new Map(
+            skills.map((skill) => [skill.descriptor.releaseKey, skill.release] as const),
+          ),
+          diagnostics: [],
+        }),
+    });
+    const issue = Effect.fnUntraced(function* () {
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["skills:read"]),
+      });
+      yield* mcpSessions.set(issued.config);
+    });
+    const prepare = (
+      text: string,
+      skills: ReadonlyArray<ReturnType<typeof automaticSkill>>,
+      messageId?: string,
+    ) =>
+      prepareScientV2SkillScope({
+        threadId,
+        driver: ProviderDriverKind.make("codex"),
+        mcpSessionInjection: true,
+        projectRoot: undefined,
+        text,
+        selectedScientSkillNames: [],
+        ...(messageId === undefined ? {} : { messageId }),
+      }).pipe(
+        Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, plannerFor(skills)),
+      );
+
+    yield* issue();
+    const first = yield* prepare("Check my results.", [stats]);
+    assert.include(first.text, "- stats-check: Check the statistics in a results section.");
+    assert.notInclude(first.textWithoutCatalogMarker!, "stats-check");
+    // Publishing the scope is not delivery: a declined or failed turn never records the list.
+    yield* first.publish;
+    const retried = yield* prepare("Check my results.", [stats]);
+    assert.include(retried.text, "- stats-check:");
+    yield* retried.publish;
+    yield* retried.recordCatalogDelivered;
+
+    const followUp = yield* prepare("And the discussion?", [stats]);
+    assert.notInclude(followUp.text, "- stats-check:");
+    assert.include(followUp.text, "unchanged since the list an earlier turn gave (1 skill;");
+    assert.include(followUp.text, "`scient_skills_list`");
+    yield* followUp.recordCatalogDelivered;
+    const stillUnchanged = yield* prepare("And the abstract?", [stats]);
+    assert.include(stillUnchanged.text, "unchanged since the list an earlier turn gave");
+
+    const changed = yield* prepare("Now the numbers.", [stats, numbers]);
+    assert.include(changed.text, "- numbers-check: Recompute reported numbers from outputs.");
+    yield* changed.recordCatalogDelivered;
+
+    // A new provider session cannot see what the old one was told.
+    yield* issue();
+    const fresh = yield* prepare("Start again.", [stats, numbers], "message-1");
+    assert.include(fresh.text, "- stats-check:");
+    assert.include(fresh.text, "- numbers-check:");
+    yield* fresh.recordCatalogDelivered;
+    // A retry of the message that carried the list repeats the same full text; the next one does not.
+    const retry = yield* prepare("Start again.", [stats, numbers], "message-1");
+    assert.include(retry.text, "- stats-check:");
+    const next = yield* prepare("Next.", [stats, numbers], "message-2");
+    assert.include(next.text, "unchanged since the list an earlier turn gave");
+    yield* mcpSessions.clear(threadId);
+  }).pipe(Effect.provide(registryLayer)),
 );
 
 it.effect("replaces incomplete empty authority without claiming a complete empty catalog", () =>

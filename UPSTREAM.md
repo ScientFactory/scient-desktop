@@ -724,6 +724,36 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`8ff66fc563357110fdb79a0f7e3a64530b70fe29` is recorded in
+[the 2026-11-23 25440f5bd5 receipt](docs/internals/t3-upstream-sync-20261123-25440f5bd5.md).
+Literal merge `f1092cfee955108534019e0bf1a5c6ac42a301d7` has owned base
+`b753d506f601e1a5f26a2e7287e0fa0cc4361726` and the frozen official target as parents, retaining
+the 48 official commits after `25440f5bd5`. T3's durable workflows stay off as shipped and agent
+feedback stays off in Scient; large files load in full in the file preview and a new thread opens
+its draft at once. T3's migrations 108-110 are Scient's 112-114. Release remains separate.
+
+The previous committed alignment through
+`25440f5bd5050e262bab4a01b21895f52476e3b7` is recorded in
+[the 2026-11-22 15d945faef receipt](docs/internals/t3-upstream-sync-20261122-15d945faef.md).
+Literal merge `d4b67d21b8e98b1965bb99f8b24b731fc6fbc6b2` has owned base
+`c7bbc0469f37c421ed2fe86fd917a55c0f68341c` and the frozen official target as parents, retaining
+the 96 official commits after `15d945faef`. Chat Markdown moves onto T3's Words renderer with
+Scient's math, direction, image cards, diagrams and citations carried over; sends wait for
+compressing images and survive a dropped connection; sidebar cards show the machine. T3's
+migrations 106 and 107 are Scient's 110 and 111. The alignment is Scient PR #1074. Release
+remains separate.
+
+An earlier committed alignment through
+`15d945faef4c14099ba3d82bcdb84e91b5a3c3cd` is recorded in
+[the 2026-11-22 c1464d6774 receipt](docs/internals/t3-upstream-sync-20261122-c1464d6774.md).
+Literal merge `c9d735b520b813fbdf3b8da35d8bcaae769a1649` has owned base
+`f1bfa5622ea6f2d08c6b203cb04ca7304acab19a` and the frozen official target as parents, retaining
+the 87 official commits after `c1464d6774`. The range is fixes and speed-ups: slash commands wait
+during a turn, dictation after a thread switch reaches its thread, cleaner office text, fewer Git
+reads, and one `T3CODE_FEATURE_FLAGS` list. Scient for GitHub stays the default app sign-in and
+Secrets stays hidden. The alignment is Scient PR #1065. Release remains separate.
+
+An earlier committed alignment through
 `c1464d6774cf4c690aba3fb20b8094a35396d130` is recorded in
 [the 2026-11-21 c5514042ad receipt](docs/internals/t3-upstream-sync-20261121-c5514042ad.md).
 Literal merge `7682072b3125ea5850eb816349a405d801e8c0a8` has owned base
@@ -734,7 +764,7 @@ HTML for chat tables and Duplicate and Reload for browser tabs, and moves to Eff
 folders go through Scient's guarded cleanup and rewind; New thread keeps Scient's project picker.
 The alignment is Scient PR #1051. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `c5514042adfb2cb2323c75b449ffd5e950c6a40b` is recorded in
 [the 2026-11-21 f2d4df0367 receipt](docs/internals/t3-upstream-sync-20261121-f2d4df0367.md).
 Literal merge `649f43e495936493337c6091b430a807ba01e7e1` has owned base
@@ -1789,10 +1819,12 @@ generation runner. Retain these narrow mounts without forking the native engine.
 Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
 and targets outside the qualified native set; removing a fallback requires native
 replacement qualification, not merely an available Google archive. T3 now installs Google's
-native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release as the offline
-floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
-native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
-qualification first.
+native CLI and dropped its pinned ACP release. Scient installs the CLI too, but from its own
+catalog's `antigravity` key (1.5.12 and later, through T3's CLI install path), and keeps the
+paired release as the floor where no qualified CLI is listed
+(`scient/providerLifecycle/antigravityAcpCatalog.ts`); T3's own CLI channel runs only where no
+catalog is supplied. `startRelease` treats the CLI as newer than any paired release, and
+`prepareAntigravityProfile` takes `nativePlugins` so a CLI launch skips Scient's projection.
 T3 also removed harness support and rates Antigravity below 1.5 broken; Scient's manifest keeps
 1.4.5 supported, and the driver, prompt and permission seams keep the harness path (its own
 `yolo`/`auto_edit` modes, video linking, runtime-policy approvals when no native Auto is
@@ -2606,6 +2638,23 @@ stuck, including when the setup ahead of it fails later. `Orchestrator.ts` only 
 predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWorkspace.test.ts`.
 T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
 equal change, use its version and delete the blocks, modules and tests.
+
+## MCP sign-in from a chat notice
+
+T3's #39921 signs an agent's MCP server in from its notice and finishes only with a pasted callback
+address. Scient makes `ProviderMcpSignInCompleteInput.callbackUrl` optional: without it, Codex's
+`complete` waits up to five minutes for `mcpServer/oauthLogin/completed`, Claude's succeeds only
+when the server is already connected, and `McpSignInAction` starts that wait when it opens the
+page. `McpSignIn` refreshes the provider instance after a sign-in so Extensions updates. All edits
+carry SCIENT-FORK markers; tests are `CodexAdapterV2.mcpSignIn.scient.test.ts`,
+`McpSignIn.scient.test.ts` and `McpSignInAction.scient.browser.test.tsx`. The same change suits T3
+and can be offered upstream; when T3 finishes local sign-ins itself, take its version and delete
+the blocks and tests.
+
+Antigravity plugin sign-in reuses that notice slot with a Scient `pluginSignIn` field on
+`system_notice`, Scient's `scient.pluginSignIn.open` RPC, the ACP flavor hooks `scientToolNotice`
+and `scientPluginSignIn`, and `ProviderAdapterV2SessionRuntime.scientPluginSignIn`; see the Antigravity
+section of `docs/internals/scient-extensions.md`.
 
 ## Security policy
 

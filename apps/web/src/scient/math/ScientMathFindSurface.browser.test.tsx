@@ -63,7 +63,10 @@ it("reveals a selected formula source in Chromium while preserving KaTeX and one
   );
   const formula = _fixture.host.querySelector(".katex");
   expect(formula).not.toBeNull();
-  const source = _fixture.host.querySelector<HTMLElement>("[data-thread-find-canonical-source]")!;
+  // The source segmentation loads once Find opens.
+  const source = await vi.waitUntil(() =>
+    _fixture.host!.querySelector<HTMLElement>("[data-thread-find-canonical-source]"),
+  );
   expect(source.hidden).toBe(true);
 
   await _fixture.root0.rerender(<Probe query="browser_find" />);

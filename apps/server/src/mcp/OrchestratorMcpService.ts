@@ -1,6 +1,7 @@
 import {
   CommandId,
   type RunId,
+  idleCompactionOf,
   isProviderAvailable,
   MessageId,
   type ModelSelection,
@@ -176,6 +177,7 @@ const TASK_WAKE_EVENTS = [
   { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
+const MAX_LISTED_TASKS = 10;
 const DEFAULT_THREAD_LIST_LIMIT = 10;
 const DEFAULT_THREAD_READ_LIMIT = 10;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
@@ -1254,6 +1256,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
     case "secret_request":
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
+    case "feedback_request":
+      return `Asked the user to approve a ${item.preview.kind} report about ${item.preview.subject} for the T3 team: ${item.feedbackStatus}.`;
     case "link_request":
       return item.linkStatus === "linked"
         ? `Linked ${item.linkedLabel ?? item.url ?? "an environment"} (${item.linkedAccess}).`
@@ -1302,7 +1306,8 @@ function timelineItem(input: {
     ...(input.row.item.type === "subagent" ? { subagentId: input.row.item.subagentId } : {}),
     runId: input.row.item.runId,
     messageId,
-    createdBy: message?.createdBy ?? null,
+    createdBy:
+      message === undefined ? null : idleCompactionOf(message) ? "system" : message.createdBy,
     creationSource: message?.creationSource ?? null,
     ...(message?.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
     type: input.row.item.type,
@@ -2005,48 +2010,74 @@ const make = Effect.gen(function* () {
 
   // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
   /** Ownership never moves: the hint only says where a readable task lives. */
-  const taskNotFound = Effect.fn("OrchestratorMcpService.taskNotFound")(function* (
-    scope: McpThreadInvocationScope,
-    taskId: NodeId,
-  ) {
-    const message = `Delegated task ${taskId} does not belong to thread ${scope.thread.threadId}.`;
-    const owner =
-      projectionSql === undefined
-        ? undefined
-        : yield* findDelegatedTaskOwner(projectionSql, taskId);
-    if (owner === undefined || owner.threadId === scope.thread.threadId)
-      return yield* failure("task_not_found", message);
-    const shellOrNull = (threadId: ThreadId) =>
-      threadManagement.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
-    const caller = yield* shellOrNull(scope.thread.threadId);
-    // Owner and child move between projects independently, so each is checked on its own.
-    const readable = Effect.fn("OrchestratorMcpService.taskNotFound.readable")(function* (
-      threadId: ThreadId | null,
-    ) {
-      if (caller === null || threadId === null) return undefined;
-      const shell = yield* shellOrNull(threadId);
-      return shell !== null && shell.deletedAt === null && shell.projectId === caller.projectId
-        ? shell
-        : undefined;
-    });
-    const ownerShell = yield* readable(owner.threadId);
-    if (ownerShell === undefined) return yield* failure("task_not_found", message);
-    const childShell = yield* readable(owner.childThreadId);
-    return yield* failure(
-      "task_not_found",
-      message +
-        delegatedTaskOwnerHint(
-          threadLinkFor(scope, ownerShell.id, ownerShell.title),
-          childShell === undefined
-            ? undefined
-            : threadLinkFor(scope, childShell.id, childShell.title),
-        ),
-    );
-  });
+  const delegatedTaskOwnerHintFor = Effect.fn("OrchestratorMcpService.delegatedTaskOwnerHintFor")(
+    function* (scope: McpThreadInvocationScope, taskId: NodeId) {
+      const owner =
+        projectionSql === undefined
+          ? undefined
+          : yield* findDelegatedTaskOwner(projectionSql, taskId);
+      if (owner === undefined || owner.threadId === scope.thread.threadId) return "";
+      const shellOrNull = (threadId: ThreadId) =>
+        threadManagement.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+      const caller = yield* shellOrNull(scope.thread.threadId);
+      // Owner and child move between projects independently, so each is checked on its own.
+      const readable = Effect.fn("OrchestratorMcpService.taskNotFound.readable")(function* (
+        threadId: ThreadId | null,
+      ) {
+        if (caller === null || threadId === null) return undefined;
+        const shell = yield* shellOrNull(threadId);
+        return shell !== null && shell.deletedAt === null && shell.projectId === caller.projectId
+          ? shell
+          : undefined;
+      });
+      const ownerShell = yield* readable(owner.threadId);
+      if (ownerShell === undefined) return "";
+      const childShell = yield* readable(owner.childThreadId);
+      return delegatedTaskOwnerHint(
+        threadLinkFor(scope, ownerShell.id, ownerShell.title),
+        childShell === undefined
+          ? undefined
+          : threadLinkFor(scope, childShell.id, childShell.title),
+      );
+    },
+  );
   // SCIENT-FORK:END
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
+
+  const taskNotFound = Effect.fn("OrchestratorMcpService.taskNotFound")(function* (
+    scope: McpThreadInvocationScope,
+    taskId: NodeId,
+  ): Effect.fn.Return<never, OrchestratorMcpFailure> {
+    const { subagents } = yield* loadThreadRecords(scope.thread.threadId, ["subagents"], {
+      omitSettledSubagents: true,
+    });
+    const open = subagents.filter(
+      (task) =>
+        task.origin === "app_owned" &&
+        (task.childThreadId !== null || task.remoteChild !== undefined),
+    );
+    const listed = open
+      .slice(0, MAX_LISTED_TASKS)
+      .map((task) => (task.title ? `${task.id} (${task.title})` : task.id))
+      .join(", ");
+    const more =
+      open.length > MAX_LISTED_TASKS ? `, and ${open.length - MAX_LISTED_TASKS} more` : "";
+    // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
+    const ownerHint = yield* delegatedTaskOwnerHintFor(scope, taskId);
+    // SCIENT-FORK:END
+    return yield* failure(
+      "task_not_found",
+      `No delegated task with id ${taskId} exists on thread ${scope.thread.threadId}. ` +
+        (open.length === 0
+          ? "This thread has no open delegated tasks."
+          : `Open delegated tasks on this thread: ${listed}${more}.`) +
+        // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
+        ownerHint,
+      // SCIENT-FORK:END
+    );
+  });
 
   const readTask = Effect.fn("OrchestratorMcpService.readTask")(function* (
     scope: McpThreadInvocationScope,
@@ -2063,9 +2094,7 @@ const make = Effect.gen(function* () {
         candidate.threadId === scope.thread.threadId,
     );
     if (task === undefined || (task.childThreadId === null && task.remoteChild === undefined)) {
-      // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
       return yield* taskNotFound(scope, taskId);
-      // SCIENT-FORK:END
     }
     if (task.childThreadId === null) {
       return yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);
@@ -2757,6 +2786,7 @@ const make = Effect.gen(function* () {
             : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
+          requireExisting: true,
           title: input.title ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
           enabled: input.enabled ?? existing.enabled,
@@ -3268,10 +3298,7 @@ const make = Effect.gen(function* () {
             task.remoteChild !== undefined,
         );
         if (remoteTask === undefined) {
-          return yield* failure(
-            "task_not_found",
-            `Delegated task ${input.taskId} does not belong to thread ${scope.thread.threadId}.`,
-          );
+          return yield* taskNotFound(scope, input.taskId);
         }
         return yield* remoteDelegation.cancel(scope, remoteTask, input);
       }
@@ -3559,6 +3586,7 @@ const make = Effect.gen(function* () {
                   threadId,
                   projectId: parent.thread.projectId,
                   title,
+                  ...(request.title?.trim() ? { titleRenamed: true } : {}),
                   modelSelection: target.modelSelection,
                   runtimeMode,
                   interactionMode,
@@ -3987,7 +4015,11 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
-      const taskId = result.run?.delegatedTaskId;
+      // A task's first run carries no task id; the child's untagged runs continue that task
+      // until it has a result.
+      const taskId =
+        result.run?.delegatedTaskId ??
+        (target.thread.forkedFrom?.type === "node" ? target.thread.forkedFrom.nodeId : undefined);
       const ownedTask =
         result.timedOut &&
         status !== "waiting" &&
@@ -3999,7 +4031,8 @@ const make = Effect.gen(function* () {
             task.origin === "app_owned" &&
             task.threadId === parent.thread.id &&
             task.childThreadId === input.threadId &&
-            task.completionDelivery?.state !== "disposed",
+            task.completionDelivery?.state !== "disposed" &&
+            (result.run?.delegatedTaskId !== undefined || task.result === null),
         );
       // A child waiting on a question or approval needs an answer, not a wake.
       const childRequests = ownedTask
@@ -4008,7 +4041,10 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure))).runtimeRequests
         : [];
       const wakesCaller =
-        ownedTask && !childRequests.some((request) => request.status === "pending");
+        ownedTask &&
+        !childRequests.some(
+          (request) => request.status === "pending" && request.responseCapability.type === "live",
+        );
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,

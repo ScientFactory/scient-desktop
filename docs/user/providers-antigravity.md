@@ -97,12 +97,21 @@ On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
 variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
 path; keep `localharness_external.exe` beside that executable.
 
+On those targets Scient installs Google's Antigravity CLI (`agy`), which serves
+ACP itself and runs the plugins you added to Antigravity in your Scient chats.
+If Scient cannot reach its release list before the first install, it installs
+the older paired ACP runtime instead, which offers only your plugins' skills.
+
 Scient's update catalog treats official ACP and legacy `agy` as separate
 release families. When a newer ACP release has passed download, archive,
 native-startup, activation, and removal qualification on its supported target,
 **Update Antigravity** appears for managed ACP installations. An update keeps
 the previous generation available while active sessions finish. It never
 mutates a system or custom installation.
+
+A managed installation of the paired runtime is offered the CLI as its update.
+The CLI keeps its own sign-in, so with a Google account you sign in to Google
+once more after updating.
 
 **Repair Antigravity** stages and validates a complete replacement before it
 touches a damaged managed generation. A failed download or verification leaves
@@ -191,6 +200,20 @@ stays active while its parent turn runs, then becomes idle; launch errors remain
 visible. Google does not expose individual child status, names, models, usage,
 or reply ownership through ACP. A batch is not a separate controllable thread,
 and its launch description is not a child result.
+
+## Sign in to a plugin
+
+When an Antigravity plugin such as Gmail needs you to sign in, its failed call adds a notice with
+**Sign in to Gmail**. Choose it to open Google's sign-in page in your browser and approve access;
+the running agent receives the approval itself. Then ask the agent to try again. The notice shows
+**Signed in** once the plugin's next call works, or after you choose **I've signed in**.
+
+The sign-in page works only while the agent that asked for it is still running, for up to ten
+minutes, and only from the Scient desktop app on the computer that runs the agent. If the notice
+says to ask the agent to try again, send a message so the plugin asks for a new sign-in. Scient
+keeps sign-in links out of the conversation, and never reads or stores the plugin's credentials.
+Only Google's plugins that sign in through their own command offer the button for now. Signing in
+needs permission to manage providers.
 
 ## Run a native goal
 

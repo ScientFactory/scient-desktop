@@ -1,5 +1,6 @@
 import { EnvironmentId, ThreadId, type FileCitation } from "@t3tools/contracts";
 import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { expect, it } from "vite-plus/test";
 
 import { queuePreviewText } from "./queuePreviewText";
@@ -28,5 +29,11 @@ it("shows a quoted file selection as its text and comment", () => {
   };
   expect(queuePreviewText(`Before ${serializeComposerCitation(quote)} after`)).toBe(
     "Before the claim\nComment: Check it after",
+  );
+});
+
+it("shows an @-file mention by its file name", () => {
+  expect(queuePreviewText(`Review ${serializeComposerFileLink("src/foo.ts")} now`)).toBe(
+    "Review foo.ts now",
   );
 });

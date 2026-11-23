@@ -16,7 +16,6 @@ import {
   type ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
@@ -61,6 +60,14 @@ import {
   prepareAntigravityProfile,
 } from "./antigravityAuthSupport.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
+// SCIENT-FORK:START — the catalog's release may be the paired server or the agy CLI.
+import {
+  antigravityReleaseId,
+  antigravityReleaseIdentity,
+  supersedesAntigravityRelease,
+  type AntigravityManagedRelease,
+} from "../scient/providerLifecycle/antigravityRuntimeRelease.ts";
+// SCIENT-FORK:END
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
@@ -130,9 +137,9 @@ export interface AntigravityExecutable {
 
 interface AntigravityInstallationService {
   readonly managedDirectory: string;
-  readonly latestRelease: Effect.Effect<AntigravityReleaseAsset | null>;
+  readonly latestRelease: Effect.Effect<AntigravityManagedRelease | null>;
   /** Bounded catalog refresh for explicit install, update, or repair. */
-  readonly refreshLatestRelease: Effect.Effect<AntigravityReleaseAsset | null>;
+  readonly refreshLatestRelease: Effect.Effect<AntigravityManagedRelease | null>;
   readonly resolve: (
     binaryPath?: string,
     environment?: NodeJS.ProcessEnv,
@@ -148,7 +155,7 @@ interface AntigravityInstallationService {
   readonly start: Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
   /** Install the exact locally-qualified release the user reviewed. */
   readonly startRelease: (
-    asset: AntigravityReleaseAsset,
+    asset: AntigravityManagedRelease,
   ) => Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
   readonly cancel: (
     operationId: string,
@@ -185,8 +192,8 @@ export interface AntigravityInstallationOptions {
   readonly baseDir: string;
   readonly releaseAsset?: AntigravityReleaseAsset | AntigravityCliReleaseAsset | null;
   // SCIENT-FORK:START — Scient's qualified catalog supplies the release to install.
-  readonly latestRelease?: Effect.Effect<AntigravityReleaseAsset | null>;
-  readonly refreshLatestRelease?: Effect.Effect<AntigravityReleaseAsset | null>;
+  readonly latestRelease?: Effect.Effect<AntigravityManagedRelease | null>;
+  readonly refreshLatestRelease?: Effect.Effect<AntigravityManagedRelease | null>;
   // SCIENT-FORK:END
   readonly updateChecksEnabled?: Effect.Effect<boolean>;
   readonly validate?: (
@@ -1650,13 +1657,14 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   }).pipe(Effect.mapError(wrapFailure("start", "Could not start the Antigravity installation.")));
 
   // SCIENT-FORK:START — install the exact locally-qualified release the user reviewed.
-  const startRelease = (asset: AntigravityReleaseAsset) =>
+  const startRelease = (asset: AntigravityManagedRelease) =>
     gate
       .withPermit(
         Effect.gen(function* () {
           const current = yield* SubscriptionRef.get(state);
+          const releaseId = antigravityReleaseId(asset);
           if (isRunning(current)) {
-            if (current.version === asset.version && running?.releaseId === asset.sha256)
+            if (current.version === asset.version && running?.releaseId === releaseId)
               return current;
             return yield* installationError(
               "start",
@@ -1674,12 +1682,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
           if (
             Option.isSome(activeRecord) &&
-            asset.registryVersion &&
-            activeRecord.value.registryVersion &&
-            isManagedRuntimeUpdate({
-              provider: "antigravityAcp",
-              current: asset.registryVersion,
-              candidate: activeRecord.value.registryVersion,
+            supersedesAntigravityRelease(antigravityReleaseIdentity(asset), {
+              cli: activeRecord.value.harness === null,
+              version: activeRecord.value.version,
+              registryVersion: activeRecord.value.registryVersion,
             })
           ) {
             return yield* installationError(
@@ -1693,7 +1699,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             operationId,
             phase: "downloading",
             downloadedBytes: 0,
-            totalBytes: asset.archiveBytes,
+            totalBytes: "sha256" in asset ? asset.archiveBytes : null,
             version: asset.version,
             installedVersion: current.installedVersion,
             canRemove: current.canRemove,
@@ -1728,7 +1734,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             ),
           );
           const fiber = yield* Effect.forkIn(Effect.interruptible(work), serviceScope);
-          running = { operationId, releaseId: asset.sha256, fiber };
+          running = { operationId, releaseId, fiber };
           return next;
         }).pipe(Effect.uninterruptible),
       )

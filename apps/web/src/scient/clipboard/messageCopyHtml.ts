@@ -2,24 +2,27 @@
  * Render clipboard HTML from Markdown: virtualized rows may be unmounted and collapsed details
  * absent from the DOM. Reuse displayed direction when mounted so RTL pastes match the message.
  */
-import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArtifactTemplates";
-import { artifactTemplateFromHastProperties } from "@t3tools/shared/codexMarkdownDirectives";
+import {
+  artifactTemplateFromHastProperties,
+  codexArtifactTemplatePresentationLabel,
+} from "@t3tools/shared/codexArtifactTemplates";
+import type { Element as HastElement, Root } from "hast";
+import { toJsxRuntime, type Components } from "hast-util-to-jsx-runtime";
 import { Children, createElement, type ComponentProps } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 
 import { getClientSettings } from "~/hooks/useSettings";
 import { renderedMarkdownClipboardHtml } from "../../markdown-clipboard";
 import { resolveMarkdownDirection, type FixedContentDirection } from "../bidi/contentDirection";
-import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
-import { isScientMathCodeClassName } from "../math/remarkScientMath";
+import { isScientMathCodeClassName } from "../math/scientWordsMath";
 import { mathMarkdownCopySource } from "../math/ScientMath";
 import {
   chatMarkdownAlertLabel,
   chatMarkdownCodeBoxDirection,
+  chatMarkdownHast,
   chatMarkdownNodeText,
-  chatMarkdownPipeline,
 } from "./chatMarkdownPipeline";
 import { hasStrongRtl } from "./clipboardDirection";
 import { MESSAGE_COPY_ATTRIBUTE } from "./messageCopyMarker";
@@ -72,7 +75,7 @@ interface MessageMarkdownProfile {
  * metadata, math carries chat's copy source, alerts carry chat's title, and
  * artifact templates name themselves as chat's copy does.
  */
-function clipboardComponents(direction: FixedContentDirection): Components {
+function clipboardComponents(direction: FixedContentDirection): Partial<Components> {
   const mathSpan = (tex: string, displayMode: boolean) =>
     createElement("span", {
       className: displayMode ? "scient-math-display" : "scient-math-inline",
@@ -112,6 +115,15 @@ function clipboardComponents(direction: FixedContentDirection): Components {
   };
 }
 
+/** Image sources never load, even in the inert document. */
+function dropImageSources(node: Root | HastElement): void {
+  for (const child of node.children) {
+    if (child.type !== "element") continue;
+    if ("src" in child.properties) child.properties.src = "";
+    dropImageSources(child);
+  }
+}
+
 /**
  * Renders Markdown with chat's pipeline into an inert document: nothing in it
  * loads, runs, or reaches the visible timeline. Image sources are dropped.
@@ -122,7 +134,8 @@ function renderMarkdown(
   direction: FixedContentDirection,
   requestedDirection: ReturnType<typeof getClientSettings>["contentDirection"],
 ): Element {
-  const pipeline = chatMarkdownPipeline({ text: markdown, ...profile });
+  const tree = chatMarkdownHast({ text: markdown, ...profile, direction, requestedDirection });
+  dropImageSources(tree);
   const inert = document.implementation.createHTMLDocument("");
   const host = inert.createElement("div");
   inert.body.append(host);
@@ -130,20 +143,15 @@ function renderMarkdown(
   try {
     flushSync(() =>
       root.render(
-        createElement(
-          ReactMarkdown,
-          {
-            remarkPlugins: pipeline.remarkPlugins,
-            rehypePlugins: [
-              ...pipeline.rehypePlugins,
-              [rehypeScientBidi, { direction, requestedDirection }],
-            ],
-            skipHtml: false,
-            components: clipboardComponents(direction),
-            urlTransform: (url, key) => (key === "src" ? "" : defaultUrlTransform(url)),
-          },
-          pipeline.text,
-        ),
+        toJsxRuntime(tree, {
+          Fragment,
+          jsx,
+          jsxs,
+          components: clipboardComponents(direction),
+          ignoreInvalidStyle: true,
+          passKeys: true,
+          passNode: true,
+        }),
       ),
     );
     const content = inert.createElement("div");

@@ -147,6 +147,8 @@ const makeHarness = Effect.fn("makeScientIssuesHarness")(function* () {
     }),
     Layer.mock(IssueService.IssueService)({
       detail: (ref) => record(`detail:${ref.projectId}`).pipe(Effect.as(detail(ref.projectId))),
+      linkMetadata: (ref) =>
+        record(`linkMetadata:${ref.projectId}`).pipe(Effect.as(detail(ref.projectId))),
       comment: (input) => record(`comment:${input.projectId}`),
       projectScope: (projectId) =>
         Effect.succeed({ projectId, tracker: GITHUB, host: "github.com", scope: "x/repo" }),
@@ -228,7 +230,7 @@ describe("issue tools keep a thread credential in its own project", () => {
       yield* harness.call("link_issue", { key: "7" });
       expect(yield* Ref.get(harness.trackerCalls)).toEqual([
         `comment:${OWN_PROJECT}`,
-        `detail:${OWN_PROJECT}`,
+        `linkMetadata:${OWN_PROJECT}`,
         `link:${OWN_THREAD}`,
       ]);
     }),

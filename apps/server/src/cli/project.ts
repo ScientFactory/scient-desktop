@@ -19,6 +19,8 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
+
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -244,6 +246,8 @@ const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.lay
     ),
     // Built after acquireServerOwnership; layerCliConfig would contend with this process's own lock.
     Layer.provideMerge(SqlitePersistence.layerConfig),
+    // Source control drivers read T3CODE_FEATURE_FLAGS, as in the server.
+    Layer.provideMerge(FeatureFlags.layer),
   );
 
 const normalizeWorkspaceRootForProjectCommand = Effect.fn(

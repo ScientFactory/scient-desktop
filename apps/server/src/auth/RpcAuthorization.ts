@@ -80,6 +80,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
   [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
   [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
+  // SCIENT-FORK: an Antigravity plugin sign-in takes the same grant as an MCP sign-in.
+  [WS_METHODS.pluginSignInOpen]: AuthProvidersManageScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptImportProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptHandoffSubscribe]: AuthProvidersManageScope,
@@ -250,7 +252,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.voiceCorrectTranscript]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsCounts]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsGet]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsGetDefinition]: AuthFilesystemReadScope,
   [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,

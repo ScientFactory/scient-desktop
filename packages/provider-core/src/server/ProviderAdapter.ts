@@ -1,5 +1,6 @@
 import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
+  type AgentFeedbackMode,
   ChatAttachment,
   CheckpointId,
   MessageId,
@@ -8,6 +9,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderSession,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
@@ -52,6 +54,10 @@ export * from "./scientTextSnapshots.ts";
 // SCIENT-FORK:START — Scient Agent live voice lives in a Scient module.
 import type { ScientLiveVoiceRuntime } from "./scientLiveVoice.ts";
 export * from "./scientLiveVoice.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in lives in a Scient module.
+import type { ScientPluginSignInRuntime } from "./scientPluginSignIn.ts";
+export * from "./scientPluginSignIn.ts";
 // SCIENT-FORK:END
 
 export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
@@ -110,6 +116,17 @@ export const ProviderAdapterV2Event = Schema.Union([
     sessionScoped: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
   }),
+  /** The agent changed selected options itself, such as leaving plan mode once its plan ran. */
+  Schema.Struct({
+    type: Schema.Literal("thread_model_selection.updated"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    instanceId: ProviderInstanceId,
+    /** Applies only where the thread still holds `from`, so newer user picks win. */
+    changes: Schema.Array(
+      Schema.Struct({ id: Schema.String, from: Schema.String, to: Schema.String }),
+    ),
+  }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),
     driver: ProviderDriverKind,
@@ -157,6 +174,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     providerTurnId: ProviderTurnId,
     pending: Schema.Boolean,
   }),
+  // The query process exited under a live session before this work reported back.
+  Schema.Struct({
+    type: Schema.Literal("background_work.lost"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    tasks: Schema.Array(OrchestrationV2PendingBackgroundTask),
+  }),
   /** Unpersisted deltas go only to clients showing the row; final output arrives in turn_item.updated. */
   Schema.Struct({
     type: Schema.Literal("command_output.delta"),
@@ -194,6 +219,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     failure: Schema.Null,
     reason: Schema.optional(Schema.String),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    /** The provider dropped this turn's request before persisting it to native history. */
+    promptDropped: Schema.optional(Schema.Literal(true)),
     retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
   Schema.Struct({
@@ -208,6 +235,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     retry: Schema.optional(OrchestrationV2ProviderRetry),
     retryStartedAt: Schema.optional(Schema.DateTimeUtc),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    /** The provider dropped this turn's request before persisting it to native history. */
+    promptDropped: Schema.optional(Schema.Literal(true)),
     /** Child turns outlive root failure and report their own terminals; otherwise open children settle. */
     childTurnsContinue: Schema.optional(Schema.Literal(true)),
     retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
@@ -554,6 +583,7 @@ export interface ProviderAdapterV2EnsureThreadInput {
 }
 
 export interface ProviderAdapterV2TurnInput {
+  readonly agentFeedback?: AgentFeedbackMode;
   readonly appThread: OrchestrationV2AppThread;
   readonly threadId: ThreadId;
   readonly runId: RunId;
@@ -737,7 +767,9 @@ export interface ProviderAdapterV2McpSignIn {
   readonly complete: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;
-    readonly callbackUrl: string;
+    // SCIENT-FORK:START — undefined waits, bounded, for the agent's own report that it finished.
+    readonly callbackUrl: string | undefined;
+    // SCIENT-FORK:END
   }) => Effect.Effect<void, ProviderMcpSignInError | ProviderAdapterV2Error>;
 }
 
@@ -929,6 +961,9 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
   readonly mcpApps?: ProviderAdapterV2McpApps;
   // SCIENT-FORK:START — a spoken conversation with the running session; absent means none.
   readonly liveVoice?: ScientLiveVoiceRuntime;
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — opens a plugin sign-in the session's notice offered; absent means none.
+  readonly scientPluginSignIn?: ScientPluginSignInRuntime;
   // SCIENT-FORK:END
   /** Absent when the agent has no way to sign an MCP server in. */
   readonly mcpSignIn?: ProviderAdapterV2McpSignIn;

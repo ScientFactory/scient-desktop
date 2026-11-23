@@ -6,7 +6,6 @@ import {
   CommandId,
   CheckpointId,
   CheckpointScopeId,
-  checkpointSupportsRewind,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
   type ScientThreadForkOptions,
@@ -345,28 +344,12 @@ const MAX_LOST_TRANSPORT_RESENDS = 2;
 // alone would leave the send pending forever.
 const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
 
-const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
-  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
-  resendAfterSocketLoss: boolean,
-) {
+const resendAfterSocketLoss = Effect.fn("EnvironmentCommands.resendAfterSocketLoss")(function* <
+  A,
+  E,
+  R,
+>(attempt: Effect.Effect<A, E, R>) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  const attempt = dispatch(command).pipe(
-    Effect.timeoutOrElse({
-      duration: MESSAGE_DISPATCH_TIMEOUT,
-      orElse: () =>
-        Effect.fail(
-          new EnvironmentRpcUnavailableError({
-            environmentId: supervisor.target.environmentId,
-            ...translatableMessage(
-              msg("{host} did not confirm the message within 60 seconds.", {
-                host: supervisor.target.label,
-              }),
-            ),
-          }),
-        ),
-    }),
-  );
-  if (!resendAfterSocketLoss) return yield* attempt;
   for (let resends = 0; ; resends += 1) {
     const attemptSession = yield* SubscriptionRef.get(supervisor.session);
     const exit = yield* Effect.exit(attempt);
@@ -393,6 +376,30 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     );
     if (Option.isNone(replacement)) return yield* exit;
   }
+});
+
+const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
+  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+  resend: boolean,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const attempt = dispatch(command).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
+          }),
+        ),
+    }),
+  );
+  return yield* resend ? resendAfterSocketLoss(attempt) : attempt;
 });
 
 // SCIENT-FORK:START
@@ -874,6 +881,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     input.message.attachments,
     attachments,
   );
+  const resend = input.resendAfterSocketLoss ?? true;
   const bootstrap = input.bootstrap?.createThread;
   const prepareWorktree = input.bootstrap?.prepareWorktree;
   if (bootstrap !== undefined || prepareWorktree !== undefined) {
@@ -905,7 +913,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                 ? {}
                 : { branch: bootstrap.branch }),
             };
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+    const launch = request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
@@ -932,10 +940,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         // SCIENT-FORK:END
       },
     });
+    return yield* resend ? resendAfterSocketLoss(launch) : launch;
   }
 
   const requestedMode = input.dispatchMode ?? "auto";
-  const resendAfterSocketLoss = input.resendAfterSocketLoss ?? true;
   if (requestedMode === "start") {
     return yield* dispatchMessage(
       {
@@ -973,7 +981,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ...(input.freshContext ? { freshContext: true } : {}),
         dispatchMode: { type: "start_immediately" },
       },
-      resendAfterSocketLoss,
+      resend,
     );
   }
 
@@ -1011,7 +1019,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
       dispatchMode,
     },
-    resendAfterSocketLoss,
+    resend,
   );
 });
 
@@ -1177,8 +1185,9 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       );
     if (
       checkpoint === undefined ||
-      // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
-      !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false)
+      // Missing or failed snapshots support conversation rewind only.
+      (checkpoint.status !== "ready" &&
+        !(input.restoreFiles === false && checkpoint.status !== "stale"))
     ) {
       const target =
         input.checkpointId === undefined
@@ -1267,25 +1276,29 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
   input: ResumeThreadQueueInput,
 ) {
-  return yield* dispatch({
-    ...(input.runId === undefined
-      ? { type: "queue.resume" as const }
-      : { type: "queued-run.start" as const, runId: input.runId }),
-    commandId: yield* allocateCommandId(input),
-    threadId: input.threadId,
-  });
+  return yield* resendAfterSocketLoss(
+    dispatch({
+      ...(input.runId === undefined
+        ? { type: "queue.resume" as const }
+        : { type: "queued-run.start" as const, runId: input.runId }),
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+    }),
+  );
 });
 
 export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
   input: PromoteQueuedRunInput,
 ) {
-  return yield* dispatch({
-    type: "queued-message.promote-to-steer",
-    commandId: yield* allocateCommandId(input),
-    threadId: input.threadId,
-    queuedRunId: input.queuedRunId,
-    targetRunId: input.targetRunId,
-  });
+  return yield* resendAfterSocketLoss(
+    dispatch({
+      type: "queued-message.promote-to-steer",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      queuedRunId: input.queuedRunId,
+      targetRunId: input.targetRunId,
+    }),
+  );
 });
 
 // SCIENT-FORK:START — the server resolves the boundary and allocates the title. A

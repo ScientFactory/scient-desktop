@@ -42,6 +42,19 @@ export const scientAgentHostCommands = (stdout: string): ReadonlyArray<string> =
   return info._tag === "Some" ? info.value.hostCommands : [];
 };
 
+const decodeEnableSources = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ enableSources: Schema.Array(Schema.String) })),
+);
+
+/**
+ * The opt-in discovery sources this executable can load (`claude-plugins`, `codex-plugins`). An
+ * older one lists none.
+ */
+export const scientAgentEnableSources = (stdout: string): ReadonlyArray<string> => {
+  const info = decodeEnableSources(stdout.trim());
+  return info._tag === "Some" ? info.value.enableSources : [];
+};
+
 const SCIENT_AGENT_UPSTREAM = "oh-my-pi";
 /**
  * A release version: three numbers without leading zeros, and an optional

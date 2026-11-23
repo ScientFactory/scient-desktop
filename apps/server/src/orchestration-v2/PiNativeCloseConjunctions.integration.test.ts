@@ -522,7 +522,16 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
               stored.event.payload.status === "stopped",
           );
           assert.exists(sessionStopped);
-          assert.isBelow(rootTerminals[0]!.sequence, sessionStopped!.sequence);
+          // The run's failure and the session's stop have separate writers; neither orders the other.
+          assert.equal(
+            after.stored.findLast(
+              (stored) =>
+                stored.event.type === "provider-session.updated" &&
+                stored.event.payload.id === session.id,
+            ),
+            sessionStopped,
+            "Nothing may reopen the closed native session",
+          );
           assert.isTrue(Option.isNone(yield* manager.getCloseState!(session.id)));
           if (scenario.pending) {
             const late = after.wire
@@ -570,7 +579,15 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
                   row.event.payload.status === "stopped",
               );
               assert.exists(stopped);
-              assert.isBelow(siblingTerminals[0]!.sequence, stopped!.sequence);
+              assert.equal(
+                siblingEvents.findLast(
+                  (row) =>
+                    row.event.type === "provider-session.updated" &&
+                    row.event.payload.id === siblingSessionId,
+                ),
+                stopped,
+                "Nothing may reopen the closed sibling session",
+              );
             }
             if (scenario.all) {
               const siblingExit = yield* Deferred.await(processes[1]!.exit).pipe(

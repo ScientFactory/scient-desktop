@@ -6,8 +6,9 @@ app, while an SSH or manually managed environment may run its own Scient server.
 
 ## Update the desktop app
 
-Packaged Scient releases check their selected update track after startup and
-periodically while the app is open. When a release is available, Scient
+Packaged Scient releases check their selected update track shortly after
+startup, every hour while the app is open, and shortly after the computer wakes
+from sleep. When a release is available, Scient
 downloads it in the background; the update control stays quiet meanwhile, and
 its tooltip shows the download. Installing is your choice:
 

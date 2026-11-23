@@ -515,7 +515,17 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       source: latestSource,
       supportTier: policy.supportTier,
       target: targetLabel,
-      actions: [...policy.actions],
+      // Repair is offered only with a release to repair from.
+      actions: policy.actions.filter(
+        (action) =>
+          action !== "repair" ||
+          resolveManagedRuntimeRepairArtifact({
+            bundledArtifact,
+            artifactPolicy,
+            candidateArtifact: currentArtifact,
+            activeArtifact: latest?.activeArtifact,
+          }) !== undefined,
+      ),
       managedVersion: latestManagedVersion,
       availableManagedVersion: policy.actions.includes("update")
         ? (availableArtifact?.version ?? null)

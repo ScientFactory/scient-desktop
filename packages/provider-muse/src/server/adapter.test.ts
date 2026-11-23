@@ -399,7 +399,8 @@ vi.mock("node:fs/promises", { spy: true });
 describe("MuseAdapterV2", () => {
   it.effect("connects the thread's MCP credential on native start and resume", () =>
     Effect.gen(function* () {
-      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const config = {
         environmentId: EnvironmentId.make("test-environment"),
         threadId: THREAD_ID,
         providerSessionId: "test-session",
@@ -410,8 +411,9 @@ describe("MuseAdapterV2", () => {
         // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
         // SCIENT-FORK:END
-      });
+      };
       for (const nativeId of [undefined, "saved-native-session"]) {
+        yield* sessions.set(config);
         const fake = yield* makeFakeMuse();
         fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
         const harness = yield* makeHarness(fake, INSTANCE_ID, nativeId);
@@ -442,6 +444,15 @@ describe("MuseAdapterV2", () => {
           },
           { type: "text", text: "Hello Muse" },
         ]);
+        yield* fake.emit("turn/completed", { turnId: nativeTurn.commandId, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+        yield* sessions.clear(THREAD_ID);
+        yield* harness.runtime.startTurn({
+          ...(yield* turnInput(harness.providerThread, 2, harness.policy)),
+          agentFeedback: "auto",
+        });
+        const turn = yield* fake.takeCall("turn/start");
+        assert.match(JSON.stringify(turn.params.input), /t3_feedback/);
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

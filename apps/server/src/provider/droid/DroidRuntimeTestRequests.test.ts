@@ -11,6 +11,27 @@ describe("Droid runtime fixture request ownership", () => {
       { system: [{ type: "text", text: title }] },
       { system: title },
       { input: [{ role: "system", content: [{ type: "input_text", text: title }] }] },
+      // Droid on macOS sent this shape over the Responses protocol: the title prompt follows
+      // Droid's own system prompt in a developer message, and the request asks for reasoning.
+      {
+        include: ["reasoning.encrypted_content"],
+        input: [
+          {
+            role: "developer",
+            content: [
+              {
+                type: "input_text",
+                text: `You are Droid, an AI software engineering agent built by Factory.\n\n${title}`,
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: "<first_message>\nTask\n</first_message>" }],
+          },
+        ],
+        tools: [],
+      },
     ]) {
       expect(classifyDroidRuntimeTestRequest(request)).toBe("title");
     }
@@ -23,6 +44,8 @@ describe("Droid runtime fixture request ownership", () => {
       { tools: "malformed" },
       { messages: [{ role: "user", content: title }] },
       { messages: [{ role: "system", content: "Unrecognized auxiliary work" }] },
+      { input: [{ role: "developer", content: [{ type: "input_text", text: "Other work" }] }] },
+      { input: [{ role: "assistant", content: [{ type: "output_text", text: title }] }] },
     ]) {
       expect(classifyDroidRuntimeTestRequest(request)).toBe("unexpected");
     }

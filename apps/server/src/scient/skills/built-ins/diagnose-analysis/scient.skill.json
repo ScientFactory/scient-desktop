@@ -1,0 +1,13 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.diagnose-analysis",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 160,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}

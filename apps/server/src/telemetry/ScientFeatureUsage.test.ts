@@ -126,7 +126,10 @@ describe("Scient feature usage", () => {
     const analytics = Layer.succeed(AnalyticsService, {
       ...disabledAnalyticsService,
       record: (event: string, properties?: Readonly<Record<string, unknown>>) =>
-        Effect.sync(() => void recorded.push([event, properties])),
+        Effect.sync(() => {
+          recorded.push([event, properties]);
+          return true;
+        }),
     });
     const routes = Layer.mergeAll(
       HttpRouter.add("POST", "/api/scient/overleaf/v1/sync", HttpServerResponse.text("ok")),

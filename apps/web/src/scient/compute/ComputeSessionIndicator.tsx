@@ -10,7 +10,7 @@ import { Button } from "~/components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import { formatDateTimeTimestamp } from "~/timestampFormat";
+import { formatReceiptDateTime } from "~/timestampFormat";
 
 import { computeSessionOwnerLabel } from "./computeContextStore";
 import { computeRuntimeVersionLabel } from "./computeFileSurfaceModel";
@@ -73,7 +73,7 @@ export function ComputeSessionIndicator(props: {
           {props.sessions.map((session) => (
             <MenuRadioItem key={session.sessionId} value={session.sessionId} size="compact">
               {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
-              {formatDateTimeTimestamp(session.createdAt, timestampFormat)}
+              {formatReceiptDateTime(session.createdAt, timestampFormat)}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>

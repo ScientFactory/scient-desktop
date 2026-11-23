@@ -165,6 +165,8 @@ export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
+export * from "./milestones.ts";
+export * from "./workflow.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
@@ -176,6 +178,7 @@ export * from "./worktreeSetup.ts";
 
 export * from "./providerCitationPresentation.ts";
 export * from "./secretRequest.ts";
+export * from "./agentFeedback.ts";
 export * from "./secretReference.ts";
 export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";
@@ -188,6 +191,9 @@ export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:START — Scient Agent voice contracts: live calls and ChatGPT dictation (new files, no upstream edits).
 export * from "./scient/liveVoice.ts";
 export * from "./scient/chatGptDictation.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in contracts (new file, no upstream edits).
+export * from "./scient/pluginSignIn.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";

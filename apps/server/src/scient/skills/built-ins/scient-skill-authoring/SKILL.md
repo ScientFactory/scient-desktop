@@ -1,44 +1,29 @@
 ---
 name: scient-skill-authoring
-description: Create or improve skills for Scient. Use when the user asks to design, write, review, simplify, or test a skill, or decide whether recurring work should become one.
+description: Make, write, review, shorten, improve or test a Scient skill; turn a recurring workflow into reusable agent guidance. Use connector-authoring when new service access or tools are needed. A review-only request produces findings, not an installed skill.
 ---
 
-# Scient Skill Authoring
+# Scient skill authoring
 
-The goal is to create or improve a skill that gives a capable agent the minimum missing guidance needed to perform repeatable work well, while preserving the agent's judgment, the user's intent, and Scient's authority boundaries.
+Deliver the skill the user asked for, in the home they asked for, with a description that makes it load at the right time and an honest account of how it was tested. Drafted, saved, active and actually discovered are different states; say which you reached. A review-only request ends with findings.
 
-## Understand the Work
+## Write it
 
-Begin with the work, not the skill. Understand what the user is actually trying to accomplish, inspect relevant context or examples when available, and discuss uncertainty only when it would materially change the skill's purpose, scope, safety, or expected result.
+Start from the user's real task and any example they gave. A skill earns its place when it captures know-how the agent would otherwise lack, for a task that recurs. Read `references/writing-for-agents.md` before drafting or reviewing; the essentials:
 
-Identify what a capable agent would otherwise be missing and what a good result would look like. Then decide whether reusable guidance would materially improve the work. If it would not, explain that clearly to the user and recommend against creating a skill, offering a better-fitting alternative when one is apparent.
+- The **description** is how an agent finds an automatic skill: the words the user would say, one trigger per distinct case, and the nearest neighbouring skill it should not be confused with. Make a skill explicit (chosen by the user) when it is a mode the user should deliberately enter.
+- The body states the **outcome**, the steps or rules that aren't obvious, and a **finish line** the agent can check for each step ("every comment answered", not "respond to the comments").
+- Say what to do rather than what not to do; use one well-known term where a sentence would do; leave out what the model already does and what tools and Scient's instructions already say. Write plain prose that keeps related actions together.
+- Move rarely needed detail into resource files and say when to read them. Link copyrighted or restricted checklists rather than reproducing them.
 
-A skill adds reusable domain context, judgment, workflow, resources, or verification to capabilities the agent already has. It does not provide tools or authority. New integrations, persistent runtimes, or privileged capabilities belong in an add-on or another capability layer. One-off work should remain an ordinary task; always-relevant workspace context or broad personal behavior may belong in instructions or preferences.
+## Save it in the right home
 
-## Write Only What Is Missing
+Use the home the user asked for. For a personal skill, read the existing one with `scient_skill_read` before changing it, save with `scient_skill_save`, and read `status`, `active` and `message`: a name that collides with a built-in or add-on skill is saved but withheld. For a project skill, write `.scient/skills/<name>/SKILL.md` in an initialized Scient project, with the frontmatter `name` matching the folder; the folder holds `SKILL.md` and its resources, without a `scient.skill.json`, and unrelated folders stay as they are. Whether a skill is on, and whether it runs automatically or only when chosen, are Settings choices, not frontmatter.
 
-Give the skill a focused purpose. Its description is a routing contract: say what it helps accomplish and when it should be used, adding exclusions only where they prevent likely confusion.
+## Test it
 
-In the body, include the goal, useful first principles or non-obvious context, meaningful constraints, and how success can be verified. Leave room for the agent to adapt to the request and available evidence. Use fixed procedures or scripts only when the work is genuinely fragile, deterministic, repetitive, or risky.
+Run the skill on the user's example, on a disposable copy if it writes files, and compare the result with what they wanted. Try a nearby request where it should not apply. File validation alone is not a test; if you can't test, say what is untested.
 
-Do not impose a universal structure, restate generic model behavior, or encode speculative edge cases. Add supporting resources only when they materially help, and make their use clear. Apply domain standards (such as evidence, uncertainty, and provenance in research) only when relevant.
+For a fuller comparison, when the user asks for one, run the same inputs in fresh contexts with and without the skill, keep expected answers out of the test agent's reach, and record whether the skill loaded separately from how well the task went.
 
-## Choose Its Home and Invocation
-
-A personal skill follows the user across projects. A project skill captures guidance or resources that belong to one initialized Scient workspace. Infer the intended home when the context is clear; otherwise discuss it with the user when the choice would materially affect the skill.
-
-Create a project skill at `.scient/skills/<name>/SKILL.md`, with the frontmatter name matching the directory. Do not add `scient.skill.json`; that filename is reserved for reviewed packaged releases. A newly valid project skill is available automatically from the next message. The user can later choose Agent access, `$name` only, or Deactivated in Settings. Do not edit Scient's app-private preference store.
-
-Save a personal skill with `scient_skill_save`, and read one of the user's skills with `scient_skill_read` before improving it. A new personal skill is on for every agent from the user's next message; saving over one keeps the earlier version, and the user can turn it off or undo the change in Settings. When the user gave rough material (notes, a document, a partial skill), keep what they meant and finish the rest; ask only about choices that change what the skill is for.
-
-After checking relevant existing skills when available, give the skill a short, distinct name; this is also its explicit `$name` invocation. Choose invocation separately from its home. Allow automatic selection when the description can reliably identify work that normally benefits from the skill. Use explicit invocation when applying it depends on intent the request may not reveal or the user should deliberately choose that mode.
-
-Invocation controls how a skill is selected, not what it may do. Scient owns identity, storage, origin, versioning, installation, activation, and authorization. Use only capabilities available in the session, and do not claim a lifecycle action or validation occurred unless it was verified.
-
-## Test and Hand Off
-
-Validate the skill and its resources. Test in proportion to its importance with a representative request, a plausible near-miss, and a variation requiring adaptation. When its value is uncertain, compare the same work without the skill. Use a fresh context when practical so the test does not inherit the intended answer or critique.
-
-Revise from observed failures rather than imagined completeness. Remove instructions that do not improve decisions or outcomes.
-
-Present the candidate or exact changes, its intended home and invocation, non-obvious rationale, testing performed, and remaining uncertainty. Keep drafted, installed, activated, and tested states distinct.
+Reply with where the skill lives (a link for files you wrote; the name and status for a personal skill), what you tested and what happened, and what remains untested. Claim automatic discovery only after you've seen an agent load it on its own.

@@ -13,6 +13,7 @@ import {
   type NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderFailure,
@@ -512,6 +513,8 @@ export function routeProviderEvent(
         },
       ];
     }
+    case "thread_model_selection.updated":
+      return [event.threadId === input.threadId, state];
     case "provider_thread.updated": {
       const belongs =
         state.ownedProviderThreadIds.has(event.providerThread.id) ||
@@ -634,9 +637,10 @@ export function routeProviderEvent(
       ];
     case "background_work.updated":
       return [state.ownedProviderTurns.has(event.providerTurnId), state];
+    case "background_work.lost":
     case "command_output.delta":
     case "prompt_suggestion.updated":
-      // The session manager serves these to clients directly; runs never see them.
+      // The session manager handles these itself; runs never see them.
       return [false, state];
     case "turn.terminal":
       return event.providerTurnId === state.rootProviderTurnId
@@ -687,6 +691,8 @@ type RunTerminalOutcome =
       readonly failure: null;
       readonly reason?: string | undefined;
       readonly threadDisposition: ProviderTerminalEvent["threadDisposition"];
+      /** A local Stop outcome never drops a provider prompt. */
+      readonly promptDropped?: undefined;
     };
 
 export interface RunExecutionServiceV2StartRootRunInput {
@@ -724,6 +730,11 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
+  /** Restores inline context handoffs if the provider drops this turn's prompt before persisting it. */
+  readonly loadDroppedInlineHandoffs?: () => Effect.Effect<
+    ReadonlyArray<OrchestrationV2ContextHandoff>,
+    never
+  >;
   /**
    * Stored rows of a thread's unsettled work. Work a dead runtime left is ended from these, since
    * Stop may have settled it after the snapshots this run holds.
@@ -804,6 +815,7 @@ export const layer: Layer.Layer<
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         // Stored root tool calls still open when the provider runtime was lost; nothing else ends them.
         readonly lostToolCalls?: ReadonlyArray<OrchestrationV2TurnItem>;
+        readonly restoredHandoffs?: ReadonlyArray<OrchestrationV2ContextHandoff>;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
         // SCIENT-FORK:START — distinguish rejected ownership from a retained held lease.
@@ -833,24 +845,35 @@ export const layer: Layer.Layer<
           status: input.terminal.status,
           completedAt,
         };
+        const allocateEventId = () => idAllocator.allocate.event({ threadId: input.run.threadId });
+        const buildRestoredHandoffEvents = () =>
+          input.terminal.promptDropped === true &&
+          input.restoredHandoffs !== undefined &&
+          input.restoredHandoffs.length > 0
+            ? Effect.forEach(input.restoredHandoffs, (handoff) =>
+                Effect.map(allocateEventId(), (id) => ({
+                  id,
+                  type: "context-handoff.updated" as const,
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  providerInstanceId: input.run.providerInstanceId,
+                  occurredAt: completedAt,
+                  payload: { ...handoff, updatedAt: completedAt },
+                })),
+              )
+            : Effect.succeed([]);
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
         if (!shouldFinalizeRun) {
-          if (input.terminal.status === "interrupted") {
-            const hasUnpairedRequest =
-              input.hasUnpairedRunInterruptRequest === undefined
-                ? false
-                : yield* input.hasUnpairedRunInterruptRequest();
-            if (hasUnpairedRequest) {
-              const reason =
-                input.loadRunInterruptReason === undefined
-                  ? undefined
-                  : yield* input.loadRunInterruptReason();
-              yield* eventSink.writeWithEffects({
-                effects: [],
-                events: [
+          const restoredHandoffEvents = yield* buildRestoredHandoffEvents();
+          const unpairedInterruptEvents =
+            input.terminal.status === "interrupted" &&
+            (input.hasUnpairedRunInterruptRequest === undefined
+              ? false
+              : yield* input.hasUnpairedRunInterruptRequest())
+              ? [
                   {
-                    id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                    id: yield* allocateEventId(),
                     type: "turn-item.updated" as const,
                     threadId: input.run.threadId,
                     runId: input.run.id,
@@ -862,18 +885,25 @@ export const layer: Layer.Layer<
                       run: input.run,
                       rootNode: input.rootNode,
                       providerThread: input.providerThread,
-                      reason,
+                      reason:
+                        input.loadRunInterruptReason === undefined
+                          ? undefined
+                          : yield* input.loadRunInterruptReason(),
                       completedAt,
                     }),
                   },
-                ],
-              });
-              yield* input.refreshAfterTurn;
-            }
+                ]
+              : [];
+          const earlyEvents = [...unpairedInterruptEvents, ...restoredHandoffEvents];
+          if (earlyEvents.length > 0) {
+            yield* eventSink.writeWithEffects({
+              effects: [],
+              events: earlyEvents,
+            });
+            yield* input.refreshAfterTurn;
           }
           return false;
         }
-        const allocateEventId = () => idAllocator.allocate.event({ threadId: input.run.threadId });
         const reason =
           input.terminal.status === "interrupted"
             ? ((input.loadRunInterruptReason === undefined
@@ -921,6 +951,7 @@ export const layer: Layer.Layer<
           status: finalProviderThreadStatus(input.terminal.threadDisposition),
           updatedAt: completedAt,
         };
+        const restoredHandoffEvents = yield* buildRestoredHandoffEvents();
         const runEventId = yield* allocateEventId();
         const nodeEventId = yield* allocateEventId();
         const providerThreadEventId = yield* allocateEventId();
@@ -1093,6 +1124,7 @@ export const layer: Layer.Layer<
                     payload: finalizedProviderThread,
                   },
                 ]),
+            ...restoredHandoffEvents,
           ],
         } satisfies Parameters<typeof eventSink.writeWithEffects>[0];
         if (input.writeIfRunCurrent !== undefined) {
@@ -1127,6 +1159,13 @@ export const layer: Layer.Layer<
             // SCIENT-FORK:START — retire only an actual atomic owner rejection.
             yield* input.onRunOwnerLost ?? Effect.void;
             // SCIENT-FORK:END
+            if (restoredHandoffEvents.length > 0) {
+              yield* eventSink.writeWithEffects({
+                effects: [],
+                events: restoredHandoffEvents,
+              });
+              yield* input.refreshAfterTurn;
+            }
             return false;
           }
         } else {
@@ -1441,52 +1480,63 @@ export const layer: Layer.Layer<
             return;
           const providerThread = yield* Ref.get(latestProviderThread);
           const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-          const writeTerminal = (
-            settledTerminal: ProviderTerminalEvent,
-            // SCIENT-FORK:START — retire a superseded run without consuming held work.
-            onRunOwnerLost?: Effect.Effect<void>,
-            // SCIENT-FORK:END
-          ) =>
-            writeOwnedFinalRunEvents({
-              run: input.run,
-              rootNode: input.rootNode,
-              checkpointScope: input.checkpointScope,
-              providerThread,
-              attempt: input.attempt,
-              ...(input.shouldFinalizeRun === undefined
-                ? {}
-                : {
-                    shouldFinalizeRun: input.shouldFinalizeRun,
-                    // Stop may commit between the ownership read and this
-                    // terminal write. Gate the events and checkpoint together.
-                    writeIfRunCurrent: {
-                      activeAttemptId: input.attempt.id,
-                      expectedStatus: "running" as const,
-                      unlessInterruptRequested: settledTerminal !== terminal,
-                    },
-                  }),
-              ...(input.hasUnpairedRunInterruptRequest === undefined
-                ? {}
-                : {
-                    hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
-                  }),
-              ...(input.loadRunInterruptReason === undefined
-                ? {}
-                : { loadRunInterruptReason: input.loadRunInterruptReason }),
-              openRunOwnedSubagents: openSubagents,
-              openRunOwnedSubagentsTerminal: terminal,
-              ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
-              terminal: settledTerminal,
-              failureItemPersisted: settledTerminal.status === "failed",
+          const writeTerminal = Effect.fnUntraced(
+            function* (
+              settledTerminal: ProviderTerminalEvent,
               // SCIENT-FORK:START — retire a superseded run without consuming held work.
-              ...(onRunOwnerLost === undefined ? {} : { onRunOwnerLost }),
+              onRunOwnerLost?: Effect.Effect<void>,
               // SCIENT-FORK:END
-              refreshAfterTurn,
-            }).pipe(
-              Effect.mapError(
-                (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
+            ) {
+              const restoredHandoffs =
+                settledTerminal.promptDropped === true &&
+                input.loadDroppedInlineHandoffs !== undefined
+                  ? yield* input.loadDroppedInlineHandoffs()
+                  : undefined;
+              return yield* writeOwnedFinalRunEvents({
+                run: input.run,
+                rootNode: input.rootNode,
+                checkpointScope: input.checkpointScope,
+                providerThread,
+                attempt: input.attempt,
+                ...(input.shouldFinalizeRun === undefined
+                  ? {}
+                  : {
+                      shouldFinalizeRun: input.shouldFinalizeRun,
+                      // Stop may commit between the ownership read and this
+                      // terminal write. Gate the events and checkpoint together.
+                      writeIfRunCurrent: {
+                        activeAttemptId: input.attempt.id,
+                        expectedStatus: "running" as const,
+                        unlessInterruptRequested: settledTerminal !== terminal,
+                      },
+                    }),
+                ...(input.hasUnpairedRunInterruptRequest === undefined
+                  ? {}
+                  : {
+                      hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
+                    }),
+                ...(input.loadRunInterruptReason === undefined
+                  ? {}
+                  : { loadRunInterruptReason: input.loadRunInterruptReason }),
+                openRunOwnedSubagents: openSubagents,
+                openRunOwnedSubagentsTerminal: terminal,
+                ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
+                ...(restoredHandoffs === undefined ? {} : { restoredHandoffs }),
+                terminal: settledTerminal,
+                failureItemPersisted: settledTerminal.status === "failed",
+                // SCIENT-FORK:START — retire a superseded run without consuming held work.
+                ...(onRunOwnerLost === undefined ? {} : { onRunOwnerLost }),
+                // SCIENT-FORK:END
+                refreshAfterTurn,
+              });
+            },
+            (effect) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
+                ),
               ),
-            );
+          );
           // A workspace handoff detaches the session and stops the turn that asked
           // for it: the run completes, while its native subagents still settle
           // as interrupted. The completed write refuses in the same transaction
@@ -2314,13 +2364,13 @@ export const layer: Layer.Layer<
                           })
                           .pipe(
                             Effect.as(true),
-                            Effect.catchCauseIf(
-                              (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
-                              (interruptCause) =>
-                                Effect.logWarning(
-                                  "orchestration V2 failed to interrupt turn after ingestion failure",
-                                  { runId: input.run.id, cause: interruptCause },
-                                ).pipe(Effect.as(false)),
+                            // An adapter whose session scope is closing exits interrupted. That is
+                            // its fiber, not this one: Effect never hands a fiber its own interrupt.
+                            Effect.catchCause((interruptCause) =>
+                              Effect.logWarning(
+                                "orchestration V2 failed to interrupt turn after ingestion failure",
+                                { runId: input.run.id, cause: interruptCause },
+                              ).pipe(Effect.as(false)),
                             ),
                           )
                       : false;
@@ -2333,6 +2383,16 @@ export const layer: Layer.Layer<
                     interrupted,
                     completedAt,
                   });
+                  const droppedPrompt =
+                    (yield* Ref.get(terminalEvent))?.promptDropped === true ||
+                    // SCIENT-FORK:START — Scient tracks the root turn as an observed frame and a committed receipt.
+                    (yield* Ref.get(observedRootProviderTurn))?.promptDropped === true ||
+                    receipt?.promptDropped === true;
+                  // SCIENT-FORK:END
+                  const recoveredHandoffs =
+                    droppedPrompt && input.loadDroppedInlineHandoffs !== undefined
+                      ? yield* input.loadDroppedInlineHandoffs()
+                      : undefined;
                   const lostToolCalls = runtimeLost
                     ? yield* loadLostRootToolCalls.pipe(
                         Effect.catchCauseIf(
@@ -2363,19 +2423,25 @@ export const layer: Layer.Layer<
                           hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
                         }),
                     openRunOwnedSubagents: openSubagents,
+                    ...(recoveredHandoffs === undefined
+                      ? {}
+                      : { restoredHandoffs: recoveredHandoffs }),
                     lostToolCalls,
                     completedAt,
-                    terminal: makeFailedTerminalEvent(
-                      makeProviderFailure({
-                        cause: squashed,
-                        message:
-                          knownProviderFailureMessage(squashed) ??
-                          userFacingDatabaseErrorMessage(squashed),
-                        class: "unknown",
-                      }),
-                      latestItemOrdinal + 1,
-                      receipt?.id,
-                    ),
+                    terminal: {
+                      ...makeFailedTerminalEvent(
+                        makeProviderFailure({
+                          cause: squashed,
+                          message:
+                            knownProviderFailureMessage(squashed) ??
+                            userFacingDatabaseErrorMessage(squashed),
+                          class: "unknown",
+                        }),
+                        latestItemOrdinal + 1,
+                        receipt?.id,
+                      ),
+                      ...(droppedPrompt ? { promptDropped: true as const } : {}),
+                    },
                     failureItemPersisted: false,
                     refreshAfterTurn,
                   }).pipe(

@@ -74,6 +74,7 @@ function agentRows(
   services: ReadonlyArray<AccountService>,
 ) {
   const listed = new Set(services.map((service) => service.id));
+  const providers = groups.map((group) => group.provider);
   const installations = new Set<string>();
   const rows: ReactNode[] = [];
   for (const group of groups)
@@ -81,7 +82,7 @@ function agentRows(
       if (plugin.apps?.some((app) => listed.has(accountServiceForApp(app)?.id ?? ""))) continue;
       // Two agents that load the same plugin share its id; each agent's own plugins do not.
       const owner =
-        providerExtensionAudience(group.provider, plugin).layer === "shared"
+        providerExtensionAudience(group.provider, plugin, providers).layer === "shared"
           ? "shared"
           : group.provider.instanceId;
       // Machine-wide plugins come first, so a project that reports the same one, in the same

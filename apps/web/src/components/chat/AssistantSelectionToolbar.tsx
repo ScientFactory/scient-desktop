@@ -166,6 +166,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       getActionElement: () => toolbarRef.current,
       ...(allowPreventedSelectionStart ? { allowPreventedSelectionStart } : {}),
       restoreAfterScroll: true,
+      immediateMultiClick: true,
       onSelection: update,
       onDismiss: clear,
     });

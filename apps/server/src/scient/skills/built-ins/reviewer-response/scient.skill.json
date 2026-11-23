@@ -1,0 +1,13 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.reviewer-response",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 130,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}

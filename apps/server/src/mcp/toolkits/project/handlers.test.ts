@@ -585,6 +585,7 @@ it.effect(
         runtimeMode: "auto-accept-edits",
       });
       expect(launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+      expect(launched[0]?.titleRenamed).toBe(true);
 
       const escalated = yield* handle({ title: "Fix", projectId, runtimeMode: "full-access" });
       expect(escalated.at(-1)?.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
@@ -620,6 +621,7 @@ it.effect(
 
       yield* handle({ title: "Fix", projectId, generateTitle: true, message: "Fix the bug" });
       expect(launched[2]).toMatchObject({ title: "Fix", generateTitle: true });
+      expect(launched[2]?.titleRenamed).toBeUndefined();
 
       for (const message of [undefined, "", " \n "]) {
         const idleTitled = yield* handle({

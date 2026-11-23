@@ -64,7 +64,7 @@ import { useScientFileActions } from "~/scient/files/useScientFileActions";
 import { useOverleafTreeMarks } from "~/scient/overleaf/useOverleafFolderConnect";
 // SCIENT-FORK:END
 import { useProjectPathSearch } from "~/state/queries";
-import { pierreTreeStyle } from "~/pierre-tree-theme";
+import { pierreTreeStyle, titleClippedPierreTreeRow } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
@@ -681,7 +681,34 @@ export default function FileBrowserPanel({
           model={model}
           aria-label={gt("{projectName} files", { projectName })}
           className={cn("min-h-0 flex-1 overflow-hidden", hideTreeForSearch && "invisible")}
+          onClickCapture={(event) => {
+            if (
+              event.defaultPrevented ||
+              event.button !== 0 ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey ||
+              event.altKey ||
+              dragMention.isDragInProgress()
+            ) {
+              return;
+            }
+            // Pierre emits no change for its sole selected row; read before the click to avoid double opens.
+            const selected = model.getSelectedPaths();
+            const path = selected.length === 1 ? selected[0] : undefined;
+            if (!path || entryKindsRef.current.get(path) !== "file") return;
+            const clickedSelectedRow = event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
+              );
+            if (!clickedSelectedRow) return;
+            treeSelectionPathRef.current = path;
+            onOpenFile(panelPath(path));
+          }}
           style={pierreTreeStyle(resolvedTheme)}
+          onPointerOver={titleClippedPierreTreeRow}
         />
         {/* SCIENT-FORK:START */}
         {fileActions.dropOverlay}

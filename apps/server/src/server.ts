@@ -14,13 +14,15 @@ import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
+import * as MilestoneHub from "./milestones/MilestoneHub.ts";
+import * as OrchestrationMilestones from "./milestones/OrchestrationMilestones.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -250,6 +252,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
+import * as WorkflowForge from "./workflows/WorkflowForge.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
@@ -703,6 +706,13 @@ const layerTaskFolders = TaskFolders.layer.pipe(
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(
+    WorkflowForge.layer.pipe(
+      Layer.provide(layerIssueService),
+      Layer.provide(layerPullRequestService),
+      Layer.provide(RuntimeLayer.layerProjectService),
+    ),
+  ),
   // SCIENT-FORK:START
   // Share the VCS clone owner with ProjectService and finalization observers.
   Layer.provide(layerProjectCloneTracker),
@@ -830,6 +840,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* (yield* OrchestrationMilestones.OrchestrationMilestones).start();
+    }),
+  ).pipe(Layer.provide(OrchestrationMilestones.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ProviderInstallation.layer,
@@ -852,8 +867,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // SCIENT-FORK:END
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(ScientSkillsLayerLive),
-  // SCIENT-FORK: task folders share this step, as Scient's layers fill pipe's 20 arguments.
-  Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, ThreadSearch.layer, layerTaskFolders)),
+  // SCIENT-FORK: task folders and the milestone hub share this step, as Scient's layers fill
+  // pipe's 20 arguments. One hub, which the feeders above and the workflow store inside the
+  // runtime publish to.
+  Layer.provideMerge(
+    Layer.mergeAll(ProjectStore.layer, ThreadSearch.layer, layerTaskFolders, MilestoneHub.layer),
+  ),
   // One step for these: `pipe` takes at most 20, and Scient's layers fill the rest.
   // The theme layer sits above the settings it writes when a theme is applied.
   Layer.provideMerge(
@@ -1603,6 +1622,7 @@ const layerMakeServer = Layer.unwrap(
       // SCIENT-FORK:END
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
+      Layer.provideMerge(FeatureFlags.layer),
       Layer.provide(Layer.succeed(HostProcess.InvokedAs, invokedAs)),
     );
   }),

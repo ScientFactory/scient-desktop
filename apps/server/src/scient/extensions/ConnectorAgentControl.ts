@@ -175,6 +175,8 @@ const foundRow = (
     ...(entry.title === undefined ? {} : { title: entry.title }),
     ...(description === undefined ? {} : { description: oneLine(description, 200) }),
     ...(host === undefined ? {} : { host }),
+    // Only Scient's picks carry hosting; a Registry server is a third party's listing.
+    hosting: entry.hosting ?? "Not checked by Scient",
     addable: "target" in choice && added === undefined && !forOthers,
     ...(forOthers
       ? {

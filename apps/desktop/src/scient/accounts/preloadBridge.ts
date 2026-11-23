@@ -47,7 +47,8 @@ export function makeDesktopAccountsBridge(
     browserConnection: (sourceId) => ipc.invoke(Channels.BROWSER_CONNECTION, sourceId),
     chromeSignInBrowser: () => ipc.invoke(Channels.CHROME_SIGN_IN_BROWSER),
     chromeSignIn: (input) => ipc.invoke(Channels.CHROME_SIGN_IN, input),
-    endChromeSignIn: (keep) => ipc.invoke(Channels.END_CHROME_SIGN_IN, keep),
+    endChromeSignIn: (keep, attemptId) =>
+      ipc.invoke(Channels.END_CHROME_SIGN_IN, attemptId === undefined ? keep : { keep, attemptId }),
     qualifySessionCopy: () => ipc.invoke(Channels.QUALIFY_SESSION_COPY),
     loginForm: (tabId) => ipc.invoke(Channels.LOGIN_FORM, { tabId }),
     onLoginFormDetected: (listener) => {
