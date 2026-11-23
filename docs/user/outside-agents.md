@@ -114,7 +114,7 @@ A bot that supports MCP Events (`io.modelcontextprotocol/events`) can learn
 when something happens without reading threads over and over: a turn ended, an
 agent waits on a person, a guest asked something, a watched pull request woke
 its thread. Each of these is an event type it can poll or stream, narrowed to
-projects or threads. [Workflow runs](workflows.md) have their own event types,
+projects or threads. Workflow runs have their own event types,
 narrowed to workflows or runs: a run started, paused, resumed or ended, and a
 question it asks was raised or settled. Runs that another run started are left
 out unless asked for, as subagent threads are, and narrowing thread events to a
