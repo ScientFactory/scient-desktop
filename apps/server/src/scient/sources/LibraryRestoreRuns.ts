@@ -89,8 +89,15 @@ export async function libraryRestoreStatus(
   return ended.get(libraryRoot) ?? { state: "none" };
 }
 
+/** Who asked, as the restore records it in Recent changes. */
+type RestoreActor = NonNullable<Parameters<typeof prepareScientLibraryRestore>[0]["actor"]>;
+
 /** Starts checking and copying a backup beside the Library, unless a copy is being made. */
-export function startLibraryRestore(libraryRoot: string, fromFolder: string): void {
+export function startLibraryRestore(
+  libraryRoot: string,
+  fromFolder: string,
+  actor: RestoreActor = "user",
+): void {
   if (preparing.has(libraryRoot)) return;
   preparing.set(libraryRoot, { state: "preparing", done: 0, total: 0 });
   ended.delete(libraryRoot);
@@ -98,6 +105,7 @@ export function startLibraryRestore(libraryRoot: string, fromFolder: string): vo
   void prepareScientLibraryRestore({
     libraryRoot,
     backup: fromFolder,
+    actor,
     onProgress: ({ done, total }) =>
       preparing.set(libraryRoot, { state: "preparing", done, total }),
   })
@@ -116,35 +124,31 @@ export function startLibraryRestore(libraryRoot: string, fromFolder: string): vo
  * Arranges for a Library a restore kept to take the Library's place at the next start. It
  * copies nothing, so it is answered at once; a refusal is remembered like a failed restore.
  */
-async function putBackLibrary(libraryRoot: string, folder: string): Promise<void> {
-  if (preparing.has(libraryRoot)) return;
+async function putBackLibrary(
+  libraryRoot: string,
+  folder: string,
+  actor: RestoreActor,
+): Promise<"ready" | "failed"> {
   ended.delete(libraryRoot);
   problems.delete(libraryRoot);
-  const result = await prepareScientLibraryPutBack({ libraryRoot, folder }).catch(
+  const result = await prepareScientLibraryPutBack({ libraryRoot, folder, actor }).catch(
     (cause: unknown) => reasonOf(cause),
   );
-  if (typeof result === "string") {
-    ended.set(libraryRoot, failed(result));
-    return;
-  }
+  const refused = (reason: string) => {
+    ended.set(libraryRoot, failed(reason));
+    return "failed" as const;
+  };
+  if (typeof result === "string") return refused(result);
   switch (result.outcome) {
     case "ready":
-      return;
+      return "ready";
     case "not-kept":
-      ended.set(
-        libraryRoot,
-        failed("That folder is not a Library a restore kept, or it is no longer there."),
-      );
-      return;
+      return refused("That folder is not a Library a restore kept, or it is no longer there.");
     case "busy":
-      ended.set(libraryRoot, failed("Another restore is being prepared."));
-      return;
+      return refused("Another restore is being prepared.");
     case "unfinished":
-      ended.set(
-        libraryRoot,
-        failed(
-          "An earlier restore is part way through. Quit Scient and open it again to finish it, then try again.",
-        ),
+      return refused(
+        "An earlier restore is part way through. Quit Scient and open it again to finish it, then try again.",
       );
   }
 }
@@ -173,14 +177,19 @@ export async function cancelLibraryRestore(
 export async function changeLibraryRestore(
   libraryRoot: string,
   change: ScientSourcesLibraryRestoreRequest["change"],
+  actor: RestoreActor = "user",
 ) {
   switch (change.action) {
     case "prepare":
-      startLibraryRestore(libraryRoot, change.fromFolder);
+      // A copy being made is not replaced: the request says so instead of passing as asked.
+      if (preparing.has(libraryRoot)) return "preparing" as const;
+      startLibraryRestore(libraryRoot, change.fromFolder, actor);
       return "requested" as const;
     case "put-back":
-      await putBackLibrary(libraryRoot, change.folder);
-      return "requested" as const;
+      if (preparing.has(libraryRoot)) return "preparing" as const;
+      return (await putBackLibrary(libraryRoot, change.folder, actor)) === "ready"
+        ? ("requested" as const)
+        : ("failed" as const);
     case "cancel":
       return cancelLibraryRestore(libraryRoot, change.restoreId);
   }

@@ -987,6 +987,7 @@ const CANCEL_OUTCOMES = {
   begun: "restore-begun",
   another: "another-restore",
   preparing: "restore-preparing",
+  failed: "restore-failed",
 } as const;
 
 /** A restore request needs write access but resolves only the Library's folder, as the panel's. */
@@ -995,7 +996,7 @@ const requestLibraryRestore = Effect.fn("ScientSourcesToolkit.requestLibraryRest
 ) {
   yield* requireSourcesWrite;
   const { library } = yield* resolveWholeLibrary("read");
-  const outcome = yield* attempt(() => changeLibraryRestore(library.root, request));
+  const outcome = yield* attempt(() => changeLibraryRestore(library.root, request, "agent"));
   return {
     library,
     outcome: outcome === "requested" ? ("restore-requested" as const) : CANCEL_OUTCOMES[outcome],

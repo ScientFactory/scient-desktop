@@ -2064,10 +2064,29 @@ describe("Sources tools on the library backend", () => {
             return restore.restoreId!;
           });
         const older = yield* Effect.promise(ready);
+        // The copy's own Recent changes credits the agent, not the person.
+        const staged = yield* Effect.promise(async () =>
+          JSON.parse(
+            await NodeFSP.readFile(
+              `${await NodeFSP.realpath(fixture.libraryRoot)}.restoring-${older}/restores.json`,
+              "utf8",
+            ),
+          ),
+        );
+        expect(staged.restores.at(-1)).toMatchObject({ restoreId: older, by: "agent" });
         // The panel asks again; the agent's cancel names the restore it saw, which is gone.
         yield* Effect.promise(() =>
           changeLibraryRestore(fixture.libraryRoot, { action: "prepare", fromFolder: backup }),
         );
+        // While that copy is being made, another request is not taken as asked.
+        expect(
+          (yield* run(
+            organizeLibrarySourcesForInvocation({
+              change: { action: "restore-library", fromFolder: backup },
+            }),
+            fixture,
+          )).outcome,
+        ).toBe("restore-preparing");
         const newer = yield* Effect.promise(() =>
           vi.waitFor(async () => {
             const restoreId = await ready();
@@ -2095,5 +2114,21 @@ describe("Sources tools on the library backend", () => {
           ),
         ).toEqual([kept.sourceId]);
       }),
+  );
+
+  it.effect("tells an agent its put back was refused, not that it was requested", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const refused = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "put-back-library", folder: NodePath.join(fixture.base, "nothing") },
+        }),
+        fixture,
+      );
+      expect(refused).toMatchObject({
+        outcome: "restore-failed",
+        libraryCopies: { restore: { state: "failed" } },
+      });
+    }),
   );
 });

@@ -1250,6 +1250,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "restore-begun",
     "another-restore",
     "restore-preparing",
+    "restore-failed",
     "join-started",
     "join-running",
     "join-undone",
