@@ -20,22 +20,24 @@ formulas, and workbook features outside the requested change.
    Use a targeted package edit or a compatible editor for files with features
    that a library save could lose. Read formulas in formula mode. A workbook
    loaded with `data_only=True` is for inspecting cached values.
-3. **Verify the saved copy.** Reopen it. Compare stored values and formula
-   definitions across all sheets, including hidden sheets. Expect only the
-   requested cell changes or structural moves. Compare calculated results
-   separately and check relevant formatting, package parts, and relationships.
-   A part diff alone misses unrelated changes inside the edited worksheet.
-   Preserve chart definitions and registration. Refresh affected chart caches
-   when their source data changes. See the editing reference for chart checks.
-4. **Check calculation and layout when affected.** Recalculate after a formula
-   or precedent change or a save that discards caches. Check dependent results
-   independently and report new, inherited, and uncomputed results separately.
+3. **Refresh results when affected.** For a charted edit, save the original
+   baseline with `xlsx_chart_cache.py check ORIGINAL --save-baseline BASELINE`.
+   After changing a formula or input, or if the save discards formula caches,
+   run `doc.py recalc COPY` and read its verdict. Then check the chart with
+   `xlsx_chart_cache.py check COPY --baseline-json BASELINE`. For new cache
+   mismatches, use `refresh COPY -o OUT --baseline-json BASELINE` and check OUT.
    The lab uses LibreOffice on a disposable copy and transfers calculated
-   results back. Read the verdict before using that copy as the deliverable.
-   Confirm Excel-sensitive calculations in Excel when available and report the
-   engine used. Inspect the affected view when the task changes layout, chart
-   appearance, or print output. Change print settings when the task calls for
-   a print-layout change.
+   results back. Check affected outputs independently. Report new, inherited,
+   and uncomputed results separately and name the engine used.
+4. **Verify before delivery.** Reopen the final copy. Check that stored values
+   and formula definitions across all sheets, including hidden sheets, differ
+   only as requested. Verify formula caches separately. Compare relevant
+   formats, chart registration, package parts and relationships. Preserve
+   calculation and print settings unless the task calls for changing them.
+   When visible layout matters, inspect the affected view. An input written
+   with old or missing dependent caches is still an incomplete edit when
+   updated results were requested. Finish the calculation and read-back before
+   calling the file ready.
 
 ## Build or audit a workbook
 
