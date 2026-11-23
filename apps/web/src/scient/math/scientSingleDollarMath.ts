@@ -6,6 +6,7 @@
 
 /** micromark character codes: null is EOF, negatives are virtual (line endings, tabs). */
 import { SCIENT_MATH_TABLE_PIPE } from "./remarkScientMath";
+import { isScientShellVariableTex } from "./scientWordsMath";
 
 type Code = number | null;
 
@@ -46,16 +47,11 @@ const PROSE_BEFORE_OPENER_PATTERN = /(?!\u05be)[\p{L}\p{M}\p{N}\p{Pd}]/u;
  */
 export const MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH = 300;
 
-const IDENTIFIER_PATTERN = /^[A-Z][A-Z0-9_]*$/;
-// Numeric subscripts are mathematical structure, even on uppercase symbols.
-const NUMERIC_SUBSCRIPT_PATTERN = /^[A-Z]+_\d+$/;
-// Up to three capitals are symbols (`$Q$`, `$AB$`, `$NPV$`); variable names
-// such as `PATH` or `USER_ID` are longer or carry an underscore.
+// Up to three capitals are symbols (`$Q$`, `$AB$`, `$NPV$`).
 const SHORT_CAPITALS_PATTERN = /^[A-Z][A-Z0-9]{0,2}$/;
 // Admit a complete unbraced charge or star (`HCO_3^-`, `x^*`), not an
 // arbitrary trailing operator.
 const CHARGE_END_PATTERN = /[\p{L}\p{N})\]}]\^[+\-*]$/u;
-const IDENTIFIER_PATH_PATTERN = /^[A-Z][A-Z0-9_]*[/:.]/;
 // `*` is deliberately absent: in spaced prose an asterisk is almost always
 // the author's emphasis delimiter, and letting it qualify a span would let
 // `*a $b* c$` destroy the emphasis and render "b* c" as a formula.
@@ -172,13 +168,7 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   content = content.replaceAll(SCIENT_MATH_TABLE_PIPE, "|");
   if (content.length === 0 || content.length > MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH) return false;
   if (STRING_ESCAPE_PATTERN.test(content)) return false;
-  if (
-    IDENTIFIER_PATTERN.test(content) &&
-    !NUMERIC_SUBSCRIPT_PATTERN.test(content) &&
-    !SHORT_CAPITALS_PATTERN.test(content)
-  )
-    return false;
-  if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
+  if (isScientShellVariableTex(content)) return false;
   if (
     !CONTENT_END_PATTERN.test(content) &&
     !CHARGE_END_PATTERN.test(content) &&

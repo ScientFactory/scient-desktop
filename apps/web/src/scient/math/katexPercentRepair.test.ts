@@ -1,7 +1,7 @@
 import katex from "katex";
 import { describe, expect, it } from "vite-plus/test";
 
-import { escapeLiteralPercents } from "./MathTypeset.logic";
+import { escapeLiteralPercents } from "./katexPercentRepair";
 
 describe("escapeLiteralPercents", () => {
   it.each([

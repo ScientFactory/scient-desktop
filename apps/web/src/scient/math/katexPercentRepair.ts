@@ -1,4 +1,9 @@
 /**
+ * The repair KaTeX needs for a `%` written right after text, kept for Scient's math after T3
+ * replaced its own math renderer (it was `components/chat/MathTypeset.logic.ts`).
+ */
+
+/**
  * Escapes each `%` written right after other text, as in `\text{3.18% yield}`.
  * A `%` at a line start or after whitespace stays a comment. Skips escapes and
  * `\verb` like KaTeX's lexer, in one linear pass.

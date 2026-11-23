@@ -1,39 +1,11 @@
-import { use, useState, type ReactNode } from "react";
-import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
-import { MarkdownFindContext, findRevealRef } from "~/components/chat/markdownFindContext";
+import { lazy, Suspense, use, type ReactNode } from "react";
+import { MarkdownFindContext } from "~/components/chat/markdownFindContext";
 
-/** Mounted only during Find, so closing it resets transient reveal state by unmounting. */
-function ScientMathFindSource({ sourceText }: { readonly sourceText: string }) {
-  const [sourceVisible, setSourceVisible] = useState(false);
-  const sourceRef = findRevealRef(() => setSourceVisible(true));
-  const occurrences = new Map<string, number>();
-  const segments = (
-    searchableMessageSegments({ role: "assistant", text: sourceText, streaming: false }) ?? []
-  ).map((text) => {
-    const occurrence = occurrences.get(text) ?? 0;
-    occurrences.set(text, occurrence + 1);
-    return { text, key: JSON.stringify([text, occurrence]) };
-  });
-
-  return (
-    <span
-      data-thread-find-canonical-source
-      aria-hidden="true"
-      data-markdown-copy=""
-      ref={sourceRef}
-      hidden={!sourceVisible}
-      dir="ltr"
-      className="font-mono text-xs text-muted-foreground"
-    >
-      {segments.map((segment, index) => (
-        <span key={segment.key}>
-          {index > 0 ? <br /> : null}
-          {segment.text}
-        </span>
-      ))}
-    </span>
-  );
-}
+// Find's source segmentation parses Markdown as the shared index does (remark), which loads only
+// once Find opens, off the chat render path.
+const ScientMathFindSource = lazy(() =>
+  import("./ScientMathFindSource").then((module) => ({ default: module.ScientMathFindSource })),
+);
 
 /** Keep formula rendering stable; Find searches one source representation, not KaTeX internals. */
 export function ScientMathFindSurface({
@@ -47,7 +19,11 @@ export function ScientMathFindSurface({
   return (
     <span className="contents" data-thread-find-canonical={searching ? "true" : undefined}>
       {children}
-      {searching ? <ScientMathFindSource key={sourceText} sourceText={sourceText} /> : null}
+      {searching ? (
+        <Suspense fallback={null}>
+          <ScientMathFindSource key={sourceText} sourceText={sourceText} />
+        </Suspense>
+      ) : null}
     </span>
   );
 }

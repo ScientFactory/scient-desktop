@@ -4,7 +4,7 @@ import katex from "katex";
 // glyphs while the bundled fonts load instead of staying invisible.
 import "katex/dist/katex-swap.min.css";
 
-import { escapeLiteralPercents } from "~/components/chat/MathTypeset.logic";
+import { escapeLiteralPercents } from "./katexPercentRepair";
 
 /**
  * KaTeX escapes echoed TeX, allowing markup injection. Cap dimensions to protect layout from

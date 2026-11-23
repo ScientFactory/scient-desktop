@@ -384,7 +384,9 @@ export function makeMatlabRuntimeAdapter(
         candidates,
         (candidate) =>
           Effect.gen(function* (): Effect.fn.Return<ComputeRuntimeInstallation> {
-            const executable = resolveExecutable(candidate.executable, platform, environment);
+            const executable = yield* Effect.promise(async () =>
+              resolveExecutable(candidate.executable, platform, environment),
+            );
             if (executable === undefined)
               return {
                 ...candidate,

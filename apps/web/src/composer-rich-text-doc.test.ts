@@ -175,6 +175,12 @@ describe("editable math source", () => {
     const doc = schema.nodeFromJSON(buildDocJson(source, known));
     expect(skillChipReplacements(doc, known)).toEqual([]);
     expect(serializeEditorDoc(doc).value).toBe(source);
+  });
+
+  it("round-trips a draft whose footnote holds a formula before the body's", () => {
+    const source = "[^a]: $z$\n\n$a$ hi [^a] $b$";
+    const known = (name: string) => ({ label: name, description: null });
+    expect(serializeEditorDoc(schema.nodeFromJSON(buildDocJson(source, known))).value).toBe(source);
     // SCIENT-FORK:END
   });
 });
@@ -1462,8 +1468,7 @@ describe("surroundSelectionWithMark", () => {
   it("keeps markers inside math literal across draft restoration", () => {
     const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("$x$"))]);
     const state = EditorState.create({ doc, selection: TextSelection.create(doc, 2, 3) });
-    // SCIENT-FORK: Scient's math rules read `$*x*$` as text, so the marked span round-trips.
-    expect(surroundSelectionWithMark(state, 2, 3, "*")).not.toBeNull();
+    expect(surroundSelectionWithMark(state, 2, 3, "*")).toBeNull();
   });
 
   it.each([

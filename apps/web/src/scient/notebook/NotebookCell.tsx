@@ -35,11 +35,7 @@ import {
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import type { NotebookCaret, NotebookCellActivity, NotebookController } from "./notebookController";
-import {
-  NOTEBOOK_MARKDOWN_PLUGINS,
-  NotebookCellOutputs,
-  type NotebookPlace,
-} from "./NotebookOutputs";
+import { NOTEBOOK_MARKDOWN, NotebookCellOutputs, type NotebookPlace } from "./NotebookOutputs";
 
 type Cell = NotebookCellView;
 
@@ -354,7 +350,7 @@ function RenderedText(props: { readonly source: string; readonly live: boolean }
       text={props.source}
       cwd={undefined}
       parseRawHtml={false}
-      extraRemarkPlugins={NOTEBOOK_MARKDOWN_PLUGINS}
+      extensions={NOTEBOOK_MARKDOWN}
     />
   ) : (
     <p className="text-sm whitespace-pre-wrap">{props.source}</p>

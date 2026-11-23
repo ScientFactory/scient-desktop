@@ -3,7 +3,7 @@ import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { messageCopyHtml } from "~/scient/clipboard/messageCopyHtml";
 import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
 import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { T, useGT, useMessages } from "gt-react";

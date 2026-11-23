@@ -1,11 +1,9 @@
 /**
- * Chat's Markdown reading, without its React components, for the Copy message
- * button's rich flavour (`messageCopyHtml.ts`). The pipeline is the one
- * `ChatMarkdown` mounts; the node readers are `ChatMarkdown`'s own, exported
- * through a marked seam, so the copy and the rendered message cannot drift.
+ * Chat's Markdown reading for Copy message's rich flavour (`messageCopyHtml.ts`): the tree
+ * `ChatMarkdown` renders and `ChatMarkdown`'s own node readers, so copy and chat cannot drift.
  */
+import type { Root } from "hast";
 import type { ReactNode } from "react";
-import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import {
   extractCodeBlock,
@@ -14,40 +12,36 @@ import {
   GITHUB_ALERT_PRESENTATIONS,
   nodeToPlainText,
 } from "~/components/ChatMarkdown";
+import { wordsHast, type MarkdownExtensions } from "~/markdown/wordsHast";
 import { chatCodeBoxDirection } from "../bidi/chatCodeBoxDirection";
-import type { ContentDirection } from "../bidi/contentDirection";
-import {
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-} from "../markdown/scientMarkdownPipeline";
-import { isScientMathCodeClassName } from "../math/remarkScientMath";
-import { normalizeScientMathDelimiters, scientMathRemarkPlugins } from "../math/scientMathText";
+import type { ContentDirection, FixedContentDirection } from "../bidi/contentDirection";
+import { isScientMathCodeClassName } from "../math/scientWordsMath";
+
+const NO_EXTENSIONS: MarkdownExtensions = {};
 
 /**
- * Chat's math text normalization and remark and rehype steps for one message,
- * without its React components. Direction runs after these, as in `ChatMarkdown`.
+ * Chat's sanitized tree for one message, with chat's math and the message's
+ * direction, as `ChatMarkdown` builds it.
  */
-export function chatMarkdownPipeline(input: {
+export function chatMarkdownHast(input: {
   readonly text: string;
   readonly lineBreaks: boolean;
   readonly parseRawHtml: boolean;
-}): {
-  readonly text: string;
-  readonly remarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-  readonly rehypePlugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
-} {
-  return {
-    text: normalizeScientMathDelimiters(input.text),
-    remarkPlugins: scientMathRemarkPlugins(
-      input.lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS,
-      input.text,
-    ),
-    rehypePlugins: input.parseRawHtml
-      ? CHAT_MARKDOWN_REHYPE_PLUGINS
-      : CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
-  };
+  readonly direction: FixedContentDirection;
+  readonly requestedDirection: ContentDirection;
+}): Root {
+  return wordsHast(input.text, {
+    math: true,
+    breaks: input.lineBreaks,
+    escapeHtml: !input.parseRawHtml,
+    insights: false,
+    extensions: NO_EXTENSIONS,
+    scient: {
+      math: true,
+      contentDirection: input.direction,
+      requestedContentDirection: input.requestedDirection,
+    },
+  });
 }
 
 /** Chat's plain text of rendered Markdown children, as its math renderers read TeX. */

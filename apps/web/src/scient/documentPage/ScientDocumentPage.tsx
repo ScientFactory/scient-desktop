@@ -26,11 +26,11 @@ import { resolveMarkdownDirection } from "../bidi/contentDirection";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
 import { isMermaidSyntaxError } from "../diagrams/mermaidRecovery";
 import { isMermaidRenderError, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
-import { isScientMathCodeClassName } from "../math/remarkScientMath";
 import { renderCachedScientMath } from "../math/ScientMath";
 import { scientMathMarkdownText, scientMathRemarkPluginsForMessage } from "../math/scientMathText";
+import { isScientMathCodeClassName } from "../math/scientWordsMath";
 import { resolveScientRichFenceKind } from "../presentation/scientRichFenceKind";
-import { scientMarkdownRemarkPlugins } from "../markdown/scientMarkdownProfiles";
+import { SCIENT_DOCUMENT_REMARK_PLUGINS } from "../markdown/scientMarkdownProfiles";
 import type { DocumentPageTracker } from "./documentPageReadiness";
 import { remarkDocumentFrontMatter } from "./remarkDocumentFrontMatter";
 
@@ -496,8 +496,7 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
   const { input, tracker } = props;
   const markdown = scientMathMarkdownText(input.markdown);
   const remarkPlugins = scientMathRemarkPluginsForMessage(
-    // A chat bundle writes its hard breaks explicitly, so both parse as documents.
-    [remarkDocumentFrontMatter, ...scientMarkdownRemarkPlugins("document")],
+    [remarkDocumentFrontMatter, ...SCIENT_DOCUMENT_REMARK_PLUGINS],
     input.markdown,
   );
   const direction = resolveMarkdownDirection(input.markdown, input.direction);

@@ -198,7 +198,7 @@
       "purpose": "Render PDF quotes in the shared citation chip: label, hover card, removal label and navigation to the quoted page."
     },
     {
-      "path": "packages/shared/src/markdownPipeline.ts",
+      "path": "packages/shared/src/markdownHast.ts",
       "anchor": "PDF_CITATION_PROTOCOL",
       "purpose": "Keep PDF quote links through sanitization so the validated citation renderer can parse them; preserving the protocol grants no navigation authority."
     },

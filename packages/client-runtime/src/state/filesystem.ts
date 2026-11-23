@@ -125,11 +125,12 @@ export function getFilesystemBrowsePath(
   const isBrowsing =
     enabled &&
     (scope !== null || isFilesystemBrowseQuery(resolvedQuery, platform) || isUnsupportedPath);
-  const directoryPath =
-    isBrowsing && !isUnsupportedPath ? getBrowseDirectoryPath(resolvedQuery) : "";
+  // A bare drive has no separator, so it would otherwise filter its own listing by "D:".
+  const browseQuery = /^[a-zA-Z]:$/.test(resolvedQuery) ? `${resolvedQuery}\\` : resolvedQuery;
+  const directoryPath = isBrowsing && !isUnsupportedPath ? getBrowseDirectoryPath(browseQuery) : "";
   const filterQuery =
-    isBrowsing && !isUnsupportedPath && !hasTrailingPathSeparator(resolvedQuery)
-      ? getBrowseLeafPathSegment(resolvedQuery)
+    isBrowsing && !isUnsupportedPath && !hasTrailingPathSeparator(browseQuery)
+      ? getBrowseLeafPathSegment(browseQuery)
       : "";
   const parentPath = isBrowsing ? getBrowseParentPath(directoryPath) : null;
 

@@ -58,7 +58,11 @@ export function useRoomComposerPost(input: {
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly promptRef: RefObject<string>;
   readonly onError: (threadId: ThreadId, message: string) => void;
-}): { readonly applies: () => boolean; readonly post: () => Promise<void> } {
+}): {
+  readonly applies: () => boolean;
+  /** `prompt` replaces the composer's text, for a post that waited and reads its saved draft. */
+  readonly post: (options?: { readonly prompt?: string }) => Promise<void>;
+} {
   const roomAction = useOrchestrationCommand(threadEnvironment.roomAction, {
     label: "post message",
   });
@@ -71,13 +75,13 @@ export function useRoomComposerPost(input: {
   const direct = useRoomDirectStore((state) => state.direct[key] === true);
   // Decided synchronously, so a send to the agent goes out with no extra wait.
   const applies = () => input.threadId !== null && !direct && roomHasPeople(room, Date.now());
-  const post = async () => {
+  const post = async (options?: { readonly prompt?: string }) => {
     if (input.threadId === null) return;
     const threadId = input.threadId;
     const target = input.composerDraftTarget;
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
-    const prompt = input.promptRef.current;
+    const prompt = options?.prompt ?? input.promptRef.current;
     const text = prompt.trim();
     const images = [...(draft?.images ?? [])];
     const files = [...(draft?.files ?? [])];

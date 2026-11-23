@@ -26,7 +26,7 @@ import {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 // SCIENT-FORK: Scient skill mentions.
-import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
+import { collectSelectedScientSkillNames } from "~/scient/skills/selectedSkillNames";
 import {
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
@@ -316,6 +316,7 @@ export function useQueuedRunEdit(input: {
             editTarget: queuedRunEditDraftId(routeThreadRef, edit.runId),
             threadTarget: threadDraftTarget,
             originalText: edit.originalText,
+            originalReplyTo: reply ?? null,
             removedExistingAttachment: edit.removedExistingAttachment === true,
           });
           if (recovery === "clean") return;

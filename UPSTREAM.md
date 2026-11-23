@@ -724,6 +724,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`25440f5bd5050e262bab4a01b21895f52476e3b7` is recorded in
+[the 2026-11-22 15d945faef receipt](docs/internals/t3-upstream-sync-20261122-15d945faef.md).
+Literal merge `d4b67d21b8e98b1965bb99f8b24b731fc6fbc6b2` has owned base
+`c7bbc0469f37c421ed2fe86fd917a55c0f68341c` and the frozen official target as parents, retaining
+the 96 official commits after `15d945faef`. Chat Markdown moves onto T3's Words renderer with
+Scient's math, direction, image cards, diagrams and citations carried over; sends wait for
+compressing images and survive a dropped connection; sidebar cards show the machine. T3's
+migrations 106 and 107 are Scient's 110 and 111. The alignment is Scient PR #1074. Release
+remains separate.
+
+The previous committed alignment through
 `15d945faef4c14099ba3d82bcdb84e91b5a3c3cd` is recorded in
 [the 2026-11-22 c1464d6774 receipt](docs/internals/t3-upstream-sync-20261122-c1464d6774.md).
 Literal merge `c9d735b520b813fbdf3b8da35d8bcaae769a1649` has owned base
@@ -731,9 +742,9 @@ Literal merge `c9d735b520b813fbdf3b8da35d8bcaae769a1649` has owned base
 the 87 official commits after `c1464d6774`. The range is fixes and speed-ups: slash commands wait
 during a turn, dictation after a thread switch reaches its thread, cleaner office text, fewer Git
 reads, and one `T3CODE_FEATURE_FLAGS` list. Scient for GitHub stays the default app sign-in and
-Secrets stays hidden. Release remains separate.
+Secrets stays hidden. The alignment is Scient PR #1065. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `c1464d6774cf4c690aba3fb20b8094a35396d130` is recorded in
 [the 2026-11-21 c5514042ad receipt](docs/internals/t3-upstream-sync-20261121-c5514042ad.md).
 Literal merge `7682072b3125ea5850eb816349a405d801e8c0a8` has owned base

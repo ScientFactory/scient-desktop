@@ -37,6 +37,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import * as imageCompression from "../../lib/imageCompression";
+import * as roomComposer from "../../scient/room/roomComposer";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import { toastManager } from "../ui/toast";
@@ -68,6 +69,7 @@ vi.mock("@tanstack/react-router", { spy: true });
 vi.mock("../../state/session", { spy: true });
 vi.mock("../../scient/threadQueue/submission", { spy: true });
 vi.mock("../../lib/imageCompression", { spy: true });
+vi.mock("../../scient/room/roomComposer", { spy: true });
 vi.mock("../ChatView.logic", { spy: true });
 
 /** Holds the send at its submission identity, its first yield before dispatch. */
@@ -219,11 +221,8 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       readSnapshot: () => ({ value: context.prompt, cursor: 0, expandedCursor: 0, contextIds: [] }),
       resetCursorState: vi.fn(),
       addTerminalContext: noop,
-      getSendContext: () => ({
-        ...context,
-        pendingAttachments:
-          context.pendingAttachments || countPreparingComposerImages(composerTargetKey(target)) > 0,
-      }),
+      // Like the composer, a compressing image does not block: the send waits for it.
+      getSendContext: () => context,
       validateProviderInput: () => true,
       setMultipleModelSelections: noop,
     };
@@ -715,10 +714,13 @@ describe("mounted composer send admission owner", () => {
     });
     const targetKey = composerTargetKey(fixture.input.composerDraftTarget);
     expect(countPreparingComposerImages(targetKey)).toBe(1);
-    await fixture.send();
+    // The send waits for the image; removing its tile cancels the held send.
+    const sending = fixture.send();
     expect(fixture.command).not.toHaveBeenCalled();
     const imageId = fixture.preparingImages[0]!.id;
     await act(() => fixture.removeImage(imageId));
+    await sending;
+    expect(fixture.command).not.toHaveBeenCalled();
     converted.reject(new Error("decode failed"));
     await adding;
     expect(countPreparingComposerImages(targetKey)).toBe(0);
@@ -730,6 +732,73 @@ describe("mounted composer send admission owner", () => {
       expect.stringContaining("could not be read"),
     );
   });
+  it.each(["stays", "leaves"] as const)(
+    "a send made while an image compresses waits and sends it when the user %s",
+    async (route) => {
+      await using fixture = await setup();
+      const converted =
+        Promise.withResolvers<
+          Awaited<ReturnType<typeof imageCompression.prepareImageForAttachment>>
+        >();
+      vi.mocked(imageCompression.prepareImageForAttachment).mockImplementationOnce(
+        () => converted.promise,
+      );
+      const image = new File(["image"], "shot.png", { type: "image/png" });
+      let adding!: Promise<boolean>;
+      await act(() => {
+        adding = fixture.intake([image]);
+      });
+      const targetKey = composerTargetKey(fixture.input.composerDraftTarget);
+      expect(countPreparingComposerImages(targetKey)).toBe(1);
+      const sending = fixture.send();
+      // The send holds until the compressed image joins the draft.
+      await act(async () => {});
+      expect(fixture.command).not.toHaveBeenCalled();
+      if (route === "leaves") fixture.route.current = "another-route";
+      converted.resolve({ ok: true, file: image, recompressed: false });
+      await adding;
+      await sending;
+      expect(fixture.command).toHaveBeenCalledTimes(1);
+      expect(fixture.command.mock.calls[0]?.[0].input.message.attachments).toHaveLength(1);
+    },
+  );
+
+  it("a post to the people in a thread waits for a compressing image", async () => {
+    const posted: Array<{ readonly prompt: string | undefined; readonly images: number }> = [];
+    const target = { current: undefined as ComposerSendInput["composerDraftTarget"] | undefined };
+    using _room = vi.spyOn(roomComposer, "useRoomComposerPost").mockReturnValue({
+      applies: () => true,
+      post: async (options) => {
+        const draft = useComposerDraftStore.getState().getComposerDraft(target.current!);
+        posted.push({ prompt: options?.prompt, images: draft?.images.length ?? 0 });
+      },
+    });
+    await using fixture = await setup();
+    target.current = fixture.input.composerDraftTarget;
+    const converted =
+      Promise.withResolvers<
+        Awaited<ReturnType<typeof imageCompression.prepareImageForAttachment>>
+      >();
+    vi.mocked(imageCompression.prepareImageForAttachment).mockImplementationOnce(
+      () => converted.promise,
+    );
+    const image = new File(["image"], "shot.png", { type: "image/png" });
+    let adding!: Promise<boolean>;
+    await act(() => {
+      adding = fixture.intake([image]);
+    });
+    fixture.input.promptRef.current = "look at this";
+    useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, "look at this");
+    const sending = fixture.send();
+    await act(async () => {});
+    expect(posted).toEqual([]);
+    converted.resolve({ ok: true, file: image, recompressed: false });
+    await adding;
+    await sending;
+    expect(posted).toEqual([{ prompt: "look at this", images: 1 }]);
+    expect(fixture.command).not.toHaveBeenCalled();
+  });
+
   it("carries captured settings and skills through fanout without releasing its parent's lock", async () => {
     await using fixture = await setup();
     using _toast = vi.spyOn(toastManager, "add").mockReturnValue("synthetic-fanout-toast");
