@@ -661,6 +661,9 @@ describe("Zotero refresh", () => {
       const refreshed = await refreshZoteroSources({ root, actor: "user", zotero });
       expect(refreshed.items[0]?.outcome).toBe("unchanged");
       expect(refreshed.items[0]?.conflicts).toEqual([]);
+      expect(refreshed.items[0]?.notBrought).toEqual([
+        { kind: "note-cut", name: "original", count: 1 },
+      ]);
       expect((await readScientSourceRecord(root, sourceId))?.note).toBe("My own words");
     }
     const saved = await readScientSourceZoteroSync(root, sourceId);
@@ -683,6 +686,27 @@ describe("Zotero refresh", () => {
     const afterEdit = await refreshZoteroSources({ root, actor: "user", zotero });
     expect(afterEdit.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
     expect((await readScientSourceRecord(root, sourceId))?.note).toBe("My own words");
+
+    // A fresh import whose multi-byte notes fit 1,000,000 characters but cross the 2 MiB sync-file
+    // byte limit also discloses the omitted original HTML in the import receipt.
+    const tenChildren = Array.from({ length: 10 }, (_, index) =>
+      zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${body}`,
+      }),
+    );
+    const freshImport = await importedFromZotero(original, tenChildren);
+    expect(freshImport.operation.items[0]?.notBrought).toContainEqual({
+      kind: "note-cut",
+      name: "original",
+      count: 1,
+    });
+    const freshSaved = await readScientSourceZoteroSync(
+      freshImport.root,
+      freshImport.record.sourceId,
+    );
+    expect(freshSaved?.notes).toHaveLength(10);
+    expect(freshSaved?.notes?.some((entry) => entry.html === undefined)).toBe(true);
   });
 
   it("leaves a source alone when its item is gone from Zotero", async () => {

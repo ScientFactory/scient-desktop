@@ -1833,15 +1833,16 @@ async function importZoteroOperationItem(input: {
       if (annotationLibraryId === undefined) {
         throw new Error("This source is not linked to a Zotero item.");
       }
+      let omittedOriginalNoteHtmlCount = 0;
       if (!base) {
-        await recordZoteroSync({
+        ({ omittedOriginalNoteHtmlCount } = await recordZoteroSync({
           root: input.root,
           record,
           material,
           attachmentKeys: files.map((file) => file.attachmentKey),
           pdfs: Object.fromEntries(pdfs),
           annotationLibraryId,
-        });
+        }));
       }
       const unfiled = await addToZoteroCollections({
         root: input.root,
@@ -1867,6 +1868,12 @@ async function importZoteroOperationItem(input: {
       // that is gone) is said with the rest of what did not come, and so are its highlights.
       const unavailable = Math.min(material.pdfs.length, ZOTERO_PDFS_PER_ITEM) - files.length;
       const notBrought = [...material.notBrought];
+      if (
+        omittedOriginalNoteHtmlCount > 0 &&
+        !notBrought.some((entry) => entry.kind === "note-cut" && entry.name === "original")
+      ) {
+        addNotBrought(notBrought, "note-cut", 1, "original");
+      }
       addNotBrought(notBrought, "pdf", unavailable, "unavailable");
       addNotBrought(notBrought, "collection", unfiled, "unfiled");
       addNotBrought(notBrought, "highlights", highlights?.unplaced ?? 0, "unplaced");

@@ -3861,8 +3861,9 @@ Zotero's own list is. A note holds 100,000 characters: blocks are added while
 they fit and the rest is left out and listed (`note-cut`). The notes as
 Zotero wrote them go into the source's Zotero file (`notes`, by item key,
 without the bytes of embedded images): every note's sha256, and its HTML while
-the notes fit 1,000,000 characters by whole notes; a note past that keeps only
-its digest and is listed (`note-cut` named `original`). A backup, a restore and
+the notes fit 1,000,000 characters and the 2 MiB serialized sync-file limit by
+whole notes; a note past either limit keeps only its digest and is listed
+(`note-cut` named `original`) on import and refresh. A backup, a restore and
 a join carry them; a project package does not, and neither does a note given
 to a source that was already here.
 Every stored or linked PDF is copied (the first with

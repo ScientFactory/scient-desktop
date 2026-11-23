@@ -3665,40 +3665,58 @@ export async function readScientSourceZoteroSync(
 function fitZoteroSyncToBudget(
   state: ScientSourceZoteroSyncType,
   maxBytes: number,
-): ScientSourceZoteroSyncType {
+): {
+  readonly state: ScientSourceZoteroSyncType;
+  readonly omittedOriginalNoteHtmlCount: number;
+} {
   const byteLength = (value: ScientSourceZoteroSyncType) =>
     Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-  if (!state.notes || byteLength(state) <= maxBytes) return state;
+  if (!state.notes || byteLength(state) <= maxBytes) {
+    return { state, omittedOriginalNoteHtmlCount: 0 };
+  }
   // Drop optional retained HTML from the end until the serialized UTF-8 sync file fits the
   // record byte budget, always preserving note digests and both text baselines.
   const notes = state.notes.map((entry) => ({ ...entry }));
+  let omittedOriginalNoteHtmlCount = 0;
   for (let index = notes.length - 1; index >= 0; index -= 1) {
     const entry = notes[index];
     if (!entry || entry.html === undefined) continue;
     notes[index] = { itemKey: entry.itemKey, sha256: entry.sha256 };
+    omittedOriginalNoteHtmlCount += 1;
     const candidate: ScientSourceZoteroSyncType = { ...state, notes };
-    if (byteLength(candidate) <= maxBytes) return candidate;
+    if (byteLength(candidate) <= maxBytes) {
+      return { state: candidate, omittedOriginalNoteHtmlCount };
+    }
   }
-  return { ...state, notes };
+  return { state: { ...state, notes }, omittedOriginalNoteHtmlCount };
 }
 
 export async function writeScientSourceZoteroSync(
   root: ScientSourceStoreLocation,
   state: ScientSourceZoteroSyncType,
-): Promise<void> {
+): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const paths = await sourceStorePaths(root);
   const bounded = fitZoteroSyncToBudget(state, MAX_RECORD_BYTES);
   // Under deletion's lock: a sync finishing after Delete for good must not bring its base back.
+  let written = false;
   await withStoreLock(paths, "source-write", async () => {
     const gone = async (path: string) => (await snapshot(path)) === "missing";
     if (
-      (await gone(sourceRecordPath(paths, bounded.sourceId))) &&
-      (await gone(trashEntryPath(paths, bounded.sourceId)))
+      (await gone(sourceRecordPath(paths, bounded.state.sourceId))) &&
+      (await gone(trashEntryPath(paths, bounded.state.sourceId)))
     ) {
       return;
     }
-    await atomicWriteJson(zoteroSyncPath(paths, bounded.sourceId), bounded, MAX_RECORD_BYTES);
+    await atomicWriteJson(
+      zoteroSyncPath(paths, bounded.state.sourceId),
+      bounded.state,
+      MAX_RECORD_BYTES,
+    );
+    written = true;
   });
+  return {
+    omittedOriginalNoteHtmlCount: written ? bounded.omittedOriginalNoteHtmlCount : 0,
+  };
 }
 
 /** Replaces a source's links to other reference managers, as a new revision. */

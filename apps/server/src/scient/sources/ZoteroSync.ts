@@ -200,16 +200,16 @@ export async function recordZoteroSync(input: {
   readonly annotationLibraryId?: string;
   /** The notes of an earlier base, kept when what was written to Zotero had none. */
   readonly notes?: Pick<ScientSourceZoteroSync, "note" | "zoteroNote" | "notes">;
-}): Promise<void> {
+}): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const reference = zoteroReference(input.material.candidate);
-  if (!reference) return;
+  if (!reference) return { omittedOriginalNoteHtmlCount: 0 };
   const notes = input.notes ?? input.material;
   const zoteroNote = input.notes?.zoteroNote;
   const { citationKey: _key, ...metadata } = normalizeScientSourceEditableMetadata({
     ...input.material.candidate,
     customType: input.material.candidate.customType ?? null,
   });
-  await writeScientSourceZoteroSync(input.root, {
+  return writeScientSourceZoteroSync(input.root, {
     formatVersion: 1,
     sourceId: input.record.sourceId,
     libraryId: reference.libraryId,
@@ -491,7 +491,7 @@ async function refreshOne(input: {
       })
     ).record;
   }
-  await writeScientSourceZoteroSync(input.root, {
+  const savedSync = await writeScientSourceZoteroSync(input.root, {
     formatVersion: 1,
     sourceId: record.sourceId,
     libraryId: currentLibraryId,
@@ -521,6 +521,12 @@ async function refreshOne(input: {
   addNotBrought(notBrought, "highlights", highlights.unplaced, "unplaced");
   addNotBrought(notBrought, "highlights", highlights.elsewhere, "no-file");
   addNotBrought(notBrought, "highlights", highlights.tooLong, "too-long");
+  if (
+    savedSync.omittedOriginalNoteHtmlCount > 0 ||
+    plan.base.notes?.some((entry) => entry.html === undefined)
+  ) {
+    addNotBrought(notBrought, "note-cut", 1, "original");
+  }
   const updated = changedFields.length > 0 || attached.added > 0;
   return {
     ...summary,
