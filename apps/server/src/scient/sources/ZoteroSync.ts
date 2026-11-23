@@ -395,12 +395,17 @@ async function refreshOne(input: {
     action: "refresh",
   });
   const currentLibraryId = currentReference!.libraryId;
-  // A "0" baseline stamped by this record's originating import is its own: the concrete
-  // reference was published only after that owner was verified for this same item.
+  // A "0" baseline stamped by this record's originating import is its own once the concrete
+  // link superseded that legacy link: the owner was verified for this same item before the
+  // concrete reference was published. A legacy link still present was not superseded.
   const legacyOwnBase =
     savedBase?.libraryId === "0" &&
     savedBase.importOperationId !== undefined &&
-    savedBase.importOperationId === input.record.origin?.operationId;
+    savedBase.importOperationId === input.record.origin?.operationId &&
+    !input.record.externalReferences.some(
+      (entry) =>
+        entry.system === "zotero" && entry.libraryId === "0" && entry.itemKey === reference.itemKey,
+    );
   const base =
     savedBase?.itemKey === reference.itemKey &&
     (sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner) || legacyOwnBase)

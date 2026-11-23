@@ -11,6 +11,7 @@ import {
   readScientSourceRecord,
   readScientSourceZoteroSync,
   updateScientSourceMetadata,
+  updateScientSourceExternalReferences,
   updateScientSourceNote,
   writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
@@ -750,6 +751,74 @@ describe("Zotero refresh", () => {
       itemVersion: 4,
     });
     expect(result.items.map((item) => item.outcome)).toEqual(["updated"]);
+  });
+
+  it("does not plan from a legacy personal baseline for a group item while the legacy link remains", async () => {
+    const legacy = rawZoteroItem("ABCD2345", {
+      title: "Original title",
+      abstractNote: "Original abstract.",
+      DOI: "10.1000/refresh-original",
+      version: 3,
+    });
+    const { root, record, library } = await importedFromZotero(legacy, [
+      rawZoteroItem("NOTE2345", { itemType: "note", note: "<p>Personal note</p>" }),
+    ]);
+    expect((await readScientSourceZoteroSync(root, record.sourceId))?.note).toBe("Personal note");
+    // As after merging in a group record and Sending to its item: the group link leads,
+    // the legacy "0" link remains behind it.
+    const promoted = await updateScientSourceExternalReferences({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      externalReferences: [
+        {
+          system: "zotero",
+          libraryId: "groups/4321",
+          itemKey: "ABCD2345",
+          itemVersion: 3,
+          rawItemType: "journalArticle",
+        },
+        ...record.externalReferences,
+      ],
+      actor: "user",
+    });
+    expect(promoted.record.externalReferences[1]).toMatchObject({ libraryId: "0" });
+    const group = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroGroupItem(
+              "ABCD2345",
+              { ...legacy.data, title: "Original title", version: 4 },
+              "4321",
+            ),
+            children: [
+              zoteroGroupItem(
+                "NOTE2345",
+                { itemType: "note", note: "<p>Group note</p>", version: 4 },
+                "4321",
+              ),
+            ],
+          },
+        ],
+      ]),
+    };
+    const zotero = fakeZoteroAccessWithGroup(
+      fakeZoteroTransport(library),
+      "4321",
+      fakeZoteroTransport(group),
+    );
+
+    const result = await refreshZoteroSources({
+      root,
+      sourceIds: [record.sourceId],
+      actor: "user",
+      zotero,
+    });
+
+    expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("Personal note");
   });
 
   // Constructed in Zotero's documented item format: public libraries do not hand out the PDFs.
