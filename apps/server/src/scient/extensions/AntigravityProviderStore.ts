@@ -32,6 +32,10 @@ import type {
 } from "../../provider/ScientProviderInstanceSeams.ts";
 import { nextInventoryReadSequence } from "../../provider/ProviderNativeInventory.ts";
 import { resolveAntigravityUserHome } from "../../provider/Drivers/AntigravitySkills.ts";
+import {
+  antigravityReleaseIdentity,
+  type AntigravityManagedRelease,
+} from "../providerLifecycle/antigravityRuntimeRelease.ts";
 import type {
   AntigravityExecutable,
   AntigravityInstallationError,
@@ -111,6 +115,8 @@ export const ANTIGRAVITY_NOT_CLI =
   "Update Antigravity in this agent's settings to add its plugins.";
 export const ANTIGRAVITY_CUSTOM_NOT_CLI =
   "This agent's custom Antigravity runtime can't add plugins. Point its path at agy, or clear it in this agent's settings.";
+export const ANTIGRAVITY_NO_CLI_RELEASE =
+  "This agent's Antigravity runtime can't add plugins, and Scient has no agy CLI release to switch it to yet. Check for an update in this agent's settings.";
 export const ANTIGRAVITY_SYSTEM_NOT_CLI =
   "The Antigravity runtime installed on this computer can't add plugins. Choose Use Scient-managed in this agent's settings to add them.";
 /** Why a runtime that is not the agy CLI can't add plugins, by where it came from. */
@@ -120,6 +126,12 @@ const notCliReason = (executable: AntigravityExecutable) =>
     : executable.source === "path"
       ? ANTIGRAVITY_SYSTEM_NOT_CLI
       : ANTIGRAVITY_NOT_CLI;
+
+/** Why this instance can't add plugins, and the runtime step in its settings that would fix it. */
+export interface AntigravityStoreAvailability {
+  readonly reason?: string | undefined;
+  readonly step?: "update" | "install" | undefined;
+}
 const INVENTORY_UNAVAILABLE =
   "Scient could not read Antigravity's installed plugins, so Add and Remove are paused. Refresh to try again.";
 
@@ -335,6 +347,8 @@ export interface AntigravityPluginStoreOptions {
   readonly run: (args: ReadonlyArray<string>) => Effect.Effect<string, Failure>;
   /** Why this instance cannot manage plugins (it is not the agy CLI), or `undefined`. */
   readonly unavailable: Effect.Effect<string | undefined>;
+  /** The runtime step that would make the store available, read only while it is not. */
+  readonly unavailableStep?: Effect.Effect<"update" | "install" | undefined> | undefined;
   /** Fires when the runtime behind `unavailable` may have changed: an install, update or removal. */
   readonly runtimeChanges?: Stream.Stream<unknown> | undefined;
   /** The resolved plugin folder agy writes, shared by every instance with the same home. */
@@ -431,6 +445,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     plugin: AntigravityCatalogPlugin,
     installed: ReadonlyArray<AntigravityInstalledPlugin> | undefined,
     unavailable: string | undefined,
+    step: "update" | "install" | undefined,
   ): ProviderStoreEntry => {
     const id = entryId(plugin.name, plugin.marketplace);
     const native = installed?.find((item) => item.name === plugin.name);
@@ -456,6 +471,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
       installed: added,
       ...(installed === undefined ? { installationStateKnown: false } : {}),
       ...(unavailable ? { storeUnavailable: true } : {}),
+      ...(unavailable && step ? { storeUnavailableStep: step } : {}),
       ...(plugin.categories[0] ? { category: plugin.categories[0] } : {}),
       ...(plugin.version ? { version: plugin.version } : {}),
       ...(plugin.publisher ? { publisher: plugin.publisher } : {}),
@@ -487,13 +503,15 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
       { concurrency: "unbounded" },
     );
     const installed = inventory._tag === "Some" ? inventory.value.plugins : undefined;
+    const step =
+      unavailable && options.unavailableStep ? yield* options.unavailableStep : undefined;
     return {
       read,
       installed,
       unavailable,
       entries: read.plugins.map((plugin) => ({
         plugin,
-        entry: toEntry(plugin, installed, unavailable),
+        entry: toEntry(plugin, installed, unavailable, step),
       })),
     };
   });
@@ -829,6 +847,7 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
         environment?: NodeJS.ProcessEnv,
       ) => Effect.Effect<AntigravityExecutable, AntigravityInstallationError, Scope.Scope>;
       readonly changes: Stream.Stream<ProviderInstallState>;
+      readonly latestRelease: Effect.Effect<AntigravityManagedRelease | null>;
     };
     readonly binaryPath: string;
     readonly environment: NodeJS.ProcessEnv;
@@ -858,11 +877,28 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-    const unavailable = input.installation.resolve(input.binaryPath, input.environment).pipe(
-      Effect.map((executable) =>
-        executable.harnessPath === null ? undefined : notCliReason(executable),
+    // A step is offered only when the release it installs is the agy CLI: Settings may also
+    // install a paired release, which can't add plugins either.
+    const availability = input.installation.resolve(input.binaryPath, input.environment).pipe(
+      Effect.flatMap((executable): Effect.Effect<AntigravityStoreAvailability> =>
+        executable.harnessPath === null
+          ? Effect.succeed({})
+          : executable.source === "override"
+            ? Effect.succeed({ reason: notCliReason(executable) })
+            : input.installation.latestRelease.pipe(
+                Effect.map((release) =>
+                  release === null || !antigravityReleaseIdentity(release).cli
+                    ? { reason: ANTIGRAVITY_NO_CLI_RELEASE }
+                    : {
+                        reason: notCliReason(executable),
+                        step: executable.source === "path" ? "install" : "update",
+                      },
+                ),
+              ),
       ),
-      Effect.orElseSucceed(() => "Install Antigravity to add its plugins."),
+      Effect.orElseSucceed((): AntigravityStoreAvailability => ({
+        reason: "Install Antigravity to add its plugins.",
+      })),
     );
     // The same home agy and the chat runtime resolve, so every instance writing one plugin
     // folder shares its lock; Windows paths compare case-insensitively.
@@ -876,7 +912,8 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
     return yield* makeAntigravityPluginActions({
       stateDir: input.stateDir,
       run,
-      unavailable,
+      unavailable: Effect.map(availability, (current) => current.reason),
+      unavailableStep: Effect.map(availability, (current) => current.step),
       // Activation and removal settle here; progress in between changes nothing yet.
       runtimeChanges: input.installation.changes.pipe(
         Stream.filter((state) => state.phase === "succeeded" || state.phase === "idle"),

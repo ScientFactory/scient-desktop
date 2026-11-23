@@ -83,6 +83,8 @@ export function useStartProviderRuntimeAction(): (input: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ServerProvider["instanceId"];
   readonly action: ProviderManagedRuntimeAction;
+  /** Why this plan must not start (it would not do what the caller offered), or null. */
+  readonly refuse?: ((plan: ProviderRuntimePlan) => string | null) | undefined;
 }) => Promise<ServerProvider> {
   const planProviderRuntime = useAtomCommand(serverEnvironment.planProviderRuntime, {
     reportFailure: false,
@@ -90,7 +92,7 @@ export function useStartProviderRuntimeAction(): (input: {
   const startProviderRuntime = useAtomCommand(serverEnvironment.startProviderRuntime, {
     reportFailure: false,
   });
-  return async ({ environmentId, instanceId, action }) => {
+  return async ({ environmentId, instanceId, action, refuse }) => {
     const plan = planForAction(
       resultValue(
         await planProviderRuntime({ environmentId, input: { instanceId, action } }),
@@ -98,6 +100,8 @@ export function useStartProviderRuntimeAction(): (input: {
       ),
       action,
     );
+    const refused = refuse?.(plan);
+    if (refused) throw new Error(refused);
     const started = resultValue(
       await startProviderRuntime({
         environmentId,

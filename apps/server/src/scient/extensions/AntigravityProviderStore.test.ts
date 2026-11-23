@@ -2,7 +2,12 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ProviderStorePage,
+} from "@t3tools/contracts";
+import type { AntigravityManagedRelease } from "../providerLifecycle/antigravityRuntimeRelease.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ANTIGRAVITY_MARKETPLACES, antigravityCategories } from "./AntigravityPluginCatalog.ts";
 import {
   ANTIGRAVITY_CUSTOM_NOT_CLI,
+  ANTIGRAVITY_NO_CLI_RELEASE,
   ANTIGRAVITY_NOT_CLI,
   ANTIGRAVITY_SYSTEM_NOT_CLI,
   antigravityPluginCommandEnvironment,
@@ -769,27 +775,57 @@ it.live("tells open pages when an update switches the runtime to agy, and only t
           version: harnessPath === null ? "1.0.0" : "1.4.5",
           managedVersionDirectory: null,
         }));
+      const gmail = yield* gmailZip;
       const http = HttpClient.make((request) =>
-        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 404 }))),
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url === OFFICIAL.url
+              ? Response.json(officialFeed(gmail))
+              : new Response("", { status: 404 }),
+          ),
+        ),
       );
-      const instance = (source: "managed" | "path" | "override") =>
+      // Only the identity matters here: a CLI release carries a SHA-512, a paired one a SHA-256.
+      const cliRelease = { version: "1.0.0", sha512: "a".repeat(128) };
+      const pairedRelease = { version: "1.4.6", sha256: "b".repeat(64), registryVersion: "1" };
+      const instance = (source: "managed" | "path" | "override", latest: object = cliRelease) =>
         makeAntigravityInstancePlugins({
           installation: {
             resolve: () => executable(source),
             acquire: () => executable(source),
             changes: SubscriptionRef.changes(install),
+            latestRelease: Effect.succeed(latest as AntigravityManagedRelease),
           },
           binaryPath: source === "override" ? path.join(stateDir, "acp") : "",
           environment: { HOME: stateDir },
           stateDir,
         }).pipe(Effect.provideService(HttpClient.HttpClient, http));
       const store = (yield* instance("managed")).actions.store!;
-      // Each older runtime's reason names the step Settings offers for it.
-      const custom = (yield* instance("override")).actions.store!;
-      expect((yield* custom.search({})).message).toBe(ANTIGRAVITY_CUSTOM_NOT_CLI);
-      const onPath = (yield* instance("path")).actions.store!;
-      expect((yield* onPath.search({})).message).toBe(ANTIGRAVITY_SYSTEM_NOT_CLI);
-      expect((yield* store.search({})).message).toBe(ANTIGRAVITY_NOT_CLI);
+      // Each older runtime's reason names the step Settings offers for it, and the store names
+      // that step only when it installs the agy CLI.
+      const answer = (page: ProviderStorePage) => ({
+        message: page.message,
+        step: page.entries.find((entry) => entry.name === "gmail")?.storeUnavailableStep,
+      });
+      const answers = {
+        managed: answer(yield* store.search({})),
+        custom: answer(yield* (yield* instance("override")).actions.store!.search({})),
+        onPath: answer(yield* (yield* instance("path")).actions.store!.search({})),
+        paired: answer(
+          yield* (yield* instance("managed", pairedRelease)).actions.store!.search({}),
+        ),
+        pairedOnPath: answer(
+          yield* (yield* instance("path", pairedRelease)).actions.store!.search({}),
+        ),
+      };
+      expect(answers).toEqual({
+        managed: { message: ANTIGRAVITY_NOT_CLI, step: "update" },
+        custom: { message: ANTIGRAVITY_CUSTOM_NOT_CLI, step: undefined },
+        onPath: { message: ANTIGRAVITY_SYSTEM_NOT_CLI, step: "install" },
+        paired: { message: ANTIGRAVITY_NO_CLI_RELEASE, step: undefined },
+        pairedOnPath: { message: ANTIGRAVITY_NO_CLI_RELEASE, step: undefined },
+      });
       const nextChange = () =>
         store.changes!.pipe(
           Stream.runHead,

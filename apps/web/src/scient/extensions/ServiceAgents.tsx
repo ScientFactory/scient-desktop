@@ -282,19 +282,19 @@ function TurnOnInAntigravity({
 type RuntimeStep = "update" | "install";
 
 /**
- * The runtime step Settings offers that lets this Antigravity add plugins: Update for Scient's
- * older copy, Use Scient-managed for one found on this computer, or none (a custom path).
+ * The runtime step that lets this Antigravity add plugins, when its store names one (its next
+ * release is the agy CLI) and Settings offers it: Update for Scient's older copy, Use
+ * Scient-managed for one found on this computer.
  */
-function antigravityRuntimeStep(provider: ServerProvider): RuntimeStep | null {
+function antigravityRuntimeStep(
+  provider: ServerProvider,
+  step: RuntimeStep | undefined,
+): RuntimeStep | null {
   const runtime = provider.connection?.runtime;
   const operation = runtime?.operation;
-  if (
-    isActiveProviderRuntimeOperation(operation) &&
-    (operation?.action === "update" || operation?.action === "install")
-  )
-    return operation.action;
-  if (runtime?.actions.includes("update")) return "update";
-  return runtime?.source === "system" && runtime.actions.includes("install") ? "install" : null;
+  if (step && operation?.action === step && isActiveProviderRuntimeOperation(operation))
+    return step;
+  return step && runtime?.actions.includes(step) ? step : null;
 }
 
 /**
@@ -339,6 +339,10 @@ function AntigravityRuntimeStep({
         environmentId,
         instanceId: provider.instanceId,
         action: step,
+        refuse: (plan) =>
+          plan.nativePlugins === true
+            ? null
+            : gt("This Antigravity release can't add plugins. Open Settings to choose another."),
       });
       const runtime = next.connection?.runtime;
       setStarted(runtime ? { baseProvider: provider, value: runtime } : null);
@@ -402,7 +406,7 @@ function AntigravityServiceRow({
   if (entry.data?.storeUnavailable) {
     // The live snapshot follows an update as it runs; the inventory's copy is an earlier read.
     const live = providers.find((item) => item.instanceId === route.instanceId) ?? provider;
-    const step = antigravityRuntimeStep(live);
+    const step = antigravityRuntimeStep(live, entry.data.storeUnavailableStep);
     return (
       <CardRow>
         <ProviderInstanceIcon

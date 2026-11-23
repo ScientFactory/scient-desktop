@@ -1111,6 +1111,9 @@ export const buildAppUnderTest = (options?: {
             Layer.mock(ProviderInstanceRegistry)({
               getInstance: () => Effect.undefined,
               listInstances: Effect.succeed([]),
+              // The extensions change feed follows instance replacement.
+              streamChanges: Stream.never,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
               ...options?.layers?.providerInstanceRegistry,
             }),
             Layer.mock(CodexInstallation)({

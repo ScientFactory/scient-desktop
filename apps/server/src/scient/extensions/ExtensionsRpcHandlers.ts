@@ -183,7 +183,8 @@ export const followProviderStoreChanges = Effect.fn("ExtensionsRpc.followProvide
     const scope = yield* Effect.scope;
     // Subscribed before forking, so a replacement made meanwhile is not missed.
     const generations = yield* input.generations.subscribeChanges;
-    const read = new Set<ProviderPluginActions>();
+    // Weak, so a retired generation's store is released while the subscription stays open.
+    const read = new WeakSet<ProviderPluginActions>();
     const attach = Effect.gen(function* () {
       const stores: Array<Stream.Stream<void>> = [];
       for (const provider of yield* input.providerRegistry.getProviders) {

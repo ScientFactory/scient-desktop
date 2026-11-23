@@ -2804,7 +2804,14 @@ describe("Antigravity Marketplace", () => {
     const gmail = storeEntry("gmail", {
       displayName: "Gmail",
       storeUnavailable: true,
+      storeUnavailableStep: "update",
       disabledReason: notCli,
+    });
+    const onPath = storeEntry("gmail", {
+      displayName: "Gmail",
+      storeUnavailable: true,
+      storeUnavailableStep: "install",
+      disabledReason: "The Antigravity runtime installed on this computer can't add plugins.",
     });
     const runtime = (patch: Partial<ProviderRuntimeSummary> = {}): ProviderRuntimeSummary => ({
       source: "scient_managed",
@@ -2828,7 +2835,7 @@ describe("Antigravity Marketplace", () => {
         },
         ...patch,
       });
-    const plan = (action: "update" | "install" | "remove") => ({
+    const plan = (action: "update" | "install" | "remove", nativePlugins = true) => ({
       _tag: "Success",
       value: {
         instanceId: antigravity,
@@ -2838,6 +2845,7 @@ describe("Antigravity Marketplace", () => {
         downloadBytes: null,
         sourceLabel: "Official Google Antigravity CLI release",
         catalogRevision: `antigravity-cli:1.0.0:${action}`,
+        nativePlugins,
         message: "Google's verified Antigravity CLI.",
       },
     });
@@ -2937,9 +2945,40 @@ describe("Antigravity Marketplace", () => {
       expect(state.commands.startRuntime).not.toHaveBeenCalled();
     });
 
+    it("never starts a release that can't add plugins", async () => {
+      await using fixture = setup();
+      const agents = await show(fixture, runtime());
+      // The catalog chose a paired release after the store answered.
+      state.commands.planRuntime.mockResolvedValue(plan("update", false));
+      await userEvent.click(buttonIn(agents, "Update Antigravity")!);
+      await vi.waitFor(() =>
+        expect(agents.querySelector('[role="alert"]')?.textContent).toContain(
+          "This Antigravity release can't add plugins.",
+        ),
+      );
+      expect(state.commands.startRuntime).not.toHaveBeenCalled();
+    });
+
+    it("offers no step when the release Settings would install can't add plugins", async () => {
+      await using fixture = setup();
+      const paired = "Scient has no agy CLI release to switch it to yet.";
+      const agents = await show(fixture, runtime({ source: "system", actions: ["install"] }), {
+        ...onPath,
+        storeUnavailableStep: undefined,
+        disabledReason: paired,
+      });
+      await vi.waitFor(() => expect(agents.textContent).toContain(paired));
+      expect(buttonIn(agents, "Use Scient-managed Antigravity")).toBeNull();
+      expect(linkIn(agents, "Open Settings")?.getAttribute("href")).toBe("/settings/providers");
+    });
+
     it("offers Use Scient-managed for an older runtime found on the computer", async () => {
       await using fixture = setup();
-      const agents = await show(fixture, runtime({ source: "system", actions: ["install"] }));
+      const agents = await show(
+        fixture,
+        runtime({ source: "system", actions: ["install"] }),
+        onPath,
+      );
       await vi.waitFor(() =>
         expect(agents.textContent).toContain("Use Scient-managed Antigravity to add its plugins"),
       );
