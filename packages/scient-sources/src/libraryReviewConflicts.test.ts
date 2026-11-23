@@ -327,5 +327,31 @@ describe("choosing a version of a review", () => {
       }),
     ).toEqual({ outcome: "resolved", report: null });
     expect(lockWhileSetAside).toEqual(["held"]);
+
+    // A stop while a version is written leaves no folder that looks like a whole version.
+    await write(
+      ".scient/library/conflicts/reviews/review_1/0123456789cd.json",
+      review({ title: "Sepsis trials, desktop" }),
+    );
+    _probe.mockImplementation(async (...args) => {
+      if (String(args[0]).includes(`${NodePath.sep}migrations${NodePath.sep}`)) {
+        throw new Error("Disk full");
+      }
+      return writeFile(...args);
+    });
+    await expect(
+      resolveScientReviewConflict({
+        projectRoot,
+        library: scientLibraryLocation(libraryRoot),
+        reviewId: "review_1",
+        conflictId: "0123456789cd",
+        pick: "use-other",
+        actor: "user",
+      }),
+    ).rejects.toThrow("Disk full");
+    const kept = (
+      await NodeFSP.readdir(NodePath.join(libraryRoot, "migrations"), { recursive: true })
+    ).filter((path) => /review_1[/\\][^/\\]+$/u.test(path));
+    expect(kept.filter((path) => !path.endsWith(".partial"))).toHaveLength(1);
   });
 });

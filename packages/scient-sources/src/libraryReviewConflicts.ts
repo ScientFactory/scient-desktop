@@ -296,19 +296,27 @@ async function backUp(
   files: ReadonlyArray<{ readonly name: string; readonly text: string | null }>,
 ): Promise<void> {
   const libraryRoot = await NodeFSP.realpath(library.root);
+  const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
   const directory = NodePath.join(
     scientLibraryMoveInternals.migrationDirectory(libraryRoot, instanceId),
     "reviews",
     reviewId,
-    `${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}-${label}`,
+    // Two versions set aside in the same millisecond keep both.
+    `${stamp}-${label}-${NodeCrypto.randomUUID().slice(0, 8)}`,
   );
-  // Inside the Library's lock, so a backup copies both files of the version or neither.
+  // Inside the Library's lock, so a backup copies both files of the version or neither; written
+  // aside and renamed, so a stop between the files leaves a `.partial` folder, never half a version.
   await withScientLibraryLock(libraryRoot, async () => {
-    await ensureDirectory(directory);
+    const partial = `${directory}.partial`;
+    await ensureDirectory(partial);
     for (const file of files) {
       if (file.text === null) continue;
-      await NodeFSP.writeFile(NodePath.join(directory, file.name), file.text, { flag: "wx" });
+      await NodeFSP.writeFile(NodePath.join(partial, file.name), file.text, {
+        flag: "wx",
+        flush: true,
+      });
     }
+    await NodeFSP.rename(partial, directory);
   });
 }
 
