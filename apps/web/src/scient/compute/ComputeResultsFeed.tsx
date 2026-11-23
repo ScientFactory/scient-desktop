@@ -256,17 +256,20 @@ function firstCodeLine(code: string) {
 
 function firstSnippetLine(code: string, language: string) {
   const lineComment = language === "sql" ? "--" : language === "matlab" ? "%" : "#";
+  const blockComments = language === "julia";
   let juliaCommentDepth = 0;
   for (const rawLine of code.split(/\r?\n/u)) {
     let line = rawLine.trim();
-    while (language === "julia" && (juliaCommentDepth > 0 || line.startsWith("#="))) {
-      const delimiter = /#=|=#/u.exec(line);
-      if (!delimiter) {
-        line = "";
-        break;
+    if (blockComments) {
+      while (juliaCommentDepth > 0 || line.startsWith("#=")) {
+        const delimiter = /#=|=#/u.exec(line);
+        if (!delimiter) {
+          line = "";
+          break;
+        }
+        juliaCommentDepth += delimiter[0] === "#=" ? 1 : -1;
+        line = line.slice(delimiter.index + 2).trimStart();
       }
-      juliaCommentDepth += delimiter[0] === "#=" ? 1 : -1;
-      line = line.slice(delimiter.index + 2).trimStart();
     }
     if (line && !line.startsWith(lineComment) && !/^#(?:\s*(?:%%|In\[)|#\s*----)/u.test(line)) {
       return line.slice(0, 120);

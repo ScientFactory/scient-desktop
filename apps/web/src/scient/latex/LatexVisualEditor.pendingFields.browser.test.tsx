@@ -21,9 +21,7 @@ vi.mock("./LatexMathField", () => ({
     return <span>{value}</span>;
   },
 }));
-vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
-}));
+vi.mock("~/assets/assetUrls", () => import("./latexAssetUrls.testkit"));
 import { LatexVisualEditor, type LatexBackgroundCommit } from "./LatexVisualEditor";
 import {
   createLatexVisualTestOwner,

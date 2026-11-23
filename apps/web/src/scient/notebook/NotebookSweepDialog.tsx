@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -42,7 +42,7 @@ export function NotebookSweepDialog(props: {
       <DialogPopup>
         <DialogHeader>
           <DialogTitle>
-            <T>Run for each {parameter.name} value</T>
+            {gt("Run for each {parameter} value", { parameter: parameter.name })}
           </DialogTitle>
           <DialogDescription>
             <T>Enter up to 20 values, one per line. Each run saves an alternative.</T>
@@ -67,7 +67,13 @@ export function NotebookSweepDialog(props: {
             <T>Cancel</T>
           </Button>
           <Button disabled={!canRun} onClick={() => props.onRun(values)}>
-            {count === 1 ? <T>Start 1 run</T> : <T>Start {count} runs</T>}
+            {count === 1 ? (
+              <T>Start 1 run</T>
+            ) : (
+              <T>
+                Start <Var>{count}</Var> runs
+              </T>
+            )}
           </Button>
         </DialogFooter>
       </DialogPopup>

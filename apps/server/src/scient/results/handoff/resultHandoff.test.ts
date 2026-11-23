@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { expect, it } from "@effect/vitest";
 
-import { makeResultsReader, publishScriptRun, sha256File } from "../resultRevisions.ts";
+import { makeResultsReader, publishScriptRun } from "../resultRevisions.ts";
 import { comparePackageValues } from "./comparePackageValues.ts";
 import { exportResultPackage } from "./exportResultPackage.ts";
 import { hashBytes } from "./handoffFiles.ts";
@@ -399,7 +399,8 @@ it("hashes data beyond the recorder limit and marks a changed input at export", 
       {
         path: "large.csv",
         size: bytes,
-        sha256: await sha256File(path),
+        // SHA-256 of "x" followed by 256 MiB of zero bytes.
+        sha256: "31b91ae12dc384c86f1f527481da8895639b0a15efa42b6d5ebb6051bfeb888a",
         changedSinceRun: true,
         hashAtExport: true,
         included: false,

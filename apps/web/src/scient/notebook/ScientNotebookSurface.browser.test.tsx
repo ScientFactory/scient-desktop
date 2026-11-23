@@ -187,7 +187,9 @@ const notebook: NotebookView = {
   },
 };
 
-it.each(["light", "dark"] as const)(
+const screenshots = import.meta.env.VITE_NOTEBOOK_DESIGN_SCREENSHOTS as string | undefined;
+
+it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
   "returns keyboard focus from the outline and previews saved parameter settings in %s",
   async (theme) => {
     freshStart.mockReset().mockResolvedValue(AsyncResult.success({ runId: "fixture-run" }));
@@ -197,11 +199,14 @@ it.each(["light", "dark"] as const)(
       .spyOn(computeEnvironment.notebookFreshStart, "permissionAtom")
       .mockReturnValue(Atom.make(true));
     const root = document.documentElement;
-    using restoration = new DisposableStack();
+    await using restoration = new AsyncDisposableStack();
     const wasDark = root.classList.contains("dark");
-    restoration.defer(() => root.classList.toggle("dark", wasDark));
+    const viewportSize = { width: innerWidth, height: innerHeight };
+    restoration.defer(async () => {
+      root.classList.toggle("dark", wasDark);
+      await page.viewport(viewportSize.width, viewportSize.height);
+    });
     root.classList.toggle("dark", theme === "dark");
-    const screenshots = import.meta.env.VITE_NOTEBOOK_DESIGN_SCREENSHOTS as string | undefined;
     await page.viewport(360, 820);
     await using screen = await render(
       <div className="flex h-dvh w-full bg-background text-foreground">

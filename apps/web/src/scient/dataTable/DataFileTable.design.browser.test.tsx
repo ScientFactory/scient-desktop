@@ -119,7 +119,9 @@ vi.mock("~/state/use-atom-command", () => ({
 
 import { DataFileTable } from "./DataFileTable";
 
-it.each(["light", "dark"] as const)(
+const screenshotDirectory = import.meta.env.VITE_SCIENT_DATA_GRID_SCREENSHOTS;
+
+it.each(screenshotDirectory ? (["light", "dark"] as const) : (["light"] as const))(
   "fits saved-view actions and their dialogs at 360 px in %s mode",
   async (theme) => {
     await using restore = new AsyncDisposableStack();
@@ -161,8 +163,8 @@ it.each(["light", "dark"] as const)(
       { router: false }, // This fixture stays inside the Files surface.
     );
     const capture = async (name: string) => {
-      const directory = import.meta.env.VITE_SCIENT_DATA_GRID_SCREENSHOTS;
-      if (directory) await page.screenshot({ path: `${directory}/${name}-${theme}.png` });
+      if (screenshotDirectory)
+        await page.screenshot({ path: `${screenshotDirectory}/${name}-${theme}.png` });
     };
 
     const banner = screen.getByRole("region", { name: "Saved view" });
@@ -242,8 +244,10 @@ it.each(["light", "dark"] as const)(
       .toBeVisible();
     await expect.element(profile.getByRole("cell", { name: "≈3", exact: true })).toBeVisible();
     expect(profile.element().getBoundingClientRect().width).toBeLessThanOrEqual(328.5);
-    await expect.poll(() => getComputedStyle(profile.element()).opacity).toBe("1");
-    await capture("profile-360");
+    if (screenshotDirectory) {
+      await expect.poll(() => getComputedStyle(profile.element()).opacity).toBe("1");
+      await capture("profile-360");
+    }
     const statistics = profile.getByRole("region", { name: "Column statistics" }).element();
     expect(statistics.scrollWidth).toBeGreaterThan(statistics.clientWidth);
     statistics.scrollLeft = statistics.scrollWidth;

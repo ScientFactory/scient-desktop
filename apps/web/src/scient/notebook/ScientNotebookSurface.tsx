@@ -757,7 +757,7 @@ export default function ScientNotebookSurface(props: {
                             disabled={freshRunDisabled}
                             onClick={() => setSweepParameter(parameter)}
                           >
-                            <T>Run for each {parameter.name} value</T>
+                            {gt("Run for each {parameter} value", { parameter: parameter.name })}
                           </MenuItem>,
                         ];
                   })}

@@ -81,6 +81,13 @@ const packageVersions = (revision: ComputeResultRevision) =>
   );
 
 type Leaf = { readonly value: string; readonly numeric: boolean };
+const integerLiteral = /^-?\d+$/u;
+
+function numericDelta(from: string, to: string): number {
+  if (integerLiteral.test(from) && integerLiteral.test(to))
+    return Number(BigInt(to) - BigInt(from));
+  return Number(to) - Number(from);
+}
 
 function valueDiff(
   output: string,
@@ -88,8 +95,9 @@ function valueDiff(
   from: Leaf | undefined,
   to: Leaf | undefined,
 ): ValueDiff {
-  const delta = from?.numeric && to?.numeric ? Number(to.value) - Number(from.value) : NaN;
-  const relativeChange = from?.numeric ? delta / Math.abs(Number(from.value)) : NaN;
+  const delta = from?.numeric && to?.numeric ? numericDelta(from.value, to.value) : NaN;
+  const baseline = from?.numeric ? Number(from.value) : NaN;
+  const relativeChange = Number.isFinite(baseline) ? delta / Math.abs(baseline) : NaN;
   return {
     output,
     pointer,

@@ -68,12 +68,13 @@ export function useNotebookFreshRun(input: {
         environmentId: input.environmentId,
         input: { cwd: input.cwd, scriptPath: input.scriptPath, ...settings },
       });
-      sequence.current += 1;
       if (result._tag === "Success") observe(scope, result.value);
       else setError(gt("The notebook could not start."));
-    } finally {
-      setStarting(false);
+    } catch {
+      setError(gt("The notebook could not start."));
     }
+    sequence.current += 1;
+    setStarting(false);
   };
 
   const job = observed?.scope === scope ? observed.job : null;

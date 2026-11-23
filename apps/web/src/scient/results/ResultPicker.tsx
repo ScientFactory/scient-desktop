@@ -105,29 +105,27 @@ export function ResultPicker(props: {
   const chooseRevision = async (revision: ComputeResultRevisionId) => {
     setBusy(true);
     setMessage(null);
-    try {
-      const result = await list({
-        environmentId: props.environmentId,
-        input: { cwd: props.cwd, revision },
-      });
-      if (result._tag !== "Success") {
-        setMessage(resultErrorMessage(result, gt("The selected revision could not be read.")));
-        return;
-      }
-      const selected = result.value.scripts[0];
-      if (selected === undefined) {
-        setMessage(gt("The selected revision has no available results."));
-        return;
-      }
-      setScripts(
-        (current) =>
-          current?.map((script) =>
-            script.latest.scriptPath === selected.latest.scriptPath ? selected : script,
-          ) ?? null,
-      );
-    } finally {
-      setBusy(false);
+    const result = await list({
+      environmentId: props.environmentId,
+      input: { cwd: props.cwd, revision },
+    }).catch(() => null);
+    setBusy(false);
+    if (result === null || result._tag !== "Success") {
+      const fallback = gt("The selected revision could not be read.");
+      setMessage(result === null ? fallback : resultErrorMessage(result, fallback));
+      return;
     }
+    const selected = result.value.scripts[0];
+    if (selected === undefined) {
+      setMessage(gt("The selected revision has no available results."));
+      return;
+    }
+    setScripts(
+      (current) =>
+        current?.map((script) =>
+          script.latest.scriptPath === selected.latest.scriptPath ? selected : script,
+        ) ?? null,
+    );
   };
 
   const needle = query.trim().toLocaleLowerCase();

@@ -424,9 +424,10 @@ function MixedRunNotice(props: {
     setMessage(null);
     try {
       setMessage(await props.onUpdate(links));
-    } finally {
-      setUpdating(null);
+    } catch {
+      setMessage(gt("The result links could not be updated."));
     }
+    setUpdating(null);
   };
   const describe = (run: ComputeResultSummary) =>
     [
@@ -610,9 +611,10 @@ function ResultCard(props: {
       const failure = await props.onUpdate({ candidate: reference, resolution });
       if (failure === null) props.onClose();
       else setMessage(failure);
-    } finally {
-      setBusy(null);
+    } catch {
+      setMessage(gt("The result links could not be updated."));
     }
+    setBusy(null);
   };
 
   const runAgain = async (options?: ResultRunOptions) => {

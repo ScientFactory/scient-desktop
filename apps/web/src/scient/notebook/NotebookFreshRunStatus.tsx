@@ -1,5 +1,5 @@
 import type { NotebookFreshRun } from "@t3tools/contracts";
-import { T } from "gt-react";
+import { T, Var } from "gt-react";
 import { Button } from "~/components/ui/button";
 
 export function NotebookFreshRunStatus(props: {
@@ -26,7 +26,7 @@ export function NotebookFreshRunStatus(props: {
                 <T>Saving notebook run…</T>
               ) : progress?.phase === "running" ? (
                 <T>
-                  Cell {progress.cell} of {progress.total}
+                  Cell <Var>{progress.cell}</Var> of <Var>{progress.total}</Var>
                 </T>
               ) : (
                 <T>Starting notebook…</T>
@@ -39,14 +39,20 @@ export function NotebookFreshRunStatus(props: {
         ) : null}
         {published !== undefined ? (
           <p>
-            {published === 1 ? <T>Published 1 result</T> : <T>Published {published} results</T>}
+            {published === 1 ? (
+              <T>Published 1 result</T>
+            ) : (
+              <T>
+                Published <Var>{published}</Var> results
+              </T>
+            )}
           </p>
         ) : null}
         {sweep === undefined ? null : (
           <>
             <p>
               <T>
-                {sweep.saved} of {sweep.total} runs saved
+                <Var>{sweep.saved}</Var> of <Var>{sweep.total}</Var> runs saved
               </T>
             </p>
             {sweep.failures.length === 0 ? null : (

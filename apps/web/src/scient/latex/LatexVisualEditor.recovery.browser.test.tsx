@@ -12,9 +12,7 @@ vi.mock("~/scient/presentation/ScientTooltip", () => ({
     <span data-tooltip={typeof content === "string" ? content : undefined}>{children}</span>
   ),
 }));
-vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
-}));
+vi.mock("~/assets/assetUrls", () => import("./latexAssetUrls.testkit"));
 import type { Editor } from "@tiptap/core";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";

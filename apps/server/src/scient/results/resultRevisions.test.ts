@@ -604,7 +604,7 @@ describe("linked result revisions", () => {
     const place = await project();
     const first = await publishScriptRun(
       place.layout,
-      await run(place, '{"hr":0.720,"text":"100","same":1}', {
+      await run(place, '{"hr":0.720,"large":9007199254740992,"text":"100","same":1}', {
         kind: "notebook",
         scriptPath: "analysis.ipynb",
         parameters: [{ name: "cutoff", value: "50", source: "default" }],
@@ -619,7 +619,7 @@ describe("linked result revisions", () => {
     );
     const second = await publishScriptRun(
       place.layout,
-      await run(place, '{"hr":0.900,"text":"200","same":1}', {
+      await run(place, '{"hr":0.900,"large":9007199254740993,"text":"200","same":1}', {
         kind: "notebook",
         scriptPath: "analysis.ipynb",
         code: "run_new_model()",
@@ -656,10 +656,17 @@ describe("linked result revisions", () => {
       ],
       valuesTruncated: false,
     });
-    const [hr, text, same] = diff.values;
+    const [hr, large, text, same] = diff.values;
     expect(hr).toMatchObject({ pointer: "/hr", from: "0.720", to: "0.900" });
     expect(hr?.delta).toBeCloseTo(0.18);
     expect(hr?.relativeChange).toBeCloseTo(0.25);
+    expect(large).toMatchObject({
+      pointer: "/large",
+      from: "9007199254740992",
+      to: "9007199254740993",
+      delta: 1,
+      relativeChange: 1 / 9007199254740992,
+    });
     expect(same).toMatchObject({ from: "1", to: "1" });
     expect(text).toEqual({ output: "values.json", pointer: "/text", from: "100", to: "200" });
   });

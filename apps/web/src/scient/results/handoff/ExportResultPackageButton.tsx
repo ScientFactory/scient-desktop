@@ -38,7 +38,7 @@ import { localEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { formatReceiptDateTime } from "~/timestampFormat";
-import { resultErrorMessage } from "../resultState";
+import { resultErrorMessage, resultParameters } from "../resultState";
 import { PackageDisclosure } from "./PackageDisclosure";
 
 export function ExportResultPackageButton(props: {
@@ -98,7 +98,7 @@ export function ExportResultPackageButton(props: {
       number: entries.length - index,
       time: formatReceiptDateTime(entry.finishedAt, timestampFormat) || entry.finishedAt,
     });
-    const parameters = entry.parameters?.map(({ name, value }) => `${name} = ${value}`).join(", ");
+    const parameters = resultParameters(entry.parameters);
     return {
       value: entry.revision,
       label,

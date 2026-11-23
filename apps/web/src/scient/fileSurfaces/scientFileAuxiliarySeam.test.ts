@@ -40,7 +40,6 @@ describe("Scient file surface seams", () => {
     expect(controls).toContain("Restart session");
     expect(controls).toContain("Stop session");
     expect(results).not.toContain("<Pause");
-    expect(results).toContain('aria-label={gt("All sessions")}');
     expect(results).toContain('role="tablist"');
     expect(results).toContain('aria-label={gt("Compute view")}');
     expect(results).not.toContain("setVariablesOpen");

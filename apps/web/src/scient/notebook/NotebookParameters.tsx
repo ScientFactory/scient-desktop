@@ -4,7 +4,7 @@ import {
   notebookParameterJson,
   parseNotebookOverride,
 } from "@t3tools/shared/notebookParameters";
-import { T, useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { useStore } from "zustand";
 
 import { Input } from "~/components/ui/input";
@@ -183,7 +183,9 @@ export function NotebookParameterControls(props: {
                 saved,
               ) ? (
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  <T>Last run used {saved}</T>
+                  <T>
+                    Last run used <Var>{saved}</Var>
+                  </T>
                 </span>
               ) : null}
             </div>

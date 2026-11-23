@@ -200,6 +200,27 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_compute_output: tool(["Read", "Reading", "Read", "run output"], "scient-compute"),
   t3_results_run: tool(["Run", "Running", "Ran", "a script for results"], "scient-compute"),
   t3_results_list: tool(["List", "Listing", "Listed", "linked results"], "scient-compute"),
+  t3_results_compare: tool(
+    ["Compare", "Comparing", "Compared", "result revisions"],
+    "scient-compute",
+  ),
+  t3_results_export: tool(
+    ["Export", "Exporting", "Exported", "a result package"],
+    "scient-compute",
+  ),
+  t3_results_verify: tool(
+    ["Verify", "Verifying", "Verified", "a result package"],
+    "scient-compute",
+  ),
+  t3_data_profile: tool(["Profile", "Profiling", "Profiled", "a dataset"], "scient-compute"),
+  t3_data_preview_view: tool(
+    ["Preview", "Previewing", "Previewed", "a data view"],
+    "scient-compute",
+  ),
+  t3_data_materialize_view: tool(
+    ["Export", "Exporting", "Exported", "a data view"],
+    "scient-compute",
+  ),
   t3_results_markdown: tool(["Link", "Linking", "Linked", "a result"], "scient-compute"),
   t3_results_check: tool(["Check", "Checking", "Checked", "linked results"], "scient-compute"),
   t3_compute_sessions: tool(["List", "Listing", "Listed", "compute sessions"], "scient-compute"),
