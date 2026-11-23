@@ -184,7 +184,11 @@ import * as ServerSettings from "./serverSettings.ts";
 // SCIENT-FORK:START — config subscriptions must not call unrelated Scient capabilities.
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
+import * as DataViews from "./scient/data/DataViews.ts";
 import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
+// SCIENT-FORK:START — capture notebook jobs in the shared route test services.
+import { NotebookRunJobs } from "./scient/notebook/NotebookRunJobs.ts";
+// SCIENT-FORK:END
 import * as ComputeResults from "./scient/results/ComputeResults.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
@@ -860,7 +864,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AnalysisService.AnalysisService)({}),
   Layer.mock(ComputeSessionService.ComputeSessionService)({ runtimeDescriptors: [] }),
   Layer.mock(DataTables.DataTables)({}),
+  Layer.mock(DataViews.DataViews)({}),
   Layer.mock(NotebookStore.NotebookStore)({}),
+  // SCIENT-FORK:START — fresh notebook RPCs share a server-lifetime owner.
+  Layer.mock(NotebookRunJobs)({}),
+  // SCIENT-FORK:END
   Layer.mock(ComputeResults.ComputeResults)({}),
   Layer.mock(ScientificRuntimePreferences)({}),
   Layer.mock(ConversationExportService)({}),

@@ -14,6 +14,9 @@ const buttonVariants = cva(
       variant: "default",
     },
     variants: {
+      // SCIENT-FORK:START — toolbar controls can use a single inset focus edge.
+      focus: { edge: "focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-ring" },
+      // SCIENT-FORK:END
       shape: {
         default: "",
         "group-start": "rounded-e-none",
@@ -21,12 +24,18 @@ const buttonVariants = cva(
         square: "rounded-sm",
       },
       size: {
+        // SCIENT-FORK:START — full-width navigation and disclosure rows use the shared row geometry.
+        row: "min-h-8 w-full justify-start rounded-lg px-2 py-1 text-sm whitespace-normal",
+        // SCIENT-FORK:END
         compact:
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-xs before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         "compact-sm":
           "h-6 gap-1 rounded-md px-1.5 text-2xs sm:text-2xs font-normal before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
         icon: "size-9 sm:size-8",
+        // SCIENT-FORK:START — Fixed 28 px across pane widths.
+        "icon-compact": "size-7 [&_svg:not([class*='size-'])]:size-3.5",
+        // SCIENT-FORK:END
         "icon-header":
           "size-5.5 rounded-xs not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5",
         "icon-lg": "size-10 sm:size-9",
@@ -61,6 +70,10 @@ const buttonVariants = cva(
           "border-input bg-popover not-dark:bg-clip-padding text-destructive-foreground shadow-xs/5 not-disabled:not-active:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:not-disabled:before:shadow-[0_-1px_--theme(--color-white/2%)] dark:not-disabled:not-active:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:border-destructive/32 [:hover,[data-pressed]]:bg-destructive/4",
         ghost:
           "[--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent",
+        // SCIENT-FORK:START — quiet action with a single inset keyboard focus edge.
+        "ghost-inset":
+          "[--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-offset-0",
+        // SCIENT-FORK:END
         "ghost-muted":
           "[--control-icon-color:currentColor] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-foreground",
         "ghost-muted-row":
@@ -114,15 +127,20 @@ interface ButtonProps extends useRender.ComponentProps<"button"> {
   variant?: ButtonVariant;
   size?: ButtonSize;
   shape?: ButtonShape;
+  // SCIENT-FORK:START — opt into the shared single-edge focus treatment.
+  focus?: "edge" | undefined;
+  // SCIENT-FORK:END
 }
 
-function Button({ className, variant, size, shape, render, ...props }: ButtonProps) {
+// SCIENT-FORK:START — opt into the shared single-edge focus treatment.
+function Button({ className, variant, size, shape, focus, render, ...props }: ButtonProps) {
   const typeValue: React.ButtonHTMLAttributes<HTMLButtonElement>["type"] = render
     ? undefined
     : "button";
 
   const defaultProps = {
-    className: cn(buttonVariants({ className, shape, size, variant })),
+    className: cn(buttonVariants({ className, shape, size, focus, variant })),
+    // SCIENT-FORK:END
     "data-slot": "button",
     "data-shape": shape ?? "default",
     "data-size": size ?? "default",

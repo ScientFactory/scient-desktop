@@ -255,11 +255,24 @@ restarting Scient. These languages have no Variables pane, and Scient has no pri
 
 A notebook in a language Scient cannot find opens normally and shows **Not found**.
 
+## Find a run
+
+Choose **Compute history** in the Console toolbar to see the project's runs, newest first.
+Choose a run to see its code and output. Use **Filter by file** to find a script's runs.
+Use **Stop** on a running entry. Choose **Sessions** to open a session and see its variables.
+Switch back to **History** to return to your filter and opened runs.
+Notebook **Run All** appears as one entry and shows the current cell out of the total. Open it to see the cells and their output. If a cell fails, the entry shows where the run failed and how many cells did not run.
+The agent icon opens the chat that started the run. A script's **Results** also shows runs
+of that file started by agents in other chats. You can review history without starting a runtime.
+
 ## Console
 
-**+** → **Scientific computing** opens a Console: a box to type code in, with the answer appearing
-above it. There is nothing to start. The first run starts the language, and values you define stay
-available to later runs until you restart or stop.
+Open **+** → **Scientific computing** to start a Console. If a blank Console is already open in
+this thread, Scient selects it. For another tab, choose **New console** in the Console toolbar or
+in Compute history.
+
+Type code and run it to see the output above the input. The first run starts the language.
+Each Console has its own session. Values stay available until you restart or stop that session.
 
 **Shift+Enter** or **⌘Enter** runs, **Enter** adds a line, and **↑** and **↓** walk through what you
 ran. The picker in the box lists every language installed on this computer. One Console holds one
@@ -504,34 +517,171 @@ where its variables were; its results stay. Running work is never stopped. If ev
 capacity menu offers **Stop this session and run fresh…**, with confirmation that its variables will
 be lost, and Cancel keeps the session.
 
+### Save and compare linked results
+
+Save the script, then make it write its outputs to the folder in `SCIENT_RESULTS_DIR`.
+Scient keeps JSON values, CSV tables and figures from a successful fresh run as a revision.
+Use **Insert ▸ Result** in a manuscript to link to that revision.
+
+- Choose **Run ▸ Run with setup…** in a file or **Run setup…** on a linked result.
+  The same dialog opens with the last saved setup. Parameters use JSON values. Enter `0.7` for a number and `"adults"` for text. The script receives one
+  JSON object in `SCIENT_PARAMETERS` when you supply overrides. A script's own defaults stay
+  in its code.
+- Select **Add file…** to declare an input. A saved SQL view also declares the files it names.
+  A missing declared file stops the run before it starts. The result shows how many files you
+  declared, how many Scient saw the runtime read, and when the check covered only some inputs.
+  In R, Julia, SQL and MATLAB, **Suggested from the script** shows existing project files named in the
+  saved script. Choose **Add** beside a suggestion to declare it for this run.
+- Open **Run details** to see which inputs Scient checked. Python can record directory listings
+  and name data files read outside the project. Freshness for those outside files is unknown.
+  Declare datasets read by native readers such as DuckDB, PyArrow or Polars.
+- **Run fresh** and **Re-run** reuse the latest saved setup. Remove all parameters or all
+  declared files in setup to clear that list for the next run.
+- Open **Compare with…** from a result or a manuscript link. Choose the **From** and **To**
+  revisions by time and parameters. **Swap sides** reverses the comparison. **Show unchanged**
+  includes matching values and files. Open either revision's actions menu to export it for rerun.
+  Older figures and tables may have aged out of local history.
+- When a run fails or stops, the paper keeps its saved value. Choose **View output** to see what
+  happened or open **Run details** to see what the saved run checked. If a later run succeeded,
+  check its value before choosing **Update value**.
+
+Each revision records the runtime and any recognized lockfiles at the project root. Python
+can also report its installed package versions. **Environment may differ** means a recorded
+lockfile changed or disappeared. Compare the saved evidence to review what differed between runs.
+
+Agents can use `scient_results_run` with parameters and input paths, `scient_results_list`
+with the analysis path to find revision IDs, and `scient_results_compare` to compare them.
+
+## Share a result for rerun
+
+Choose **Export for rerun…** from **Result packages** in Compute history, on a result card, or
+from either revision's actions menu in a comparison. Choose the saved revision by its date and
+parameters. Export from a card or comparison starts with that revision selected.
+
+Select the data files you want to share. Scient automatically includes local code files the run
+was recorded reading. Data already under `data/` keeps that package path. The README maps every
+included data file to its original project path. Scient shows file sizes and flags changes since
+the run. Review the environment files and clear any you want to leave out. Scient removes a
+machine-specific Conda prefix and excludes environment files that still contain a home-folder
+path. Choose where to save the package. Scient shows progress as it computes file digests and
+opens the package location when the Compute computer has a file manager.
+
+The folder contains a README, a manifest, the source that ran, the saved outputs, available
+environment evidence, and RO-Crate metadata. If the project has a LICENSE file, the package
+carries it with the crate. The manifest lists the size and SHA-256 digest of each input where
+available and identifies digests computed at export. Give your colleague access to any data they need to
+supply separately. Review the copied files before sharing them. If Scient cannot find source
+that matches the saved run, restore the matching source or save a new result and export it.
+
+### Verify a package
+
+1. In Compute or the command palette, choose **Verify a result package…** and select the package
+   folder on the Compute computer.
+2. If the author left inputs out, open **Separately supplied inputs** and choose a folder that
+   holds those files at their original project-relative paths. Open **Verification settings**
+   to select a runtime, change the tolerances or the 60-minute time limit, or put your name
+   on the report.
+3. Choose **Run and verify** only if you trust the package's code. Scient checks the files and
+   runs the source in a new working folder with the recorded settings. You can close the dialog
+   while it runs and return through **View verification** in the status notification. Choose
+   **Cancel verification** to stop the rerun and save a cancelled report.
+4. Read the verdict and each output's outcome. Expand the matched outputs or the rerun environment
+   details to see more. The full report is saved as
+   `verification.json` in a new folder beside the package.
+
+Verification supports Python scripts and notebooks and R and Julia scripts. Set up the matching
+runtime and dependencies before you run. Python notebooks need IPython. Copied lockfiles and
+package lists help you choose the environment.
+
+Scient compares tables, text and other files byte for byte. It compares JSON numbers with
+absolute tolerance `1e-12` and relative tolerance `1e-9` by default. You can change both.
+Strings, booleans, nulls and pairs of integer values must match exactly. Figures are compared by
+hash and shown alongside the verdict. The verdict comes from the values and other files.
+
+Agents can use `scient_results_export` and `scient_results_verify` with folders inside the
+current project. For export, pass a script or notebook path for the newest revision, or an exact
+revision ID from `scient_results_list`. Tell your agent which files to share and whether it may
+run the package's code.
+
 ## Notebooks
 
-Jupyter notebooks (`.ipynb`) open as editable notebooks, however large the file.
+Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
 
-- **Run:** point at a cell's number to run it, or use **Run all**. Cells queue in order and a run
-  stops at the first cell that fails. You can keep working, or leave the notebook, while it runs.
-- **Edit:** click code to edit it where you clicked. Click a Text cell to edit it in the same editor
-  as a Markdown document.
-- **Out of date:** a dot replaces a cell's number when the code changed since it ran, or a cell it
-  reads from changed. Its output dims. **Run out-of-date cells** in the Run menu runs just those.
-- **Keyboard:** Shift+Enter runs and moves on, Cmd/Ctrl+Enter runs. Esc leaves the editor; then
-  `A`/`B` add a cell above or below, `J`/`K` or the arrows move, `D D` deletes, `Z` undoes the delete,
-  `M`/`Y` switch to Text or Code, and `I I` stops the run.
-- **Variables** opens the session's variables below the notebook.
+- Open **Notebook outline** in the toolbar and choose a heading to jump to it. The outline marks the
+  selected section. Use **Cell actions** to collapse a heading's section or hide a code cell's
+  source or outputs. The file keeps those folds when you reopen it in Scient or JupyterLab.
+- Point at a cell's number to run it, or choose **Run all**. Cells run in order and stop at the
+  first failure. Click code to edit it at the pointer, or click a Text cell to edit its Markdown.
+- A dot and dimmed output mark a cell whose code changed or whose output may be out of date.
+  Scient uses names in the code to guess which cells depend on earlier ones.
+- Press Shift+Enter to run and move on or Cmd/Ctrl+Enter to run and stay. Press Esc to leave the
+  editor. Then use `A` or `B` to add a cell, `J` or `K` to move, `D D` to delete, `Z` to restore
+  the deleted cell, and `M` or `Y` to switch it to Text or Code. Press `I I` to interrupt a cell run.
+- Open **Variables** to see the live session's variables.
+- **Expand section** under a collapsed heading reveals its hidden cells.
 
-Outputs and figures are saved into the file, so it opens with its results in Jupyter or anywhere
-else. Scient keeps each run's details in the cell's metadata.
+### Run with parameters
+
+1. Put simple assignments in a Python, R or Julia code cell. Open **Cell actions** and select
+   **Tag as parameters**.
+2. Change values in the parameters bar. These changes stay pending when you switch files and
+   apply when you choose **Run fresh with input** from a data file. The bar can show the values
+   the last clean run used. Expressions in the parameters cell run before the overrides apply,
+   so move calculations that depend on changed values to a later cell.
+3. Check **Declared inputs** below the parameters. The list starts with the last published run's
+   declarations. Add or remove files for the next fresh run.
+4. Choose **Run with changes** and confirm. Scient starts a fresh kernel and runs the saved notebook
+   from top to bottom. It saves the overrides in an `injected-parameters` cell and updates the
+   notebook outputs after success. A failed or stopped run keeps the previous outputs.
+
+The fresh run shows the current cell and a **Stop** action. Before replacing the saved outputs,
+Scient keeps the current notebook in **Retained file versions**. Choose **Restore…** there to
+restore its source and outputs together.
+
+To publish a result revision, write the intended figures, CSV tables and JSON values to the
+folder in `SCIENT_RESULTS_DIR`. The kernel receives the overrides as JSON in
+`SCIENT_PARAMETERS`. The **Run fresh and publish** menu action also works for notebooks without
+parameters.
+
+Notebook authors can set control hints in the parameters cell's `metadata.scient.parameters`.
+Use `{"threshold":{"min":0.3,"max":0.7,"step":0.1}}` for a slider or
+`{"group":{"options":["all","adults"]}}` for a dropdown.
+
+### Explore saved settings
+
+Use **Run for each value** in the Run menu to save alternatives for one parameter. Edit the proposed
+values, one per line, before starting. Scient reports which settings it saved and which failed.
+Open **Reader view** to choose among the saved settings and see their
+values, tables and figures. Inline result values linked from the notebook's Markdown follow the
+selected revision. Expand a code cell to inspect it.
+
+**Reset** returns to the published run. The line under the parameters shows the time of the
+selected saved run or tells you when no saved run matches. When a setting was made with earlier
+code, **Run for this value** saves an alternative while keeping the published setting and notebook
+file in place. Browsing settings uses saved results.
+
+Agents can read headings, parameter defaults and saved alternatives with `scient_notebook_read`.
+They can tag or fold cells with `scient_notebook_edit` and publish a fresh run with
+`scient_notebook_run` using `fresh: true` and JSON overrides such as `{"threshold": 0.7}`.
 
 ## Working with agents
 
-Agents in a chat can run code in Scient Compute. By default an agent works in its own session for
-that chat, which uses Scient-managed Python when it is installed; asked to, it runs in your
-session, such as an open file or notebook, where its runs appear in Results marked **Agent**. For
-notebooks they read, edit and run cells directly, and you see the changes in the open notebook. Agents
-see the output and figures of their runs, can read your runs, list a session's variables,
-interrupt or restart a session, and set up Scient-managed Python or its Toolkits. In the other
-languages they run a project file the way **Run** does, and you see that run under the file. They run
-with the same authority as your own code.
+Ask an agent to run a saved script by name, for example “Run threshold.py at its default
+threshold and tell me the recall.” The file tool uses the project's Compute runtime and records
+the run under the file. Agents use their own session by default. Ask the agent to use your open
+session when you want it to see your current variables. Both kinds of run show **Agent** in Results.
+
+Ask for parameter values and name the input files when a script needs them. The script must read
+parameter values from `SCIENT_PARAMETERS`. Compute records the values and input paths. These runs
+use a fresh session for session-based languages. Ask to publish a result when the outputs need to
+be linked in a document.
+
+Agents use the code tool for snippets and notebook tools to run cells. A run from the shell leaves
+no Compute record. Parameters passed to a saved script appear in its history and chat rows.
+Use values such as `{"threshold": 0.7}` for scripts that read `SCIENT_PARAMETERS`.
+For a sweep, the agent runs the saved file once per setting. The tool reports project files
+observed changing during the run. Expand a Compute run in chat to see its output. Agents run
+code with the same authority as your own code.
 
 ### Files changed outside the editor
 

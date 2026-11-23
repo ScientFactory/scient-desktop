@@ -18,6 +18,13 @@ import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { TaskFolders } from "../workspace/TaskFolders.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+// SCIENT-FORK:START — Measure the Compute tools exposed before discovery.
+import * as McpToolExposure from "../mcp/McpToolExposure.ts";
+import {
+  SCIENT_EAGER_COMPUTE_TOOLS,
+  SCIENT_ALWAYS_LOADED_TOOLS,
+} from "./scient/ScientAgentToolLoading.ts";
+// SCIENT-FORK:END
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -177,23 +184,43 @@ const layerAdvertisedTools = McpHttpServer.layerTools.pipe(
   Layer.provide(toolHandlerServices),
 );
 
-// Claude Code loads these tools up front instead of behind ToolSearch, outside this budget.
-it.effect("only request_secret and send_to_user ask Claude Code to load them up front", () =>
+// SCIENT-FORK:START — Claude must see the Compute execution tools without ToolSearch.
+it.effect("keeps the eager Claude list small and exposes Compute before discovery", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
     const alwaysLoad = mcp.tools
-      .filter(({ tool }) => tool._meta?.["anthropic/alwaysLoad"] !== undefined)
-      .map(({ tool }) => [tool.name, tool._meta]);
+      .filter(({ tool }) => tool._meta?.["anthropic/alwaysLoad"] === true)
+      .map(({ tool }) => tool.name)
+      .toSorted();
     expect(alwaysLoad).toEqual([
-      // SCIENT-FORK:START — Scient's skill list and load find guidance before the work starts.
-      ["scient_skills_list", { "anthropic/alwaysLoad": true }],
-      ["scient_skill_load", { "anthropic/alwaysLoad": true }],
-      // SCIENT-FORK:END
-      ["request_secret", { "anthropic/alwaysLoad": true }],
-      ["send_to_user", { "anthropic/alwaysLoad": true }],
+      "request_secret",
+      ...SCIENT_EAGER_COMPUTE_TOOLS,
+      "scient_skill_load",
+      "scient_skills_list",
+      "send_to_user",
     ]);
+    const exposure = McpToolExposure.make(
+      () => [],
+      () => Effect.void,
+    );
+    for (const tool of SCIENT_EAGER_COMPUTE_TOOLS) {
+      expect(exposure.isListed("new-session", tool)).toBe(true);
+      expect(SCIENT_ALWAYS_LOADED_TOOLS).toContain(tool);
+    }
+    expect(exposure.isListed("new-session", "scient_compute_inventory")).toBe(false);
+    const eagerCompute = mcp.tools
+      .filter(({ tool }) => SCIENT_EAGER_COMPUTE_TOOLS.some((name) => name === tool.name))
+      .map(({ tool }) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      }));
+    expect(utf8Bytes(JSON.stringify(eagerCompute))).toBe(
+      scientBudget.eagerComputeToolListJsonBytes,
+    );
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
+// SCIENT-FORK:END
 
 // CI rejects a PR that raises any value above main's agentContextBudget.json, so growth
 // needs the agent-context-increase label. Lower the values when the text shrinks.

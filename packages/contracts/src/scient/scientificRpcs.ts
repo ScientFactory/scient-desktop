@@ -30,6 +30,8 @@ import {
   ComputeGetProjectSessionResult,
   ComputeInspectRuntimesInput,
   ComputeListProjectExecutionsInput,
+  ComputeRunHistoryInput,
+  ComputeRunHistoryResult,
   ComputeListProjectExecutionsResult,
   ComputeListProjectOutputsInput,
   ComputeListProjectSessionsResult,
@@ -69,6 +71,18 @@ import {
   ComputeResultsUndoUpdateInput,
   ComputeResultsUpdateFilesInput,
   ComputeResultsListInput,
+  ComputeResultsSetupInput,
+  ComputeResultsSetupResult,
+  ComputeResultsPreviewInput,
+  ComputeResultsPreviewResult,
+  ComputeResultsCompareInput,
+  ComputeResultsCompareResult,
+  ComputeResultsHistoryInput,
+  ComputeResultsHistoryResult,
+  ComputeResultsPublicationInput,
+  ComputeResultsPublicationResult,
+  ComputeResultsAttemptOutputInput,
+  ComputeResultsAttemptOutputResult,
   ComputeResultsListResult,
   ComputeResultsPlaceFigureInput,
   ComputeResultsPlaceFigureResult,
@@ -78,16 +92,41 @@ import {
   ComputeResultsResolveResult,
 } from "../scientComputeResults.ts";
 import {
+  ResultHandoffChoices,
+  ResultHandoffExportInput,
+  ResultHandoffExportResult,
+  ResultHandoffExportProgress,
+  ResultHandoffExportProgressInput,
+  ResultHandoffRevisionInput,
+  ResultHandoffVerifyRequest,
+  ResultHandoffCancelInput,
+  ResultHandoffCancelResult,
+  ResultHandoffVerifyResult,
+} from "../scientResultHandoff.ts";
+import {
   ComputeTableInput,
   DataFileTable,
   DataFileTableError,
   DataFileTableInput,
+  DataFileProfileInput,
+  DataProfile,
+  DataProfileEvent,
+  ComputeTableProfileInput,
   DataTablePage,
+  DataViewError,
+  DataViewInput,
+  DataViewPageInput,
+  DataViewSaveInput,
+  DataViewMaterializeInput,
 } from "../scientData.ts";
 import {
   NotebookEditInput,
   NotebookEditResult,
   NotebookError,
+  NotebookFreshRun,
+  NotebookFreshRunInput,
+  NotebookFreshRunStatusInput,
+  NotebookFreshRunStopInput,
   NotebookOutputJson,
   NotebookReadInput,
   NotebookReadOutputInput,
@@ -126,6 +165,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeCancelExecution: "compute.cancelExecution",
   computeInterruptSession: "compute.interruptSession",
   computeListExecutions: "compute.listExecutions",
+  computeRunHistory: "compute.runHistory",
   computeListOutputs: "compute.listOutputs",
   computeInspectVariables: "compute.inspectVariables",
   computeReadTable: "compute.readTable",
@@ -133,6 +173,17 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeSaveConsoleNotebook: "compute.saveConsoleNotebook",
   computeResultsResolve: "compute.results.resolve",
   computeResultsList: "compute.results.list",
+  computeResultsSetup: "compute.results.setup",
+  computeResultsPreview: "compute.results.preview",
+  computeResultsCompare: "compute.results.compare",
+  computeResultsHistory: "compute.results.history",
+  computeResultsPublication: "compute.results.publication",
+  computeResultsAttemptOutput: "compute.results.attemptOutput",
+  computeResultsHandoffChoices: "compute.results.handoffChoices",
+  computeResultsExport: "compute.results.export",
+  computeResultsExportProgress: "compute.results.exportProgress",
+  computeResultsVerify: "compute.results.verify",
+  computeResultsCancelVerification: "compute.results.cancelVerification",
   computeResultsPlaceFigure: "compute.results.placeFigure",
   computeResultsRerun: "compute.results.rerun",
   computeResultsPlaceLatex: "compute.results.placeLatex",
@@ -143,11 +194,20 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   notebookReadOutput: "notebook.readOutput",
   notebookEdit: "notebook.edit",
   notebookRecordRun: "notebook.recordRun",
+  notebookFreshStart: "notebook.freshStart",
+  notebookFreshStatus: "notebook.freshStatus",
+  notebookFreshStop: "notebook.freshStop",
   subscribeComputeSessions: "subscribe.computeSessions",
   subscribeComputeActiveWork: "subscribe.computeActiveWork",
 
   // Scient-owned data file viewer
   dataReadFileTable: "data.readFileTable",
+  dataProfileFile: "data.profileFile",
+  dataReadView: "data.readView",
+  dataProfileView: "data.profileView",
+  dataSaveView: "data.saveView",
+  dataMaterializeView: "data.materializeView",
+  dataProfileVariable: "data.profileVariable",
 } as const;
 
 /** Spread into the streaming subscriptions at the end of rpc.ts WS_METHODS. */
@@ -343,6 +403,12 @@ const WsComputeListExecutionsRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.compute
   error: ComputeRpcError,
 });
 
+const WsComputeRunHistoryRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeRunHistory, {
+  payload: ComputeRunHistoryInput,
+  success: ComputeRunHistoryResult,
+  error: ComputeRpcError,
+});
+
 const WsComputeListOutputsRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeListOutputs, {
   payload: ComputeListProjectOutputsInput,
   success: ComputeExecutionOutputs,
@@ -370,6 +436,46 @@ const WsDataReadFileTableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataReadFil
   error: Schema.Union([DataFileTableError, EnvironmentAuthorizationError]),
 });
 
+const WsDataProfileFileRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataProfileFile, {
+  payload: DataFileProfileInput,
+  success: DataProfileEvent,
+  error: Schema.Union([DataFileTableError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsDataProfileVariableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataProfileVariable, {
+  payload: ComputeTableProfileInput,
+  success: DataProfile,
+  error: ComputeRpcError,
+});
+
+const dataViewRpcError = Schema.Union([DataViewError, EnvironmentAuthorizationError]);
+const writtenDataPath = Schema.Struct({ path: DataViewInput.fields.path });
+
+const WsDataReadViewRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataReadView, {
+  payload: DataViewPageInput,
+  success: DataTablePage,
+  error: dataViewRpcError,
+});
+
+const WsDataProfileViewRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataProfileView, {
+  payload: DataViewInput,
+  success: DataProfile,
+  error: dataViewRpcError,
+});
+
+const WsDataSaveViewRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataSaveView, {
+  payload: DataViewSaveInput,
+  success: writtenDataPath,
+  error: dataViewRpcError,
+});
+
+const WsDataMaterializeViewRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataMaterializeView, {
+  payload: DataViewMaterializeInput,
+  success: writtenDataPath,
+  error: dataViewRpcError,
+});
+
 const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSaveOutput, {
   payload: ComputeSaveProjectOutputInput,
   success: ComputeSaveProjectOutputResult,
@@ -389,11 +495,92 @@ const WsComputeResultsResolveRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.compute
   error: ComputeResultsRpcError,
 });
 
+const WsComputeResultsHistoryRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsHistory, {
+  payload: ComputeResultsHistoryInput,
+  success: ComputeResultsHistoryResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsComputeResultsCompareRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsCompare, {
+  payload: ComputeResultsCompareInput,
+  success: ComputeResultsCompareResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsComputeResultsPreviewRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPreview, {
+  payload: ComputeResultsPreviewInput,
+  success: ComputeResultsPreviewResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsComputeResultsSetupRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsSetup, {
+  payload: ComputeResultsSetupInput,
+  success: ComputeResultsSetupResult,
+  error: ComputeResultsRpcError,
+});
+
 const WsComputeResultsListRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsList, {
   payload: ComputeResultsListInput,
   success: ComputeResultsListResult,
   error: ComputeResultsRpcError,
 });
+
+const WsComputeResultsPublicationRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPublication,
+  {
+    payload: ComputeResultsPublicationInput,
+    success: ComputeResultsPublicationResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsResultHandoffChoicesRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsHandoffChoices,
+  {
+    payload: ResultHandoffRevisionInput,
+    success: ResultHandoffChoices,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsAttemptOutputRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsAttemptOutput,
+  {
+    payload: ComputeResultsAttemptOutputInput,
+    success: ComputeResultsAttemptOutputResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsResultHandoffExportRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsExport, {
+  payload: ResultHandoffExportInput,
+  success: ResultHandoffExportResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsResultHandoffExportProgressRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsExportProgress,
+  {
+    payload: ResultHandoffExportProgressInput,
+    success: ResultHandoffExportProgress,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsResultHandoffVerifyRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeResultsVerify, {
+  payload: ResultHandoffVerifyRequest,
+  success: ResultHandoffVerifyResult,
+  error: ComputeResultsRpcError,
+});
+
+const WsResultHandoffCancelRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsCancelVerification,
+  {
+    payload: ResultHandoffCancelInput,
+    success: ResultHandoffCancelResult,
+    error: ComputeResultsRpcError,
+  },
+);
 
 const WsComputeResultsPlaceFigureRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPlaceFigure,
@@ -463,6 +650,24 @@ const WsComputeSubmitCellsRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSub
 
 const NotebookRpcError = Schema.Union([NotebookError, EnvironmentAuthorizationError]);
 
+const WsNotebookFreshStartRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookFreshStart, {
+  payload: NotebookFreshRunInput,
+  success: NotebookFreshRun,
+  error: Schema.Union([ComputeResultsError, EnvironmentAuthorizationError]),
+});
+
+const WsNotebookFreshStatusRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookFreshStatus, {
+  payload: NotebookFreshRunStatusInput,
+  success: Schema.NullOr(NotebookFreshRun),
+  error: Schema.Union([ComputeResultsError, EnvironmentAuthorizationError]),
+});
+
+const WsNotebookFreshStopRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookFreshStop, {
+  payload: NotebookFreshRunStopInput,
+  success: Schema.NullOr(NotebookFreshRun),
+  error: Schema.Union([ComputeResultsError, EnvironmentAuthorizationError]),
+});
+
 const WsNotebookReadRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookRead, {
   payload: NotebookReadInput,
   success: Schema.NullOr(NotebookView),
@@ -523,14 +728,32 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeCancelExecutionRpc,
   WsComputeInterruptSessionRpc,
   WsComputeListExecutionsRpc,
+  WsComputeRunHistoryRpc,
   WsComputeListOutputsRpc,
   WsComputeInspectVariablesRpc,
   WsComputeReadTableRpc,
   WsDataReadFileTableRpc,
+  WsDataProfileFileRpc,
+  WsDataReadViewRpc,
+  WsDataProfileViewRpc,
+  WsDataSaveViewRpc,
+  WsDataMaterializeViewRpc,
+  WsDataProfileVariableRpc,
   WsComputeSaveOutputRpc,
   WsComputeSaveConsoleNotebookRpc,
   WsComputeResultsResolveRpc,
   WsComputeResultsListRpc,
+  WsComputeResultsSetupRpc,
+  WsComputeResultsPreviewRpc,
+  WsComputeResultsCompareRpc,
+  WsComputeResultsHistoryRpc,
+  WsComputeResultsPublicationRpc,
+  WsComputeResultsAttemptOutputRpc,
+  WsResultHandoffChoicesRpc,
+  WsResultHandoffExportRpc,
+  WsResultHandoffExportProgressRpc,
+  WsResultHandoffVerifyRpc,
+  WsResultHandoffCancelRpc,
   WsComputeResultsPlaceFigureRpc,
   WsComputeResultsRerunRpc,
   WsComputeResultsPlaceLatexRpc,
@@ -542,5 +765,8 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsNotebookReadOutputRpc,
   WsNotebookEditRpc,
   WsNotebookRecordRunRpc,
+  WsNotebookFreshStartRpc,
+  WsNotebookFreshStatusRpc,
+  WsNotebookFreshStopRpc,
   WsSubscribeComputeSessionsRpc,
 );

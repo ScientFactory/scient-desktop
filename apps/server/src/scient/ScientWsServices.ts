@@ -11,6 +11,8 @@ import * as Layer from "effect/Layer";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as ComputeSessionService from "./compute/ComputeSessionService.ts";
 import * as DataTables from "./data/DataTables.ts";
+import { NotebookRunJobs } from "./notebook/NotebookRunJobs.ts";
+import * as DataViews from "./data/DataViews.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
 import * as ComputeResults from "./results/ComputeResults.ts";
 import { ScientificRuntimePreferences } from "./compute/ScientificRuntimePreferences.ts";
@@ -43,7 +45,9 @@ export const captureScientWsServices = Effect.gen(function* () {
   const browserHistory = yield* BrowserHistory;
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const dataTables = yield* DataTables.DataTables;
+  const dataViews = yield* DataViews.DataViews;
   const notebooks = yield* NotebookStore.NotebookStore;
+  const notebookJobs = yield* NotebookRunJobs;
   const computeResults = yield* ComputeResults.ComputeResults;
   const runtimePreferences = yield* ScientificRuntimePreferences;
   const conversationExports = yield* ConversationExportService;
@@ -71,7 +75,9 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(BrowserHistory, browserHistory),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
     Layer.succeed(DataTables.DataTables, dataTables),
+    Layer.succeed(DataViews.DataViews, dataViews),
     Layer.succeed(NotebookStore.NotebookStore, notebooks),
+    Layer.succeed(NotebookRunJobs, notebookJobs),
     Layer.succeed(ComputeResults.ComputeResults, computeResults),
     Layer.succeed(ScientificRuntimePreferences, runtimePreferences),
     Layer.succeed(ConversationExportService, conversationExports),

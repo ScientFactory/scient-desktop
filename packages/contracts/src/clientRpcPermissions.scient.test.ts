@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -67,21 +68,58 @@ describe("Linked results client authorization", () => {
       scopes: [AuthFilesystemWriteScope],
       permissions: [AuthFilesystemWriteScope],
     };
-    const rerun = clientRpcRequiredScopes(WS_METHODS.computeResultsRerun, {});
-    expect(rerun.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
-    expect(rerun.every((scope) => sessionGrantsScope(operator, scope))).toBe(true);
+    for (const method of [
+      WS_METHODS.computeResultsRerun,
+      WS_METHODS.notebookFreshStart,
+      WS_METHODS.notebookFreshStop,
+    ]) {
+      const scopes = clientRpcRequiredScopes(method, {});
+      expect(scopes.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
+      expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(true);
+    }
+    expect(clientRpcRequiredScopes(WS_METHODS.notebookFreshStatus, {})).toEqual([
+      AuthFilesystemReadScope,
+    ]);
     // Placing, updating and undoing write project files, so they take the file-write grant.
     for (const method of [
       WS_METHODS.computeResultsPlaceFigure,
       WS_METHODS.computeResultsPlaceLatex,
       WS_METHODS.computeResultsUpdateFiles,
       WS_METHODS.computeResultsUndoUpdate,
+      WS_METHODS.notebookEdit,
     ]) {
       const scopes = clientRpcRequiredScopes(method, {});
       expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(false);
       expect(scopes.every((scope) => sessionGrantsScope(writer, scope))).toBe(true);
     }
   });
+});
+
+it("requires a current file-write grant to save or export a data view", () => {
+  for (const method of [WS_METHODS.dataSaveView, WS_METHODS.dataMaterializeView]) {
+    expect(clientRpcRequiredScopes(method, {})).toEqual([AuthFilesystemWriteScope]);
+  }
+});
+
+it("requires file access and the relevant result grant for package operations", () => {
+  const exportScopes = [
+    AuthOrchestrationReadScope,
+    AuthFilesystemReadScope,
+    AuthFilesystemWriteScope,
+  ];
+  const verifyScopes = [
+    AuthOrchestrationOperateScope,
+    AuthFilesystemReadScope,
+    AuthFilesystemWriteScope,
+  ];
+  expect(clientRpcRequiredScopes(WS_METHODS.computeResultsExport, {})).toEqual(exportScopes);
+  expect(clientRpcRequiredScopes(WS_METHODS.computeResultsExportProgress, {})).toEqual(
+    exportScopes,
+  );
+  expect(clientRpcRequiredScopes(WS_METHODS.computeResultsVerify, {})).toEqual(verifyScopes);
+  expect(clientRpcRequiredScopes(WS_METHODS.computeResultsCancelVerification, {})).toEqual(
+    verifyScopes,
+  );
 });
 
 describe("Plugin sign-in client authorization", () => {

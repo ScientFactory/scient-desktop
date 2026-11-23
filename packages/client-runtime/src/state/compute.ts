@@ -491,6 +491,12 @@ export function createComputeEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 60_000,
     }),
+    runHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:compute:run-history",
+      tag: WS_METHODS.computeRunHistory,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     outputs: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:compute:outputs",
       tag: WS_METHODS.computeListOutputs,
@@ -502,9 +508,15 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.subscribeComputeSessions,
       idleTtlMs: 0,
       transform: (stream) =>
+        // SCIENT-FORK:START — fold bursts before notifying the Compute renderer.
         stream.pipe(
-          Stream.scan(() => EMPTY_COMPUTE_SUBSCRIPTION_STATE, applyComputeSessionStreamEvent),
+          Stream.groupedWithin(32, "16 millis"),
+          Stream.scan(
+            () => EMPTY_COMPUTE_SUBSCRIPTION_STATE,
+            (state, events) => events.reduce(applyComputeSessionStreamEvent, state),
+          ),
         ),
+      // SCIENT-FORK:END
     }),
     verifyRuntime: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:verify-runtime",
@@ -551,13 +563,42 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeSaveOutput,
       scheduler: executionScheduler,
     }),
+    // SCIENT-FORK:START — linked results calls use the active environment.
     resultsResolve: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:results-resolve",
       tag: WS_METHODS.computeResultsResolve,
     }),
+    resultsHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:compute:results-history",
+      tag: WS_METHODS.computeResultsHistory,
+      staleTimeMs: 0,
+    }),
+    resultsCompare: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:compute:results-compare",
+      tag: WS_METHODS.computeResultsCompare,
+      staleTimeMs: 0,
+    }),
+    resultsPreview: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:compute:results-preview",
+      tag: WS_METHODS.computeResultsPreview,
+      staleTimeMs: 0,
+    }),
+    resultsSetup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-setup",
+      tag: WS_METHODS.computeResultsSetup,
+    }),
     resultsList: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:results-list",
       tag: WS_METHODS.computeResultsList,
+    }),
+    resultsPublication: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:compute:results-publication",
+      tag: WS_METHODS.computeResultsPublication,
+      staleTimeMs: 0,
+    }),
+    resultsAttemptOutput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-attempt-output",
+      tag: WS_METHODS.computeResultsAttemptOutput,
     }),
     resultsPlaceFigure: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:results-place-figure",
@@ -584,6 +625,30 @@ export function createComputeEnvironmentAtoms<R, E>(
       label: "environment-data:compute:results-undo-update",
       tag: WS_METHODS.computeResultsUndoUpdate,
     }),
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — route result package actions through Compute commands.
+    resultsHandoffChoices: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-handoff-choices",
+      tag: WS_METHODS.computeResultsHandoffChoices,
+    }),
+    resultsExport: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-export",
+      tag: WS_METHODS.computeResultsExport,
+    }),
+    resultsExportProgress: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-export-progress",
+      tag: WS_METHODS.computeResultsExportProgress,
+    }),
+    resultsVerify: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-verify",
+      tag: WS_METHODS.computeResultsVerify,
+      scheduler: executionScheduler,
+    }),
+    resultsCancelVerification: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-cancel-verification",
+      tag: WS_METHODS.computeResultsCancelVerification,
+    }),
+    // SCIENT-FORK:END
     saveConsoleNotebook: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:save-console-notebook",
       tag: WS_METHODS.computeSaveConsoleNotebook,
@@ -605,6 +670,21 @@ export function createComputeEnvironmentAtoms<R, E>(
       label: "environment-data:notebook:record-run",
       tag: WS_METHODS.notebookRecordRun,
     }),
+    // SCIENT-FORK:START — fresh notebook job admission and status.
+    notebookFreshStart: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:fresh-start",
+      tag: WS_METHODS.notebookFreshStart,
+      scheduler: executionScheduler,
+    }),
+    notebookFreshStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:fresh-status",
+      tag: WS_METHODS.notebookFreshStatus,
+    }),
+    notebookFreshStop: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:fresh-stop",
+      tag: WS_METHODS.notebookFreshStop,
+    }),
+    // SCIENT-FORK:END
     submitCells: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:submit-cells",
       tag: WS_METHODS.computeSubmitCells,
