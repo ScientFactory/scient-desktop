@@ -23,8 +23,9 @@ counts, and ranges or common values. The profile describes the table before
 your filters and sort. It says whether it used all rows or the first rows
 shown in its summary. Use **Cancel** to stop a profile in progress.
 
-- CSV and TSV profiles count empty fields as missing. Codes such as `NA`,
-  `?` and `-999` stay as text values. Column types come from the first rows.
+- CSV and TSV profiles count empty fields as missing. Profiles do not interpret
+  study-specific missing codes. Numeric sentinels such as `-999` count as numbers
+  and can affect the range. Column types come from the first rows.
 - Each statistic says **All rows** or gives the sample size.
 - Parquet uses file metadata for exact null counts and ranges when available.
   DuckDB examines the whole file for distinct and common values. **≈** marks
@@ -53,8 +54,9 @@ shown in its summary. Use **Cancel** to stop a profile in progress.
    and updates the Files tree after writing.
 
 Open **Actions** in the dataset or view and choose **Use in analysis…**. Pick a saved script or
-notebook. Copy the read example into the analysis and save the code. Use
-**Run fresh with input** to record the file as an input file for that run.
+notebook. The example starts in the notebook’s language when Scient supports it.
+Use the language selector to change it. Copy the example into the analysis and save the code.
+Choose **Run fresh with input** to record the file as an input file for that run.
 The Python, R and Julia examples for SQL views use DuckDB in the selected
 analysis environment. Run them from the project root.
 

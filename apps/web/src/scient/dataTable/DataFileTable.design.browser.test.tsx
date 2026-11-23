@@ -56,6 +56,7 @@ vi.mock("~/state/compute", async () => {
   const permission = Atom.make(true);
   return {
     computeEnvironment: {
+      notebookRead: { label: "read" },
       resultsSetup: { label: "setup" },
       resultsRerun: { label: "rerun", permissionAtom: () => permission },
     },

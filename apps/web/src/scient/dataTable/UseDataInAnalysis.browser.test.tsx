@@ -19,6 +19,7 @@ vi.mock("~/state/compute", async () => {
   const permission = Atom.make(true);
   return {
     computeEnvironment: {
+      notebookRead: { label: "read" },
       resultsSetup: { label: "setup" },
       resultsRerun: { label: "rerun", permissionAtom: () => permission },
     },
@@ -29,14 +30,16 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: { readonly label: string }) =>
     command.label === "rerun"
       ? run
-      : async () => ({
-          _tag: "Success",
-          value: {
-            inputs: ["views/shortlist.sql"],
-            parameters: [{ name: "threshold", value: "0.5", source: "override" }],
-            suggestedInputs: [],
-          },
-        }),
+      : command.label === "read"
+        ? async () => ({ _tag: "Success", value: { language: "R" } })
+        : async () => ({
+            _tag: "Success",
+            value: {
+              inputs: ["views/shortlist.sql"],
+              parameters: [{ name: "threshold", value: "0.5", source: "override" }],
+              suggestedInputs: [],
+            },
+          }),
 }));
 
 vi.mock("~/components/files/ProjectFilePicker", () => ({
@@ -83,6 +86,13 @@ it.each([
     await screen.getByRole("button", { name: "Use in analysis…" }).click();
     await page.getByRole("button", { name: analysis }).click();
     await expect.element(page.getByRole("button", { name: "Copy code" })).toBeEnabled();
+    if (path === "views/high_risk.sql") {
+      const picker = page.getByRole("combobox", { name: "Example language" });
+      expect(picker.element().textContent).toBe("R");
+      await picker.click();
+      await page.getByRole("option", { name: "Julia" }).click();
+      await expect.element(picker).toHaveTextContent("Julia");
+    }
     const button =
       analysis.endsWith(".ipynb") && pending === undefined
         ? "Run with input and saved values"

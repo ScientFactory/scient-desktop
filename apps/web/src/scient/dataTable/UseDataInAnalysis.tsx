@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useGT } from "gt-react";
-import { use, useState } from "react";
+import { use, useRef, useState } from "react";
 
 import { ProjectFilePickerForTarget } from "~/components/files/ProjectFilePicker";
 import { Button } from "~/components/ui/button";
@@ -59,6 +59,8 @@ export function UseDataInAnalysis(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { copyToClipboard } = useCopyToClipboard();
+  const selection = useRef(0);
+  const readNotebook = useAtomCommand(computeEnvironment.notebookRead, { reportFailure: false });
   const loadSetup = useAtomCommand(computeEnvironment.resultsSetup, { reportFailure: false });
   const rerun = useAtomCommand(computeEnvironment.resultsRerun, { reportFailure: false });
   const canRun = useAtomValue(computeEnvironment.resultsRerun.permissionAtom(environmentId));
@@ -71,7 +73,7 @@ export function UseDataInAnalysis(props: {
     (state) => draftKey !== null && state.drafts[draftKey]?.parameters !== undefined,
   );
 
-  const select = (path: string) => {
+  const select = async (path: string) => {
     if (
       path === file.path ||
       (!/\.ipynb$/iu.test(path) && computeSourceLanguageForPath(path) === null)
@@ -80,8 +82,18 @@ export function UseDataInAnalysis(props: {
       return;
     }
     setPicking(false);
+    const request = ++selection.current;
+    let nextLanguage = dataSnippetLanguage(path);
+    if (/\.ipynb$/iu.test(path)) {
+      const result = await readNotebook({ environmentId, input: { cwd: file.cwd, path } });
+      if (selection.current !== request) return;
+      if (result._tag === "Success") {
+        const language = result.value?.language.toLowerCase();
+        if (language === "r" || language === "julia") nextLanguage = language;
+      }
+    }
+    setLanguage(nextLanguage);
     setScriptPath(path);
-    setLanguage(dataSnippetLanguage(path));
     setError(null);
   };
 
@@ -154,7 +166,7 @@ export function UseDataInAnalysis(props: {
                 threadRef: { environmentId, threadId },
                 projectName: file.cwd.split(/[\\/]/u).at(-1) ?? "",
               }}
-              onSelectFile={select}
+              onSelectFile={(path) => void select(path)}
             />
           </CommandDialogPopup>
         ) : null}
@@ -187,7 +199,7 @@ export function UseDataInAnalysis(props: {
                 }}
               >
                 <SelectTrigger size="sm" aria-label={gt("Example language")}>
-                  <SelectValue />
+                  <SelectValue>{languages.find(({ id }) => id === language)?.label}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {languages.map(({ id, label }) => (
