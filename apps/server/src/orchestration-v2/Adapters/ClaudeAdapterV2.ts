@@ -240,7 +240,6 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 // SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
-import { makeOwnedProcessTree } from "@t3tools/shared/scientOwnedProcessTree";
 // SCIENT-FORK:END
 import {
   claudeLocalSettingsDirectory,
@@ -474,12 +473,6 @@ const CLAUDE_ROOT_REFUSAL =
 // Claude Code's answer to a --resume whose session store is gone, as a result error and on stderr.
 const CLAUDE_CONVERSATION_NOT_FOUND = "No conversation found with session ID:";
 
-// SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
-const CLAUDE_TREE_FIRST_SAMPLE = Duration.seconds(1);
-const CLAUDE_TREE_SAMPLE_INTERVAL = Duration.seconds(10);
-const CLAUDE_TREE_REAP_GRACE = Duration.seconds(1);
-// SCIENT-FORK:END
-
 // SCIENT-FORK:START — descendants that left the CLI's group stop with it when the server dies.
 // Before the group kill the watcher lists the CLI's descendants in other process groups, which
 // `kill 0` misses, and later kills only those still the same process. fd 4 holds the launch
@@ -537,47 +530,10 @@ export function spawnClaudeProcessGroup(
   let forget: (() => void) | undefined;
   // Always drained, so a chatty CLI never blocks on a full stderr pipe.
   child.stderr?.setEncoding("utf8").on("data", onStderr).once("close", onStderrClose);
-  // SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
-  // The CLI runs its Bash tool shells and helpers detached, in groups of their own, so the group
-  // kill below misses them; the tree is sampled while the CLI lives, as they lose that link at exit.
-  const ownedTree = child.pid === undefined ? undefined : makeOwnedProcessTree(child.pid);
-  const sampling =
-    ownedTree === undefined
-      ? undefined
-      : Effect.runFork(
-          Effect.sleep(CLAUDE_TREE_FIRST_SAMPLE).pipe(
-            Effect.andThen(
-              ownedTree.sample.pipe(
-                Effect.andThen(Effect.sleep(CLAUDE_TREE_SAMPLE_INTERVAL)),
-                Effect.forever,
-              ),
-            ),
-          ),
-        );
-  // SCIENT-FORK:END
   child.once("exit", () => {
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
     } catch {}
-    // SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
-    if (sampling !== undefined && ownedTree !== undefined) {
-      Effect.runFork(
-        Fiber.interrupt(sampling).pipe(
-          Effect.andThen(ownedTree.reap(CLAUDE_TREE_REAP_GRACE)),
-          Effect.tap(({ unverified }) =>
-            unverified > 0
-              ? Effect.logWarning(
-                  "Claude processes may still be running: the process table was unreadable",
-                  {
-                    unverified,
-                  },
-                )
-              : Effect.void,
-          ),
-        ),
-      );
-    }
-    // SCIENT-FORK:END
     try {
       forget?.();
     } catch {}

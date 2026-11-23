@@ -2428,12 +2428,11 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   from Scient) is upstream code now. Scient's marked blocks keep only its follow-up: overlapping
   status reads share one running listing, and the error keeps the listing's `GitCommandError` as
   `cause`. Tested in `GitVcsDriverCore.scient.test.ts`; offered as pingdotgg/t3code#34574.
-- `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
-  (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
-  is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
-  server dies, the fd-3 watcher lists the CLI's live descendants in other groups before its group
-  kill. Only the agent's own tree, never terminals. Tested in `ClaudeProcessGroup.scient.test.ts`.
-  Reported as pingdotgg/t3code#34459 with this design as a proposal.
+- `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): if the server dies, the fd-3 watcher lists the
+  CLI's live descendants in other process groups (its detached Bash tool shells and helpers)
+  before its group kill. While the server runs, T3's shared descendant poll stops them after the
+  CLI exits, so Scient's own sampling was removed. Only the agent's own tree, never terminals.
+  Tested in `ClaudeProcessGroup.scient.test.ts`. Reported as pingdotgg/t3code#34459.
 
 When T3 takes an equal change, use its version and delete the block and its `.scient` test.
 

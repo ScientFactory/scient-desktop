@@ -21,51 +21,6 @@ const isAlive = (pid: number) => {
   }
 };
 
-// Claude Code starts its Bash tool shells and helpers detached, in process groups of their own,
-// so killing the CLI's group when it exits leaves them running for good.
-it.live.skipIf(isWindows)("stops the CLI's detached descendants when the CLI exits", () =>
-  Effect.gen(function* () {
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-tree-"));
-    const pidFile = NodePath.join(dir, "grandchild");
-    const cli = NodePath.join(dir, "claude");
-    const program = [
-      "const child = require('node:child_process').spawn(process.execPath,",
-      "  ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });",
-      "require('node:fs').writeFileSync(process.argv[1], String(child.pid));",
-      "setTimeout(() => process.exit(0), 2500);",
-    ].join("\n");
-    NodeFS.writeFileSync(
-      cli,
-      `#!/bin/sh\nexec "${process.execPath}" -e "$PROGRAM" "${pidFile}"\n`,
-      { mode: 0o755 },
-    );
-    let grandchild = 0;
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (grandchild > 0 && isAlive(grandchild)) process.kill(grandchild, "SIGKILL");
-        NodeFS.rmSync(dir, { recursive: true, force: true });
-      }),
-    );
-    const child = spawnClaudeProcessGroup({
-      command: cli,
-      args: [],
-      cwd: dir,
-      env: { ...process.env, PROGRAM: program },
-      // @effect-diagnostics-next-line abortControllerInEffect:off - The fixture exits by itself.
-      signal: new AbortController().signal,
-    }) as NodeChildProcess.ChildProcess;
-    yield* Effect.callback<void>((resume) => {
-      child.once("exit", () => resume(Effect.void));
-    });
-    grandchild = Number(NodeFS.readFileSync(pidFile, "utf8"));
-    assert.isAbove(grandchild, 1);
-    // The reap after exit asks it to stop, then kills it after a second.
-    yield* Effect.promise(() =>
-      expect.poll(() => isAlive(grandchild), { timeout: 5_000 }).toBe(false),
-    );
-  }).pipe(Effect.scoped),
-);
-
 // When the server dies, the watcher in the CLI's group stops the CLI's group, and now also the
 // descendants that left it, while the CLI still links them.
 it.live.skipIf(isWindows)("stops the CLI's detached descendants when the server goes away", () =>
