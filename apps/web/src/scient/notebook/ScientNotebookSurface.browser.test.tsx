@@ -2,12 +2,15 @@ import "~/index.css";
 
 import { RegistryContext } from "@effect/atom-react";
 import {
+  ComputeExecutionId,
   ComputeLanguageId,
   ComputeResultRevisionId,
   ComputeSessionId,
   EnvironmentId,
   ThreadId,
+  type ComputeExecutionRecord,
   type ComputeLanguageRuntimeInspection,
+  type ComputeSessionRecord,
   type NotebookAlternatives,
   type NotebookCellView,
   type NotebookFreshRun,
@@ -19,17 +22,33 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { computeEnvironment } from "~/state/compute";
 import { computeFileContextId, useComputeContextStore } from "../compute/computeContextStore";
 import ScientNotebookSurface from "./ScientNotebookSurface";
 import { useNotebookRunDrafts } from "./notebookRunDrafts";
 
-const { freshStart, freshStop, startSession, submitCells, runtimeQuery } = vi.hoisted(() => ({
+const {
+  freshStart,
+  freshStop,
+  startSession,
+  submitCells,
+  runtimeQuery,
+  sessionQuery,
+  executionsQuery,
+  queryState,
+} = vi.hoisted(() => ({
   freshStart: vi.fn(),
   freshStop: vi.fn(),
   startSession: vi.fn(),
   submitCells: vi.fn(),
   runtimeQuery: "test-notebook-runtime",
+  sessionQuery: "test-notebook-sessions",
+  executionsQuery: "test-notebook-executions",
+  queryState: {
+    sessions: [] as ComputeSessionRecord[],
+    executions: [] as ComputeExecutionRecord[],
+  },
 }));
 
 const freshRunAtom = Atom.make(
@@ -45,6 +64,8 @@ vi.mock("~/state/compute", async (original) => {
     computeEnvironment: {
       ...actual.computeEnvironment,
       runtimes: () => runtimeQuery,
+      sessions: () => sessionQuery,
+      executions: () => executionsQuery,
       notebookFreshRun: () => freshRunAtom,
     },
   };
@@ -53,7 +74,14 @@ vi.mock("~/state/compute", async (original) => {
 vi.mock("~/state/query", async (original) => ({
   ...(await original<typeof import("~/state/query")>()),
   useEnvironmentQuery: (query: unknown) => ({
-    data: query === runtimeQuery ? { languages: [python] } : null,
+    data:
+      query === runtimeQuery
+        ? { languages: [python] }
+        : query === sessionQuery
+          ? queryState.sessions
+          : query === executionsQuery
+            ? queryState.executions
+            : null,
     isPending: false,
     isSuccess: true,
     error: null,
@@ -228,12 +256,34 @@ const recoveryNotebook: NotebookView = {
             output_type: "error",
             ename: "NameError",
             evalue: "name 'run_date' is not defined",
-            traceback: ["NameError: name 'run_date' is not defined"],
+            traceback: [
+              "Traceback (most recent call last):",
+              '  File "cell", line 3',
+              "NameError: name 'run_date' is not defined",
+            ],
           }),
         },
       ],
     },
-    cell("later", "code", "print('later')"),
+    {
+      ...cell("later", "code", "print('later')"),
+      run: {
+        execution: "write-run",
+        code: "hash",
+        at: "2026-11-23T14:15:00.000Z",
+        ms: 12,
+        writtenFiles: ["from-notebook-metadata.gif"],
+      } as NonNullable<NotebookView["cells"][number]["run"]>,
+    },
+    {
+      ...cell("receipt", "code", "write_animation()"),
+      run: {
+        execution: "live-write",
+        code: "hash",
+        at: "2026-11-23T20:00:00.000Z",
+        ms: 12,
+      },
+    },
   ],
 };
 
@@ -281,6 +331,10 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
     );
     const error = screen.getByText("NameError: name 'run_date' is not defined");
     await expect.element(error).toBeVisible();
+    await expect
+      .element(screen.getByText("Cell 1 defines run_date and has not run in this session."))
+      .toBeVisible();
+    await expect.element(screen.getByText("Details", { exact: true })).toBeVisible();
     if (screenshots) await page.screenshot({ path: `${screenshots}/notebook-error-${theme}.png` });
     expect(submitCells).not.toHaveBeenCalled();
     const replay = screen.getByRole("button", { name: "Run from top through this cell" });
@@ -578,4 +632,147 @@ it("lets the author choose sweep values and shows the failed settings", async ()
       sweep: [{ threshold: "0.3" }, { threshold: "0.7" }],
     },
   });
+});
+
+it("shows a compact Run all failure summary with jump, skipped count, and observed file link", async () => {
+  const sessionId = ComputeSessionId.make("batch-session");
+  const contextId = computeFileContextId({
+    environmentId,
+    threadId: threadRef.threadId,
+    cwd: "/project",
+    relativePath: "missing-setup.ipynb",
+  });
+  const openFile = vi.fn();
+  using _openFile = vi
+    .spyOn(useRightPanelStore.getState(), "openFile")
+    .mockImplementation(openFile);
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(() => {
+    queryState.sessions = [];
+    queryState.executions = [];
+    useComputeContextStore.getState().removeContext(contextId);
+  });
+  useComputeContextStore.getState().ensureContext({
+    contextId,
+    environmentId,
+    cwd: "/project",
+    relativePath: "missing-setup.ipynb",
+    ownerKey: contextId,
+  });
+  useComputeContextStore.getState().reserveSession({ contextId, sessionId });
+  useComputeContextStore.getState().bindSession({ contextId, sessionId, generation: 1 as never });
+  queryState.sessions = [
+    {
+      sessionId,
+      generation: 1 as never,
+      languageId: ComputeLanguageId.make("python"),
+      status: "ready",
+      activity: "idle",
+      createdAt: "2026-11-23T20:00:00.000Z",
+      lastActivityAt: "2026-11-23T20:00:02.000Z",
+      runtime: profile,
+      identity: null,
+      environmentFingerprint: null,
+      activeExecutionId: null,
+      pendingCount: 0,
+      closedAt: null,
+      lostReason: null,
+      label: "Python",
+      workingDirectory: "/project",
+      transportKind: "jupyter" as never,
+      projectId: "p" as never,
+      storage: { rootDir: "/tmp" } as never,
+    } as ComputeSessionRecord,
+  ];
+  const makeRecord = (
+    id: string,
+    cellId: string,
+    index: number,
+    status: "failed" | "cancelled" | "succeeded",
+    startedAt: string | null,
+  ): ComputeExecutionRecord => ({
+    request: {
+      executionId: ComputeExecutionId.make(id),
+      sessionId,
+      generation: 1 as never,
+      code: "x = 1",
+      codeHash: "h",
+      source: {
+        _tag: "document",
+        origin: "cell",
+        path: "missing-setup.ipynb",
+        bufferState: "saved",
+        revision: null,
+        range: null,
+        cell: cellId,
+        ...(status === "succeeded"
+          ? {}
+          : {
+              notebookBatch: {
+                id: ComputeExecutionId.make("batch-1"),
+                mode: "all",
+                index,
+                count: 3,
+              },
+            }),
+      },
+      submittedAt: "2026-11-23T20:00:00.000Z",
+      environmentFingerprint: null,
+    },
+    result: {
+      executionId: ComputeExecutionId.make(id),
+      status,
+      outcome: status,
+      queuePosition: null,
+      startedAt,
+      finishedAt: "2026-11-23T20:00:02.000Z",
+      diagnostics: [],
+      outputCount: 0,
+      imageCount: 0,
+      outputBytes: 0,
+      truncated: false,
+      failureReason: null,
+    },
+  });
+  const written = makeRecord("live-write", "receipt", 0, "succeeded", "2026-11-23T20:00:00.000Z");
+  queryState.executions = [
+    { ...written, result: { ...written.result!, writtenFiles: ["animation.gif"] } },
+    makeRecord("e1", "setup", 0, "failed", "2026-11-23T20:00:01.000Z"),
+    makeRecord("e2", "target", 1, "cancelled", null),
+    makeRecord("e3", "later", 2, "cancelled", null),
+  ];
+
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <div className="flex h-dvh w-full bg-background text-foreground">
+        <ScientNotebookSurface
+          environmentId={environmentId}
+          cwd="/project"
+          relativePath="missing-setup.ipynb"
+          threadRef={threadRef}
+          fileRevision="1.0"
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+
+  await expect.element(screen.getByText("Cell 1 failed · 2 later cells skipped")).toBeVisible();
+  const jump = screen.getByRole("button", { name: "Jump to cell 1" }).first();
+  await expect.element(jump).toBeVisible();
+  await jump.click();
+  await expect
+    .element(page.elementLocator(document.querySelector('[data-notebook-cell="setup"]')!))
+    .toHaveFocus();
+
+  // Retained output shows provenance and observed written file opens via right-panel file store.
+  await expect.element(screen.getByText("Not run in this session")).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "from-notebook-metadata.gif" }))
+    .not.toBeInTheDocument();
+  const wroteFile = screen.getByRole("button", { name: "animation.gif" });
+  await expect.element(wroteFile).toBeVisible();
+  await wroteFile.click();
+  expect(openFile).toHaveBeenCalledWith(threadRef, "animation.gif");
 });

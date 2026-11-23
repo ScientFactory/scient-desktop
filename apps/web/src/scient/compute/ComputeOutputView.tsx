@@ -31,6 +31,9 @@ import { computeDependencyRecovery, managedDependencyRuntime } from "./computeDe
 import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryAction";
 import type { ComputeContextId } from "./computeContextStore";
 
+import type { NotebookDefiningCell } from "../notebook/notebookRunSummary";
+import { extractUndefinedName } from "../notebook/notebookRunSummary";
+
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
 type ComputeDiagnosticOutput = Extract<ComputeOutput, { readonly _tag: "diagnostic" }>;
@@ -39,6 +42,8 @@ type DiagnosticFrame = ComputeDiagnosticOutput["diagnostic"]["frames"][number];
 interface NotebookDiagnosticContext {
   readonly path: string;
   readonly onReplay?: (() => void) | undefined;
+  readonly onJumpToCell?: ((cellId: string) => void) | undefined;
+  readonly definingCell?: ((name: string) => NotebookDefiningCell | null) | undefined;
 }
 
 type ProjectedBlock =
@@ -158,18 +163,45 @@ export function NotebookSetupRecovery(props: {
   readonly errorName: unknown;
   readonly message: unknown;
   readonly onReplay: (() => void) | undefined;
+  readonly onJumpToCell?: ((cellId: string) => void) | undefined;
+  readonly definingCell?: NotebookDefiningCell | null | undefined;
 }) {
-  if (
-    props.onReplay === undefined ||
-    props.errorName !== "NameError" ||
-    typeof props.message !== "string" ||
-    !/^name '[^'\r\n]+' is not defined$/.test(props.message)
-  )
-    return null;
+  const gt = useGT();
+  const missingName = extractUndefinedName(props.errorName, props.message);
+  if (missingName === null) return null;
+  const defining = props.definingCell ?? null;
+  if (defining?.status === "failed" && props.onJumpToCell !== undefined) {
+    return (
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <p>
+          {gt("Cell {cell} defines {name} and failed.", {
+            cell: defining.cellNumber,
+            name: missingName,
+          })}
+        </p>
+        <Button
+          size="xs"
+          variant="outline"
+          focus="edge"
+          onClick={() => props.onJumpToCell?.(defining.cellId)}
+        >
+          {gt("Jump to cell {cell}", { cell: defining.cellNumber })}
+        </Button>
+      </div>
+    );
+  }
+  if (props.onReplay === undefined) return null;
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
       <p>
-        <T>An earlier cell may need to run.</T>
+        {defining?.status === "not-run" ? (
+          gt("Cell {cell} defines {name} and has not run in this session.", {
+            cell: defining.cellNumber,
+            name: missingName,
+          })
+        ) : (
+          <T>An earlier cell may need to run.</T>
+        )}
       </p>
       <Button size="xs" variant="outline" focus="edge" onClick={props.onReplay}>
         <T>Run from top through this cell</T>
@@ -207,6 +239,9 @@ function ComputeDiagnostic(props: {
         });
   const { summary, traceback } = computeDiagnosticSummary(diagnostic);
   const fullText = [summary, traceback].filter(Boolean).join("\n");
+  const missingName = extractUndefinedName(diagnostic.errorName, diagnostic.message);
+  const definingCell =
+    missingName === null ? null : (props.notebook?.definingCell?.(missingName) ?? null);
   return (
     <ComputeOutputBlock copy={() => ({ text: fullText })}>
       <div className="rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs">
@@ -257,11 +292,13 @@ function ComputeDiagnostic(props: {
               errorName={diagnostic.errorName}
               message={diagnostic.message}
               onReplay={props.notebook?.onReplay}
+              onJumpToCell={props.notebook?.onJumpToCell}
+              definingCell={definingCell}
             />
             {traceback.length > 0 ? (
               <details className="mt-1 text-muted-foreground">
                 <summary className="cursor-pointer">
-                  <T>Traceback</T>
+                  <T>Details</T>
                 </summary>
                 <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px]">
                   {traceback}

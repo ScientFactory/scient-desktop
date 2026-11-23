@@ -336,6 +336,11 @@ describe("ComputeProjectOutputObserver", () => {
           `${Array.from({ length: 10 }, () => "d").join("/")}/deep.svg`,
           "figures/nested.svg",
         ]);
+        expect(collection.writtenFiles).toEqual([
+          `${Array.from({ length: 10 }, () => "d").join("/")}/deep.svg`,
+          "figures/nested.svg",
+          "notes.txt",
+        ]);
         expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
       }),
     ).pipe(Effect.provide(observerLayer(async () => scripted.backend)));
@@ -350,7 +355,11 @@ describe("ComputeProjectOutputObserver", () => {
           yield* write(NodePath.join(root, "own.svg"));
           // Writes through a handle opened in an earlier cell, or by a child process.
           yield* write(NodePath.join(root, "unseen.svg"));
-          scripted.emit(null, [NodePath.join(root, "unseen.svg")]);
+          yield* write(NodePath.join(root, "watch-only.txt"), "not attributed to runtime");
+          scripted.emit(null, [
+            NodePath.join(root, "unseen.svg"),
+            NodePath.join(root, "watch-only.txt"),
+          ]);
         }),
         { paths: [NodePath.join(root, "own.svg")] },
       ).pipe(
@@ -360,6 +369,7 @@ describe("ComputeProjectOutputObserver", () => {
               "own.svg",
               "unseen.svg",
             ]);
+            expect(collection.writtenFiles).toEqual(["own.svg"]);
             expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
           }),
         ),

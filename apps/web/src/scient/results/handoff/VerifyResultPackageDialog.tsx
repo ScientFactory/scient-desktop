@@ -4,7 +4,7 @@ import type {
   ResultHandoffOutputFinding,
   ResultHandoffVerifyResult,
 } from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -32,6 +32,7 @@ import { localEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { resultErrorMessage } from "../resultState";
 import { PackageDisclosure } from "./PackageDisclosure";
+import { verificationOutcomeSummary } from "./verificationOutcomePresentation";
 
 export function VerifyResultPackageDialog(props: {
   readonly environmentId: EnvironmentId;
@@ -353,7 +354,7 @@ export function VerifyResultPackageDialog(props: {
             <DialogAction type="button" disabled={!ready} onClick={() => void run()}>
               <T>Run and verify</T>
             </DialogAction>
-          ) : result.report.status === "verified" ? (
+          ) : verificationOutcomeSummary(result.report).completed ? (
             <DialogAction type="button" onClick={close}>
               <T>Done</T>
             </DialogAction>
@@ -410,7 +411,9 @@ function VerificationOutcome(props: {
   readonly openFile: ((path: string) => Promise<void>) | undefined;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const { report, reportPath, figures } = props.result;
+  const outcome = verificationOutcomeSummary(report, messages);
   const matched = report.outputs.filter((output) => output.status === "matched");
   const other = report.outputs.filter((output) => output.status !== "matched");
   const files = report.files.filter(
@@ -419,13 +422,7 @@ function VerificationOutcome(props: {
   return (
     <div className="flex min-w-0 flex-col gap-4 text-sm">
       <p role="status" className="font-semibold">
-        {report.status === "verified"
-          ? gt("Verified")
-          : report.status === "differs"
-            ? gt("Differs")
-            : report.status === "cancelled"
-              ? gt("Cancelled")
-              : gt("Could not run")}
+        {outcome.label}
       </p>
       {report.message === undefined || report.status === "cancelled" ? null : (
         <p>{report.message}</p>
@@ -579,7 +576,9 @@ function VerificationOutputs(props: {
                 : gt("{count, plural, one {# value differs} other {# values differ}}", {
                     count: file.differenceCount,
                   })
-              : gt("Not compared")}
+              : file.status === "missing"
+                ? gt("Missing")
+                : gt("Not compared")}
           {file.message ? ` · ${file.message}` : null}
           {file.values === undefined ? null : (
             <ul className="ps-4">

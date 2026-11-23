@@ -120,3 +120,107 @@ it("shows unmatched outputs immediately and lets the reader expand matched outpu
   await run.click();
   expect(verify.mock.lastCall?.[0].input.inputsFolder).toBe("/project/source-data");
 });
+
+it("distinguishes matched evidence with differing figures and completed figure-only reruns", async () => {
+  verify
+    .mockReset()
+    .mockResolvedValueOnce({
+      _tag: "Success",
+      value: {
+        report: {
+          version: 1,
+          revision: null,
+          verifiedAt: "2026-11-23T08:00:00Z",
+          status: "verified",
+          message:
+            "Checked values, tables, and data files matched. Figures differ and need visual review.",
+          absoluteTolerance: 1e-12,
+          relativeTolerance: 1e-9,
+          outputs: [
+            { path: "metrics.json", status: "matched" },
+            { path: "roc.png", status: "differs", message: "Figure bytes differ." },
+          ],
+          files: [],
+          environment: {
+            language: "Python",
+            version: "3.12.13",
+            platform: "darwin",
+            architecture: "arm64",
+            locale: "en_US.UTF-8",
+            timezone: "UTC",
+          },
+          environmentChanges: [],
+        },
+        reportPath: "/project/verification/verification.json",
+        figures: [],
+      } satisfies ResultHandoffVerifyResult,
+    })
+    .mockResolvedValueOnce({
+      _tag: "Success",
+      value: {
+        report: {
+          version: 1,
+          revision: null,
+          verifiedAt: "2026-11-23T08:01:00Z",
+          status: "could-not-run",
+          message:
+            "The rerun finished with no retained values, tables, or data files to verify automatically. Review the differing figures.",
+          absoluteTolerance: 1e-12,
+          relativeTolerance: 1e-9,
+          outputs: [{ path: "roc.png", status: "differs", message: "Figure bytes differ." }],
+          files: [],
+          environment: {
+            language: "Python",
+            version: "3.12.13",
+            platform: "darwin",
+            architecture: "arm64",
+            locale: "en_US.UTF-8",
+            timezone: "UTC",
+          },
+          environmentChanges: [],
+        },
+        reportPath: "/project/verification/verification.json",
+        figures: [],
+      } satisfies ResultHandoffVerifyResult,
+    });
+  // The verification dialog does not navigate.
+  {
+    await using _first = await render(
+      <VerifyResultPackageDialog
+        environmentId={EnvironmentId.make("fixture")}
+        cwd="/project"
+        open
+        onClose={() => {}}
+        onReopen={() => {}}
+      />,
+      { router: false },
+    );
+    await page.getByRole("textbox", { name: "Package folder" }).fill("/project/package-1");
+    await page.getByRole("button", { name: "Run and verify" }).click();
+    await expect
+      .element(
+        page
+          .getByRole("status")
+          .filter({ hasText: "Checked outputs matched · figures need review" }),
+      )
+      .toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Done" })).toBeVisible();
+  }
+
+  await using _second = await render(
+    <VerifyResultPackageDialog
+      environmentId={EnvironmentId.make("fixture")}
+      cwd="/project"
+      open
+      onClose={() => {}}
+      onReopen={() => {}}
+    />,
+    { router: false },
+  );
+  await page.getByRole("textbox", { name: "Package folder" }).fill("/project/package-2");
+  await page.getByRole("button", { name: "Run and verify" }).click();
+  await expect
+    .element(page.getByRole("status").filter({ hasText: "Rerun finished · figures need review" }))
+    .toBeVisible();
+  await expect.element(page.getByText("Could not run")).not.toBeInTheDocument();
+});

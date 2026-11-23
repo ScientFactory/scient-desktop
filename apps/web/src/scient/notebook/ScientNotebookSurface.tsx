@@ -7,7 +7,7 @@ import {
   type NotebookFreshRunInput,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { BookOpen, ListTree, Plus, Square, Variable } from "lucide-react";
+import { BookOpen, CircleAlert, ListTree, Plus, Square, Variable } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useStore } from "zustand";
@@ -64,6 +64,7 @@ import {
   type NotebookCaret,
   type NotebookController,
 } from "./notebookController";
+import { notebookBatchFailureSummary } from "./notebookRunSummary";
 
 /** Where focus goes next: the cell itself (command mode) or a place in its editor. */
 type NotebookFocusTarget = "cell" | NotebookCaret;
@@ -290,6 +291,7 @@ export default function ScientNotebookSurface(props: {
     refreshAfterQueueDrains: true,
   });
   const liveSession = model.liveSession;
+  const runtimeInspection = model.runtimes.data ?? null;
   const interruptSession = useAtomCommand(computeEnvironment.interruptSession, {
     reportFailure: false,
   });
@@ -439,6 +441,7 @@ export default function ScientNotebookSurface(props: {
     else controller.edit(cellId, target);
     setFocusedCell({ cellId, ...(heading === undefined ? {} : { heading }) });
   };
+  const jumpToCell = useStableCallback((cellId: string) => focusCell(cellId, "cell"));
   const positionOf = (cellId: string) => controller.store.getState().order.indexOf(cellId);
   const placeOfCell = useStableCallback((source: HTMLElement): ComputePlace | null => {
     const cellId = source.closest<HTMLElement>("[data-notebook-cell]")?.dataset.notebookCell;
@@ -700,11 +703,27 @@ export default function ScientNotebookSurface(props: {
   );
   const runAllDisabled = busy || restarting || runningFresh;
   const freshRunDisabled = runAllDisabled || !canRerun || inputs === undefined || invalidOverrides;
+  const batchFailure =
+    busy || runningFresh
+      ? null
+      : notebookBatchFailureSummary({
+          executions: model.executions,
+          cellRuns,
+          path: props.relativePath,
+          order,
+          cells: controller.store.getState().cells,
+          lastNotebookBatch: liveSession?.lastNotebookBatch,
+          liveSessionGeneration: liveSession?.generation ?? null,
+        });
   const place = {
     environmentId: props.environmentId,
     cwd: props.cwd,
     threadRef: props.threadRef,
     path: props.relativePath,
+    liveSessionGeneration: liveSession?.generation ?? null,
+    runtimeInspection,
+    cellRuns,
+    onJumpToCell: jumpToCell,
     askAboutCell: askAbout === null ? undefined : askAboutCell,
     replay:
       runAllDisabled || firstCodeCell === undefined
@@ -927,6 +946,33 @@ export default function ScientNotebookSurface(props: {
           />
         </div>
       </div>
+      {batchFailure === null ? null : (
+        <div
+          role="status"
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-destructive/5 px-3 py-1.5 text-xs"
+        >
+          <p className="flex min-w-0 items-center gap-1.5 text-destructive">
+            <CircleAlert className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate font-medium">
+              {batchFailure.skippedCount > 0
+                ? gt(
+                    "Cell {cell} failed · {count, plural, one {# later cell skipped} other {# later cells skipped}}",
+                    { cell: batchFailure.cellNumber, count: batchFailure.skippedCount },
+                  )
+                : gt("Cell {cell} failed", { cell: batchFailure.cellNumber })}
+            </span>
+          </p>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            focus="edge"
+            onClick={() => jumpToCell(batchFailure.cellId)}
+          >
+            {gt("Jump to cell {cell}", { cell: batchFailure.cellNumber })}
+          </Button>
+        </div>
+      )}
       {parameters.length === 0 ? null : (
         <div className="max-h-40 shrink-0 overflow-auto border-b border-border/60">
           <NotebookParameterControls

@@ -424,7 +424,9 @@ function ProjectRuntimeDetails(props: {
       >
         {missing.length > 0 ? (
           <p className="text-xs text-muted-foreground">
-            {gt("Missing packages: {packages}", { packages: missing.join(", ") })}
+            {gt("Missing Scientific Python Toolkit packages: {packages}", {
+              packages: missing.join(", "),
+            })}
           </p>
         ) : null}
       </SettingsRow>

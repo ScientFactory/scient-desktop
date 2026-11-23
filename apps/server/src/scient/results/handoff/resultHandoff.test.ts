@@ -27,7 +27,14 @@ import { exportHandoffInputs } from "./handoffInputs.ts";
 import { makeResultHandoff } from "./ResultHandoff.ts";
 import { verifyResultPackage } from "./verifyResultPackage.ts";
 
-vi.mock("node:fs", { spy: true });
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    createReadStream: vi.fn(actual.createReadStream),
+    createWriteStream: vi.fn(actual.createWriteStream),
+  };
+});
 
 const decodeManifest = Schema.decodeUnknownSync(ResultHandoffManifest);
 
@@ -277,6 +284,8 @@ it.effect(
       const result = yield* verify(root);
       expect(result.report).toMatchObject({
         status: "verified",
+        message:
+          "Checked values, tables, and data files matched. Some figures need review, and some original outputs were unavailable.",
         timeoutMinutes: 60,
         files: expect.arrayContaining([
           { path: "extra.txt", status: "unlisted", message: expect.any(String) },
@@ -302,6 +311,26 @@ it.effect(
         manifestText,
       );
       expect(launched).toBe(2);
+
+      // Completed figure-only rerun stays distinct in wording from a failed-to-start run.
+      const figureOnlyManifest = {
+        ...manifest,
+        outputs: manifest.outputs.filter((output) => output.kind === "figure"),
+        skippedOutputs: [],
+      };
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(manifestPath, JSON.stringify(figureOnlyManifest)),
+      );
+      const figureOnlyDiffering = yield* verify(root);
+      expect(figureOnlyDiffering.report).toMatchObject({
+        status: "could-not-run",
+        message:
+          "The rerun finished with no retained values, tables, or data files to verify automatically. Review the differing figures.",
+        outputs: [{ path: "figure.png", status: "differs" }],
+      });
+      expect(figureOnlyDiffering.figures.map((figure) => figure.name)).toEqual(["figure.png"]);
+      yield* Effect.promise(() => NodeFSP.writeFile(manifestPath, manifestText));
+      expect(launched).toBe(4);
 
       for (const stop of ["request", "disconnect"] as const) {
         const copying = yield* Deferred.make<void>();
@@ -344,7 +373,7 @@ it.effect(
           requested: false,
         });
         expect(blocked.destroyed).toBe(true);
-        expect(launched).toBe(2);
+        expect(launched).toBe(4);
         expect(scratch).toBeDefined();
         yield* Effect.promise(() =>
           expect(NodeFSP.access(scratch!)).rejects.toMatchObject({ code: "ENOENT" }),
@@ -390,7 +419,7 @@ it.effect(
         ),
       );
       expect((yield* verify()).report).toMatchObject({ status: "could-not-run", revision: null });
-      expect(launched).toBe(2);
+      expect(launched).toBe(4);
     }),
 );
 

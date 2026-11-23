@@ -391,6 +391,13 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
     const deciding = outputs.filter(
       (output) => kinds.get(output.path) !== "figure" && output.status !== "unchecked",
     );
+    const figureOutputs = outputs.filter((output) => kinds.get(output.path) === "figure");
+    const differingFigures = figureOutputs.some(
+      (output) => output.status === "differs" || output.status === "missing",
+    );
+    const matchedFigures = figureOutputs.some((output) => output.status === "matched");
+    const hasUnchecked =
+      manifest.outputsOmitted > 0 || outputs.some((output) => output.status === "unchecked");
     const status: ResultHandoffVerification["status"] =
       deciding.length === 0
         ? "could-not-run"
@@ -399,10 +406,22 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
           : "verified";
     const message =
       deciding.length === 0
-        ? "The rerun finished. There were no retained values, tables, or other files to confirm."
-        : manifest.outputsOmitted > 0 || outputs.some((output) => output.status === "unchecked")
-          ? "Some original outputs were unavailable. The verdict covers the retained outputs."
-          : undefined;
+        ? differingFigures
+          ? "The rerun finished with no retained values, tables, or data files to verify automatically. Review the differing figures."
+          : matchedFigures
+            ? "The rerun finished and figure bytes matched, with no retained values, tables, or data files to verify automatically."
+            : "The rerun finished. There were no retained values, tables, or other files to confirm."
+        : status === "verified"
+          ? differingFigures && hasUnchecked
+            ? "Checked values, tables, and data files matched. Some figures need review, and some original outputs were unavailable."
+            : differingFigures
+              ? "Checked values, tables, and data files matched. Figures differ and need visual review."
+              : hasUnchecked
+                ? "Checked values, tables, and data files matched. Some original outputs were unavailable."
+                : undefined
+          : hasUnchecked
+            ? "Some original outputs were unavailable. Comparison covers the retained outputs."
+            : undefined;
     const environmentChanges = environmentDifferences(manifest, files, environment);
     return {
       report: {
@@ -412,6 +431,7 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
         environment,
         environmentChanges,
         status,
+        ...(deciding.length === 0 ? { rerunCompleted: true } : {}),
         ...(message === undefined ? {} : { message }),
       },
       figures,

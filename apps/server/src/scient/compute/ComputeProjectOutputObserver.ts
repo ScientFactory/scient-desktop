@@ -416,7 +416,8 @@ async function collectProjectOutputs(input: {
   const since = BigInt(observation.startedAt) * 1_000_000n;
   const includeWrittenFiles = input.limits.includeWrittenFiles === true;
   // A runtime's own record adds what the watch may have lost; only the watch can vouch for coverage.
-  const reported = new Set(writes?.paths ?? []);
+  const runtimeWrites = new Set(writes?.paths ?? []);
+  const reported = new Set(runtimeWrites);
   const warnings: string[] = [];
   let coverageReason: ComputeCaptureReason | undefined;
   const quickScan = input.limits.preferFileScan
@@ -466,9 +467,10 @@ async function collectProjectOutputs(input: {
   const writtenFiles = new Set<string>();
   for (const path of reported) {
     signal.throwIfAborted();
-    const candidate = await authorizeCandidate(projectRoot, path, since, includeWrittenFiles);
+    const allowWrittenFile = includeWrittenFiles || runtimeWrites.has(path);
+    const candidate = await authorizeCandidate(projectRoot, path, since, allowWrittenFile);
     if (candidate === null) continue;
-    if (includeWrittenFiles && candidate.relativePath.length <= 4096) {
+    if (allowWrittenFile && candidate.relativePath.length <= 4096) {
       writtenFiles.add(candidate.relativePath);
     }
     if (!OUTPUT_FILE.test(candidate.relativePath)) continue;
@@ -522,7 +524,7 @@ async function collectProjectOutputs(input: {
   return {
     images,
     tables,
-    ...(includeWrittenFiles
+    ...(includeWrittenFiles || writtenFiles.size > 0
       ? { writtenFiles: [...writtenFiles].toSorted().slice(0, MAXIMUM_WRITTEN_FILES) }
       : {}),
     capture: {

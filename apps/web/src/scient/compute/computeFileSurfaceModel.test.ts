@@ -447,7 +447,7 @@ describe("python compute surface model", () => {
       kind: "status",
       label: "Python 3.12.13",
       canRun: true,
-      note: "Some scientific packages are missing",
+      note: "Some Scientific Python Toolkit packages are missing",
     });
   });
 

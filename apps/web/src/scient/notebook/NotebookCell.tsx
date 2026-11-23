@@ -40,7 +40,9 @@ import {
   type ScientNestedCodeEditor,
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
 import { CodeBlockActions, useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
+import { ComputeWrittenFiles } from "~/scient/compute/ComputeWrittenFiles";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
+import { resultTime } from "~/scient/results/resultState";
 import type { NotebookCaret, NotebookCellActivity, NotebookController } from "./notebookController";
 import { NOTEBOOK_MARKDOWN, NotebookCellOutputs, type NotebookPlace } from "./NotebookOutputs";
 
@@ -319,6 +321,7 @@ function CodeCellTopRow(props: {
   readonly language: string;
   readonly theme: "light" | "dark";
   readonly wrapped: boolean;
+  readonly silentResult: boolean;
   readonly onWrapChange: (wrapped: boolean) => void;
   readonly readCode: () => string;
   readonly editsDisabled?: boolean | undefined;
@@ -344,6 +347,11 @@ function CodeCellTopRow(props: {
         <span className={cn("truncate", hasIcon && "hidden @[19rem]/code-box:inline")}>
           {props.language}
         </span>
+        {props.silentResult ? (
+          <span className="truncate font-sans">
+            <T>No output</T>
+          </span>
+        ) : null}
       </span>
       <div className="flex shrink-0 items-center gap-0.5">
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
@@ -633,6 +641,7 @@ export function NotebookCell(props: {
   );
   const caret = useStore(controller.store, (state) => state.caret);
   const activity = useStore(controller.store, (state) => state.activity[cellId] ?? null);
+  const liveRun = useStore(controller.store, (state) => state.liveRuns[cellId]);
   const stale = useStore(controller.store, (state) => state.stale.get(cellId) ?? null);
   const section = useRef<HTMLElement>(null);
   const [near, setNear] = useState(false);
@@ -689,6 +698,18 @@ export function NotebookCell(props: {
         </MenuPopup>
       </Menu>
     ) : null;
+  const producedInLiveSession =
+    liveRun !== undefined &&
+    props.place.liveSessionGeneration != null &&
+    liveRun.generation === props.place.liveSessionGeneration &&
+    cell.run?.execution === liveRun.executionId;
+  const writtenFiles = producedInLiveSession ? liveRun.writtenFiles : undefined;
+  const silentResult =
+    activity === null &&
+    cell.pendingExecution === null &&
+    cell.run !== null &&
+    cell.outputs.length === 0 &&
+    (writtenFiles?.length ?? 0) === 0;
   return (
     // `application` keeps command-mode keys here instead of the chat's type-to-focus.
     <section
@@ -752,6 +773,7 @@ export function NotebookCell(props: {
               language={language}
               theme={theme}
               wrapped={wrapped}
+              silentResult={silentResult}
               onWrapChange={setWrapped}
               readCode={() => cell.source}
               editsDisabled={props.editsDisabled}
@@ -845,17 +867,23 @@ export function NotebookCell(props: {
           </Button>
         ) : isCode && !outputsFolded ? (
           <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
-            {activity === null &&
-            cell.pendingExecution === null &&
-            cell.run !== null &&
-            cell.outputs.length === 0 ? (
-              <p className="px-3 py-1 text-xs text-muted-foreground">
-                <T>No output</T>
-              </p>
-            ) : null}
-            {activity === null && cell.run === null && cell.outputs.length > 0 ? (
-              <p className="px-3 pt-1 text-xs text-muted-foreground">
-                <T>Saved output</T>
+            {activity === null && cell.outputs.length > 0 && !producedInLiveSession ? (
+              <p className="flex flex-wrap items-center gap-x-1.5 px-3 pt-1 text-[11px] leading-4 text-muted-foreground">
+                <span>
+                  <T>Saved output</T>
+                </span>
+                {cell.run !== null ? (
+                  <>
+                    <span aria-hidden>·</span>
+                    <time dateTime={cell.run.at} className="tabular-nums">
+                      {resultTime(cell.run.at)}
+                    </time>
+                  </>
+                ) : null}
+                <span aria-hidden>·</span>
+                <span>
+                  <T>Not run in this session</T>
+                </span>
               </p>
             ) : null}
             <NotebookCellOutputs
@@ -864,6 +892,13 @@ export function NotebookCell(props: {
               cell={cell}
               near={live}
             />
+            {activity === null && writtenFiles !== undefined && writtenFiles.length > 0 ? (
+              <ComputeWrittenFiles
+                threadRef={props.place.threadRef}
+                paths={writtenFiles}
+                className="px-3 pb-1.5"
+              />
+            ) : null}
           </div>
         ) : null}
       </div>

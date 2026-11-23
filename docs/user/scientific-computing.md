@@ -173,7 +173,7 @@ instead. Removing the managed installation intentionally returns new sessions to
 discovery; it does not remove your other Python installations.
 
 An existing Python can run ordinary code without every scientific library. If the reviewed
-Scientific Python packages are missing, the status tooltip notes that some scientific packages are missing.
+Scientific Python Toolkit packages are missing, the status tooltip notes that some Scientific Python Toolkit packages are missing.
 Run remains available for code that does not need those packages; Scient does not
 silently install them into a user-owned environment.
 An unrelated managed setup or removal failure does not disable or replace the status of a usable
@@ -611,12 +611,17 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
   selected section. Use **Cell actions** to collapse a heading's section or hide a code cell's
   source or outputs. The file keeps those folds when you reopen it in Scient or JupyterLab.
 - Point at a cell's number to run it, or choose **Run all**. Cells run in order and stop at the
-  first failure. Click code to edit it at the pointer, or click a Text cell to edit its Markdown.
+  first failure; a summary under the toolbar shows the first failed cell, how many later cells were
+  skipped, and a button to jump directly to it. Click code to edit it at the pointer, or click a
+  Text cell to edit its Markdown.
 - If a cell needs setup from earlier cells, select it and choose **Run from top through this cell**
-  from the Run menu. A Python error for an undefined name can also offer this action. It runs
-  earlier code again in the current session and stops at the selected cell or at the first failure.
-- Text, figures and errors appear below the cell that produced them. A cell can show **No output**
-  after it runs. Choose **Show outputs** if a cell's output is folded.
+  from the Run menu. A Python error for an undefined name can also offer replay or a jump to the
+  defining cell when live evidence shows it failed. Full tracebacks stay collapsed under
+  **Details**.
+- Text, figures, observed written file links and errors appear below the cell that produced them.
+  Silent cells show a compact **No output** line, and outputs from an earlier session show when
+  they ran and that they have not run in the current session. Choose **Show outputs** if a cell's
+  output is folded.
 - A dot and dimmed output mark a cell whose code changed or whose output may be out of date.
   Scient uses names in the code to guess which cells depend on earlier ones.
 - Press Shift+Enter to run and move on or Cmd/Ctrl+Enter to run and stay. Press Esc to leave the

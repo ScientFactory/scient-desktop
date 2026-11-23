@@ -289,7 +289,10 @@ def _scient_install_write_recorder():
     import tempfile
     import threading
 
-    extensions = frozenset({".png", ".svg", ".csv", ".tsv", ".parquet", ".xlsx"})
+    extensions = frozenset({
+        ".png", ".svg", ".gif", ".jpg", ".jpeg", ".webp", ".pdf", ".mp4", ".webm",
+        ".csv", ".tsv", ".parquet", ".xlsx",
+    })
     write_flags = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
     destination_events = frozenset({"os.rename", "shutil.copyfile", "os.link"})
     project_root = os.path.normcase(os.path.realpath(os.getcwd()))

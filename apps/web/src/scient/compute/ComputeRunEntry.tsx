@@ -28,6 +28,7 @@ import { formatReceiptDateTime } from "~/timestampFormat";
 
 import type { ComputeContextId } from "./computeContextStore";
 import { ComputeOutputView } from "./ComputeOutputView";
+import { ComputeWrittenFiles } from "./ComputeWrittenFiles";
 import { computeRunAttributes, useAskAboutCompute } from "./ComputeQuoteActions";
 import {
   finishComputeQuoteReveal,
@@ -410,6 +411,11 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
         ) : null}
       </header>
       {publication === null ? null : <RunPublication result={publication} />}
+      <ComputeWrittenFiles
+        threadRef={props.threadRef}
+        paths={execution.result?.writtenFiles}
+        className="mt-1"
+      />
       {status !== "cancelled" && execution.result?.failureReason && !explained ? (
         <p className="mt-1 text-xs text-destructive">{execution.result.failureReason}</p>
       ) : null}

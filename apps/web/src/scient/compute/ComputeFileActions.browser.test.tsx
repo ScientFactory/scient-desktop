@@ -395,7 +395,7 @@ describe("Python file run actions", () => {
         expect(confirmation()).toMatchObject({
           open: true,
           title: "Use Scient-managed Python?",
-          description: "Python 3.12.13 · System is missing scientific packages.",
+          description: "Python 3.12.13 · System is missing Scientific Python Toolkit packages.",
           confirmLabel: "Use managed",
           secondaryAction: { label: "Use current" },
         });

@@ -1,5 +1,7 @@
 /* oxlint-disable react/no-array-index-key -- Notebook outputs keep their saved order and have no identity. */
 import type {
+  ComputeExecutionRecord,
+  ComputeRuntimeInspection,
   ComputeSessionId,
   EnvironmentId,
   NotebookCellView,
@@ -7,11 +9,14 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useGT } from "gt-react";
+import { T, useGT } from "gt-react";
+import { CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { Button } from "~/components/ui/button";
 import { computeEnvironment } from "~/state/compute";
 import { ComputeOutputBlock } from "~/scient/compute/ComputeOutputBlock";
+import { computeDiagnosticSummary } from "~/scient/compute/computeResultPresentation";
 import { ComputeRichOutput, type ComputeRichDisplay } from "~/scient/compute/ComputeRichOutput";
 import { computeDisplays } from "~/scient/compute/computeRichRepresentation";
 import { renderTerminalText } from "~/scient/compute/computeTerminalText";
@@ -25,6 +30,7 @@ import {
 import { useStore } from "zustand";
 import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import type { NotebookController } from "./notebookController";
+import { notebookDefiningCell, type NotebookDefiningCell } from "./notebookRunSummary";
 
 type NotebookOutput = Readonly<Record<string, unknown>>;
 
@@ -71,6 +77,10 @@ export interface NotebookPlace {
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
   readonly path: string;
+  readonly liveSessionGeneration?: number | null | undefined;
+  readonly runtimeInspection?: ComputeRuntimeInspection | null | undefined;
+  readonly cellRuns?: ReadonlyMap<string, ComputeExecutionRecord> | undefined;
+  readonly onJumpToCell?: ((cellId: string) => void) | undefined;
   /** Adds text from a cell's output to the chat as a quote of that cell, when a chat is open. */
   readonly askAboutCell?: ((cellId: string, text: string) => void) | undefined;
   readonly replay?:
@@ -180,6 +190,9 @@ function SavedOutputs(props: {
   readonly outputs: ReadonlyArray<NotebookOutput>;
   readonly label: string;
   readonly onReplay?: (() => void) | undefined;
+  readonly onJumpToCell?: ((cellId: string) => void) | undefined;
+  readonly definingCell?: ((name: string) => NotebookDefiningCell | null) | undefined;
+  readonly onAskAgent?: ((text: string) => void) | undefined;
 }) {
   if (props.outputs.length === 0) return null;
   return (
@@ -198,20 +211,65 @@ function SavedOutputs(props: {
             );
           }
           case "error": {
-            const text =
-              Array.isArray(output.traceback) && output.traceback.length > 0
-                ? output.traceback.filter((line) => typeof line === "string").join("\n")
-                : `${String(output.ename)}: ${String(output.evalue)}`;
+            const errorName = typeof output.ename === "string" ? output.ename : "Error";
+            const message = typeof output.evalue === "string" ? output.evalue : "";
+            const rawTraceback = Array.isArray(output.traceback)
+              ? output.traceback.filter((line): line is string => typeof line === "string")
+              : [];
+            const { summary, traceback } = computeDiagnosticSummary({
+              errorName,
+              message,
+              traceback: rawTraceback,
+              frames: [],
+            });
+            const fullText = [summary, traceback].filter(Boolean).join("\n");
+            const definingCell =
+              errorName === "NameError" && props.definingCell !== undefined
+                ? (() => {
+                    const match = /^name '([^'\r\n]+)' is not defined$/.exec(message);
+                    return match?.[1] ? props.definingCell(match[1]) : null;
+                  })()
+                : null;
             return (
-              <ComputeOutputBlock key={index} copy={() => ({ text })}>
-                <div className="text-destructive">
-                  <ComputeTerminalOutput terminal={renderTerminalText(text)} />
+              <ComputeOutputBlock key={index} copy={() => ({ text: fullText })}>
+                <div className="rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs">
+                  <div className="flex items-start gap-2">
+                    <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start gap-2">
+                        <p className="min-w-0 flex-1 font-medium break-words text-destructive">
+                          {summary}
+                        </p>
+                        {props.onAskAgent === undefined ? null : (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => props.onAskAgent?.(fullText)}
+                          >
+                            <T>Ask agent</T>
+                          </Button>
+                        )}
+                      </div>
+                      <NotebookSetupRecovery
+                        errorName={output.ename}
+                        message={output.evalue}
+                        onReplay={props.onReplay}
+                        onJumpToCell={props.onJumpToCell}
+                        definingCell={definingCell}
+                      />
+                      {traceback.length > 0 ? (
+                        <details className="mt-1 text-muted-foreground">
+                          <summary className="cursor-pointer">
+                            <T>Details</T>
+                          </summary>
+                          <div className="mt-1">
+                            <ComputeTerminalOutput terminal={renderTerminalText(traceback)} />
+                          </div>
+                        </details>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
-                <NotebookSetupRecovery
-                  errorName={output.ename}
-                  message={output.evalue}
-                  onReplay={props.onReplay}
-                />
               </ComputeOutputBlock>
             );
           }
@@ -233,11 +291,13 @@ const PENDING_FIGURE_HEIGHT = "20rem";
 /** Outputs stored in the file, loaded when the cell comes near the view. */
 function StoredOutputs(props: {
   readonly controller: NotebookController;
+  readonly place: NotebookPlace;
   readonly cell: NotebookCellView;
   readonly near: boolean;
   readonly onReplay: (() => void) | undefined;
+  readonly definingCell: (name: string) => NotebookDefiningCell | null;
 }) {
-  const { controller, cell, near } = props;
+  const { controller, cell, near, place } = props;
   const [loaded, setLoaded] = useState<ReadonlyArray<NotebookOutput> | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- large stored outputs come from the server when their cell is on screen.
   useEffect(() => {
@@ -269,7 +329,18 @@ function StoredOutputs(props: {
       />
     );
   }
-  return <SavedOutputs outputs={loaded} label="figure" onReplay={props.onReplay} />;
+  return (
+    <SavedOutputs
+      outputs={loaded}
+      label="figure"
+      onReplay={props.onReplay}
+      onJumpToCell={place.onJumpToCell}
+      definingCell={props.definingCell}
+      onAskAgent={
+        place.askAboutCell === undefined ? undefined : (text) => place.askAboutCell?.(cell.id, text)
+      }
+    />
+  );
 }
 
 export function NotebookCellOutputs(props: {
@@ -290,6 +361,17 @@ export function NotebookCellOutputs(props: {
     replay === undefined || cell.id === replay.firstCodeCell || cell.source.trim() === ""
       ? undefined
       : () => replay.runThrough(cell.id);
+  const definingCell = (name: string) => {
+    const state = controller.store.getState();
+    return notebookDefiningCell({
+      order: state.order,
+      cells: state.cells,
+      targetCellId: cell.id,
+      name,
+      cellRuns: place.cellRuns ?? new Map(),
+      liveSessionGeneration: place.liveSessionGeneration ?? null,
+    });
+  };
   return showsRun ? (
     <LiveOutputs
       controller={controller}
@@ -298,9 +380,17 @@ export function NotebookCellOutputs(props: {
       near={near}
       run={liveRun}
       onReplay={onReplay}
+      definingCell={definingCell}
     />
   ) : (
-    <StoredOutputs controller={controller} cell={cell} near={near} onReplay={onReplay} />
+    <StoredOutputs
+      controller={controller}
+      place={place}
+      cell={cell}
+      near={near}
+      onReplay={onReplay}
+      definingCell={definingCell}
+    />
   );
 }
 
@@ -312,6 +402,7 @@ function LiveOutputs(props: {
   readonly near: boolean;
   readonly run: { readonly sessionId: string; readonly executionId: string };
   readonly onReplay: (() => void) | undefined;
+  readonly definingCell: (name: string) => NotebookDefiningCell | null;
 }) {
   const { environmentId, cwd, threadRef } = props.place;
   const live = useAtomValue(
@@ -323,9 +414,11 @@ function LiveOutputs(props: {
     return (
       <StoredOutputs
         controller={props.controller}
+        place={props.place}
         cell={props.cell}
         near={props.near}
         onReplay={props.onReplay}
+        definingCell={props.definingCell}
       />
     );
   }
@@ -338,7 +431,13 @@ function LiveOutputs(props: {
         executionId={props.run.executionId as never}
         outputs={live.output.outputs}
         threadRef={threadRef}
-        notebook={{ path: props.place.path, onReplay: props.onReplay }}
+        runtimeInspection={props.place.runtimeInspection ?? null}
+        notebook={{
+          path: props.place.path,
+          onReplay: props.onReplay,
+          onJumpToCell: props.place.onJumpToCell,
+          definingCell: props.definingCell,
+        }}
         onAskAgent={
           props.place.askAboutCell === undefined
             ? undefined

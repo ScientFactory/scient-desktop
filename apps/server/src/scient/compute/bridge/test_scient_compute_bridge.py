@@ -874,6 +874,7 @@ class TestWriteRecorder(unittest.TestCase):
             shutil.copyfile(self.path("d.png"), self.path("e.png"))
             with open(self.path("d.png"), "rb") as file:
                 file.read()
+            pathlib.Path(self.path("animation.gif")).write_bytes(b"GIF89a")
             with open(self.path("notes.txt"), "w") as file:
                 file.write("not an output")
 
@@ -882,6 +883,7 @@ class TestWriteRecorder(unittest.TestCase):
             sorted(record["paths"]),
             sorted([
                 os.path.join(deep, "a.png"),
+                self.path("animation.gif"),
                 self.path("b.svg"),
                 self.path("c.csv"),
                 self.path("d.png"),

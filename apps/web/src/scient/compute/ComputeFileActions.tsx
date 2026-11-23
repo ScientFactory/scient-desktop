@@ -1119,7 +1119,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       [
         runtimeExecutable,
         missingScientificPackages.length > 0
-          ? gt("Missing packages: {packages}", { packages: missingScientificPackages.join(", ") })
+          ? gt("Missing Scientific Python Toolkit packages: {packages}", {
+              packages: missingScientificPackages.join(", "),
+            })
           : "note" in runtimeToolbar
             ? runtimeToolbar.note
             : null,
@@ -1451,7 +1453,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             }}
             anchor={primaryRunAnchor}
             title={gt("Use Scient-managed Python?")}
-            description={gt("{runtime} is missing scientific packages.", {
+            description={gt("{runtime} is missing Scientific Python Toolkit packages.", {
               runtime: computeRuntimeDisplayLabel(
                 preRunRuntimeChoice.current.profile,
                 languageName,

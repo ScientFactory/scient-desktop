@@ -182,6 +182,8 @@ export const ResultHandoffVerification = Schema.Struct({
   verifiedAt: Text,
   verifierName: Schema.optional(Text),
   status: Schema.Literals(["verified", "differs", "could-not-run", "cancelled"]),
+  /** The rerun completed even when no retained output can establish a verdict. */
+  rerunCompleted: Schema.optional(Schema.Boolean),
   message: Schema.optional(Text),
   absoluteTolerance: Schema.Number,
   relativeTolerance: Schema.Number,
