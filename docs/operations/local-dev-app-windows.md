@@ -12,11 +12,11 @@ background with no console windows and switches with `pnpm dev:app:review`.
 - Native Windows PowerShell, Git for Windows, and Node matching `package.json`.
   Confirm `git --version` and `node --version` work in the launch terminal.
 - The package manager pinned by `package.json` and locked dependencies in the
-  feature worktree. Follow [initial setup](./development.md#first-checkout);
+  feature worktree. Follow [initial setup](./00_development.md#first-checkout);
   do not update the lockfile to work around a different package-manager version.
 - If installation needs to compile native dependencies, Python 3 and Visual
   Studio Build Tools with Desktop development with C++ and a Windows SDK.
-  Building an installer has additional [Windows packaging prerequisites](./development.md#windows-installer-prerequisites);
+  Building an installer has additional [Windows packaging prerequisites](./00_development.md#windows-installer-prerequisites);
   packaging and release signing are not required for ordinary dev-app review.
 
 Run the Windows checkout with Windows Node and dependencies. WSL is a different

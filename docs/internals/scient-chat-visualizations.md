@@ -189,7 +189,7 @@ titles without replacing the author's semantic color encoding.
 Scient's compact shared awareness contract names Mermaid, Vega-Lite, and Plotly,
 requires self-contained source, and distinguishes chat representation from a
 durable artifact. Provider delivery and capability gating are governed centrally
-by [the provider architecture](./providers.md#scient-awareness), not by each
+by [the provider architecture](./scient-providers.md#scient-awareness), not by each
 renderer. No renderer injects hidden user text or project instruction files.
 
 Desktop and web render the rich chart. Mobile and older clients continue to

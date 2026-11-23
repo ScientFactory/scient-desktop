@@ -43,7 +43,7 @@ Documentation impact:
 ## UI Changes
 
 <!-- Before/after screenshots of every changed screen, light and dark, checked against the
-     UI checklist (docs/internals/web-ui.md#ui-checklist). Add a short video for motion or
+     UI checklist (docs/internals/10_web-ui.md#ui-checklist). Add a short video for motion or
      interaction. Delete this section if the PR changes no UI. -->
 
 ## Review

@@ -252,6 +252,7 @@ const startLocalBackend = Effect.gen(function* () {
   }
   // SCIENT-FORK:END
 
+  yield* DesktopBackendPool.recoverLocalBackend;
   // A backend started while another server holds this home's lock can only exit with code 78.
   if (
     !(settings.wslOnly && settings.wslBackendEnabled) &&

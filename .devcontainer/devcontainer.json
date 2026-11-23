@@ -1,6 +1,6 @@
 // Dev container for Scient. Mirrors CI (ubuntu-24.04, Node 26, Rust stable)
-// and the canonical setup in docs/operations/development.md: global `vp`, `vp i`.
-// Contributor doc: docs/internals/devcontainer.md
+// and the canonical setup in docs/operations/00_development.md: global `vp`, `vp i`.
+// Contributor doc: docs/operations/01_devcontainer.md
 {
   "name": "Scient",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
@@ -24,7 +24,7 @@
   },
   "containerEnv": {
     // SCIENT-FORK:START — direct launches use isolated Scient state.
-    // The dev runner resolves its own home; see docs/internals/devcontainer.md.
+    // The dev runner resolves its own home; see docs/operations/01_devcontainer.md.
     "SCIENT_NEXT_HOME": "${containerWorkspaceFolder}/.scient-next",
     "T3CODE_HOME": "${containerWorkspaceFolder}/.scient-next"
     // SCIENT-FORK:END
@@ -56,7 +56,7 @@
   },
   "customizations": {
     "codespaces": {
-      "openFiles": ["docs/internals/devcontainer.md"]
+      "openFiles": ["docs/operations/01_devcontainer.md"]
     },
     "vscode": {
       "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer"],

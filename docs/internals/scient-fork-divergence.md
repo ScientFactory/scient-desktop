@@ -435,7 +435,7 @@ settings, background demand, attachments, and credentials; the provider packages
 application profile directly. Complete current-input validation stays in
 [`ScientCurrentInput.ts`](../../apps/server/src/orchestration-v2/ScientCurrentInput.ts) and delegates
 formatting to the shared provider package. Native shutdown and OMP remain the physical resource
-owners described in [provider lifecycle](./provider-lifecycle.md) and [providers](./providers.md);
+owners described in [provider lifecycle](./provider-lifecycle.md) and [providers](./scient-providers.md);
 relocating a helper does not certify cleanup.
 
 Accounting credentials compose through `usage/usageAccountingSettingsSecrets.ts` in the shared
@@ -564,7 +564,7 @@ membership, delivery/status records retain the source ID, and source edits prese
 old body before rewriting it. Frozen fork versions remain authoritative. Normal SQL reads remove
 legacy handoff bodies before hydration; bounded source readers preserve old embedded histories
 and summary-only text. The existing V2 event transaction, delivery receipts and pending-delivery
-uncertainty own execution. See [context handoffs](./context-handoffs.md).
+uncertainty own execution. See [context handoffs](./scient-context-handoffs.md).
 
 Archived bodies are stored once. Before the 2026-10-13 reference change, handoffs copied whole
 conversations into the archive, once per status event; on one real database 1.6M archived

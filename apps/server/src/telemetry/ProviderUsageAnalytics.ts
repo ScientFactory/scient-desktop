@@ -77,8 +77,8 @@ export interface RunSettledReport {
 }
 
 type Properties = Readonly<Record<string, unknown>>;
-/** Maps a native model id to a vendor catalog label, or undefined to keep it out. */
-export type ModelLabeler = (model: string) => string | undefined;
+/** Maps a native model id to the name analytics reports. */
+export type ModelLabeler = (model: string) => string;
 
 const TERMINAL_STATUSES: ReadonlySet<OrchestrationV2ProviderTurn["status"]> = new Set([
   "completed",

@@ -16,7 +16,7 @@ automation system. For native mobile testing, use
 2. Choose a base directory that belongs only to the current worktree or test:
    - In a linked worktree, use its ignored `.scient-next` directory for reusable test state.
    - Use `mktemp -d /tmp/t3code-test.XXXXXX` for disposable state and retain the printed absolute path.
-3. Start the full web stack with `vp run dev`. Add `--share` when the user needs to open it from another tailnet device. Follow the [development runbook](../../../docs/operations/development.md#state-and-ports) for state precedence; pass `--home-dir <base-dir>` when selecting a different isolated directory.
+3. Start the full web stack with `vp run dev`. Add `--share` when the user needs to open it from another tailnet device. Follow the [development runbook](../../../docs/operations/00_development.md#scient) for state precedence; pass `--home-dir <base-dir>` when selecting a different isolated directory.
 4. Keep the terminal session alive and read the selected server port, web port, base directory, and pairing URL from its output.
 
 Treat a base directory as disposable only when it was created or deliberately selected for the current test. Do not use live Scient or T3 profiles as test state. Prefer a new temporary base directory over clearing state of uncertain ownership.
@@ -59,7 +59,10 @@ for a fresh one. Keep using the same tab.
 
 ## Verify and retain
 
-Exercise the affected flow and capture the state that proves it works. Keep
+Exercise the affected flow and capture the state that proves it works. Actually
+look at the rendered result and think as a user using the feature—check layout,
+visual hierarchy, alignment, and end-to-end flow—and iterate on anything that
+feels awkward or unfinished until you are satisfied before handing back. Keep
 the server, state, and panel available while the user inspects or iterates.
 An assistant turn ending is not teardown. Stop only processes you started,
 using retained terminal sessions or captured PIDs.
@@ -92,7 +95,7 @@ Keep pairing URLs out of screenshots, committed files, and durable logs. When th
 
 ## Recover a consumed or expired pairing token
 
-Follow [pairing recovery in the development runbook](../../../docs/operations/development.md#replacing-a-consumed-or-expired-pairing-url). Target the running test profile explicitly and check the required scopes and reachable origin. Do not restart an environment merely to replace a token.
+Follow [pairing recovery in the development runbook](../../../docs/operations/00_development.md#scient). Target the running test profile explicitly and check the required scopes and reachable origin. Do not restart an environment merely to replace a token.
 
 ## Inspect or seed SQLite state
 
@@ -111,7 +114,7 @@ Tear down when the user explicitly asks, confirms the iteration is finished, or 
 
 When teardown is appropriate:
 
-1. Follow the [runbook's process-stopping guidance](../../../docs/operations/development.md#stopping-a-manually-launched-process).
+1. Follow the [runbook's process-stopping guidance](../../../docs/operations/00_development.md#scient).
 2. Preserve the isolated base directory when it contains useful reproduction evidence or state for a likely follow-up.
 3. Otherwise remove only a path created for this test after resolving and verifying the exact target.
 

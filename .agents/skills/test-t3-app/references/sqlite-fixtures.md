@@ -7,7 +7,7 @@ Load this reference only when inspecting or seeding isolated test state directly
 The helper hardcodes `<base-dir>/userdata/state.sqlite`; it does not discover the
 running server's database. Scient's development and desktop profiles can use other
 layouts even when a base directory is explicit. Follow the
-[development runbook](../../../../docs/operations/development.md#state-and-ports)
+[development runbook](../../../../docs/operations/00_development.md#scient)
 and verify the target runtime's actual database path before using these commands.
 If it does not match the helper's layout, use application commands or APIs instead;
 do not move or symlink a database to make the helper work.

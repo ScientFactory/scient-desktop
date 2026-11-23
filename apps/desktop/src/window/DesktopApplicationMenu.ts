@@ -201,6 +201,7 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
   const runFork = Effect.runForkWith(context);
+  const runSync = Effect.runSyncWith(context);
 
   const runMenuEffect = <E>(
     action: string,
@@ -240,13 +241,19 @@ export const make = Effect.gen(function* () {
       runMenuEffect("send-feedback", dispatchMenuAction("send-feedback"));
     };
     // SCIENT-FORK:END
-    // Chromium and the renderer already handle this chord; injecting another paste duplicates text.
     const pasteAsTextClick = (
       _item: Electron.MenuItem,
       _window: Electron.BaseWindow | undefined,
       event: Electron.KeyboardEvent,
     ) => {
-      if (event.triggeredByAccelerator === true) return;
+      if (event.triggeredByAccelerator === true) {
+        // Chromium pastes this chord itself except on macOS. Paste synchronously there:
+        // a renderer round trip can land after the terminal's own clipboard read.
+        if (environment.platform === "darwin") {
+          runSync(electronMenu.pasteAndMatchStyle);
+        }
+        return;
+      }
       runMenuEffect("paste-as-text", dispatchMenuAction("paste-as-text"));
     };
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {

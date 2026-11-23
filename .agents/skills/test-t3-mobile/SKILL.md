@@ -72,7 +72,7 @@ Run backend commands from the repository root. Create a fresh temporary base dir
 for this test and use its absolute path consistently below. Do not use live Scient
 or T3 profiles. The direct `serve` command below uses `<base-dir>/userdata`;
 other launch paths may differ. For `vp run dev`, follow the
-[development runbook](../../../docs/operations/development.md#state-and-ports)
+[development runbook](../../../docs/operations/00_development.md#scient)
 and confirm the resolved runtime paths instead of assuming this layout.
 
 Seed a small number of meaningful Git projects before starting the backend:
@@ -206,9 +206,12 @@ Exercise only the affected flow on one representative device unless the change s
 
 1. Confirm the app connected to the intended disposable environment instead of merely rendering an empty disconnected state.
 2. Capture the relevant final state.
+   Actually inspect the screenshots (`device_screenshot`) as a user using the feature—check layout,
+   visual hierarchy, touch ergonomics, and flow—and iterate on anything that feels off until you are
+   satisfied before handing back.
 3. Remove the disposable environment from T3 Code Dev.
 4. Remove any `adb reverse` rule created for this test with `adb -s <emulator-serial> reverse --remove tcp:<metro-port>`.
-5. Stop only the serve-sim, Metro, backend, emulator, and log processes started by this test, following the [process-stopping guidance](../../../docs/operations/development.md#stopping-a-manually-launched-process).
+5. Stop only the serve-sim, Metro, backend, emulator, and log processes started by this test, following the [process-stopping guidance](../../../docs/operations/00_development.md#scient).
 6. Remove only base directories and temporary Git repositories deliberately created for this test. Preserve them when they contain useful reproduction evidence.
 
 Keep local verification focused. Do not turn this workflow into a full repository test run.
@@ -224,12 +227,6 @@ Keep local verification focused. Do not turn this workflow into a full repositor
 - **iOS semantic actions fail:** set explicit XcodeBuildMCP defaults and refresh with `snapshot_ui`.
 - **Android cannot reach Metro:** verify `adb reverse` for the exact Metro port and relaunch the development-client URL.
 - **Android cannot reach the backend:** use `10.0.2.2`, not `127.0.0.1`, for the Android Emulator.
-  At teardown, close the AgentDevice session and call `device_close` after the
-  disposable connection and owned backend/Metro processes have been handled.
-  Confirm the intended projects appear, exercise the affected flow, and capture
-  evidence. Retain the app and environment while iterating. At teardown, remove
-  the disposable connection, close the AgentDevice session, call `device_close`,
-  and stop only your backend and Metro processes.
 
 ## Accessibility audit
 

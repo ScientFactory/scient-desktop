@@ -1975,7 +1975,6 @@ export function makeNativeSessionAdapterV2(
           }
           return {
             providerThread: thread!,
-            providerTurns: [...turns.values()],
             messages: [...messages.values()],
             runtimeRequests: [...requests.values()].map((entry) => entry.request),
           };
@@ -2446,7 +2445,6 @@ export function makeNativeSessionAdapterV2(
             options.capabilities.threads.canReadThreadSnapshot
               ? Effect.succeed({
                   providerThread: thread ?? request.providerThread,
-                  providerTurns: [...turns.values()],
                   messages: [...messages.values()],
                   runtimeRequests: [...requests.values()].map((entry) => entry.request),
                 })

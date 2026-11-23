@@ -18,7 +18,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
-import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ReplayWorkspacePolicy from "./scient-fork/ReplayWorkspacePolicy.testkit.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
@@ -110,7 +110,7 @@ function layerTest(
     Layer.provide(
       Layer.mergeAll(
         layerRegistry,
-        RuntimePolicy.layer,
+        ReplayWorkspacePolicy.layerThreadWorktree,
         realPath === undefined ? NodeServices.layer : FileSystem.layerNoop({ realPath }),
       ),
     ),

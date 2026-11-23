@@ -13,6 +13,7 @@ import {
   type OrchestrationV2AppThread,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -151,6 +152,7 @@ it.effect(
 
       // Repositories inside the folder are found; `--track` adds one from outside it.
       const shared = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-shared-" });
+      const homeShared = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-home-" });
       yield* fs.makeDirectory(NodePath.join(workspaceRoot, "api", ".git"), { recursive: true });
       yield* fs.makeDirectory(NodePath.join(workspaceRoot, "notes"));
       yield* runCli([
@@ -159,12 +161,15 @@ it.effect(
         workspaceRoot,
         "--track",
         `${shared}${NodePath.sep}`,
+        "--track",
+        `~/${NodePath.basename(homeShared)}`,
         "--base-dir",
         baseDir,
-      ]);
+      ]).pipe(Effect.provideService(HostProcess.HomeDirectory, NodePath.dirname(homeShared)));
       assert.deepEqual((yield* readStoredProjects(baseDir)).projects[0]?.trackedFolders, [
         { path: NodePath.join(workspaceRoot, "api"), name: "api", discovered: true },
         { path: shared, name: NodePath.basename(shared) },
+        { path: homeShared, name: NodePath.basename(homeShared) },
       ]);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

@@ -695,7 +695,7 @@ describe("orchestrator MCP delegation", () => {
     withToolkit((fx) =>
       Effect.gen(function* () {
         const steerReceived = yield* Deferred.make<void>();
-        // SCIENT-FORK: match the skill-scope projection (docs/internals/providers.md).
+        // SCIENT-FORK: match the skill-scope projection (docs/internals/scient-providers.md).
         fx.gates.steerReceived.set(agentClaudePromptText(childSteerText), steerReceived);
         const { child, sent } = yield* steerIntoUntaskedChildRun(
           fx,

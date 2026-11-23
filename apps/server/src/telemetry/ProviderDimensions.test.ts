@@ -37,7 +37,7 @@ const thread = (
   ...overrides,
 });
 
-it("reports configured models while keeping unknown provider instances out", () => {
+it("reports every model name but never instance names", () => {
   expect(
     agentToolProperties({
       tool: "t3_thread_send",

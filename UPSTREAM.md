@@ -261,7 +261,7 @@ sidebar closed, progress is a corner toast.
 The version shown by an install caller remains binding even when its final feed check
 discovers and downloads a newer release. Late download events cannot replace the current
 offer, and update events cannot mutate an install's reserved release.
-Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analytics.md`) live in
+Update outcomes and summaries (`app.update.*`, see `docs/internals/scient-product-analytics.md`) live in
 `apps/desktop/src/scient/updateOutcomes/`; `DesktopUpdates.ts`, `DesktopTelemetryPublisher.ts`,
 `DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`
 carry only marked calls into them. The four-hour poller contains an unexpected failure per
@@ -364,7 +364,7 @@ closing-thread resume retry. When syncing, take upstream's version of those hunk
 the marked Scient additions inside them: the `awaitRelease` detach argument and
 `idleUnloadedProviderThreads` fallback in `ProviderSessionManager.ts`, the release wait in
 `CodexAdapterV2.unloadThread`, the `expectedRuntime` release argument, and the linked-environments
-test assertions. See [provider lifecycle](docs/internals/providers.md#registry-and-routing).
+test assertions. See [provider lifecycle](docs/internals/scient-providers.md#registry-and-routing).
 
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
@@ -1611,7 +1611,7 @@ database. Preserve its read-only original source, before-images, source identity
 Scient migration ledger, and conflict versions. The `EventSink` transaction hook prepares recovery
 events against current projections before appending them, so edits and interrupted retries remain
 safe. Historical imports never acquire provider-session, queue, or checkpoint execution authority.
-See [legacy migration and recovery](docs/internals/legacy-orchestration-migration.md).
+See [legacy migration and recovery](docs/internals/scient-legacy-orchestration-migration.md).
 
 The agent-capability foundation keeps workspace authority under
 `scient/projectScope`, not in T3's host project schema. Scient's existing
@@ -1688,7 +1688,7 @@ categories instead of folding them into `other`. Its shared allowlist, conforman
 generator and generated fixture are anchored `scientMounts`, not OMP-owned code.
 Deploy the revision-7 gateway before releasing this producer; old `other` records
 cannot be re-attributed. Analytics meanings and consent/content boundaries remain
-in `docs/internals/product-analytics.md`.
+in `docs/internals/scient-product-analytics.md`.
 `scripts/scient-seam-check.mjs --base --head` checks this inventory with the
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
@@ -1773,7 +1773,7 @@ with `scient-fork/ContextHistorySource.ts` and its bounded readers; preserve the
 Scient migration ledger and old source bodies. Generic budget accounting, formatting and item
 priority remain in provider-core. Source identity is private execution metadata. The decisive
 behavior and resource contract is maintained in
-[context handoffs](docs/internals/context-handoffs.md), with actual default-composition,
+[context handoffs](docs/internals/scient-context-handoffs.md), with actual default-composition,
 legacy/rebuild, receiving-model and reservation-recovery witnesses beside the production owners.
 
 Scient layers two sidebar divergences beside T3's thread list: user-defined
@@ -1893,13 +1893,13 @@ It does not replace T3's model catalog or ACP selection: choices, persistence,
 and dispatch retain exact native IDs. Preserve this presentation seam in web
 and mobile without moving grouping into the provider engine. If Google or T3
 exposes native reasoning options, prefer those; models with native options
-already bypass grouping. See [provider architecture](docs/internals/providers.md).
+already bypass grouping. See [provider architecture](docs/internals/scient-providers.md).
 
 Claude's health-check commands, `claude --version` and Scient's `claude auth status` gate, use a
 20-second deadline instead of the shared 4-second probe deadline, in `SCIENT-FORK` regions of
 `ClaudeProvider.ts`. The native CLI needs 2-4 seconds to answer on Windows. Drop the version-check
 region once upstream gives that check an equivalent deadline. See
-[Claude health check](docs/internals/providers.md#claude-health-check).
+[Claude health check](docs/internals/scient-providers.md#claude-health-check).
 
 Desktop/web also reconciles historical Antigravity family selections in unstarted
 drafts against the instance's live native variants. Preserve its draft-store write,

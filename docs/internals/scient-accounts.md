@@ -803,7 +803,7 @@ on any of these.
   are offered upstream; see `UPSTREAM.md`.
 
 The analytics gateway must accept the `accounts` settings section before release; regenerate
-its wire contract using the [analytics deployment procedure](product-analytics.md).
+its wire contract using the [analytics deployment procedure](./scient-product-analytics.md).
 
 ### Provider-managed sign-ins
 

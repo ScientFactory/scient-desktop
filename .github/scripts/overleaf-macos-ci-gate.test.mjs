@@ -48,7 +48,7 @@ NodeTest.test("unrelated renderer, server and documentation edits skip it", () =
       "apps/web/src/components/ChatView.tsx",
       "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
       "apps/desktop/src/main.ts",
-      "docs/operations/release.md",
+      "docs/operations/scient-release.md",
     ]),
     false,
   );
