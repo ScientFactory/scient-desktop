@@ -138,9 +138,14 @@ function parseDescription(description: string | undefined): Description | null {
 async function openDirectory(tiff: GeoTIFF, offset: number) {
   const image = await new GeoTIFF(tiff.source, tiff.littleEndian, tiff.bigTiff, offset).getImage(0);
   // TIFF 6.0 defaults BitsPerSample to 1, as in bilevel files; geotiff has no default of its own.
+  // Some writers store one value for every sample, which geotiff applies to the first only.
   const directory = image.getFileDirectory();
-  if (!directory.hasTag("BitsPerSample"))
-    directory.actualizedFields.set(258, Array<number>(image.getSamplesPerPixel()).fill(1));
+  const samples = image.getSamplesPerPixel();
+  const bits = directory.hasTag("BitsPerSample")
+    ? Array.from(directory.getValue("BitsPerSample") as ArrayLike<number>, Number)
+    : [];
+  if (bits.length < samples)
+    directory.actualizedFields.set(258, Array<number>(samples).fill(bits[0] ?? 1));
   return image;
 }
 
