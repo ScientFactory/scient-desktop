@@ -112,7 +112,6 @@ import {
   updateScientSourceNote,
   sourceAttachmentAbsolutePath,
   scientSourceIdFor,
-  writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 
 import {
@@ -1865,19 +1864,6 @@ async function importZoteroOperationItem(input: {
             : {}),
         });
         omittedOriginalNoteHtml = saved.omittedOriginalNoteHtmlCount > 0;
-      } else if (
-        namespaceBase === ownBase &&
-        ownBase.libraryId === "0" &&
-        reference !== undefined &&
-        reference.libraryId !== "0"
-      ) {
-        // Publish the verified owner transition Refresh could not save, keeping the "0" namespace.
-        await writeScientSourceZoteroSync(input.root, {
-          ...ownBase,
-          libraryId: reference.libraryId,
-          annotationLibraryId: ownBase.annotationLibraryId ?? "0",
-          syncedAt: new Date().toISOString(),
-        });
       }
       const unfiled = await addToZoteroCollections({
         root: input.root,

@@ -395,9 +395,15 @@ async function refreshOne(input: {
     action: "refresh",
   });
   const currentLibraryId = currentReference!.libraryId;
+  // A "0" baseline stamped by this record's originating import is its own: the concrete
+  // reference was published only after that owner was verified for this same item.
+  const legacyOwnBase =
+    savedBase?.libraryId === "0" &&
+    savedBase.importOperationId !== undefined &&
+    savedBase.importOperationId === input.record.origin?.operationId;
   const base =
     savedBase?.itemKey === reference.itemKey &&
-    sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner)
+    (sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner) || legacyOwnBase)
       ? savedBase
       : null;
   const annotationLibraryId = base?.annotationLibraryId ?? base?.libraryId ?? reference.libraryId;

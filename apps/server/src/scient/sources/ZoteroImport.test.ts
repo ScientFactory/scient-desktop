@@ -925,10 +925,7 @@ describe("Zotero import", () => {
     });
     expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
     expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
-    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toMatchObject({
-      libraryId: "475425",
-      annotationLibraryId: "0",
-    });
+    expect((await readScientSourceZoteroSync(root, partial!.sourceId))?.libraryId).toBe("0");
     const refreshedAgain = await refreshZoteroSources({
       root,
       sourceIds: [partial!.sourceId],
@@ -937,6 +934,10 @@ describe("Zotero import", () => {
     });
     expect(refreshedAgain.items[0]?.outcome).not.toBe("failed");
     expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
+    expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toMatchObject({
+      libraryId: "475425",
+      annotationLibraryId: "0",
+    });
   });
 
   it("names highlights from the incoming library when a same-key baseline came from another library", async () => {
