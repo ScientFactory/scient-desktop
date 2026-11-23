@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
+import { ProjectService } from "../../../project/ProjectService.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import * as AnalyticsService from "../../../telemetry/AnalyticsService.ts";
@@ -69,6 +70,7 @@ it.effect("records calls of Scient's tools like T3's, without arguments", () => 
   }).pipe(
     Effect.provide(
       ScientSourcesToolkitRegistrationLive.pipe(
+        Layer.provide(Layer.mock(ProjectService)({})),
         Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
         Layer.provide(
           Layer.succeed(

@@ -37,6 +37,7 @@ import {
   type ScientSourceDuplicateAssessment,
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
+  type ScientSourceEditorialNotice,
   type ScientSourceEditorialStatus,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
@@ -58,6 +59,7 @@ import {
   type ScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
+import { withScientLibraryWatchNotices } from "@scientfactory/scient-sources/library-notice-watch";
 import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import {
   bulkUpdateScientSources,
@@ -603,50 +605,71 @@ export async function checkSourceIdentifier(input: {
     !titlesAgree(record.title!, resolution.metadata.title!);
   const registry: SourceCheckRegistryOutcome =
     resolution === null ? "none" : mismatch ? "mismatch" : resolution.status;
-  const check: {
-    readonly verification: ScientSourceVerification;
-    readonly editorialStatus: ScientSourceEditorialStatus | null;
-  } =
-    resolution === null
-      ? { verification: { state: "unverified" }, editorialStatus: null }
-      : resolution.status === "found" && !mismatch
-        ? {
-            verification: {
-              state: "verified",
-              identifier: resolution.identifier,
-              checkedAt: resolution.retrievedAt,
-            },
-            editorialStatus: resolution.metadata.editorialNotices
-              ? editorialStatusFromNotices(
-                  resolution.metadata.editorialNotices,
-                  resolution.retrievedAt,
-                )
-              : null,
-          }
-        : resolution.status === "unavailable"
-          ? {
-              verification:
-                sameIdentifier && previous
-                  ? previous
-                  : { state: "unchecked", identifier: resolution.identifier },
-              editorialStatus: sameIdentifier ? (record.editorialStatus ?? null) : null,
-            }
-          : {
-              verification: {
-                state: "unverified",
-                identifier: resolution.identifier,
-                checkedAt,
-                problem: mismatch ? "mismatch" : "not-found",
-              },
-              editorialStatus: null,
-            };
-  const result = await recordScientSourceCheck({
-    root: input.root,
-    sourceId: input.sourceId,
-    expectedRevision: record.revision,
-    ...check,
-    actor: input.actor,
-  });
+  const found = resolution?.status === "found" && !mismatch ? resolution : null;
+  const reported = found?.metadata.editorialNotices;
+  const write = async (kept: ReadonlyArray<ScientSourceEditorialNotice>) => {
+    const mergeWatched = (existing: ReadonlyArray<ScientSourceEditorialNotice>) =>
+      kept.filter((notice) => !existing.some((other) => other.kind === notice.kind));
+    const check: {
+      readonly verification: ScientSourceVerification;
+      readonly editorialStatus: ScientSourceEditorialStatus | null;
+    } =
+      resolution === null
+        ? { verification: { state: "unverified" }, editorialStatus: null }
+        : resolution.status === "found" && !mismatch
+          ? (() => {
+              const watched = mergeWatched(reported ?? []);
+              const notices =
+                reported || watched.length > 0 ? [...(reported ?? []), ...watched] : null;
+              return {
+                verification: {
+                  state: "verified",
+                  identifier: resolution.identifier,
+                  checkedAt: resolution.retrievedAt,
+                },
+                editorialStatus: notices
+                  ? editorialStatusFromNotices(notices, resolution.retrievedAt)
+                  : null,
+              };
+            })()
+          : resolution.status === "unavailable"
+            ? (() => {
+                const existing = sameIdentifier ? (record.editorialStatus?.notices ?? []) : [];
+                const watched = mergeWatched(existing);
+                return {
+                  verification:
+                    sameIdentifier && previous
+                      ? previous
+                      : { state: "unchecked", identifier: resolution.identifier },
+                  editorialStatus:
+                    watched.length > 0
+                      ? editorialStatusFromNotices([...existing, ...watched], checkedAt)
+                      : sameIdentifier
+                        ? (record.editorialStatus ?? null)
+                        : null,
+                };
+              })()
+            : {
+                verification: {
+                  state: "unverified",
+                  identifier: resolution.identifier,
+                  checkedAt,
+                  problem: mismatch ? "mismatch" : "not-found",
+                },
+                editorialStatus:
+                  kept.length > 0 ? editorialStatusFromNotices(kept, checkedAt) : null,
+              };
+    return recordScientSourceCheck({
+      root: input.root,
+      sourceId: input.sourceId,
+      expectedRevision: record.revision,
+      ...check,
+      actor: input.actor,
+    });
+  };
+  const result = isScientLibraryLocation(input.root)
+    ? await withScientLibraryWatchNotices(input.root, record, write)
+    : await write([]);
   return { ...result, registry };
 }
 
@@ -1803,22 +1826,44 @@ async function importZoteroOperationItem(input: {
         ),
       );
       const base = await readScientSourceZoteroSync(input.root, record.sourceId);
+      // Only a base this record's originating import wrote is its own: Trash keeps the sync
+      // file, so a re-import starts beside the previous import's baseline and its namespace.
+      const ownBase =
+        partial &&
+        base?.importOperationId !== undefined &&
+        base.importOperationId === record.origin?.operationId
+          ? base
+          : null;
+      const reference = record.externalReferences.find((entry) => entry.system === "zotero");
+      // A retained base for this same item owns the stable highlight namespace: its own
+      // library's, or the legacy local "0" of this import's own baseline after the owner
+      // was verified; any other retained file must not name this import's highlights.
+      const namespaceBase =
+        base &&
+        base.itemKey === input.itemKey &&
+        (base.libraryId === reference?.libraryId || (ownBase === base && base.libraryId === "0"))
+          ? base
+          : null;
       const annotationLibraryId =
-        base?.annotationLibraryId ??
-        base?.libraryId ??
-        record.externalReferences.find((reference) => reference.system === "zotero")?.libraryId;
+        namespaceBase?.annotationLibraryId ?? namespaceBase?.libraryId ?? reference?.libraryId;
       if (annotationLibraryId === undefined) {
         throw new Error("This source is not linked to a Zotero item.");
       }
-      if (!base) {
-        await recordZoteroSync({
+      const savedDecision = ownBase?.importOmittedOriginalNoteHtml;
+      let omittedOriginalNoteHtml = savedDecision === true;
+      if (!ownBase) {
+        const saved = await recordZoteroSync({
           root: input.root,
           record,
           material,
           attachmentKeys: files.map((file) => file.attachmentKey),
           pdfs: Object.fromEntries(pdfs),
           annotationLibraryId,
+          ...(record.origin?.operationId !== undefined
+            ? { initialImportOperationId: record.origin.operationId }
+            : {}),
         });
+        omittedOriginalNoteHtml = saved.omittedOriginalNoteHtmlCount > 0;
       }
       const unfiled = await addToZoteroCollections({
         root: input.root,
@@ -1843,7 +1888,19 @@ async function importZoteroOperationItem(input: {
       // A PDF Zotero has and could not hand over (a linked file read over the web, a file
       // that is gone) is said with the rest of what did not come, and so are its highlights.
       const unavailable = Math.min(material.pdfs.length, ZOTERO_PDFS_PER_ITEM) - files.length;
-      const notBrought = [...material.notBrought];
+      // A saved initial decision governs this line; what Zotero holds now does not rewrite it.
+      const notBrought =
+        savedDecision === undefined
+          ? [...material.notBrought]
+          : material.notBrought.filter(
+              (entry) => !(entry.kind === "note-cut" && entry.name === "original"),
+            );
+      if (
+        omittedOriginalNoteHtml &&
+        !notBrought.some((entry) => entry.kind === "note-cut" && entry.name === "original")
+      ) {
+        addNotBrought(notBrought, "note-cut", 1, "original");
+      }
       addNotBrought(notBrought, "pdf", unavailable, "unavailable");
       addNotBrought(notBrought, "collection", unfiled, "unfiled");
       addNotBrought(notBrought, "highlights", highlights?.unplaced ?? 0, "unplaced");

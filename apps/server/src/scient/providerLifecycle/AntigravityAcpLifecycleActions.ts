@@ -430,6 +430,8 @@ export function makeAntigravityManagedRuntimeActions(input: {
         ? "Official Google Antigravity CLI release"
         : "Official Google Antigravity ACP release",
       catalogRevision: antigravityReleaseRevision(asset),
+      // Only the agy CLI loads Antigravity plugins.
+      nativePlugins: cli,
       message: cli
         ? `${verb} Google's verified Antigravity CLI privately for Scient. It runs your Antigravity plugins in Scient chats.${replacesPaired ? signInAgain : ""}`
         : `${verb} Google's verified Antigravity ACP runtime privately for Scient.`,

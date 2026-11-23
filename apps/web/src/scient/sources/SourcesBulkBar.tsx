@@ -282,8 +282,8 @@ export function SourcesBulkBar(props: {
     });
 
   return (
-    // Narrower than one row of actions, they take a line of their own (wrapping again if they
-    // must), so the count and Done selecting stay on the first. Progress has a line of its own.
+    // Narrower than one row of actions, they take the line above (wrapping again if they must),
+    // so the select-all box and count sit just over the rows' boxes. Progress has its own line.
     <div className="@container/bulk mt-2 mb-1 ml-3 mr-4 shrink-0 text-sm">
       <div className="flex min-h-8 flex-wrap items-center gap-1">
         <Checkbox
@@ -297,9 +297,23 @@ export function SourcesBulkBar(props: {
           }
         />
         <span className="ms-2 me-auto whitespace-nowrap text-muted-foreground tabular-nums">
-          {count > 0 || !progress ? `${count.toLocaleString()} selected` : null}
+          {count > 0 || !progress
+            ? gt("{count} selected", { count: count.toLocaleString() })
+            : null}
         </span>
-        <div className="flex flex-wrap items-center gap-1 @max-[30rem]/bulk:order-1 @max-[30rem]/bulk:basis-full">
+        <div className="flex flex-wrap items-center gap-1 @max-[30rem]/bulk:-order-1 @max-[30rem]/bulk:basis-full">
+          {library?.listed === "library" && notInProject.length > 0 ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
+            >
+              <FolderPlus />
+              {m(LIBRARY_LABELS.addToProject)}
+            </Button>
+          ) : null}
           {count >= 2 ? <CompareSourcesButton records={selected} /> : null}
           <Menu>
             <MenuTrigger
@@ -423,20 +437,6 @@ export function SourcesBulkBar(props: {
                 ))}
               </MenuPopup>
             </Menu>
-          ) : null}
-          {library?.listed === "library" ? (
-            <ScientTooltip content={m(LIBRARY_LABELS.addToProject)}>
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label={gt("Add to project: {count} selected", { count })}
-                disabled={busy || notInProject.length === 0}
-                onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
-              >
-                <FolderPlus />
-              </Button>
-            </ScientTooltip>
           ) : null}
           {library?.listed === "project" ? (
             <ScientTooltip content={m(LIBRARY_LABELS.removeFromProject)}>

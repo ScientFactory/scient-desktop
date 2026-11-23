@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The list revision is a digest of its parts.
+import * as NodeCrypto from "node:crypto";
+
 import {
   citationKeyValidationMessage,
   scientLibraryIdentityProblem,
@@ -35,7 +38,6 @@ import {
 import {
   readScientLibraryJoinDifferences,
   takeFromScientLibraryJoin,
-  undoScientLibraryJoin,
 } from "@scientfactory/scient-sources/library-join";
 import {
   listScientLibraryImportNotBrought,
@@ -54,12 +56,19 @@ import {
   resolveScientReviewConflict,
 } from "@scientfactory/scient-sources/library-review-conflicts";
 import {
+  readScientLibraryAliases,
+  resolveScientLibraryAlias,
+} from "@scientfactory/scient-sources/library-aliases";
+import { readScientDisplacedCopiesOf } from "@scientfactory/scient-sources/project-displaced-copies";
+import {
   changeScientLibraryReview,
   listScientLibraryReviewIds,
   listScientLibraryReviewRecords,
   listScientLibraryReviews,
   readScientLibraryReview,
   readScientLibraryReviewRecord,
+  readScientLibraryReviewTitles,
+  ScientReviewWork,
   type ScientLibraryReviewRecord,
 } from "@scientfactory/scient-sources/library-reviews";
 import {
@@ -76,7 +85,9 @@ import {
   resolveScientProjectPins,
   pinScientLibrarySource,
   readScientProjectPinNoteHistory,
+  readScientProjectPins,
   renameScientProjectPinKey,
+  ScientPinWork,
   setScientProjectPinNote,
   unpinScientLibrarySource,
   type ScientProjectPin,
@@ -147,7 +158,7 @@ import { scheduleSourceCategorization } from "./SourceCategories.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 import type { ScientSourcesLibraryStore } from "./SourcesBackend.ts";
 import { startLibraryBackup } from "./LibraryBackupRuns.ts";
-import { runningLibraryJoins, startLibraryJoin } from "./LibraryJoinRuns.ts";
+import { runningLibraryJoins, startLibraryJoin, undoLibraryJoin } from "./LibraryJoinRuns.ts";
 
 type Store = ScientSourcesLibraryStore;
 
@@ -232,7 +243,14 @@ const reach = (store: Store, sourceId: string) => alsoPinnedIn(store, sourceId).
 
 type Categories = Awaited<ReturnType<typeof readScientSourceCategories>>;
 /** A library record as this project sees it: under its key here when it is pinned. */
-const pinnedEntry = (record: ScientSourceRecord, group: ProjectPinGroup | undefined) => ({
+const pinnedEntry = (
+  record: ScientSourceRecord,
+  group:
+    | (Pick<ProjectPinGroup, "alsoCitedAs"> & {
+        readonly pin: Pick<ProjectPinGroup["pin"], "citationKey" | "note">;
+      })
+    | undefined,
+) => ({
   record: group ? { ...record, citationKey: group.pin.citationKey } : record,
   pinned: group !== undefined,
   projectNote: group ? (group.pin.note ?? null) : undefined,
@@ -272,13 +290,33 @@ export async function libraryOverview(
     readonly background: boolean;
     readonly readingStatus?: ScientSourceReadingStatus;
     readonly starred?: boolean;
+    /** The revision of the list the caller holds; when it still holds, no rows are sent. */
+    readonly knownRevision?: string;
   },
 ) {
   const inspected = store.exists
     ? await inspectScientLibrarySources(store.library)
     : { records: [], activeOperation: null };
   const works = distinctPinnedWorks(await listProjectPinnedWorks(store, ACTOR));
-  const pins = await projectPinGroupsByLibraryId(store);
+  // The works already hold each pinned record under its key here: no second resolution.
+  const pins = new Map(
+    works.flatMap((work) =>
+      work.from === "library"
+        ? [
+            [
+              work.record.sourceId,
+              {
+                pin: {
+                  citationKey: work.citationKey,
+                  ...(work.projectNote === null ? {} : { note: work.projectNote }),
+                },
+                alsoCitedAs: work.alsoCitedAs,
+              },
+            ] as const,
+          ]
+        : [],
+    ),
+  );
   const scoped =
     input.scope === "project"
       ? works.map((work) => ({
@@ -316,7 +354,26 @@ export async function libraryOverview(
     void scheduleSourceFullTextIndexing(store.library);
     void scheduleSourceCategorization(store.library);
   }
-  return {
+  const scopes = {
+    listed: input.scope,
+    project: works.length,
+    library: inspected.records.length,
+  };
+  const revision =
+    "recordsRevision" in inspected && inspected.recordsRevision
+      ? overviewRevision({
+          input,
+          recordsRevision: inspected.recordsRevision,
+          listed,
+          categories,
+          organization,
+          noticeChanges,
+          scopes,
+          unreadable: "unreadableRecords" in inspected ? inspected.unreadableRecords : undefined,
+          trashedCount: "trashedCount" in inspected ? inspected.trashedCount : undefined,
+        })
+      : undefined;
+  const status = {
     projectState: "initialized" as const,
     issues: [],
     activeOperation: inspected.activeOperation,
@@ -326,21 +383,85 @@ export async function libraryOverview(
     ...("trashedCount" in inspected && inspected.trashedCount !== undefined
       ? { trashedCount: inspected.trashedCount }
       : {}),
-    records: listed.map((entry) => overviewRow(entry, categories)),
+    ...(revision ? { revision } : {}),
+  };
+  // The caller already holds this answer: only the status and counts are sent.
+  const unchanged = revision !== undefined && revision === input.knownRevision;
+  return {
+    ...status,
+    ...(unchanged ? { unchanged: true as const } : {}),
+    records: unchanged ? [] : listed.map((entry) => overviewRow(entry, categories)),
     // Only the sources that have one: the list looks each source up and takes a missing entry
     // as none, and at 20,000 sources the empty entries were 1.6 MB of the answer.
-    recordDiagnostics: listed.flatMap(({ record }) => {
-      const diagnostics = sourceMetadataDiagnostics(record);
-      return diagnostics.length > 0 ? [{ sourceId: record.sourceId, diagnostics }] : [];
-    }),
-    ...(organization ? { organization } : {}),
-    scopes: {
-      listed: input.scope,
-      project: works.length,
-      library: inspected.records.length,
-    },
-    ...(noticeChanges.length > 0 ? { noticeChanges } : {}),
+    recordDiagnostics: unchanged
+      ? []
+      : listed.flatMap(({ record }) => {
+          const diagnostics = sourceMetadataDiagnostics(record);
+          return diagnostics.length > 0 ? [{ sourceId: record.sourceId, diagnostics }] : [];
+        }),
+    ...(organization && !unchanged ? { organization } : {}),
+    scopes,
+    ...(noticeChanges.length > 0 && !unchanged ? { noticeChanges } : {}),
   };
+}
+
+/** Raise when a row's shape or content changes, so a client never keeps rows built the old way. */
+const OVERVIEW_ROWS_FORMAT = 1;
+
+/**
+ * What the listed rows, collections and notices are made of: the record files' stamps, each
+ * listed entry's place in this project, the categories, collections and notices, and the filter.
+ * Equal digests mean an equal answer apart from the operation status, which is always sent.
+ */
+function overviewRevision(parts: {
+  readonly input: {
+    readonly scope: ScientSourcesScope;
+    readonly readingStatus?: ScientSourceReadingStatus;
+    readonly starred?: boolean;
+  };
+  readonly recordsRevision: string;
+  readonly listed: ReadonlyArray<{
+    readonly record: ScientSourceRecord;
+    readonly pinned: boolean;
+    readonly projectNote?: string | null | undefined;
+    readonly fromSnapshot: boolean;
+    readonly alsoCitedAs?: ReadonlyArray<string> | undefined;
+  }>;
+  readonly categories: unknown;
+  readonly organization: unknown;
+  readonly noticeChanges: unknown;
+  readonly scopes: unknown;
+  readonly unreadable: unknown;
+  readonly trashedCount: unknown;
+}): string {
+  const hash = NodeCrypto.createHash("sha256");
+  const { scope, readingStatus, starred } = parts.input;
+  hash.update(JSON.stringify([OVERVIEW_ROWS_FORMAT, scope, readingStatus, starred]));
+  hash.update(parts.recordsRevision);
+  for (const entry of parts.listed) {
+    // A project's rows also take values from its pins (and snapshots are pins alone), so there
+    // the whole record counts; an All Library row is its record file's, stamped above.
+    hash.update(
+      JSON.stringify([
+        scope === "project" || entry.fromSnapshot ? entry.record : entry.record.sourceId,
+        entry.record.citationKey,
+        entry.pinned,
+        entry.projectNote,
+        entry.alsoCitedAs,
+      ]),
+    );
+  }
+  for (const part of [
+    parts.categories,
+    parts.organization,
+    parts.noticeChanges,
+    parts.scopes,
+    parts.unreadable,
+    parts.trashedCount,
+  ]) {
+    hash.update(`\0${JSON.stringify(part) ?? ""}`);
+  }
+  return hash.digest("base64url");
 }
 
 /** A work's fields two copies can differ in, in the order a Merged row lists them. */
@@ -558,10 +679,17 @@ export async function librarySourceDetail(
     });
     if (!entry?.record) throw new Error("The source was not found in this review.");
     const match = (await libraryReviewRecordMatches(store, [entry])).get(input.sourceId);
+    const libraryId = await libraryIdOf(store, input.sourceId);
+    const current = store.exists ? await readScientSourceRecord(store.library, libraryId) : null;
+    const keptId =
+      current || !store.exists
+        ? libraryId
+        : resolveScientLibraryAlias(await readScientLibraryAliases(store.library), input.sourceId);
     return {
       ...normalizeSourceRecordForRead(routeRecord(entry.record, undefined)),
       ...(entry.from === "snapshot" ? { label: SNAPSHOT_LABEL } : {}),
       ...(match ? { libraryMatch: match } : {}),
+      ...(await keptCopiesOf(store, keptId, current ?? entry.record)),
     };
   }
   const sourceId = await libraryIdOf(store, input.sourceId);
@@ -577,6 +705,7 @@ export async function librarySourceDetail(
       ...(input.personal ? { personalNote: record.note ?? null } : {}),
       ...scientSourceReadingState(record),
       ...(detail.pinned ? await noteHistoryOf(store, input.citationKey ?? detail.citationKey) : {}),
+      ...(await keptCopiesOf(store, sourceId, record)),
     };
   }
   const snapshot = (
@@ -592,6 +721,12 @@ export async function librarySourceDetail(
   const match = store.exists
     ? (await libraryPinMatches(store, new Set([input.sourceId]))).get(input.sourceId)
     : undefined;
+  const keptId = store.exists
+    ? resolveScientLibraryAlias(
+        await readScientLibraryAliases(store.library),
+        snapshot.projectSourceId,
+      )
+    : sourceId;
   return {
     ...routeRecord(snapshot.record, {
       citationKey: snapshot.citationKey,
@@ -602,6 +737,9 @@ export async function librarySourceDetail(
     projectNote: snapshot.projectNote,
     ...(match ? { libraryMatch: match } : {}),
     ...(await noteHistoryOf(store, snapshot.citationKey)),
+    ...(await keptCopiesOf(store, keptId, snapshot.record, {
+      citationKey: snapshot.citationKey,
+    })),
   };
 }
 
@@ -757,6 +895,67 @@ export async function repairLibraryPin(
       });
     }
   }
+}
+
+/** What each kind of holder saves of a source; a kept copy shows no other field. */
+const KEPT_FIELDS = {
+  "citation-key": new Set(Object.keys(ScientPinWork.fields)),
+  review: new Set(Object.keys(ScientReviewWork.fields)),
+};
+
+/**
+ * What this project's saved details held before a merge Undo replaced them, beside the values
+ * the details show now; copies whose citation key or review has since gone are included.
+ */
+export async function keptCopiesOf(
+  store: Store,
+  sourceId: string,
+  shown: Readonly<object> | null,
+  options?: { readonly citationKey?: string },
+) {
+  const copies = (await readScientDisplacedCopiesOf(store.root, sourceId)).flatMap((copy) => {
+    const differs = copy.differs.filter((field) => KEPT_FIELDS[copy.holder].has(field));
+    return differs.length > 0 ? [{ ...copy, differs }] : [];
+  });
+  if (copies.length === 0) return {};
+  const group = (await projectPinGroupsByLibraryId(store)).get(sourceId);
+  const aliases = store.exists ? await readScientLibraryAliases(store.library) : null;
+  // A pin served from its snapshot is in no group: include every pin whose own or aliased ID is this source.
+  const keys = new Set([
+    ...(group ? [group.pin.citationKey, ...group.alsoCitedAs] : []),
+    ...(options?.citationKey ? [options.citationKey] : []),
+    ...(await readScientProjectPins(store.root)).flatMap((pin) =>
+      pin.sourceId === sourceId ||
+      (aliases ? resolveScientLibraryAlias(aliases, pin.sourceId) === sourceId : false)
+        ? [pin.citationKey]
+        : [],
+    ),
+  ]);
+  const reviews = await readScientLibraryReviewTitles(
+    store.root,
+    copies.flatMap((copy) => (copy.holder === "review" ? [copy.heldBy] : [])),
+  );
+  const valueOf = (from: unknown, field: string) =>
+    typeof from === "object" && from !== null
+      ? ((from as Record<string, unknown>)[field] ?? null)
+      : null;
+  return {
+    keptCopies: copies.map((copy) => {
+      const title = copy.holder === "review" ? reviews.get(copy.heldBy) : undefined;
+      return {
+        holder: copy.holder,
+        heldBy: copy.heldBy,
+        ...(title ? { holderName: title } : {}),
+        holderPresent: copy.holder === "review" ? title !== undefined : keys.has(copy.heldBy),
+        undoneAt: copy.undoneAt,
+        fields: copy.differs.map((field) => ({
+          field,
+          earlier: valueOf(copy.work, field),
+          current: valueOf(shown, field),
+        })),
+      };
+    }),
+  };
 }
 
 async function noteHistoryOf(store: Store, citationKey: string | null | undefined) {
@@ -999,7 +1198,7 @@ export async function libraryTrash(store: Store, projects?: ReadonlyArray<KnownP
 
 /** The Library's recent changes; the whole Library's, whichever project asks. */
 export async function libraryRecentChanges(
-  store: Store,
+  store: Pick<Store, "library" | "exists">,
   input: {
     readonly limit?: number;
     readonly sourcesOfImport?: string;
@@ -1311,26 +1510,9 @@ export async function organizeLibrarySources(
       // The join itself accepts only a checked backup or a Library a restore moved aside.
       return startLibraryJoin(store.library, change.fromFolder, ACTOR);
     case "undo-join": {
-      const undone = await undoScientLibraryJoin({
-        library: store.library,
-        joinId: change.joinId,
-        actor: ACTOR,
-      });
-      if (undone.outcome !== "undone") {
-        return {
-          outcome:
-            undone.outcome === "not-found"
-              ? ("join-not-found" as const)
-              : undone.outcome === "running"
-                ? ("join-busy" as const)
-                : ("already-undone" as const),
-        };
-      }
-      await afterChange(store, []);
-      return {
-        outcome: "join-undone" as const,
-        joinUndone: { trashed: undone.trashed, left: undone.left },
-      };
+      const undone = await undoLibraryJoin(store.library, change.joinId, ACTOR);
+      if (undone.outcome === "join-undone") await afterChange(store, []);
+      return undone;
     }
     case "take-from-library": {
       const taken = await takeFromScientLibraryJoin({

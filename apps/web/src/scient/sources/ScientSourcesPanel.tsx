@@ -588,12 +588,20 @@ export function ScientSourcesPanel(props: {
   const selectedRecord = selectedSourceId ? shownSourceRecord(sources, selectedSourceId) : null;
 
   if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
-  const loadSource = sources.loadSource;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected source record from the server when missing
+  const loadSource = useStableCallback(sources.loadSource);
+  const isLibraryMode = sources.overview?.scopes !== undefined;
+  const selectedDetailKey =
+    selectedSourceId && selectedSummary
+      ? `${selectedSourceId}\0${selectedSummary.revision}\0${selectedSummary.pinned ?? ""}\0${selectedSummary.projectNote ?? ""}`
+      : null;
+  const needsProjectLoad =
+    !isLibraryMode && selectedSourceId !== null && selectedSummary !== null && !selectedRecord;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads or revalidates the selected source record from the server
   useEffect(() => {
-    if (!selectedSourceId || selectedRecord || !selectedSummary) return;
+    if (!selectedSourceId || !selectedDetailKey) return;
+    if (!isLibraryMode && !needsProjectLoad) return;
     void loadSource(selectedSourceId).catch(() => undefined);
-  }, [selectedSourceId, selectedRecord, selectedSummary, loadSource]);
+  }, [selectedSourceId, selectedDetailKey, isLibraryMode, needsProjectLoad, loadSource]);
   const zoteroCollectionChoices = zoteroCollectionLabels(sources.zoteroCollections);
   const selectedZoteroCollectionKey =
     sources.zoteroScope.kind === "collection" ? sources.zoteroScope.collectionKey : null;
@@ -1792,7 +1800,7 @@ export function ScientSourcesPanel(props: {
     },
   };
   const nextView: SourceView = sourceView === "list" ? "cards" : "list";
-  const viewLabel = nextView === "cards" ? "Show as cards" : "Show as a list";
+  const viewLabel = nextView === "cards" ? gt("Show as cards") : gt("Show as a list");
 
   return (
     <div
@@ -1857,10 +1865,34 @@ export function ScientSourcesPanel(props: {
         }}
       />
       <PanelHeader
-        title={gt("Library", { $context: "the personal Library of sources" })}
+        {...(scopes
+          ? {
+              start: (
+                // Full labels first: the row wraps before they shorten, and only a panel narrower
+                // than the switch itself shortens them.
+                <ToggleGroup
+                  className="max-w-full shrink-0 *:min-w-0 *:shrink"
+                  aria-label={gt("Source scope")}
+                  value={[scopes.listed]}
+                  onValueChange={(values) => {
+                    const scope = values[0];
+                    if (scope === "project" || scope === "library") selectScope(scope);
+                  }}
+                >
+                  <Toggle value="project">
+                    <span className="truncate">{m(LIBRARY_LABELS.scopes.project)}</span>
+                  </Toggle>
+                  <Toggle value="library">
+                    <span className="truncate">{m(LIBRARY_LABELS.scopes.library)}</span>
+                  </Toggle>
+                </ToggleGroup>
+              ),
+            }
+          : {})}
         {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere, m) } : {})}
         action={
           <div className="flex shrink-0 items-center gap-1">
+            {scopes && sources.overview.records.length > 0 ? <AskLibraryButton /> : null}
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
             <Menu>
               <MenuTrigger
@@ -2025,32 +2057,12 @@ export function ScientSourcesPanel(props: {
         />
       ) : null}
       <div className={`${SOURCES_COLUMN} flex shrink-0 flex-col`}>
-        {scopes ? (
-          <div className="@container mx-3 mt-2 flex flex-wrap items-center gap-2">
-            <ToggleGroup
-              aria-label={gt("Source scope")}
-              value={[scopes.listed]}
-              onValueChange={(values) => {
-                const scope = values[0];
-                if (scope === "project" || scope === "library") selectScope(scope);
-              }}
-            >
-              <Toggle value="project">{m(LIBRARY_LABELS.scopes.project)}</Toggle>
-              <Toggle value="library">{m(LIBRARY_LABELS.scopes.library)}</Toggle>
-            </ToggleGroup>
-            {packageSources ? (
-              <>
-                <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
-                <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
-                  <T>Show all</T>
-                </Button>
-              </>
-            ) : null}
-            {sources.overview.records.length > 0 ? (
-              <div className="ml-auto">
-                <AskLibraryButton />
-              </div>
-            ) : null}
+        {scopes && packageSources ? (
+          <div className="mx-3 mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
+            <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
+              <T>Show all</T>
+            </Button>
           </div>
         ) : null}
         {shownResult ? <div className="mx-3 mt-2">{resultSlot}</div> : null}
@@ -2101,9 +2113,12 @@ export function ScientSourcesPanel(props: {
               : {})}
           />
         ) : sources.overview.records.length > 0 ? (
-          <div className="mx-3 mt-2 mb-1 flex min-h-8 items-center gap-1 rounded-md text-sm text-muted-foreground">
+          <div className="@container mx-3 mt-2 mb-1 flex min-h-8 items-center gap-1 rounded-md text-sm text-muted-foreground">
             <div className="flex min-w-0 flex-1 cursor-text items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground">
-              <Search className="size-4 shrink-0 text-muted-foreground/80" aria-hidden="true" />
+              <Search
+                className="size-4 shrink-0 text-muted-foreground/80 @max-[20rem]:hidden"
+                aria-hidden="true"
+              />
               <Input
                 nativeInput
                 unstyled
@@ -2157,7 +2172,7 @@ export function ScientSourcesPanel(props: {
                 aria-label={gt("Sort sources")}
               >
                 <ArrowDownUp className="size-3.5" aria-hidden="true" />
-                <SelectValue className="max-w-20" />
+                <SelectValue className="max-w-20 @max-[20rem]:hidden" />
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {SCIENT_SOURCE_SORT_OPTIONS.map((option) => (

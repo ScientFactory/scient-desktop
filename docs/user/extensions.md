@@ -336,7 +336,15 @@ Antigravity**.
 Gmail, Google Drive, Google Calendar, Google Docs, Sheets and Slides list
 Antigravity under **Your agents** on their page, with **Add to Antigravity**
 right there. Once added, the row says the plugin signs in the first time a chat
-uses it; Scient does not see that sign-in. Partner plugins that connect through
+uses it; Scient does not see that sign-in. If that Antigravity still uses
+Scient's older Antigravity runtime, which can't add plugins, the row offers
+**Update Antigravity** instead, the same update as in Settings. An older
+Antigravity runtime installed on the computer itself gets **Use Scient-managed
+Antigravity**, as Settings offers. The row offers either only when the release it
+installs is Google's agy CLI, which can add plugins. When the step finishes, the row changes to
+**Add to Antigravity** without leaving the page. Both need permission to manage
+agents on that environment. An Antigravity with a custom runtime path that
+can't add plugins says so and links to Settings. Partner plugins that connect through
 their own MCP server, such as Notion, Linear, Figma or Canva, stay in the
 Antigravity Marketplace and are not offered on service pages: Antigravity signs
 their connection in only in its own plugin manager, so in Scient's chats they

@@ -190,7 +190,7 @@ const decodeRow = Effect.fn("WorkspaceBindingStore.decodeRow")(function* (
   );
 });
 
-const authorityEvidenceEqual = (
+export const authorityEvidenceEqual = (
   binding: WorkspaceBindingRecordV1,
   evidence: ObservedWorkspaceEvidence,
 ): boolean =>
@@ -204,7 +204,7 @@ const authorityEvidenceEqual = (
   binding.worktreeIdentity?.rootPath === evidence.worktreeIdentity?.rootPath &&
   binding.worktreeIdentity?.metadataPath === evidence.worktreeIdentity?.metadataPath;
 
-const samePhysicalRoot = (
+export const samePhysicalRoot = (
   binding: WorkspaceBindingRecordV1,
   evidence: ObservedWorkspaceEvidence,
 ): boolean =>

@@ -4,10 +4,14 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
+import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   ConnectorRuntime,
   ExtensionDeliveryReceipts,
@@ -16,6 +20,7 @@ import {
 import {
   changeFeedLayer,
   ExtensionsChangeFeed,
+  followProviderStoreChanges,
   providerSupportChanges,
   validateConnectorAgents,
   providerStoreEntryError,
@@ -84,6 +89,7 @@ it.effect("bumps the extensions revision when a provider instance is added", () 
         getProviders: Effect.succeed([provider("work", "codex")]),
         streamChanges: Stream.fromQueue(snapshots),
       }),
+      Layer.mock(ProviderInstanceRegistry)({ streamChanges: Stream.never }),
     );
     const feed = Context.get(
       yield* Layer.build(changeFeedLayer.pipe(Layer.provide(owners))),
@@ -101,6 +107,75 @@ it.effect("bumps the extensions revision when a provider instance is added", () 
     assert.deepEqual(Array.from(yield* Fiber.join(announced)), [{ revision: 1 }]);
     assert.equal(yield* feed.current, 1);
   }),
+);
+
+it.effect("bumps the extensions revision when an instance is replaced with the same snapshot", () =>
+  Effect.gen(function* () {
+    const generations = yield* Queue.unbounded<void>();
+    const owners = Layer.mergeAll(
+      Layer.mock(ConnectorRuntime)({ changes: Stream.never }),
+      Layer.mock(ScientPluginRegistry)({ changes: Stream.never }),
+      Layer.mock(ExtensionDeliveryReceipts)({ changes: Stream.never }),
+      Layer.mock(ProviderRegistry)({
+        getProviders: Effect.succeed([provider("agy", "antigravity")]),
+        streamChanges: Stream.never,
+      }),
+      Layer.mock(ProviderInstanceRegistry)({ streamChanges: Stream.fromQueue(generations) }),
+    );
+    const feed = Context.get(
+      yield* Layer.build(changeFeedLayer.pipe(Layer.provide(owners))),
+      ExtensionsChangeFeed,
+    );
+    const announced = yield* feed.changes.pipe(
+      Stream.take(1),
+      Stream.runCollect,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.yieldNow;
+    yield* Queue.offer(generations, undefined);
+    assert.deepEqual(Array.from(yield* Fiber.join(announced)), [{ revision: 1 }]);
+  }),
+);
+
+it.effect("follows a replaced instance to its new store's changes", () =>
+  Effect.gen(function* () {
+    const generations = yield* PubSub.unbounded<void>();
+    const storeOf = (changes: Queue.Queue<void>, reads: Ref.Ref<number>) =>
+      ({
+        store: {
+          changes: Stream.fromQueue(changes),
+          search: () => Effect.die("unused"),
+          entry: () => Effect.die("unused"),
+          install: () => Effect.die("unused"),
+        },
+        refreshInventory: () => Ref.update(reads, (count) => count + 1),
+      }) as unknown as ProviderPluginActions;
+    const oldChanges = yield* Queue.unbounded<void>();
+    const newChanges = yield* Queue.unbounded<void>();
+    const oldReads = yield* Ref.make(0);
+    const newReads = yield* Ref.make(0);
+    let current = storeOf(oldChanges, oldReads);
+    const notified = yield* Queue.unbounded<void>();
+    yield* followProviderStoreChanges({
+      providerRegistry: {
+        getProviders: Effect.succeed([provider("agy", "antigravity")]),
+        getProviderPluginActionsForInstance: () => Effect.sync(() => current),
+      },
+      generations: { subscribeChanges: PubSub.subscribe(generations) },
+      notify: Queue.offer(notified, undefined).pipe(Effect.asVoid),
+    });
+    yield* Queue.offer(oldChanges, undefined);
+    yield* Queue.take(notified);
+
+    // The runtime manager rebuilds the instance: the old store is retired, a new one answers.
+    current = storeOf(newChanges, newReads);
+    yield* PubSub.publish(generations, undefined);
+    yield* Queue.offer(newChanges, undefined);
+    yield* Queue.take(notified);
+    yield* Effect.yieldNow;
+    assert.equal(yield* Ref.get(oldReads), 1);
+    assert.equal(yield* Ref.get(newReads), 1);
+  }).pipe(Effect.scoped),
 );
 
 it.effect(

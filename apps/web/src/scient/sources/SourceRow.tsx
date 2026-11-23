@@ -92,7 +92,9 @@ export function RowStar(props: {
   const onToggle = props.onToggle;
   if (!onToggle) {
     return (
-      <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
+      <span
+        className={`flex size-7 shrink-0 items-center justify-center text-muted-foreground ${props.starred ? "" : "@max-[20rem]/row:hidden"}`}
+      >
         {props.starred ? (
           <Star
             role="img"
@@ -109,7 +111,7 @@ export function RowStar(props: {
       className={
         props.starred
           ? "flex size-7 shrink-0 items-center justify-center"
-          : "flex size-7 shrink-0 items-center justify-center opacity-0 focus-within:opacity-100 group-hover:opacity-100"
+          : "flex size-7 shrink-0 items-center justify-center opacity-0 focus-within:opacity-100 group-hover:opacity-100 @max-[20rem]/row:hidden"
       }
     >
       <ScientTooltip content={label}>
@@ -166,7 +168,7 @@ export function SourcePdfAction(props: {
   if (materialSelection._tag === "Selected") {
     const pdf = materialSelection.material;
     return (
-      <ScientTooltip content="Open PDF">
+      <ScientTooltip content={gt("Open PDF")}>
         <Button
           variant="ghost"
           size={props.size}
@@ -186,7 +188,7 @@ export function SourcePdfAction(props: {
   }
   if (materialSelection._tag !== "SeveralMaterials") return null;
   return (
-    <ScientTooltip content="Choose a PDF in source details">
+    <ScientTooltip content={gt("Choose a PDF in source details")}>
       <Button
         variant="ghost"
         size={props.size}
@@ -207,7 +209,7 @@ export function SourceMenuButton(props: {
 }) {
   const gt = useGT();
   return (
-    <ScientTooltip content="More source actions">
+    <ScientTooltip content={gt("More source actions")}>
       <Button
         variant="ghost"
         size="icon-xs"
@@ -244,9 +246,11 @@ export function SourceRow(props: {
   const { record, row } = props;
   const metadataDiagnostics = row.diagnosticsBySourceId.get(record.sourceId);
   const onToggleStar = row.onToggleStar;
+  const material = selectScientSourceMaterial({ materials: record.attachments })._tag;
+  const hasPdf = material === "Selected" || material === "SeveralMaterials";
   return (
     <div
-      className={`group flex w-full items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-foreground/[0.045] ${row.selection.has(record.sourceId) ? "bg-accent/35" : ""}`}
+      className={`group @container/row flex w-full items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-foreground/[0.045] ${row.selection.has(record.sourceId) ? "bg-accent/35" : ""}`}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -272,7 +276,7 @@ export function SourceRow(props: {
             >
               <SourceJournalIcon record={record} />
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">
+                <span className="block text-sm font-medium wrap-break-word">
                   {record.title ?? gt("Untitled source")}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
@@ -309,7 +313,10 @@ export function SourceRow(props: {
             </ScientTooltip>
           ) : null}
         </span>
-        <span className="flex size-7 shrink-0 items-center justify-center">
+        {/* An empty slot keeps PDF icons in line, except where the title needs the room. */}
+        <span
+          className={`flex size-7 shrink-0 items-center justify-center ${hasPdf ? "" : "@max-[20rem]/row:hidden"}`}
+        >
           <SourcePdfAction record={record} row={row} size="icon-sm" />
         </span>
         {/* The star sits beside the menu, so it lines up from row to row. */}

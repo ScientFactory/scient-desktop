@@ -8,6 +8,7 @@ import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   publishScientReviewSnapshotAt,
   readScientReviewSnapshotAt,
@@ -154,6 +155,31 @@ function unionBy<A>(items: ReadonlyArray<A>, key: (item: A) => string): A[] {
   return [...seen.values()];
 }
 
+/**
+ * The pairs whose duplicate decisions close a cycle, as versions that each kept another record of
+ * it can make when united: every record of it would then be left out of screening.
+ */
+function cyclePairs(duplicates: ScientSystematicReview["duplicates"]): ReadonlyArray<string> {
+  const next = new Map<string, string[]>();
+  for (const entry of duplicates) {
+    next.set(entry.sourceId, [...(next.get(entry.sourceId) ?? []), entry.duplicateOf]);
+  }
+  const reaches = (from: string, to: string) => {
+    const seen = new Set<string>();
+    const stack = [from];
+    for (let at = stack.pop(); at !== undefined; at = stack.pop()) {
+      if (at === to) return true;
+      if (seen.has(at)) continue;
+      seen.add(at);
+      stack.push(...(next.get(at) ?? []));
+    }
+    return false;
+  };
+  return duplicates
+    .filter((entry) => reaches(entry.duplicateOf, entry.sourceId))
+    .map((entry) => pairKey(entry.sourceId, entry.duplicateOf));
+}
+
 export type { ScientReviewCombineReport } from "./systematicReview.ts";
 
 const searchDetails = ({ sourceIds: _ids, ...details }: ScientReviewSearch) => details;
@@ -189,17 +215,19 @@ export function combineScientReviews(input: {
     duplicatePairs(incoming),
   ];
   const [existingDistinct, incomingDistinct] = [distinctPairs(existing), distinctPairs(incoming)];
-  const undecided = new Set(
-    [...existingDuplicates, ...incomingDuplicates].filter(
-      (key) =>
-        (existingDuplicates.has(key) && incomingDistinct.has(key)) ||
-        (incomingDuplicates.has(key) && existingDistinct.has(key)),
-    ),
+  const conflicting = [...existingDuplicates, ...incomingDuplicates].filter(
+    (key) =>
+      (existingDuplicates.has(key) && incomingDistinct.has(key)) ||
+      (incomingDuplicates.has(key) && existingDistinct.has(key)),
   );
-  const duplicates = unionBy(
+  const united = unionBy(
     [...existing.duplicates, ...incoming.duplicates],
     (entry) => `${entry.sourceId}\0${entry.duplicateOf}`,
-  ).filter((entry) => !undecided.has(pairKey(entry.sourceId, entry.duplicateOf)));
+  ).filter((entry) => !conflicting.includes(pairKey(entry.sourceId, entry.duplicateOf)));
+  const undecided = new Set([...conflicting, ...cyclePairs(united)]);
+  const duplicates = united.filter(
+    (entry) => !undecided.has(pairKey(entry.sourceId, entry.duplicateOf)),
+  );
   const distinct = unionBy(
     [...existing.distinctPairs, ...incoming.distinctPairs],
     ([left, right]) => pairKey(left, right),
@@ -268,17 +296,28 @@ async function backUp(
   files: ReadonlyArray<{ readonly name: string; readonly text: string | null }>,
 ): Promise<void> {
   const libraryRoot = await NodeFSP.realpath(library.root);
+  const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
   const directory = NodePath.join(
     scientLibraryMoveInternals.migrationDirectory(libraryRoot, instanceId),
     "reviews",
     reviewId,
-    `${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}-${label}`,
+    // Two versions set aside in the same millisecond keep both.
+    `${stamp}-${label}-${NodeCrypto.randomUUID().slice(0, 8)}`,
   );
-  await ensureDirectory(directory);
-  for (const file of files) {
-    if (file.text === null) continue;
-    await NodeFSP.writeFile(NodePath.join(directory, file.name), file.text, { flag: "wx" });
-  }
+  // Inside the Library's lock, so a backup copies both files of the version or neither; written
+  // aside and renamed, so a stop between the files leaves a `.partial` folder, never half a version.
+  await withScientLibraryLock(libraryRoot, async () => {
+    const partial = `${directory}.partial`;
+    await ensureDirectory(partial);
+    for (const file of files) {
+      if (file.text === null) continue;
+      await NodeFSP.writeFile(NodePath.join(partial, file.name), file.text, {
+        flag: "wx",
+        flush: true,
+      });
+    }
+    await NodeFSP.rename(partial, directory);
+  });
 }
 
 async function publishChecked(filePath: string, text: string, maximumBytes: number): Promise<void> {

@@ -13,7 +13,11 @@ import {
   resolveScientLibraryAlias,
   type ScientLibraryAliases,
 } from "./libraryAliases.ts";
-import { readScientLibraryExclusions, type ScientLibraryExclusions } from "./libraryExclusions.ts";
+import {
+  readScientLibraryExclusions,
+  SCIENT_LIBRARY_MERGES_DIRECTORY,
+  type ScientLibraryExclusions,
+} from "./libraryExclusions.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientLibraryInstances,
@@ -660,6 +664,52 @@ export async function recordScientProjectSourceMappings(input: {
 }
 
 /**
+ * Merges and Undos change records and aliases in steps, each behind a pending receipt; null
+ * while one is under way. A receipt or alias written later changes the stamps returned.
+ */
+async function mergeState(root: string): Promise<string | null> {
+  const stamp = async (path: string) => {
+    const stats = await NodeFSP.lstat(path, { bigint: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    return stats ? [stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":") : "missing";
+  };
+  const pending = NodePath.join(root, SCIENT_LIBRARY_MERGES_DIRECTORY, "pending");
+  const state = `${await stamp(pending)}|${await stamp(NodePath.join(root, "aliases.json"))}`;
+  const names = await NodeFSP.readdir(pending).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  return names.some((name) => name.endsWith(".json")) ? null : state;
+}
+
+/**
+ * Every source answered from the instance map alone, or null: no matching, exclusions or
+ * removed-source reads, and no answer read while a merge or Undo was half done.
+ */
+async function resolveMapped(
+  root: string,
+  input: ScientProjectSourceResolveInput,
+): Promise<ReadonlyArray<ScientProjectSourceResolution> | null> {
+  const before = await mergeState(root);
+  if (!before) return null;
+  const instanceId = await projectInstanceId(input.library, input.projectRoot, "read");
+  if (!instanceId) return null;
+  const { entries } = await readInstanceMapFile(root, instanceId);
+  const aliases = await readLibraryAliasesAt(root);
+  const live = new Set((await listScientSourceRecords(input.library)).map((r) => r.sourceId));
+  const results: ScientProjectSourceResolution[] = [];
+  for (const { projectSourceId } of input.sources) {
+    const mapped = entries.get(projectSourceId);
+    const target = mapped ? resolveScientLibraryAlias(aliases, mapped.sourceId) : null;
+    if (!target || !live.has(target)) return null;
+    results.push({ kind: "resolved", projectSourceId, sourceId: target, by: "instance-map" });
+  }
+  return (await mergeState(root)) === before ? results : null;
+}
+
+/**
  * Resolves project source IDs in the design's order: the instance map, the same ID through
  * aliases, then identifier and title/author/year against the snapshot. Pins, reviews, annotation
  * hints and links all resolve here.
@@ -669,7 +719,11 @@ export async function resolveScientProjectSources(
 ): Promise<ReadonlyArray<ScientProjectSourceResolution>> {
   const root = await NodeFSP.realpath(input.library.root);
   if (input.mode === "read") return resolveAt(root, input);
-  return withScientLibraryLock(root, () => resolveAt(root, input));
+  // A source found in the map writes nothing, so when every one is, the lock other changes wait
+  // on is not taken. Anything else (a new mapping, hydration, a first registration) takes it.
+  return (
+    (await resolveMapped(root, input)) ?? withScientLibraryLock(root, () => resolveAt(root, input))
+  );
 }
 
 export type ScientProjectSourceLinkResult =

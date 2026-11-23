@@ -1,4 +1,4 @@
-import { normalizePersistentIdentifier } from "@scientfactory/scient-sources";
+import { journalCoverDoiParts, journalRecordDoi } from "@t3tools/shared/scientJournalIdentity";
 
 /** Served as files, not inlined: there are many icons and any one screen shows a few of them. */
 const ICON_FILES = import.meta.glob<string>("../../assets/publishers/*.png", {
@@ -301,14 +301,8 @@ function mark(key: PublisherKey): PublisherMark | null {
 const normalized = (value: string | null | undefined) =>
   (value ?? "").normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 
-/** The record's DOI as the environment normalizes it: lower case, without a resolver or label. */
-export function sourceDoi(record: Pick<PublisherRecord, "identifiers">): string | null {
-  const doi = record.identifiers.find(({ scheme }) => scheme.trim().toLowerCase() === "doi");
-  return doi ? normalizePersistentIdentifier("doi", doi.value).slice("doi:".length) : null;
-}
-
 function doiPrefix(record: PublisherRecord): string | null {
-  return sourceDoi(record)?.match(/^(10\.\d{4,9})\//u)?.[1] ?? null;
+  return journalCoverDoiParts(journalRecordDoi(record))?.prefix ?? null;
 }
 
 /**
@@ -357,6 +351,6 @@ export function publisherMark(record: PublisherRecord): PublisherMark | null {
     if (owned) return mark(key);
   }
   // bioRxiv and medRxiv share one DOI prefix; a medRxiv title was matched above.
-  if (isBiorxivDoi(sourceDoi(record))) return mark("biorxiv");
+  if (isBiorxivDoi(journalRecordDoi(record))) return mark("biorxiv");
   return publisher ? mark(publisher) : null;
 }

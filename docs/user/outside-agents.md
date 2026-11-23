@@ -1,8 +1,8 @@
 # Outside agents
 
 Agents that Scient did not start can work with an environment through its MCP
-server. They can read projects and threads, start and message threads, and
-check which providers and models are available. This covers Claude Code or
+server. They can read projects and threads, start and message threads, work
+with your Library, and check which providers and models are available. This covers Claude Code or
 Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
 in once, and you choose what it may do.
 
@@ -49,11 +49,12 @@ Then choose what the agent may do. With a code, **Auto** is selected by default,
 or the closest lower mode allowed by your organization’s policy. Approving
 without a code starts at **Read only**:
 
-- **Read only** lets the agent read projects and threads and see
-  the available providers and models. It cannot change anything.
+- **Read only** lets the agent read projects and threads, read your Library and
+  see the available providers and models. It cannot change anything.
 - **Supervised** through **Full access** also let it start, message and stop
-  threads in every project. A thread it starts or steers cannot run with more
-  permissions than the mode you chose.
+  threads in every project, and change your Library as an agent in a thread can.
+  A thread it starts or steers cannot run with more permissions than the mode
+  you chose.
 
 ## What outside agents can call
 
@@ -70,6 +71,26 @@ Scient.
   `projectId` or `threadId`.
 - To list threads across projects, call `scient_thread_list` with
   `allProjects: true`, or use `scient_thread_search`.
+
+## Your Library
+
+An outside agent gets the same Library tools as an agent in a thread
+(`scient_sources_list`, `scient_sources_get`, `scient_sources_add` and the
+rest), with one more input, `projectId`. Highlights and notes in PDFs,
+systematic reviews and reference checks stay with agents in a thread for now.
+
+- **Without `projectId`** the agent works with the whole Library: it lists all
+  of its papers (`scope: "library"`), reads Recent changes, backs the Library
+  up, restores it, and adds from another Library. Nothing it reads this way
+  shows a project's citation keys, notes or pins.
+- **With `projectId`** it works in that project, as an agent in a thread of the
+  project does: it adds papers to the project, cites them and keeps the
+  project's bibliography. `scient_project_list` lists the projects and their
+  ids. A call that needs a project and has none says so.
+
+In **Read only** the agent can list, read and search, but each call that would
+change something is refused and changes nothing. In the other modes it makes
+the same changes with these tools as an agent in a thread.
 
 ## Claude Code
 

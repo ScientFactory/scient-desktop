@@ -3,6 +3,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
+import { ProjectService } from "../../../project/ProjectService.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
   workspaceResolverForTest,
@@ -13,6 +14,7 @@ import { ScientSourcesToolkitRegistrationLive } from "../../McpHttpServer.ts";
 import { McpInvocationContext, type McpCapability } from "../../McpInvocationContext.ts";
 
 const TestLayer = ScientSourcesToolkitRegistrationLive.pipe(
+  Layer.provide(Layer.mock(ProjectService)({})),
   Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
   Layer.provideMerge(McpServer.McpServer.layer),
 );
@@ -124,6 +126,7 @@ const readTextFixture = workspaceResolverForTest(
   ]),
 );
 const ReadTextLayer = ScientSourcesToolkitRegistrationLive.pipe(
+  Layer.provide(Layer.mock(ProjectService)({})),
   Layer.provide(
     Layer.succeed(WorkspaceBindingResolver, {
       ...readTextFixture,

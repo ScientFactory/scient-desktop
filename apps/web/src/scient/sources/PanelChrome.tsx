@@ -1,5 +1,5 @@
 import { useGT } from "gt-react";
-import { ChevronLeft, Library, X } from "lucide-react";
+import { ChevronLeft, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -28,29 +28,34 @@ export function SourceErrorBanner(props: {
 /** Every Sources page keeps its content in one column; past 64rem only the side margins grow. */
 export const SOURCES_COLUMN = "mx-auto w-full max-w-[64rem]";
 
+/**
+ * The top row of a Sources page. The panel's tab already names the Library, so its list leads
+ * with `start` (the scope switch) and no title; a page reached from it names itself beside Back.
+ */
 export function PanelHeader(props: {
-  readonly title: ReactNode;
+  readonly title?: ReactNode;
+  readonly start?: ReactNode;
   readonly description?: string;
   readonly action?: ReactNode;
   readonly onBack?: () => void;
 }) {
   const gt = useGT();
   return (
-    <div className="@container flex shrink-0 items-center gap-3 border-b border-border px-3 py-2.5">
+    <div className="@container flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-3 py-2.5">
       {props.onBack ? (
         <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label={gt("Go back")}>
           <ChevronLeft />
         </Button>
-      ) : (
-        <Library className="size-4 shrink-0" />
-      )}
+      ) : null}
+      {props.start}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{props.title}</div>
+        {props.title ? <div className="truncate text-sm font-medium">{props.title}</div> : null}
         {props.description ? (
           <div className="truncate text-xs text-muted-foreground">{props.description}</div>
         ) : null}
       </div>
-      {props.action}
+      {/* When the row cannot hold everything, the actions wrap to a line of their own. */}
+      {props.action ? <div className="ml-auto">{props.action}</div> : null}
     </div>
   );
 }

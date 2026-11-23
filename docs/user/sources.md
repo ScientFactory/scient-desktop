@@ -121,7 +121,10 @@ above the list to browse papers from every project. Use
 **Remove from this project** to take it out; the paper stays in your Library
 and in other projects. Importing or adding by identifier while **My Library** is shown
 adds the papers to your Library only; the import's result, and the message
-after adding by identifier, offer **Add to project**.
+after adding by identifier, offer **Add to project**. In **My Library**, select
+papers and choose **Add to project** in the selection bar to add those not yet in
+this project; on a paper that is not in this project, its **⋯** menu lists **Add to
+project** first.
 
 A paper this project cites that is in the Trash says "Not in this Library":
 the project keeps its citation details, so it can still be cited, but it has no
@@ -154,8 +157,8 @@ link. A few journals with their own icon, such as The Lancet, Cell and Nature,
 show it instead. When no publisher is known the row shows an icon for its type
 (article, book, conference paper and so on). Cards also show the journal's
 current cover when its publisher offers one (Elsevier, Wiley, Springer Nature,
-Science, PNAS, NEJM and some others). Covers are saved for offline use and kept
-visible while they are refreshed.
+Science, PNAS, NEJM and some others); preprints have none. Covers are saved for
+offline use and kept visible while they are refreshed.
 In list view, the blue **Unread** dot sits with the actions on the right,
 immediately before **Open PDF** when a PDF is available.
 
@@ -286,7 +289,11 @@ list.
 
 Choose **Keep this version**, **Use the other**, or
 **Combine**. Combine keeps the searches and sources of both versions and
-reopens any source the two decided differently, so you can decide it again. The
+reopens any source the two decided differently, so you can decide it again. Two
+records that the versions judged differently as duplicates (one kept each, or
+one called them different papers) both stay in screening until you decide, and
+so do three or more whose duplicate choices together would leave none of them
+(one version keeps B over A and C over B, the other A over C). The
 version you do not keep is stored aside, not deleted. After Combine, a short
 report on the review lists what is left to decide until you dismiss it.
 
@@ -358,8 +365,14 @@ one, also after you remove the copy: the project then cites it from its own
 saved citation details. Those saved details become exactly that paper's
 again. If they said anything else while the two were merged (for example an
 abstract a systematic review imported), the earlier details are kept, once,
-in the project folder under `.scient/library/displaced/`, where you or an
-agent can read them. A project package does not include them. If Scient stopped in the middle of a merge or an Undo,
+in the project folder under `.scient/library/displaced/`. The paper's details
+show them under **Earlier values kept after merge Undo**: for each citation key
+or review that held them, each value before and now, side by side, each with a
+copy button. Values a key or review held that has since been removed are shown
+too, marked as no longer in this project, and so are values kept for a paper
+now in Trash. Only citation details a key or review keeps are shown, never your
+personal note. Nothing is put back on its own: copy what you need. A project package does not include them and says how many it
+left in the project. If Scient stopped in the middle of a merge or an Undo,
 it finishes it the next time it opens your Library. After a
 project moves into your Library, its summary line offers **Review** when some
 merges kept different values.
@@ -466,7 +479,8 @@ too long to keep (over 100,000 characters), files that are not PDFs,
 links kept as attachments, PDFs Zotero could not hand over, images in notes,
 notes too long to keep whole (a note holds 100,000 characters; what does not
 fit is left out from a paragraph on), notes not kept as Zotero wrote them
-(Scient keeps 1,000,000 characters of a reference's notes that way), notes and
+(Scient keeps up to 1,000,000 characters of original note HTML within a 2 MiB
+sync file that also holds the source's text and metadata), notes and
 files that belong to no reference, and collections that could not be made or
 filled here (the Library holds 500 collections, ten levels, names of 200
 characters, and 20,000 sources in one collection).
@@ -557,7 +571,12 @@ Zotero. Every detail goes to the field Zotero has for it in that kind of item
 (a legal case's name, court and reporter; a book's edition and place; a
 program's version); a detail that kind of item has no field for goes to
 Zotero's **Extra**, where Zotero reads it. If the item was changed in Zotero after Scient last read it, nothing is
-overwritten: refresh from Zotero first, then send again. This needs the Zotero
+overwritten: refresh from Zotero first, then send again. A change someone makes
+in Zotero while you send is kept the same way, for the next refresh to bring,
+and so is a note changed in Zotero, since a send never changes notes there.
+For a source linked to two Zotero libraries, a note on the item you send to that
+Scient never read is compared at the next refresh like any new note.
+This needs the Zotero
 key in Accounts with write access. Changes are not sent automatically; there is
 no two-way sync. At most 500 sources are sent at a time; with more selected,
 Scient says so and sends nothing.
@@ -905,7 +924,8 @@ like: what is already here is skipped.
 **Undo** is in **Recent changes**. It moves the sources that were added to the
 Trash, but only those you have not used since. A source you edited, read or
 starred, one a project now cites, one you put in a collection, or one whose
-PDF you highlighted stays.
+PDF you highlighted stays. A collection the addition made goes only when it is
+empty again and you have not renamed or moved it.
 
 Do not use **Restore from a backup…** to make one computer equal to the other
 after you have worked on both: the restore replaces that Library, and a note
@@ -938,7 +958,9 @@ project package" with the date. In the desktop app, for a project on this
 computer, it asks for the folder (starting beside the project). In the web app,
 or for a project on another computer, it saves the package inside the project:
 git then commits it with the project, PDFs included, and it takes disk space
-there. Scient says what was left out because this Library did not have it.
+there. Scient says what was left out because this Library did not have it, and
+how many earlier values kept after a merge Undo stay in the project instead of
+going into the package (the package's `README.md` says the same).
 
 People and agents can save or import a package at the requested path on the
 computer running the project, including outside the project. No earlier panel
@@ -1071,7 +1093,9 @@ found, for example "The weekly check found: 1 paper was retracted." Choose
 **Show** to list those papers and **Dismiss** when you have seen them; a
 notice is announced once. A paper you add or restore is checked at the next
 weekly check, even when the list has not changed since the last one. If Retraction Watch lists a retracted paper as
-reinstated, its retraction is removed and the line says so.
+reinstated, its retraction is removed and the line says so. A retraction the
+weekly check found, or found already shown on the paper, stays when you refresh
+the paper's metadata, even if the publisher's record no longer mentions it.
 
 The weekly check finds retractions reliably. It finds an expression of
 concern or a correction only when Retraction Watch lists it; the publisher's
@@ -1105,7 +1129,8 @@ project**, which keeps the paper in your Library. Choose
 **Undo** in the message that appears to put it straight back, or choose
 **Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
 your Library while it is in the trash. **Empty trash** deletes the sources in
-it for good, with their saved versions and any PDF no other source uses.
+it for good, with their saved versions, what Scient kept of their Zotero items
+(Zotero's notes among it) and any PDF no other source uses.
 When the last retained reference to a collected PDF is gone, Scient also removes
 its extracted text and highlights. This is not secure erasure: an interrupted
 cleanup or an unreadable file can leave orphaned material, and existing backups,
@@ -1344,7 +1369,8 @@ who made each one (you or an agent) and what can be done about it now:
   that was changed since. The line then reads "Undone; _N_ changed since and
   were left". Collections keep no record of when each paper joined, so Undo of
   a collection change puts back the members the bulk change added or removed
-  wherever they still are. When only the later parts of an old, large change
+  wherever they still are. A collection the bulk change made is removed only
+  when it is empty again and you have not renamed or moved it. When only the later parts of an old, large change
   are still on record, the line says so and Undo covers those.
 - **A merge:** the two papers, with **Undo**, or why it can no longer be
   undone. A pair that was merged, undone and merged again is listed once.
@@ -1375,7 +1401,9 @@ in a collection.
 
 - **Records**: use **Log search** for each database search: the database, the
   search string exactly as run, the date and the number of results the
-  database reported, with the collection or selected sources it brought in.
+  database reported, with the collection or selected sources it brought in
+  (select them in the list or put them in a collection first; the dialog says
+  so when there is nothing to choose).
   Logging the same database, string and date again replaces that search. Add
   records found another way, such as from reference lists, with **Add
   records**. Sources the Library already merged on import count as
@@ -1699,13 +1727,28 @@ page, and what the paper says instead when it is not there. An agent can also
 save a web page with `scient_sources_save_page`, keeping a passage as you would.
 
 The conversation's [permission mode](permission-modes.md) and provider approval
-flow still apply to writes. Library tools stay scoped to the current project:
-they do not grant arbitrary host file paths or turn uncertain metadata into
-verified evidence. Agents can browse and import from Zotero, refresh from it
+flow still apply to writes. Library tools read and change the current
+project's sources and the Library, and never turn uncertain metadata into
+verified evidence. As you can, an agent allowed to change things can back up the
+whole Library into a folder you name, restore or add from a backup folder, and
+put back a Library a restore kept; a Read only connection can do none of these. Agents can browse and import from Zotero, refresh from it
 and send to it with the same rules as you; they change Zotero only when you ask
 them to send. An agent brings a large collection 500 references at a time and
 goes on until none remain; it does not go on with an import you stopped. An agent can also read the same **Recent changes** list as you,
 so you can ask it to undo yesterday's tagging or to restore a paper it removed.
+
+An agent can also [back up](#back-up-my-library) the whole Library into a
+folder you name, [restore](#restore-from-a-backup) it from a backup or put back
+a Library a restore kept, and [add from another Library](#add-from-another-library)
+or undo that addition, and read how each stands, as **Backup and recovery**
+shows it. A restore it asks for takes effect the next time Scient starts, as
+yours does. To cancel a waiting restore it names the one it saw, so it never
+cancels a restore you chose after it looked. It cannot yet take a single note,
+PDF or paper from **Show differences**.
+
+Agents you connect from outside Scient, such as Claude Code or Codex in your
+own terminal, can use the Library too; see
+[Outside agents](outside-agents.md#your-library).
 
 ## Current limits
 

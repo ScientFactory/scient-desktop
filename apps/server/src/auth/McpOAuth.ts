@@ -644,6 +644,13 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     "orchestration",
                     "worktree",
                     "pull-requests",
+                    // SCIENT-FORK:START — the Library, as the approved mode allows; never a peer link.
+                    ...(client.peerLink
+                      ? []
+                      : client.access === "read-only"
+                        ? (["sources:read"] as const)
+                        : (["sources:read", "sources:write"] as const)),
+                    // SCIENT-FORK:END
                   ]),
                   issuedAt,
                 })),

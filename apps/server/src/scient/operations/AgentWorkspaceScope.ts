@@ -14,7 +14,7 @@ export class AgentWorkspaceError extends Schema.TaggedError<AgentWorkspaceError>
   },
 ) {}
 
-const verifiedFor = (binding: WorkspaceBindingRecordV1, environmentId: EnvironmentId) =>
+export const verifiedFor = (binding: WorkspaceBindingRecordV1, environmentId: EnvironmentId) =>
   binding.environmentId === environmentId &&
   binding.trustState === "verified" &&
   binding.supersededBy === null;

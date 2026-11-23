@@ -1,5 +1,10 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import type { ProviderStoreEntry, ServerProvider, ServerProviderPlugin } from "@t3tools/contracts";
+import type {
+  ProviderRuntimeSummary,
+  ProviderStoreEntry,
+  ServerProvider,
+  ServerProviderPlugin,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { Link } from "@tanstack/react-router";
@@ -10,8 +15,18 @@ import { useContext, useRef, useState, type ReactNode } from "react";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  isActiveProviderRuntimeOperation,
+  providerLifecycleFailureMessage,
+} from "../providerConnection/providerConnectionPresentation";
+import {
+  currentOptimisticProviderValue,
+  type OptimisticProviderValue,
+} from "../providerConnection/optimisticProviderValue";
 import { ScientAgentAccounts } from "../providerConnection/ScientAgentAccounts";
+import { useStartProviderRuntimeAction } from "../providerConnection/useProviderLifecycleController";
 import {
   type AccountService,
   type AccountServiceRoute,
@@ -25,6 +40,7 @@ import {
 import { useProviderPluginActions } from "./extensionActions";
 import { DetailSection } from "./ExtensionDetailPages";
 import { ActionFeedback } from "./ExtensionItems";
+import { ActionError } from "./ExtensionsFeedback";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import {
   actOnProviderPlugin,
@@ -263,9 +279,106 @@ function TurnOnInAntigravity({
   );
 }
 
+type RuntimeStep = "update" | "install";
+
 /**
- * An Antigravity agent's row for a service its marketplace has as a plugin. Shown only once the
- * store answers and can add plugins; being added claims nothing about the plugin's own sign-in.
+ * The runtime step that lets this Antigravity add plugins, when its store names one (its next
+ * release is the agy CLI) and Settings offers it: Update for Scient's older copy, Use
+ * Scient-managed for one found on this computer.
+ */
+function antigravityRuntimeStep(
+  provider: ServerProvider,
+  step: RuntimeStep | undefined,
+): RuntimeStep | null {
+  const runtime = provider.connection?.runtime;
+  const operation = runtime?.operation;
+  if (step && operation?.action === step && isActiveProviderRuntimeOperation(operation))
+    return step;
+  return step && runtime?.actions.includes(step) ? step : null;
+}
+
+/**
+ * Settings' own runtime step, for an Antigravity whose runtime can't add plugins. One button
+ * throughout, so keyboard focus stays on it while the step runs and when it fails. The store's
+ * change feed turns the row into Add once the new runtime is active.
+ */
+function AntigravityRuntimeStep({
+  provider,
+  step,
+}: {
+  readonly provider: ServerProvider;
+  readonly step: RuntimeStep;
+}) {
+  const gt = useGT();
+  const { environmentId } = useExtensionsEnvironment();
+  const canPlan = useAtomValue(serverEnvironment.planProviderRuntime.permissionAtom(environmentId));
+  const canStart = useAtomValue(
+    serverEnvironment.startProviderRuntime.permissionAtom(environmentId),
+  );
+  const startRuntimeAction = useStartProviderRuntimeAction();
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // The started operation, until the provider stream reports it.
+  const [started, setStarted] = useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(
+    null,
+  );
+  const operation = (
+    currentOptimisticProviderValue(started, provider) ?? provider.connection?.runtime
+  )?.operation;
+  const active = isActiveProviderRuntimeOperation(operation) ? operation : null;
+  const busy = starting || active?.action === step;
+  const failed =
+    error ??
+    (operation?.action === step && operation.status === "failed" ? operation.message : null);
+  const run = async () => {
+    if (busy || active !== null) return;
+    setError(null);
+    setStarting(true);
+    try {
+      const next = await startRuntimeAction({
+        environmentId,
+        instanceId: provider.instanceId,
+        action: step,
+        refuse: (plan) =>
+          plan.nativePlugins === true
+            ? null
+            : gt("This Antigravity release can't add plugins. Open Settings to choose another."),
+      });
+      const runtime = next.connection?.runtime;
+      setStarted(runtime ? { baseProvider: provider, value: runtime } : null);
+    } catch (cause) {
+      setError(providerLifecycleFailureMessage(cause, gt("Scient could not update Antigravity.")));
+    }
+    setStarting(false);
+  };
+  const progress = step === "update" ? gt("Updating…") : gt("Installing…");
+  return (
+    <span className="flex shrink-0 flex-col items-end gap-1">
+      <Button
+        variant="ghost-primary"
+        size="sm"
+        disabled={!canPlan || !canStart}
+        aria-disabled={busy || active !== null || undefined}
+        onClick={() => void run()}
+      >
+        {busy
+          ? progress
+          : step === "update"
+            ? gt("Update Antigravity")
+            : gt("Use Scient-managed {provider}", { provider: "Antigravity" })}
+      </Button>
+      <span role="status" className="sr-only">
+        {busy ? progress : ""}
+      </span>
+      <ActionError message={failed} />
+    </span>
+  );
+}
+
+/**
+ * An Antigravity agent's row for a service its marketplace has as a plugin. Shown once the store
+ * answers; when its runtime can't add plugins, the row offers the update that can. Being added
+ * claims nothing about the plugin's own sign-in.
  */
 function AntigravityServiceRow({
   route,
@@ -275,7 +388,7 @@ function AntigravityServiceRow({
   readonly provider: ServerProvider;
 }) {
   const gt = useGT();
-  const { environmentId } = useExtensionsEnvironment();
+  const { environmentId, providers } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const atom = extensionsProviderStoreEntry({
     environmentId,
@@ -289,7 +402,40 @@ function AntigravityServiceRow({
     (entry.data?.installed
       ? provider.plugins?.find((item) => item.name === entry.data?.name)
       : undefined);
-  if (entry.error || entry.data?.storeUnavailable) return null;
+  if (entry.error) return null;
+  if (entry.data?.storeUnavailable) {
+    // The live snapshot follows an update as it runs; the inventory's copy is an earlier read.
+    const live = providers.find((item) => item.instanceId === route.instanceId) ?? provider;
+    const step = antigravityRuntimeStep(live, entry.data.storeUnavailableStep);
+    return (
+      <CardRow>
+        <ProviderInstanceIcon
+          driverKind={route.driver}
+          displayName={route.label}
+          acpRegistryIconUrl={provider.iconUrl}
+          iconClassName="size-6"
+          indicatorBackground="var(--card)"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{route.label}</span>
+          <span className="block text-xs text-muted-foreground">
+            {step === "update"
+              ? gt("Update Antigravity to add its plugins")
+              : step === "install"
+                ? gt("Use Scient-managed Antigravity to add its plugins")
+                : entry.data.disabledReason}
+          </span>
+        </span>
+        {step ? (
+          <AntigravityRuntimeStep provider={live} step={step} />
+        ) : (
+          <Button variant="ghost-muted" size="sm" render={<Link to="/settings/providers" />}>
+            <T>Open Settings</T>
+          </Button>
+        )}
+      </CardRow>
+    );
+  }
   const state =
     entry.data === null || entry.data.installationStateKnown === false
       ? "checking"

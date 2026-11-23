@@ -145,3 +145,38 @@ describe("Plugin sign-in client authorization", () => {
     expect(scopes.every((scope) => sessionGrantsScope(manager, scope))).toBe(true);
   });
 });
+
+describe("Managed runtime client authorization", () => {
+  it("takes the provider management grant the server checks, not the settings grant", () => {
+    const base: AuthSessionState = {
+      authenticated: true,
+      scopes: [],
+      permissions: [],
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "synthetic",
+      },
+    };
+    const settingsWriter = {
+      ...base,
+      scopes: [AuthSettingsWriteScope],
+      permissions: [AuthSettingsWriteScope],
+    };
+    const manager = {
+      ...base,
+      scopes: [AuthProvidersManageScope],
+      permissions: [AuthProvidersManageScope],
+    };
+    for (const method of [
+      WS_METHODS.serverPlanProviderRuntime,
+      WS_METHODS.serverStartProviderRuntime,
+      WS_METHODS.serverCancelProviderRuntime,
+    ]) {
+      const scopes = clientRpcRequiredScopes(method, {});
+      expect(scopes.every((scope) => sessionGrantsScope(settingsWriter, scope))).toBe(false);
+      expect(scopes.every((scope) => sessionGrantsScope(manager, scope))).toBe(true);
+    }
+  });
+});

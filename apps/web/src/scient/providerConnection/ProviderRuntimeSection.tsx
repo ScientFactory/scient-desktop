@@ -22,6 +22,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
@@ -414,10 +415,17 @@ export function ProviderRuntimeSection(props: {
         setLocalFailure(null);
         setPendingAction("plan");
         if (needsDecision) onPlanOpenChange?.(true);
-        const result = await planRuntime({
+        const planned = await planRuntime({
           environmentId,
           input: { instanceId: provider.instanceId, action },
         });
+        // A plan for another action is never started in this one's place.
+        const result =
+          planned._tag === "Success" && planned.value.action !== action
+            ? AsyncResult.failure(
+                Cause.fail(new Error("Scient prepared a different runtime action. Try again.")),
+              )
+            : planned;
         if (result._tag === "Failure") {
           setPendingAction(null);
           onPlanOpenChange?.(false);

@@ -28,6 +28,11 @@ export const ProviderStoreEntry = Schema.Struct({
   installationStateKnown: Schema.optional(Schema.Boolean),
   /** True when this agent cannot add from its store at all; `disabledReason` says why. */
   storeUnavailable: Schema.optional(Schema.Boolean),
+  /**
+   * The runtime step in this agent's settings that makes its store available, when one would:
+   * Update its managed runtime, or Install Scient's managed runtime in place of a system one.
+   */
+  storeUnavailableStep: Schema.optional(Schema.Literals(["update", "install"])),
   version: Schema.optional(Schema.String),
   publisher: Schema.optional(Schema.String),
   website: Schema.optional(Schema.String),

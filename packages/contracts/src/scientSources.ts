@@ -81,6 +81,8 @@ export const ScientSourcesOverviewRequest = Schema.Struct({
   /** Library servers list only records with this reading state; `scopes` still counts them all. */
   readingStatus: Schema.optionalKey(ScientSourceReadingStatus),
   starred: Schema.optionalKey(Schema.Boolean),
+  /** The `revision` of the answer the client holds for this request; see `unchanged`. */
+  knownRevision: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourcesOverviewRequest = typeof ScientSourcesOverviewRequest.Type;
 
@@ -182,6 +184,26 @@ export const ScientSourceDetailResult = Schema.Struct({
         at: Schema.String,
         kind: Schema.Literals(["original", "edit", "found"]),
         by: Schema.optionalKey(Schema.Literals(["user", "agent"])),
+      }),
+    ),
+  ),
+  /**
+   * What this project's saved details held before a merge Undo replaced them with the record,
+   * field by field beside the record's value now; also for a key or review since removed.
+   */
+  keptCopies: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        holder: Schema.Literals(["citation-key", "review"]),
+        /** The citation key, or the review's ID. */
+        heldBy: Schema.String,
+        /** A review's title, while the review is in the project. */
+        holderName: Schema.optionalKey(Schema.String),
+        holderPresent: Schema.Boolean,
+        undoneAt: Schema.String,
+        fields: Schema.Array(
+          Schema.Struct({ field: Schema.String, earlier: Schema.Unknown, current: Schema.Unknown }),
+        ),
       }),
     ),
   ),
@@ -567,6 +589,10 @@ export const ScientProjectPackageReport = Schema.Struct({
   changedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Export: whether the folder is inside the project (committed with it). */
   insideProject: Schema.optionalKey(Schema.Boolean),
+  /** Export: values kept after a merge Undo, which stay in the project and are not packaged. */
+  keptCopiesLeftOut: Schema.optionalKey(Count),
+  /** Export: files of such kept values that could not be read. */
+  keptCopiesUnreadable: Schema.optionalKey(Count),
   /** Import: undo-import takes it. */
   importId: Schema.optionalKey(NonEmptyString),
   /** Highlights changed apart on both computers: this one's stays, the other is history. */
@@ -701,7 +727,14 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   restoredSources: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   restoredPdfs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   /** undo-join: sources moved to the Trash, and sources left because they changed since. */
-  joinUndone: Schema.optionalKey(Schema.Struct({ trashed: Schema.Int, left: Schema.Int })),
+  joinUndone: Schema.optionalKey(
+    Schema.Struct({
+      trashed: Schema.Int,
+      left: Schema.Int,
+      /** The sources among `left`, changed since the join. */
+      leftSourceIds: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
   /** export-package: the folder written. */
   packagePath: Schema.optionalKey(NonEmptyString),
   packages: Schema.optionalKey(
@@ -1373,6 +1406,13 @@ export type ScientSourcesOverviewRecord = typeof ScientSourcesOverviewRecord.Typ
 
 export const ScientSourcesOverviewResult = Schema.Struct({
   ...ScientSourcesStoreOverview.fields,
+  /** Library servers: changes whenever the records, diagnostics, collections or notices would. */
+  revision: Schema.optionalKey(NonEmptyString),
+  /**
+   * The request's `knownRevision` is still this answer's: `records`, `recordDiagnostics`,
+   * `organization` and `noticeChanges` are not sent, and the client keeps the ones it holds.
+   */
+  unchanged: Schema.optionalKey(Schema.Literal(true)),
   records: Schema.Array(ScientSourcesOverviewRecord),
   recordDiagnostics: Schema.Array(ScientSourceRecordDiagnostics),
   // Optional so a client can read an older server's overview.

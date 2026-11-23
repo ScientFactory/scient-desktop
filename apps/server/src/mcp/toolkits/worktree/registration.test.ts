@@ -254,15 +254,14 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      // The credential holds worktree, orchestration and preview: only the device and
-      // issue tools, whose every call needs a grant it lacks, are not listed.
-      // Device tools need their grant, and only a deferring client lists tool_search.
-      // The background wait is listed only for providers that can hold a thread on one.
+      // Device and issue tools need missing grants; tool_search is for deferring clients;
+      // scient_background_wait needs background-wait; scient_workflow is hiddenFromThreads.
       const unlisted = new Set([
         ...McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name),
         ...McpHttpServer.hostMcpToolGrants.issues.map((tool) => tool.name),
         "tool_search",
         "scient_background_wait",
+        "scient_workflow",
       ]);
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
       expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(

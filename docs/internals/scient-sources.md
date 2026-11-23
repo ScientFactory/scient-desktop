@@ -97,7 +97,11 @@ such as PubMed are never treated as the publisher. Without evidence the row keep
 its source-type icon. The icons ship in `apps/web/src/assets/publishers/`
 (64 px PNGs from each publisher's own site; see `NOTICE` there).
 
-Cards also show the journal's current cover. The host derives at most four
+Cards of journal articles and conference papers show the journal's current cover;
+`journalCoverEligible` and the DOI and cover-evidence reading (`journalRecordDoi`,
+`journalCoverDoiParts`) live in `@t3tools/shared/scientJournalIdentity`, so the
+client's cache keys and the host's addresses come from the same reading. A
+preprint card asks nothing. The host derives at most four
 publisher addresses from the record (`journalCoverCandidates`): Springer Nature's
 journal id in the DOI, Atypon journal codes by title (Science, PNAS, Health
 Affairs, ACP, NEJM, AHA, RSNA), and Elsevier and Wiley covers by ISSN, including
@@ -110,7 +114,8 @@ offline and while a stale cover is refreshed. Failures back off exponentially
 from one minute to a day. The old `journal-icons` cache is deleted in the
 background. Signed cover URLs renew without removing a working image; client
 successes are shared within an environment and project only for the same journal
-identity.
+identity, and cards sharing a success renew it with one request: the others wait
+on it.
 
 Discovery has a six-second network budget after registry-lane admission.
 Public-address checks and DNS pinning apply to every request, including
@@ -437,7 +442,8 @@ pairs and what is left as possible duplicates. One merge:
   under `From <label>:`, where the label is the caller's (the project name at
   the move), else the citation key.
 - Library collection membership moves to the survivor. When the survivor
-  gains a Zotero link it lacked, the loser's Zotero base is copied to it.
+  gains a Zotero link it lacked, the loser's Zotero base is copied to it
+  (`withGainedZoteroBase`); recovery of a stopped merge repeats that step.
 - The loser goes to the trash with `mergedInto` (survivor and merge ID). A
   plain restore refuses it; only the merge's Undo brings it back. Such an
   entry is Undo material, not something a person removed: the Trash list, its
@@ -591,7 +597,9 @@ goes through the central record decoder.
 source or many under the library lock. It writes the record file in place with
 no new revision and no history entry: reading state is about the person, so an
 editor open on the record is never made stale. For the same reason revisions
-never list it as a change, and a revert keeps the current values. A merge keeps
+never list it as a change, a revert keeps the current values, and a write that
+finds its revision already kept in history (one stopped before) compares that
+copy without them. A merge keeps
 the survivor read if either record was read and starred if either was, as
 ordinary merge changes, so Undo puts each record's own values back. A source
 that arrives through the move starts unread and not starred.
@@ -718,8 +726,21 @@ sources in `<project>/.scient/library/pins.json`:
   `displaced/reviews/<review-id>.json` for a review. One copy per holder,
   source and Undo, so a retry or a later edit of the paper adds none; no cap;
   a file that cannot be read is moved aside under a dated name; a failed keep
-  stops the replacement. Nothing reads them back on its own, and a project
-  package does not carry them. Limits: a pin whose ID is another computer's and
+  stops the replacement, as does a folder on the way that is a link (checked
+  from the project root, as every read checks it). Nothing puts them back on
+  its own. `readScientDisplacedCopiesOf` reads one source's copies from every
+  holder's file, and `countScientDisplacedCopiesInProject` counts copies and
+  unreadable files (including those set aside, and a linked folder) without
+  keeping them. A Library source's detail, live or from a pin's snapshot,
+  carries its copies as `keptCopies` (holder, whether the key or review is
+  still in the project, and each differing field beside the value the details
+  show now), in HTTP and in `scient_sources_get`. Only fields the holder's
+  projection has are shown (`ScientPinWork` for a key, `ScientReviewWork` for a
+  review), so a file naming another field, such as the personal note, shows
+  nothing of it; review titles come from the named review files alone. A
+  project package does not carry them: the export
+  result (`keptCopiesLeftOut`, `keptCopiesUnreadable`), the panel's summary and
+  the package README say how many stay in the project. Limits: a pin whose ID is another computer's and
   was matched here by its data is not repaired after removal; a source merged
   again and unmerged again marks only its latest pair. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
@@ -792,7 +813,10 @@ trash. A record deleted for good (Empty trash, `deletePermanently`, the agent's
 `permanent` removal) first leaves a tombstone, `deleted/<sourceId>.json` in the
 Library: its trash entry with the record cut to what identifies the work (no
 abstract, note, PDFs or history), written before the trash entry is erased and
-under the same lock. The resolver treats tombstones as it treats the trash (by
+under the same lock. The source's Zotero base, which holds Zotero's note text,
+is removed before the trash entry too, and a base is written only under that lock
+while the source is live or in the trash, so a Zotero sync still running when
+the source went does not bring it back. The resolver treats tombstones as it treats the trash (by
 ID, alias, hydration identity, or a corroborated match of the pin's `work`, a
 merged-away copy only while its survivor is gone), so such a pin stays
 `removed` and its snapshot serves it; a `removed` resolution names the removed
@@ -967,9 +991,9 @@ without the author's library can still list, screen and count:
 their backend through the `ScientSourcesBackend` reference, whose default is
 the constant (tests written for the project store provide `"project"`). `resolveScientSourcesStoreFor` gives every Sources
 call its store: the project root, or the project root plus
-`scientLibraryLocation(scientLibraryRootFor(stateDir))`. The project still
-comes only from the thread's workspace binding (`resolveScientSourcesProject`),
-so tools take no project argument. The same reference picks the advertised
+`scientLibraryLocation(scientLibraryRootFor(stateDir))`. For an agent in a
+thread the project comes only from the thread's workspace binding
+(`resolveScientSourcesProject`), so its tools take no project argument. The same reference picks the advertised
 tool list (`ScientSourcesToolkit` or `ScientSourcesLibraryToolkit`); both
 share operations and handlers. The agent-context budget tests measure the
 complete advertised tool list against `agentContextBudget.scient.json`; output
@@ -983,6 +1007,27 @@ environment authority for people and agents.
   hydrates pins: unresolved pins and review records use their saved snapshots.
 - Any tool that takes a source ID accepts a library ID or a project source ID
   of this project; both resolve through aliases and the instance map.
+- A client connected through Copy MCP URL (no thread, not a peer link) is
+  offered the Sources toolkit only (`toolkits/sources/outside.ts`):
+  `outsideCall` is the one eligibility rule that listing
+  (`ScientMcpProtocol.ts`) and dispatch (`registerScientToolkit` in
+  `McpHttpServer.ts`) share. McpOAuth grants it `sources:read`, plus
+  `sources:write` unless it was approved Read only; a tool whose grants it
+  lacks is not listed and its call is refused before any store is resolved.
+  Its listing is generated from the same tools with an extra `projectId`
+  property; the call takes `projectId` out and decodes the rest with the
+  tool's own schema, so a thread's tool list and decoding stay byte for byte
+  the same. `projectId` resolves through the project registry
+  (`ProjectService.getById`) and `resolveWorkspaceRoot` to the verified
+  canonical checkout on this server, and reaches the handlers as
+  `ScientSourcesOutsideCall`; `resolveScientSourcesProject` answers
+  `project-required` without it. Without a project only whole-Library calls
+  run (`resolveWholeLibrary`): list `scope: "library"`, `recentChanges` and
+  `libraryCopies`, and the organize backup, restore and join actions; their
+  rows carry no checkout's keys, notes or `pinned`. A Read only client writes
+  no file, also when its project still has its own store: PDF text is read
+  without being stored and no indexing pass starts (`storesFullText`), and
+  the style catalogue stays in memory (`writesDerivedFiles`).
 - `scient_sources_list` lists this project's pins under their project keys
   (`fromSnapshot` marks a pin this library lacks); `scope: "library"` lists the
   whole library with `pinned` per record. `scient_sources_search` searches the
@@ -1316,11 +1361,16 @@ removed.
 
 **Review conflicts** (`libraryReviewConflicts.ts`): `listScientReviewConflicts`
 and `resolveScientReviewConflict` with `keep`, `use-other` or `combine`. The
-version not kept goes to `migrations/<instanceId>/reviews/<reviewId>/` first.
+version not kept goes to `migrations/<instanceId>/reviews/<reviewId>/` first,
+written inside the Library lock so a backup holds its review and its work
+snapshot together or neither.
 Combine unites searches (a search in both keeps its details and the union of
 its IDs; differing details are reported), other IDs, duplicates, distinct
 pairs, screening and retrieval. A pair marked duplicate in one version and
-distinct in the other is dropped from both lists and reported as undecided. A
+distinct in the other, or whose duplicate decisions close a cycle once united
+(opposite directions, or A→B and B→C in one version with C→A in the other,
+which would leave every record of it out of screening), is dropped from both
+lists and reported as undecided. A
 source whose latest decision differs between the two gets a `cleared` entry
 with the note "Decided differently in two copies". The snapshot covering the
 whole membership is published and read back before the review. A combine that
@@ -1365,8 +1415,9 @@ duplicates. K kept different values: Review." for 5e to show.
 organize route and `scient_sources_organize` take `move-back`): finishes a
 pending cleanup, then builds the v1 store in a staging folder,
 `.scient/library/.restoring/sources`: every run's backup, each pinned record's
-later library state as a new v1 revision under the pin's key and project note,
-its PDFs, and the current reviews and bibliography copies over the backup's.
+later library state as a new v1 revision under the pin's key and project note
+with the Library's Zotero base for it under the pin's key, its PDFs, and the
+current reviews and bibliography copies over the backup's.
 One rename publishes the folder as `.scient/sources`. After that it restores
 highlight files that are not there, backs up and removes `pins.json`, and sets
 the journal to `moved-back`. Library records stay. It refuses while
@@ -2246,8 +2297,9 @@ User-Agent. No other host receives it, and an empty or malformed value sends
 nothing. Adapters that pass the address another way (Unpaywall's `email`)
 read `registryContactEmail()`; none keeps its own setting.
 
-All metadata responses are HTTPS-only, time- and size-bounded, and
-schema-decoded. Only the exact identifier leaves the project environment; the
+All metadata responses are HTTPS-only, size-bounded, and schema-decoded, and
+each request has an idle timer and one 30 s budget across its redirects (the
+citation-style catalogue 2 minutes). Only the exact identifier leaves the project environment; the
 PDF never does. Resolution failure is a normal offline fallback, not an import
 failure. No visible-PDF abstract extraction, OCR, fuzzy bibliographic search,
 or model inference is part of this slice because those paths need separate
@@ -2591,6 +2643,10 @@ the publisher's with another date:
 - A kind the file has and the source has no notice of is added, in the shape
   the registry gives the same row (`kind`, the notice's DOI, its date, `source:
   "retraction-watch"`), so a later refresh that finds it changes nothing.
+- A kind the file has and the source already shows (from the publisher, say)
+  is not written to the source, but the check records it as its own (an
+  `added` entry, already `dismissed`, since the person sees nothing new), so a
+  registry that later stops reporting it does not take it off.
 - A `retraction-watch` retraction is taken off only when the file lists the
   paper as reinstated and no longer as retracted. A paper missing from the file
   is not evidence: reading it as one could show a retracted paper as sound
@@ -2604,18 +2660,27 @@ The status is built by `editorialStatusFromNotices` and written by
 `recordScientSourceCheck` with the source's verification unchanged, so each
 change is a revision in the source's history, credited to the user like the
 pass's other writes; a source edited meanwhile answers `stale` and is matched
-the next week. The Trash is not checked.
+the next week: the check then records no `covered`, so that request is not
+conditional. The Trash is not checked.
 
 **Told once.** `notice-watch.json` in the Library holds the time of the last
 successful check, the file's `ETag` and the papers its read matched
 (`covered`), and one entry per source and kind for
-what the check did there (`added` or `withdrawn`, when, and `dismissed`). The
+what the check did there (`added` or `withdrawn`, when, `dismissed`, and for
+`added` the file's notices of that kind). The
 overview carries the entries not yet dismissed, for sources still held, as
 `noticeChanges`, whatever the scope; the panel shows them as one line with
 **Show** (the list narrowed to those sources) and **Dismiss** (the organize
-action `dismiss-notice-changes`). A notice the check puts back after a refresh
-took it off (a registry that does not repeat it) corrects the source and is
-not listed again, since its entry already says `added`. Entries of sources no
+action `dismiss-notice-changes`). A registry check of a Library source keeps,
+for each kind whose entry says `added` and that the registry did not report,
+the source's `retraction-watch` notices of that kind, or the entry's own
+notices when the source has none (`withScientLibraryWatchNotices`): only the
+file's reinstatement takes one off, and it also ends a kind the check kept
+without writing it. The check writes its sources and the state file in one
+hold of the Library lock, and the registry check reads the entries under the
+lock its write takes, so a refresh between the two never drops a notice. A notice the check puts back after it was taken
+off otherwise corrects the source and is not listed again, since its entry
+already says `added`. Entries of sources no
 longer in the Library are dropped at the next check that reads the file. A
 state file that cannot be read counts as none: the check runs again.
 
@@ -2798,8 +2863,10 @@ the menu item where this computer's folder dialog can choose the folder, asks
 the status each second while one runs (whether or not the last read
 succeeded), and announces the end once in each window that started the backup
 or saw it running, also after a switch to another project. Library writes wait on the lock meanwhile (30 s, then
-`ScientLibraryBusyError`). Agents have no action for it yet (a recorded
-parity gap).
+`ScientLibraryBusyError`). Agents start it with organize `back-up-library`
+and read it with list `libraryCopies` (`readLibraryCopies`, which
+`backupStatus` serves too); their call admits the Library alone as a write
+does (no unfinished restore, merges settled) and moves no project in.
 
 ## Library restore
 
@@ -2815,7 +2882,9 @@ differs ends it as `damaged` with that file's name and removes the copy. It
 adds the restore to the copy's `restores.json` (restore ID, backup ID, who,
 counts, when), and last writes the intent `<library>.restore.json`. A second
 request that succeeds replaces a waiting copy, which is removed only once the
-new copy is whole; one that fails at any point leaves it waiting.
+new copy is whole; one that fails at any point leaves it waiting. A replaced
+copy that cannot be removed then (a file held open) stays until the sweep after
+the next start; the new intent stands either way.
 `cancelScientLibraryRestore` drops it. All three hold
 `<library>.restore.lock`. Once a start has moved a folder for a restore (its
 copy is no longer where it waited, or the Library it replaces stands aside),
@@ -2912,8 +2981,11 @@ and, unlike `organize`, resolves no store: it never creates the Library or
 moves the open project into it. `backupStatus` answers both the backup and
 the restore. The panel shows the waiting copy with Cancel, says once per
 window how a restore ended, asks again until the first answer comes, and
-drops an answer that arrives for a project it has left. Scient does not restart itself. Agents have no
-action for it yet (a recorded parity gap).
+drops an answer that arrives for a project it has left. Scient does not restart itself. Agents
+prepare, put back and cancel with organize `restore-library`,
+`put-back-library` and `cancel-restore` through the same
+`changeLibraryRestore`; an agent's cancel must name the `restoreId` it read,
+and a newer restore answers `another-restore` and keeps waiting.
 
 A "Move back into this project" chosen after the backup was made is recorded
 only in the Library the restore replaces. Commit carries it over first
@@ -2988,8 +3060,11 @@ added, in an order that survives a kill at any point: for each PDF that is not
 here, its highlights file and then the PDF (checked by hash, flushed); a PDF
 already here keeps this Library's highlights, and the source is recorded as
 differing if the other's differ; its earlier versions, and the PDFs only they
-name while the other Library still has them; the "keep apart" decisions; last
-the record. Files are created from the other Library's own bytes by renaming a
+name while the other Library still has them; its Zotero base (only one that
+decodes and names the source), which keeps a Zotero PDF removed there from
+coming back on Refresh (one that does not decode was no base there either: the
+source comes without it and refreshes as one never synced, as it would have
+there); the "keep apart" decisions; last the record. Files are created from the other Library's own bytes by renaming a
 flushed temporary file into place, only where no file has the name; the lock,
 which every writer of those files holds, makes that exclusive. The "keep
 apart" decisions are the other Library's as its own rule reads them ("not
@@ -3018,7 +3093,8 @@ the join did not put it in; and the highlights file of each of its PDFs is as
 it was when the source arrived (for a part settled after a stop that state is
 not known, and any highlights file keeps the source). Anything else leaves it
 and counts it. A collection the join made is deleted once nothing here is in
-it and nothing is under it. In the Trash the sources are "removed here", so a
+it, nothing is under it and its name and parent are still those it was made
+with (`madeAs` in the join's header, also on a bulk edit's created collection). In the Trash the sources are "removed here", so a
 later join skips them. Not seen by Undo: a systematic review that screened
 the source (the review keeps its own copy), and a pin written in the same
 instant as the Undo (the source then goes to the Trash; the project still
@@ -3412,7 +3488,8 @@ same two functions.
   number); a work without one by its DOI, else by all its details, never by
   title and year alone (Mendeley Desktop's `ITEM-n` is the citation's
   numbering and is left out). A work is linked to the one Library record its
-  Zotero item and its DOI or PMID point to: the item by library and key
+  Zotero item (by every address the citation lists for it, so a synced address
+  after a local one counts) and its DOI or PMID point to: the item by library and key
   together (a zotero.org user library is the bare user ID in both, a group
   `groups/<id>`; Zotero on this computer reports a synced user's ID too and
   `0` before sync, while an unsynced document names its library
@@ -3719,7 +3796,12 @@ fixed loopback endpoint `127.0.0.1:23119`, plus Better BibTeX's local JSON-RPC
 `item.citationkey` for keys an item does not carry itself. The web transport
 (`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library, or a
 group library, at `api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
-Responses are time- and size-bounded and decoded through explicit schemas;
+Responses are size-bounded and decoded through explicit schemas. Besides the
+socket's idle timer, each request has one wall-clock budget from before it
+connects through every redirect to its last byte (`withRequestDeadline` in
+`nodeHttpResponse.ts`): 60 s for zotero.org, 10 minutes for a zotero.org file,
+30 s for Zotero on this computer. Past it the request and the file stream are
+aborted, the temporary copy is removed and the item fails, ready to retry;
 mapping lives in `ZoteroItems.ts`.
 
 The zotero.org key comes from Accounts (`ZoteroAccountKey.ts`): the newest
@@ -3779,8 +3861,9 @@ Zotero's own list is. A note holds 100,000 characters: blocks are added while
 they fit and the rest is left out and listed (`note-cut`). The notes as
 Zotero wrote them go into the source's Zotero file (`notes`, by item key,
 without the bytes of embedded images): every note's sha256, and its HTML while
-the notes fit 1,000,000 characters by whole notes; a note past that keeps only
-its digest and is listed (`note-cut` named `original`). A backup, a restore and
+the notes fit 1,000,000 characters and the 2 MiB serialized sync-file limit by
+whole notes; a note past either limit keeps only its digest and is listed
+(`note-cut` named `original`) on import and refresh. A backup, a restore and
 a join carry them; a project package does not, and neither does a note given
 to a source that was already here.
 Every stored or linked PDF is copied (the first with
@@ -4042,7 +4125,10 @@ the user takes Zotero's value (`useZotero`) or keeps theirs (`keepLocal`).
 Empty Zotero values never clear a field; tags merge as additions and removals;
 new PDFs (by attachment key) are
 attached; the record's Zotero item version is updated; an item gone from Zotero
-is reported and left alone. Without a sync file (sources imported before this
+is reported and left alone. The note is written against the note the merge
+read, so an edit elsewhere in the source does not refuse it; when the note
+changed here meanwhile the source is reported stale and no base is written.
+Without a sync file (sources imported before this
 existed), every difference counts as a Zotero change. The citation key is never
 changed by a refresh.
 
@@ -4066,6 +4152,15 @@ the source note as a child note, and the source is linked to the new item. A
 linked source is patched with only the fields that differ, using the item's
 own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
 since Scient last read it, nothing is sent and the user is asked to refresh.
+The base then moves only by what the Send wrote: to Zotero's item as read back
+when it is still at the version the write left it at (else the earlier base
+stays and the link keeps that version, so Zotero's change is seen by the next
+Send and brought by Refresh), keeping the earlier base's notes for an item that
+was only patched. A Send to an existing item whose base is another item's (a
+source linked to two libraries) stores `note: null` without `notes`, so Refresh
+treats that item's notes as new; only a created item's notes, which the Send
+wrote, become the base. The link is written against the record as it is then, so an
+edit made during the Send keeps both.
 Empty values here are never sent. Extra keeps its unmanaged lines and carries
 the citation key and identifiers without a Zotero field.
 
@@ -4331,9 +4426,13 @@ tool does more. The only exemptions are one step of an interactive flow that a
 single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
-an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. Two gaps stand: an
-agent cannot start or watch a Library backup, and cannot restore one.
+an exemption: such a command is a `gap` with its reason. The Library-only
+organize actions have their own table: each names the tool's actions that do
+the same, or is `exempt` or a `gap` with its reason. `libraryParity.test.ts`
+reports every gap as a test annotation in each run. One gap stands: an agent cannot take
+a note, a PDF or a whole paper from another Library's differences
+(`take-from-library`), because the list tool does not read a join's
+differences.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is

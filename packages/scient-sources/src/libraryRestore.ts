@@ -271,8 +271,7 @@ export type ScientLibraryRestorePrepared =
   /** Another restore is being prepared, cancelled or finished right now. */
   | { readonly outcome: "busy" }
   /** An earlier restore already moved a folder; the next start finishes it first. */
-  | { readonly outcome: "unfinished" }
-  | { readonly outcome: "stopped" };
+  | { readonly outcome: "unfinished" };
 
 /**
  * Checks a backup and copies it beside the Library, each file compared with the backup's own
@@ -286,8 +285,8 @@ export async function prepareScientLibraryRestore(input: {
   /** A finished backup folder. */
   readonly backup: string;
   readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
-  /** Asked between files; true abandons the copy and removes it. */
-  readonly shouldStop?: () => boolean;
+  /** Tests only: runs before each file is copied. */
+  readonly faults?: { readonly beforeCopy?: () => void };
   readonly actor?: ScientSourceActor;
 }): Promise<ScientLibraryRestorePrepared> {
   await NodeFSP.mkdir(NodePath.dirname(input.libraryRoot), { recursive: true });
@@ -326,10 +325,7 @@ export async function prepareScientLibraryRestore(input: {
         await NodeFSP.mkdir(staged);
         created = true;
         for (const [index, file] of manifest.files.entries()) {
-          if (input.shouldStop?.()) {
-            await discard();
-            return { outcome: "stopped" };
-          }
+          input.faults?.beforeCopy?.();
           const from = NodePath.join(payload, ...file.path.split("/"));
           // Enumeration is not a copy boundary: a payload may have been replaced since then.
           // Require the same canonical, regular-file boundary as the backup checker.
@@ -411,9 +407,7 @@ export async function prepareScientLibraryRestore(input: {
           MAX_SMALL_BYTES,
         );
         // A kept Library that waited to be put back stays where it is; only a copy goes.
-        if (earlier && earlier.putBack === undefined) {
-          await NodeFSP.rm(paths.staged(earlier.restoreId), { recursive: true, force: true });
-        }
+        if (earlier && earlier.putBack === undefined) await dropReplacedCopy(paths, earlier);
         return { outcome: "ready", restoreId, backupCreatedAt: manifest.createdAt, counts };
       },
       { timeoutMs: 0 },
@@ -423,6 +417,19 @@ export async function prepareScientLibraryRestore(input: {
     if (error instanceof ScientLibraryBusyError && !created) return { outcome: "busy" };
     throw error;
   }
+}
+
+/**
+ * Removes the copy a new choice replaced. The new intent is already written, so a folder that
+ * cannot go now (a file held open on Windows) is left to the sweep after the next start.
+ */
+async function dropReplacedCopy(
+  paths: ReturnType<typeof beside>,
+  earlier: ScientLibraryRestoreIntent,
+): Promise<void> {
+  await NodeFSP.rm(paths.staged(earlier.restoreId), { recursive: true, force: true }).catch(
+    () => undefined,
+  );
 }
 
 export type ScientLibraryPutBackPrepared =
@@ -494,9 +501,7 @@ export async function prepareScientLibraryPutBack(input: {
           MAX_SMALL_BYTES,
         );
         // A copy of a backup that was waiting is replaced by this choice.
-        if (earlier && earlier.putBack === undefined) {
-          await NodeFSP.rm(paths.staged(earlier.restoreId), { recursive: true, force: true });
-        }
+        if (earlier && earlier.putBack === undefined) await dropReplacedCopy(paths, earlier);
         return { outcome: "ready", restoreId, setAsideAt: record.finishedAt, counts };
       },
       { timeoutMs: 0 },

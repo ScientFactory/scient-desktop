@@ -23,6 +23,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import { ProjectService } from "../../../project/ProjectService.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
   workspaceResolverForTest,
@@ -130,6 +131,7 @@ it.effect("a library-mode agent tool runs through the real MCP layers with the s
         McpHttpServer.ScientSourcesToolkitRegistrationLive,
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.mock(ProjectService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (presented) => Effect.succeed(presented === token ? scope : undefined),

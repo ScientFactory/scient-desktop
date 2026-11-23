@@ -25,6 +25,8 @@ import {
   SCIENT_ALWAYS_LOADED_TOOLS,
 } from "./scient/ScientAgentToolLoading.ts";
 // SCIENT-FORK:END
+import { hostToolVisibility } from "../mcp/ScientMcpProtocol.ts";
+import { scientOperationCatalog } from "../mcp/ScientOperationCatalog.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -221,6 +223,22 @@ it.effect("keeps the eager Claude list small and exposes Compute before discover
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
 // SCIENT-FORK:END
+
+// The tool list dies on a tool no one owns, and an outside client lists every tool.
+it.effect("every advertised tool is owned by a Scient operation or declared as a host tool", () =>
+  Effect.gen(function* () {
+    const mcp = yield* McpServer.McpServer;
+    const host = hostToolVisibility(McpHttpServer.hostMcpTools, McpHttpServer.hostMcpToolGrants);
+    const unowned = mcp.tools
+      .map(({ tool }) => tool.name)
+      // ScientAgentFeedbackGate keeps agentFeedback off in Scient, so t3_feedback is never listed.
+      .filter(
+        (name) =>
+          name !== "t3_feedback" && !scientOperationCatalog.forTool(name) && !host.owns(name),
+      );
+    expect(unowned).toEqual([]);
+  }).pipe(Effect.provide(layerAdvertisedTools)),
+);
 
 // CI rejects a PR that raises any value above main's agentContextBudget.json, so growth
 // needs the agent-context-increase label. Lower the values when the text shrinks.

@@ -88,6 +88,10 @@
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"
     },
+    "./project-displaced-copies": {
+      "types": "./src/projectDisplacedCopies.ts",
+      "import": "./src/projectDisplacedCopies.ts"
+    },
     "./project-package": {
       "types": "./src/projectPackage.ts",
       "import": "./src/projectPackage.ts"

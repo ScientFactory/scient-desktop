@@ -1,6 +1,19 @@
-import { describe, expect, it } from "@effect/vitest";
+// @effect-diagnostics nodeBuiltinImport:off -- A pick writes review files in real folders.
+import * as NodeAsyncHooks from "node:async_hooks";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
-import { scientReviewVersionDifferences } from "./libraryReviewConflicts.ts";
+import { initializeScientProject } from "@scientfactory/project-init";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+
+import { ScientLibraryBusyError, withScientLibraryLock } from "./libraryLock.ts";
+import {
+  resolveScientReviewConflict,
+  scientReviewVersionDifferences,
+} from "./libraryReviewConflicts.ts";
+import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import type {
   ScientReviewScreening,
   ScientReviewSearch,
@@ -45,6 +58,15 @@ const search = (searchId: string, more: Partial<ScientReviewSearch> = {}): Scien
   loggedAt: "2026-11-01T00:00:00.000Z",
   loggedBy: "user",
   ...more,
+});
+
+vi.mock("node:fs/promises", { spy: true });
+
+const fixtures: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
 });
 
 const differences = (here: ScientSystematicReview, other: ScientSystematicReview, offset = 0) =>
@@ -249,5 +271,87 @@ describe("differences between two versions of a review", () => {
     expect(last.records.onlyOther).toBe(101);
     expect(last.rows).toMatchObject([{ kind: "record", sourceId: "source_100", in: "other" }]);
     expect(last.nextOffset).toBeNull();
+  });
+});
+
+describe("choosing a version of a review", () => {
+  it("sets the version it does not keep aside inside the Library's lock, so a backup copies all of it or none", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-review-pick-")),
+    );
+    fixtures.push(base);
+    const projectRoot = NodePath.join(base, "project");
+    await NodeFSP.mkdir(projectRoot);
+    await initializeScientProject({ root: projectRoot });
+    const libraryRoot = NodePath.join(base, "library");
+    await ensureScientLibrary(libraryRoot);
+    const write = async (relative: string, value: ScientSystematicReview) => {
+      const path = NodePath.join(projectRoot, ...relative.split("/"));
+      await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+      await NodeFSP.writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+    };
+    await write(".scient/library/reviews/review_1.json", review({}));
+    await write(
+      ".scient/library/conflicts/reviews/review_1/0123456789ab.json",
+      review({ title: "Sepsis trials, laptop" }),
+    );
+
+    // Asked from outside the pick, as a backup starting then would ask.
+    const outside = NodeAsyncHooks.AsyncLocalStorage.snapshot();
+    const lockWhileSetAside: string[] = [];
+    const { writeFile } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    using _probe = vi.spyOn(NodeFSP, "writeFile").mockImplementation(async (...args) => {
+      if (String(args[0]).includes(`${NodePath.sep}migrations${NodePath.sep}`)) {
+        lockWhileSetAside.push(
+          await outside(() =>
+            withScientLibraryLock(libraryRoot, async () => "free", { timeoutMs: 0 }).catch(
+              (error: unknown) => {
+                if (error instanceof ScientLibraryBusyError) return "held";
+                throw error;
+              },
+            ),
+          ),
+        );
+      }
+      return writeFile(...args);
+    });
+
+    expect(
+      await resolveScientReviewConflict({
+        projectRoot,
+        library: scientLibraryLocation(libraryRoot),
+        reviewId: "review_1",
+        conflictId: "0123456789ab",
+        pick: "use-other",
+        actor: "user",
+      }),
+    ).toEqual({ outcome: "resolved", report: null });
+    expect(lockWhileSetAside).toEqual(["held"]);
+
+    // A stop while a version is written leaves no folder that looks like a whole version.
+    await write(
+      ".scient/library/conflicts/reviews/review_1/0123456789cd.json",
+      review({ title: "Sepsis trials, desktop" }),
+    );
+    _probe.mockImplementation(async (...args) => {
+      if (String(args[0]).includes(`${NodePath.sep}migrations${NodePath.sep}`)) {
+        throw new Error("Disk full");
+      }
+      return writeFile(...args);
+    });
+    await expect(
+      resolveScientReviewConflict({
+        projectRoot,
+        library: scientLibraryLocation(libraryRoot),
+        reviewId: "review_1",
+        conflictId: "0123456789cd",
+        pick: "use-other",
+        actor: "user",
+      }),
+    ).rejects.toThrow("Disk full");
+    const kept = (
+      await NodeFSP.readdir(NodePath.join(libraryRoot, "migrations"), { recursive: true })
+    ).filter((path) => /review_1[/\\][^/\\]+$/u.test(path));
+    expect(kept.filter((path) => !path.endsWith(".partial"))).toHaveLength(1);
   });
 });

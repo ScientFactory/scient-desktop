@@ -125,7 +125,9 @@ export function SourcesActiveFilters(props: {
         />
       ) : null}
       <span className="ms-auto tabular-nums" aria-live="polite">
-        {props.matchCount === 1 ? gt("1 source") : `${props.matchCount} sources`}
+        {props.matchCount === 1
+          ? gt("1 source")
+          : gt("{count} sources", { count: props.matchCount.toLocaleString() })}
       </span>
       <Menu>
         <MenuTrigger

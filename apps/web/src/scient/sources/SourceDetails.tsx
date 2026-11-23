@@ -77,6 +77,7 @@ import {
 } from "./libraryLabels";
 import { agentVerificationLabel, fileNameTitleLabel } from "./sourceLabels";
 import { pdfVersionLabel } from "./sourcePdfVersion";
+import { KeptCopies } from "./KeptCopies";
 import { SourceEditorialStatus } from "./SourceEditorialStatus";
 import { verificationProblemLabel } from "./sourceLifecycleLabels";
 import { SourceReference } from "./SourceReference";
@@ -1022,7 +1023,7 @@ export function SourceDetails(props: {
             if (open) props.onSourceActionsOpen?.();
           }}
         >
-          <ScientTooltip content="More source actions">
+          <ScientTooltip content={gt("More source actions")}>
             <MenuTrigger
               render={
                 <Button size="icon-xs" variant="ghost" aria-label={gt("More source actions")}>
@@ -1297,6 +1298,11 @@ export function SourceDetails(props: {
                     match={record.libraryMatch}
                     library={readOnly ? undefined : library}
                   />
+                ) : null}
+                {record.keptCopies && record.keptCopies.length > 0 ? (
+                  <DetailsSection title={gt("Earlier values kept after merge Undo")}>
+                    <KeptCopies copies={record.keptCopies} />
+                  </DetailsSection>
                 ) : null}
 
                 <SourceReference
