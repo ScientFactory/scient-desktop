@@ -1004,10 +1004,15 @@ function ThreadDetailBody(
     readonly threadKey: string;
     readonly now: number;
   } | null>(null);
+  const selectedProviderDriver =
+    props.serverConfig?.providers.find(
+      (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+    )?.driver ?? null;
   // Approval/question identity invalidates quota: answering on any client resumes spending.
   const usageLimitsKey = [
     selectedThreadKey,
     props.selectedThread.modelSelection.instanceId,
+    selectedProviderDriver === "scient" ? props.selectedThread.modelSelection.model : "",
     props.selectedThread.latestRun?.runId ?? "",
     props.activePendingApproval?.requestId ?? props.activePendingUserInput?.requestId ?? "",
   ].join(":");

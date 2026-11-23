@@ -81,22 +81,21 @@ export function modelFallbackBannerItem(
   {
     fallbackModelName,
     defaultProviderName,
-    defaultModelName,
+    limitLabel,
     resetsAt,
     timestampFormat,
-    onUseDefault,
     onDismiss,
   }: {
     readonly fallbackModelName: string;
     readonly defaultProviderName: string;
-    readonly defaultModelName: string;
+    readonly limitLabel?: string | undefined;
     readonly resetsAt: string | null;
     readonly timestampFormat: TimestampFormat;
-    readonly onUseDefault: () => void;
     readonly onDismiss: () => void;
   },
   resolve: MessageResolver = m,
 ): ComposerBannerStackItem {
+  const subject = limitLabel?.trim() || defaultProviderName;
   return {
     id: "fallback-model",
     variant: "info",
@@ -105,7 +104,7 @@ export function modelFallbackBannerItem(
     description: resetsAt
       ? resolve(
           msg("{provider} is out of usage · resets {time}", {
-            provider: defaultProviderName,
+            provider: subject,
             time: formatUpcomingTimestamp(
               resetsAt,
               timestampFormat,
@@ -115,12 +114,7 @@ export function modelFallbackBannerItem(
             ),
           }),
         )
-      : resolve(msg("{provider} is out of usage", { provider: defaultProviderName })),
-    actions: (
-      <Button size="xs" variant="ghost" onClick={onUseDefault}>
-        {resolve(msg("Use {model}", { model: defaultModelName }))}
-      </Button>
-    ),
+      : resolve(msg("{provider} is out of usage", { provider: subject })),
     dismissLabel: resolve(msg("Dismiss fallback model notice")),
     onDismiss,
   };
