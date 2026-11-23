@@ -4406,7 +4406,9 @@ export const layerWsRpc = (
           dataViews: yield* DataViews.DataViews,
           // SCIENT-FORK:END
           saveComputeOutput,
+          // SCIENT-FORK:START — pass the shared notebook store to the scientific handlers.
           notebooks,
+          // SCIENT-FORK:END
           saveConsoleNotebook,
           computeNotebookOutputs,
           // SCIENT-FORK:START — mount shared notebook and result operations.

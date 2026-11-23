@@ -85,7 +85,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.subscribeAnalysisRuns
   | typeof WS_METHODS.subscribeComputeSessions
+  // SCIENT-FORK:START — keep fresh notebook run updates on the streaming client.
   | typeof WS_METHODS.subscribeNotebookFreshRun
+  // SCIENT-FORK:END
   | typeof WS_METHODS.subscribeComputeActiveWork
   | typeof WS_METHODS.subscribeDocumentBindingChanges
   // SCIENT-FORK:START — Scient Extensions change stream.
