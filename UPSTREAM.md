@@ -731,6 +731,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`4ce9f8c1b87e3b70682a9e1a5737679340ebdfae` is recorded in
+[the 2026-11-24 8ff66fc563 receipt](docs/internals/t3-upstream-sync-20261124-8ff66fc563.md).
+Literal merge `90e38a8031645ba1fe37b86c280be23ec4d33709` has owned base
+`3f2a2402ce4975dcdda3fc6a0fa3a40b07dcc039` and the frozen official target as parents, retaining
+the 192 official commits after `8ff66fc563`. T3's Workflows page is taken behind its Labs switch,
+off by default; agent feedback stays off. T3's numbered docs are adopted, with Scient's own content
+in `scient-*` docs. T3's migration 111 is Scient's 115. Release remains separate.
+
+The previous committed alignment through
 `8ff66fc563357110fdb79a0f7e3a64530b70fe29` is recorded in
 [the 2026-11-23 25440f5bd5 receipt](docs/internals/t3-upstream-sync-20261123-25440f5bd5.md).
 Literal merge `f1092cfee955108534019e0bf1a5c6ac42a301d7` has owned base
@@ -739,7 +748,7 @@ the 48 official commits after `25440f5bd5`. T3's durable workflows stay off as s
 feedback stays off in Scient; large files load in full in the file preview and a new thread opens
 its draft at once. T3's migrations 108-110 are Scient's 112-114. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `25440f5bd5050e262bab4a01b21895f52476e3b7` is recorded in
 [the 2026-11-22 15d945faef receipt](docs/internals/t3-upstream-sync-20261122-15d945faef.md).
 Literal merge `d4b67d21b8e98b1965bb99f8b24b731fc6fbc6b2` has owned base
