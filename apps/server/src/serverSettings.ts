@@ -169,8 +169,6 @@ const normalizeServerSettings = (
     Effect.map(foldProviderInstanceEnabledFlags),
     Effect.map((next) => withIdleCompaction(next, globalIdleCompaction(next))),
     Effect.map((next) => ({ ...next, ...deriveLegacyProjectOverrides(next) })),
-    // SCIENT-FORK: agent feedback stays off in Scient; see ScientAgentFeedbackGate.
-    Effect.map(withScientAgentFeedbackOff),
     Effect.mapError(
       (cause) =>
         new ServerSettingsError({
@@ -374,7 +372,11 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
   const writeSemaphore = yield* Semaphore.make(1);
-  const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
+  // SCIENT-FORK:START — agent feedback reads as off, as in the live service.
+  const toTestEffective = (settings: ServerSettings) =>
+    withScientAgentFeedbackOff(resolveTextGenerationProvider(settings));
+  const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(toTestEffective));
+  // SCIENT-FORK:END
 
   const updateTestSettings = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
@@ -384,7 +386,8 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
         Effect.flatMap(update),
         Effect.flatMap(normalizeServerSettings),
         Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-        Effect.map(resolveTextGenerationProvider),
+        // SCIENT-FORK: agent feedback reads as off, as in the live service.
+        Effect.map(toTestEffective),
       ),
     );
 

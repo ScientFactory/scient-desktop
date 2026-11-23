@@ -278,6 +278,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("agent feedback h
     }).pipe(Effect.provide(layerWithPolicy())),
   );
 
+  it.effect("lets an unrelated write through a saved and locked mode", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(config.settingsPath, '{"agentFeedback":{"mode":"auto"}}');
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const updated = yield* service.updateSettings({ workflowsEnabled: true });
+      assert.isTrue(updated.workflowsEnabled);
+      assert.deepEqual(yield* readModes, ["off", "off"]);
+    }).pipe(
+      Effect.provide(
+        layerWithPolicy({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: { "agentFeedback.mode": { value: "auto", locked: true } },
+        }),
+      ),
+    ),
+  );
+
   it.effect("reads a managed lock as off", () =>
     readModes.pipe(
       Effect.map((modes) => assert.deepEqual(modes, ["off", "off"])),
