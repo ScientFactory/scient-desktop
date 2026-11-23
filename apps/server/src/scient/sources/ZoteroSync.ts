@@ -228,6 +228,9 @@ export async function recordZoteroSync(input: {
       note: notes.note,
       ...(zoteroNote !== undefined ? { zoteroNote } : {}),
       ...(notes.notes ? { notes: [...notes.notes] } : {}),
+      ...(input.record.origin?.operationId !== undefined
+        ? { importOperationId: input.record.origin.operationId }
+        : {}),
       attachmentKeys: [...input.attachmentKeys],
       ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
     },
@@ -512,6 +515,9 @@ async function refreshOne(input: {
     note: plan.base.note,
     ...(plan.base.zoteroNote !== undefined ? { zoteroNote: plan.base.zoteroNote } : {}),
     ...(plan.base.notes ? { notes: [...plan.base.notes] } : {}),
+    ...(record.origin?.operationId !== undefined
+      ? { importOperationId: record.origin.operationId }
+      : {}),
     attachmentKeys: attached.keys,
     pdfs: Object.fromEntries(pdfs),
   });
@@ -764,6 +770,9 @@ async function syncAfterSend(input: {
         ? { zoteroNote: input.created.notes.zoteroNote }
         : {}),
       ...(input.created.notes.notes ? { notes: [...input.created.notes.notes] } : {}),
+      ...(record.origin?.operationId !== undefined
+        ? { importOperationId: record.origin.operationId }
+        : {}),
       attachmentKeys: [],
     });
     return;

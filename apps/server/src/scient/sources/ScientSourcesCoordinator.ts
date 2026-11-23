@@ -1841,8 +1841,9 @@ async function importZoteroOperationItem(input: {
         base && base.itemKey === input.itemKey && base.libraryId === reference?.libraryId
           ? base
           : null;
+      const namespaceBase = ownBase && ownBase.itemKey === input.itemKey ? ownBase : sameItemBase;
       const annotationLibraryId =
-        sameItemBase?.annotationLibraryId ?? sameItemBase?.libraryId ?? reference?.libraryId;
+        namespaceBase?.annotationLibraryId ?? namespaceBase?.libraryId ?? reference?.libraryId;
       if (annotationLibraryId === undefined) {
         throw new Error("This source is not linked to a Zotero item.");
       }
