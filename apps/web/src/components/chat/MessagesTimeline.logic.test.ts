@@ -1866,8 +1866,10 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
     });
-    expect(streamingReply.at(-1)?.id).toBe("assistant-entry");
-    expect(streamingReply.some((row) => row.kind === "thinking")).toBe(false);
+    // SCIENT-FORK:START — Scient keeps Thinking under a streaming reply; ThinkingRowFade hides it
+    // once the reply's lines appear.
+    expect(streamingReply.some((row) => row.kind === "thinking")).toBe(true);
+    // SCIENT-FORK:END
   });
 
   it("keeps a promptless restart in one active visual response", () => {
@@ -4606,6 +4608,9 @@ it("keeps the working header in place across worktree setup handoff", () => {
     "worktree-setup",
     "working",
     "message",
+    // SCIENT-FORK:START — Thinking stays under a streaming reply until ThinkingRowFade hides it.
+    "thinking",
+    // SCIENT-FORK:END
   ]);
 
   const stage = (id: "agent" | "setup-script", status: "done" | "running") =>
