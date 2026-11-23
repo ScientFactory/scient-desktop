@@ -224,16 +224,19 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
       await page.viewport(viewportSize.width, viewportSize.height);
     });
     root.classList.toggle("dark", theme === "dark");
-    await page.viewport(360, 820);
+    await page.viewport(900, 820);
     await using screen = await render(
       <div className="flex h-dvh w-full bg-background text-foreground">
-        <ScientNotebookSurface
-          environmentId={environmentId}
-          cwd="/project"
-          relativePath="threshold.ipynb"
-          threadRef={threadRef}
-          fileRevision="1.0"
-        />
+        <div className="shrink-0 border-e" style={{ width: 540 }} />
+        <section aria-label="Notebook pane" className="flex min-w-0 flex-1 flex-col">
+          <ScientNotebookSurface
+            environmentId={environmentId}
+            cwd="/project"
+            relativePath="threshold.ipynb"
+            threadRef={threadRef}
+            fileRevision="1.0"
+          />
+        </section>
       </div>,
     );
 
@@ -242,20 +245,35 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
       "[data-assistant-citation-viewport]",
     )!;
     await expect.element(screen.getByRole("heading", { name: "Threshold analysis" })).toBeVisible();
+    const pane = screen.getByRole("region", { name: "Notebook pane" }).element();
     const editorWidth = viewport.clientWidth;
+    expect(pane.clientWidth).toBe(360);
     (outline.element() as HTMLButtonElement).focus();
     await userEvent.keyboard("{Enter}");
-    const sheet = page.getByRole("dialog", { name: "Notebook outline" });
-    const destination = sheet.getByRole("button", { name: heading });
+    const popup = page.getByRole("dialog", { name: "Notebook outline" });
+    const destination = popup.getByRole("button", { name: heading });
     await expect.element(destination).toBeVisible();
     expect(viewport.clientWidth).toBe(editorWidth);
-    (destination.element() as HTMLButtonElement).focus();
+    await vi.waitFor(() => {
+      const paneBounds = pane.getBoundingClientRect();
+      const outlineBounds = popup.element().getBoundingClientRect();
+      expect(outlineBounds.left).toBeGreaterThanOrEqual(paneBounds.left);
+      expect(outlineBounds.right).toBeLessThanOrEqual(paneBounds.right);
+      expect(outlineBounds.top).toBeGreaterThanOrEqual(
+        outline.element().getBoundingClientRect().bottom,
+      );
+    });
     if (screenshots) {
-      await vi.waitFor(() => expect(getComputedStyle(sheet.element()).opacity).toBe("1"));
-      await page.screenshot({ path: `${screenshots}/sheet-360-${theme}.png` });
+      await vi.waitFor(() => expect(getComputedStyle(popup.element()).opacity).toBe("1"));
+      await page.screenshot({ path: `${screenshots}/popover-360-${theme}.png` });
     }
+    await userEvent.keyboard("{Escape}");
+    await expect.element(outline).toHaveFocus();
     await userEvent.keyboard("{Enter}");
-    await expect.element(sheet).not.toBeInTheDocument();
+    await expect.element(destination).toBeVisible();
+    (destination.element() as HTMLButtonElement).focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(popup).not.toBeInTheDocument();
     await expect.element(screen.getByRole("heading", { name: heading })).toHaveFocus();
 
     const editorSlider = screen.getByRole("slider", { name: "threshold" });
@@ -269,7 +287,7 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
     expect(freshStart).not.toHaveBeenCalled();
     if (screenshots) await page.screenshot({ path: `${screenshots}/editor-360-${theme}.png` });
 
-    await page.viewport(700, 820);
+    await page.viewport(1240, 820);
     await expect.element(outline).not.toHaveAttribute("aria-haspopup");
     await outline.click();
     const dock = screen.getByRole("navigation", { name: "Notebook outline" });
@@ -297,7 +315,7 @@ it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
       }),
     );
 
-    await page.viewport(360, 820);
+    await page.viewport(900, 820);
     await screen.getByRole("button", { name: "Reader view" }).click();
     const readerSlider = screen.getByRole("slider", { name: "threshold" });
     const saved = screen.getByRole("status", { name: "Saved run status" });

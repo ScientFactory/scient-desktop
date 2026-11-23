@@ -16,7 +16,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
 import { MenuItem, MenuSeparator } from "~/components/ui/menu";
-import { Sheet, SheetHeader, SheetPopup, SheetTitle } from "~/components/ui/sheet";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
@@ -231,17 +231,19 @@ export default function ScientNotebookSurface(props: {
   const selected = useStore(controller.store, (state) => state.selected);
   const [dockedOutline, setDockedOutline] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [outlinePopupOpen, setOutlinePopupOpen] = useState(false);
+  const [notebookPane, setNotebookPane] = useState<HTMLDivElement | null>(null);
   const outlineButton = useRef<HTMLButtonElement>(null);
-  const outlineDestination = useRef<{ readonly cellId: string; readonly heading: number } | null>(
-    null,
-  );
+  const outlineDestination = useRef<
+    { readonly cellId: string; readonly heading: number } | "trigger" | null
+  >(null);
   const observeNotebookWidth = useStableCallback((node: HTMLDivElement | null) => {
+    setNotebookPane(node);
     if (node === null) return;
     const measure = () => {
       const docked = node.clientWidth >= 640;
       setDockedOutline(docked);
-      if (docked) setSheetOpen(false);
+      if (docked) setOutlinePopupOpen(false);
     };
     measure();
     return observeResize(node, measure);
@@ -651,7 +653,6 @@ export default function ScientNotebookSurface(props: {
       focusedCell.heading
     ];
   }
-  const outlineOpen = dockedOutline ? dockOpen : sheetOpen;
   const outline = (
     <NotebookOutline
       headings={sections.headings}
@@ -663,7 +664,7 @@ export default function ScientNotebookSurface(props: {
           focusCell(heading.cellId, "cell", index - first);
         } else {
           outlineDestination.current = { cellId: heading.cellId, heading: index - first };
-          setSheetOpen(false);
+          setOutlinePopupOpen(false);
         }
       }}
     />
@@ -802,23 +803,64 @@ export default function ScientNotebookSurface(props: {
                     <BookOpen />
                   </Button>
                 </ScientTooltip>
-                <ScientTooltip content={gt("Notebook outline")}>
-                  <Button
-                    ref={outlineButton}
-                    size="icon-xs"
-                    variant={outlineOpen ? "selected" : "ghost-muted"}
-                    focus="edge"
-                    aria-label={gt("Notebook outline")}
-                    aria-expanded={outlineOpen}
-                    aria-haspopup={dockedOutline ? undefined : "dialog"}
-                    onClick={() => {
-                      if (dockedOutline) setDockOpen(!dockOpen);
-                      else setSheetOpen(!sheetOpen);
+                {dockedOutline ? (
+                  <ScientTooltip content={gt("Notebook outline")}>
+                    <Button
+                      size="icon-xs"
+                      variant={dockOpen ? "selected" : "ghost-muted"}
+                      focus="edge"
+                      aria-label={gt("Notebook outline")}
+                      aria-expanded={dockOpen}
+                      onClick={() => setDockOpen(!dockOpen)}
+                    >
+                      <ListTree />
+                    </Button>
+                  </ScientTooltip>
+                ) : (
+                  <Popover
+                    open={outlinePopupOpen}
+                    onOpenChange={(open, details) => {
+                      if (!open && details.reason === "escape-key") {
+                        outlineDestination.current = "trigger";
+                      }
+                      setOutlinePopupOpen(open);
+                    }}
+                    onOpenChangeComplete={(open) => {
+                      if (open) return;
+                      const target = outlineDestination.current;
+                      outlineDestination.current = null;
+                      if (target === "trigger") outlineButton.current?.focus();
+                      else if (target !== null) focusCell(target.cellId, "cell", target.heading);
                     }}
                   >
-                    <ListTree />
-                  </Button>
-                </ScientTooltip>
+                    <ScientTooltip content={gt("Notebook outline")}>
+                      <PopoverTrigger
+                        ref={outlineButton}
+                        aria-label={gt("Notebook outline")}
+                        render={
+                          <Button
+                            size="icon-xs"
+                            variant={outlinePopupOpen ? "selected" : "ghost-muted"}
+                            focus="edge"
+                          />
+                        }
+                      >
+                        <ListTree />
+                      </PopoverTrigger>
+                    </ScientTooltip>
+                    <PopoverPopup
+                      aria-label={gt("Notebook outline")}
+                      align="end"
+                      width="md"
+                      padding="tight"
+                      className="max-w-(--available-width)"
+                      collisionBoundary={notebookPane ?? undefined}
+                      finalFocus={false}
+                    >
+                      {outline}
+                    </PopoverPopup>
+                  </Popover>
+                )}
                 <ScientTooltip content={gt("Variables")}>
                   <Button
                     size="icon-xs"
@@ -922,26 +964,6 @@ export default function ScientNotebookSurface(props: {
             {outline}
           </nav>
         ) : null}
-        <Sheet
-          open={sheetOpen}
-          onOpenChange={setSheetOpen}
-          onOpenChangeComplete={(open) => {
-            if (open) return;
-            const target = outlineDestination.current;
-            outlineDestination.current = null;
-            if (target === null) outlineButton.current?.focus();
-            else focusCell(target.cellId, "cell", target.heading);
-          }}
-        >
-          <SheetPopup side="left" finalFocus={false}>
-            <SheetHeader>
-              <SheetTitle>
-                <T>Notebook outline</T>
-              </SheetTitle>
-            </SheetHeader>
-            <div className="min-h-0 overflow-auto px-4 pb-4">{outline}</div>
-          </SheetPopup>
-        </Sheet>
         <div
           ref={attachScroller}
           data-assistant-citation-viewport=""
