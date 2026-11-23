@@ -1,5 +1,7 @@
 import type {
   ComputeResultCause,
+  ComputeResultsRerunInput,
+  ComputeResultsCompareInput,
   ComputeResultScript,
   ComputeResultSummary,
 } from "@t3tools/contracts";
@@ -8,11 +10,13 @@ import {
   formatResultTableCaption,
   formatResultValueMarkdown,
   isResultTableOutput,
+  resultInputCoverageIncomplete,
   type ResultReferenceState,
 } from "@t3tools/shared/computeResults";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as Schema from "effect/Schema";
 
 import { agentScope, computeFailed } from "./agentComputeScope.ts";
 
@@ -24,11 +28,13 @@ const CAUSE_LABELS: Record<ComputeResultCause["kind"], string> = {
   "input-changed": "input changed",
   "input-missing": "input missing",
   "input-changed-during-run": "input changed while the script ran",
+  "lockfile-changed": "environment may differ",
 };
 
 /** The editor's states, in words an agent reads without the app. */
 const STATE_FOR_AGENT: Record<ResultReferenceState, string> = {
   current: "current",
+  incomplete: "freshness-partly-unknown",
   newer: "newer-run",
   stale: "out-of-date",
   edited: "edited",
@@ -37,7 +43,12 @@ const STATE_FOR_AGENT: Record<ResultReferenceState, string> = {
 };
 
 const describeCauses = (causes: ReadonlyArray<ComputeResultCause>) =>
-  causes.map((cause) => `${CAUSE_LABELS[cause.kind]}: ${cause.path}`);
+  causes
+    .filter((cause) => cause.kind !== "lockfile-changed")
+    .map((cause) => `${CAUSE_LABELS[cause.kind]}: ${cause.path}`);
+
+const environmentMayDiffer = (causes: ReadonlyArray<ComputeResultCause>) =>
+  causes.filter(({ kind }) => kind === "lockfile-changed").map(({ path }) => path);
 
 const summaryForAgent = (summary: ComputeResultSummary) => ({
   revision: summary.revision,
@@ -45,12 +56,21 @@ const summaryForAgent = (summary: ComputeResultSummary) => ({
   finishedAt: summary.finishedAt,
   inputTracking: summary.inputTracking,
   inputs: summary.inputs,
+  observedDirectories: summary.observedDirectories,
+  readsOutsideProject: summary.readsOutsideProject,
+  outsideDataPaths: summary.outsideDataPaths,
+  declaredInputs: summary.declaredInputs ?? [],
+  parameters: summary.parameters ?? [],
+  inputCoverageIncomplete: resultInputCoverageIncomplete(summary),
+  kind: summary.kind ?? ("script" as const),
   outOfDate: describeCauses(summary.causes),
+  environmentMayDiffer: environmentMayDiffer(summary.causes),
 });
 
 const scriptForAgent = (script: ComputeResultScript) => ({
   latest: summaryForAgent(script.latest),
   revisions: script.revisions,
+  lastAttempt: script.lastAttempt ?? null,
   values: script.values.map((value) => ({
     ...value,
     markdown: formatResultValueMarkdown(value.value, {
@@ -65,11 +85,27 @@ const scriptForAgent = (script: ComputeResultScript) => ({
 
 export const runScientResults = Effect.fn("ScientResultsTools.run")(function* (input: {
   readonly path: string;
+  readonly parameters?: Readonly<Record<string, Schema.Json>> | undefined;
+  readonly inputs?: ComputeResultsRerunInput["inputs"];
   readonly waitSeconds?: number | undefined;
 }) {
   const scope = yield* agentScope();
   const outcome = yield* scope.gateway
-    .rerunResults({ cwd: scope.cwd, scriptPath: input.path, threadId: scope.threadId })
+    .rerunResults({
+      cwd: scope.cwd,
+      scriptPath: input.path,
+      threadId: scope.threadId,
+      parameters:
+        input.parameters === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(input.parameters).map(([name, value]) => [
+                name,
+                JSON.stringify(value),
+              ]),
+            ),
+      inputs: input.inputs,
+    })
     .pipe(
       Effect.timeoutOption(Duration.seconds(input.waitSeconds ?? DEFAULT_WAIT_SECONDS)),
       Effect.mapError(computeFailed),
@@ -99,12 +135,70 @@ export const runScientResults = Effect.fn("ScientResultsTools.run")(function* (i
   };
 });
 
-export const listScientResults = Effect.fn("ScientResultsTools.list")(function* () {
+export const listScientResults = Effect.fn("ScientResultsTools.list")(function* (input: {
+  readonly path?: string | undefined;
+  readonly revision?: string | undefined;
+  readonly output?: string | undefined;
+  readonly includePackages?: boolean | undefined;
+}) {
   const scope = yield* agentScope();
+  if (input.revision !== undefined || input.output !== undefined) {
+    if (input.revision === undefined || input.output === undefined)
+      return yield* computeFailed({ message: "Provide both a revision and its output name." });
+    return {
+      scripts: [],
+      outputContent: yield* scope.gateway
+        .resultOutputContent({
+          cwd: scope.cwd,
+          revision: input.revision,
+          output: input.output,
+        })
+        .pipe(Effect.mapError(computeFailed)),
+    };
+  }
   const { scripts } = yield* scope.gateway
     .listResults({ cwd: scope.cwd })
     .pipe(Effect.mapError(computeFailed));
-  return { scripts: scripts.map(scriptForAgent) };
+  if (input.path === undefined) return { scripts: scripts.map(scriptForAgent) };
+  const script = scripts.find(({ latest }) => latest.scriptPath === input.path);
+  const {
+    history: { latest, revisions },
+    setup,
+  } = yield* Effect.all(
+    {
+      history: scope.gateway.resultHistory({
+        cwd: scope.cwd,
+        scriptPath: input.path,
+        includeLatest: true,
+      }),
+      setup: scope.gateway.resultSetup({ cwd: scope.cwd, scriptPath: input.path }),
+    },
+    { concurrency: "unbounded" },
+  ).pipe(Effect.mapError(computeFailed));
+  const { packages, ...environment } = latest?.environment ?? {
+    lockfiles: [],
+    packages: undefined,
+  };
+  const latestRecord =
+    latest?.environment !== undefined && input.includePackages !== true
+      ? { ...latest, environment }
+      : latest;
+  return {
+    scripts: script === undefined ? [] : [scriptForAgent(script)],
+    history: revisions,
+    suggestedInputs: setup.suggestedInputs,
+    ...(latestRecord === undefined ? {} : { latestRecord }),
+    ...(packages === undefined ? {} : { packageCount: packages.length }),
+  };
+});
+
+export const compareScientResults = Effect.fn("ScientResultsTools.compare")(function* (
+  input: Omit<ComputeResultsCompareInput, "cwd">,
+) {
+  const scope = yield* agentScope();
+  return yield* scope.gateway
+    .compareResults({ cwd: scope.cwd, ...input })
+    .pipe(Effect.mapError(computeFailed));
 });
 
 export const scientResultMarkdown = Effect.fn("ScientResultsTools.markdown")(function* (input: {
@@ -176,6 +270,7 @@ export const scientResultMarkdown = Effect.fn("ScientResultsTools.markdown")(fun
 
 const FILE_STATE_FOR_AGENT = {
   current: "current",
+  incomplete: "freshness-partly-unknown",
   "out-of-date": "out-of-date",
   edited: "edited",
   missing: "missing",
@@ -204,6 +299,7 @@ export const checkScientResults = Effect.fn("ScientResultsTools.check")(function
           newerRevision: script.newer?.revision ?? null,
           newerValue: null,
           outOfDate: describeCauses(script.summary.causes),
+          environmentMayDiffer: environmentMayDiffer(script.summary.causes),
         })),
       ),
     };
@@ -229,6 +325,7 @@ export const checkScientResults = Effect.fn("ScientResultsTools.check")(function
         newerRevision: resolved?.newer?.summary.revision ?? null,
         newerValue: resolved?.newer?.value ?? null,
         outOfDate: describeCauses(resolved?.summary.causes ?? []),
+        environmentMayDiffer: environmentMayDiffer(resolved?.summary.causes ?? []),
       };
     }),
   };

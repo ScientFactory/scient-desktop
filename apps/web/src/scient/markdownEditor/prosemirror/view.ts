@@ -1987,7 +1987,19 @@ export class ScientMarkdownEditorView {
     if (!selection.empty || selection.$from.parent.type.name !== "paragraph") return null;
     const before = selection.$from.parent.textBetween(0, selection.$from.parentOffset, "\0", "\0");
     const match = /^\/([^\s/]*)$/u.exec(before);
-    return match?.[1] ?? null;
+    if (match !== null) return match[1] ?? null;
+
+    // Keep block commands at the start of the paragraph. Result is also an inline command.
+    if (!this.canInsertResults || !/\s\/result$/iu.test(before)) return null;
+    if (selection.$from.marks().some(({ type }) => type.name === "code" || type.name === "link"))
+      return null;
+    const after = selection.$from.parent.textBetween(
+      selection.$from.parentOffset,
+      selection.$from.parent.content.size,
+      "\0",
+      "\0",
+    );
+    return /^(?:$|\s|[.,;:!?)\]](?=\s|$))/u.test(after) ? "result" : null;
   }
 
   /** The Library sources a writer can pick after typing `[@`. */
@@ -2188,8 +2200,10 @@ export class ScientMarkdownEditorView {
     const view = this.editorView;
     const query = this.slashQuery();
     if (!view || query === null || !modeIsEditable(this.mode)) return false;
-    const from = view.state.selection.$from.start();
-    view.dispatch(view.state.tr.delete(from, view.state.selection.from));
+    const { selection } = view.state;
+    const from = selection.from - query.length - 1;
+    if (from > selection.$from.start() && command !== "result") return false;
+    view.dispatch(view.state.tr.delete(from, selection.from));
     this.slashActiveIndex = 0;
     return this.execute(command);
   }

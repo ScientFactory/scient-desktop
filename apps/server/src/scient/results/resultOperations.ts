@@ -10,6 +10,14 @@ import {
   ComputeSessionId,
   TERMINAL_COMPUTE_SESSION_STATUSES,
   type ComputeResultReference,
+  type ComputeResultsRerunInput,
+  type ComputeResultsAttemptOutputInput,
+  type ComputeResultsCompareInput,
+  type ComputeResultsHistoryInput,
+  type ComputeResultsListInput,
+  type ComputeResultsPreviewInput,
+  type ComputeResultsPublicationInput,
+  type ComputeResultsSetupInput,
   type ComputeResultsRerunResult,
 } from "@t3tools/contracts";
 import { findMarkdownResultReferences, resultReferenceState } from "@t3tools/shared/computeResults";
@@ -20,7 +28,9 @@ import * as Schedule from "effect/Schedule";
 
 import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
+import type { makeNotebookRuns } from "../notebook/notebookRuns.ts";
 import type { ComputeRuntimeDescriptor } from "../compute/ComputeSessionService.ts";
+import { suggestedResultInputs, supportsResultInputSuggestions } from "./resultRevisions.ts";
 import type { ComputeResults } from "./ComputeResults.ts";
 import {
   placeLatexResult,
@@ -111,9 +121,10 @@ const requireUnaliased = async (root: string, relativePath: string) => {
 export function makeResultOperations(input: {
   readonly gateway: Pick<
     ComputeRpcGateway,
-    "project" | "startSession" | "getSession" | "listExecutions"
+    "project" | "startSession" | "getSession" | "listExecutions" | "listOutputs"
   >;
   readonly results: ComputeResults["Service"];
+  readonly runNotebookFresh: ReturnType<typeof makeNotebookRuns>["run"];
   readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
   readonly workspace: Pick<
     WorkspaceFileSystem.WorkspaceFileSystem["Service"],
@@ -136,8 +147,107 @@ export function makeResultOperations(input: {
     return { resolutions };
   });
 
-  const list = Effect.fn("ResultOperations.list")(function* (request: { readonly cwd: string }) {
-    return { scripts: yield* input.results.list(yield* project(request.cwd)) };
+  const list = Effect.fn("ResultOperations.list")(function* (request: ComputeResultsListInput) {
+    return {
+      scripts: yield* input.results.list(
+        yield* project(request.cwd),
+        request.preferCurrent,
+        request.revision,
+      ),
+    };
+  });
+
+  const outputContent = Effect.fn("ResultOperations.outputContent")(function* (request: {
+    readonly cwd: string;
+    readonly revision: string;
+    readonly output: string;
+  }) {
+    return yield* input.results.outputContent(
+      yield* project(request.cwd),
+      request.revision,
+      request.output,
+    );
+  });
+
+  const setup = Effect.fn("ResultOperations.setup")(function* (request: ComputeResultsSetupInput) {
+    const resultsProject = yield* project(request.cwd);
+    const defaults = input.results.setup(resultsProject, request.scriptPath);
+    const suggestedInputs = supportsResultInputSuggestions(request.scriptPath)
+      ? input.workspace
+          .readFile({ cwd: resultsProject.root, relativePath: request.scriptPath })
+          .pipe(
+            Effect.flatMap((file) =>
+              Effect.tryPromise({
+                try: () =>
+                  suggestedResultInputs(resultsProject.root, request.scriptPath, file.contents),
+                catch: failure("Input suggestions could not be read."),
+              }),
+            ),
+            Effect.orElseSucceed(() => []),
+          )
+      : Effect.succeed([]);
+    const [saved, suggestions] = yield* Effect.all([defaults, suggestedInputs], {
+      concurrency: "unbounded",
+    });
+    return { ...saved, suggestedInputs: suggestions };
+  });
+
+  const history = Effect.fn("ResultOperations.history")(function* (
+    request: ComputeResultsHistoryInput,
+  ) {
+    return yield* input.results.history(
+      yield* project(request.cwd),
+      request.scriptPath,
+      request.includeLatest,
+    );
+  });
+
+  const compare = Effect.fn("ResultOperations.compare")(function* (
+    request: ComputeResultsCompareInput,
+  ) {
+    return yield* input.results.compare(yield* project(request.cwd), request.from, request.to);
+  });
+
+  const preview = Effect.fn("ResultOperations.preview")(function* (
+    request: ComputeResultsPreviewInput,
+  ) {
+    return yield* input.results.preview(
+      yield* project(request.cwd),
+      request.revision,
+      request.output,
+    );
+  });
+
+  const runPublication = Effect.fn("ResultOperations.runPublication")(function* (
+    request: ComputeResultsPublicationInput,
+  ) {
+    return yield* input.results.runPublication(yield* project(request.cwd), request);
+  });
+
+  const attemptOutput = Effect.fn("ResultOperations.attemptOutput")(function* (
+    request: ComputeResultsAttemptOutputInput,
+  ) {
+    const resultsProject = yield* project(request.cwd);
+    const attempt = yield* input.results.lastAttempt(resultsProject, request.scriptPath);
+    if (attempt === null || attempt.finishedAt !== request.finishedAt)
+      return yield* new ComputeResultsError({
+        message: "The last run has changed. Open its output again.",
+      });
+    const sessionTarget = { cwd: resultsProject.root, sessionId: attempt.sessionId };
+    const executionId = attempt.hasExecution ? attempt.executionId : null;
+    const { output, session } = yield* Effect.all(
+      {
+        output: input.gateway.listOutputs({ ...sessionTarget, executionId }),
+        session: input.gateway.getSession(sessionTarget),
+      },
+      { concurrency: "unbounded" },
+    ).pipe(Effect.mapError(failure("The run output could not be read.")));
+    return {
+      output,
+      session,
+      executionId,
+      ...(attempt.parameters === undefined ? {} : { parameters: attempt.parameters }),
+    };
   });
 
   /** Copies a revision's figure beside the manuscript, so the manuscript keeps that exact figure. */
@@ -187,12 +297,13 @@ export function makeResultOperations(input: {
    * Runs the saved script from scratch, the way Run fresh does, and reports the revision it
    * published, or why it published none, including a run that stopped before it settled.
    */
-  const rerun = Effect.fn("ResultOperations.rerun")(function* (request: {
-    readonly cwd: string;
-    readonly scriptPath: string;
-    readonly threadId?: string;
-  }) {
+  const rerun = Effect.fn("ResultOperations.rerun")(function* (
+    request: ComputeResultsRerunInput & {
+      readonly threadId?: string;
+    },
+  ) {
     const extension = NodePath.posix.extname(request.scriptPath).toLowerCase();
+    if (extension === ".ipynb") return yield* input.runNotebookFresh(request);
     const descriptor = input.runtimeDescriptors.find((candidate) =>
       candidate.sourceExtensions.some((known) => known.toLowerCase() === extension),
     );
@@ -220,6 +331,8 @@ export function makeResultOperations(input: {
         runOnce: {
           executionId,
           code: file.contents,
+          ...(request.parameters === undefined ? {} : { parameters: request.parameters }),
+          ...(request.inputs === undefined ? {} : { inputs: request.inputs }),
           source: {
             _tag: "document",
             origin: "file",
@@ -249,7 +362,7 @@ export function makeResultOperations(input: {
           Effect.flatMap((executions) =>
             executions.some((execution) => execution.request.executionId === executionId)
               ? Effect.never
-              : input.results.abandon(sessionId, executionId).pipe(
+              : input.results.abandon(resultsProject.projectId, sessionId, executionId).pipe(
                   Effect.as<ComputeResultsRerunResult>({
                     _tag: "failed",
                     message: session?.lostReason ?? "The run stopped before it started.",
@@ -259,7 +372,10 @@ export function makeResultOperations(input: {
         ),
       ),
     );
-    return yield* Effect.raceFirst(input.results.publication(sessionId, executionId), stopped);
+    return yield* Effect.raceFirst(
+      input.results.publication(resultsProject.projectId, sessionId, executionId),
+      stopped,
+    );
   });
 
   /** Every linked result in a Markdown manuscript, with the state the editor would show. */
@@ -436,6 +552,13 @@ export function makeResultOperations(input: {
   return {
     resolve,
     list,
+    outputContent,
+    attemptOutput,
+    runPublication,
+    setup,
+    history,
+    compare,
+    preview,
     placeFigure,
     rerun,
     check,

@@ -84,6 +84,7 @@ describe("linked result references", () => {
     ];
     const resolved = (
       table: ReadonlyArray<ReadonlyArray<string>> | null,
+      causes: Extract<ComputeResultResolution, { _tag: "resolved" }>["summary"]["causes"] = [],
     ): ComputeResultResolution => ({
       _tag: "resolved",
       summary: {
@@ -95,7 +96,7 @@ describe("linked result references", () => {
         inputTracking: "observed",
         inputs: [],
         inputsTruncated: false,
-        causes: [],
+        causes,
       },
       value: null,
       figure: false,
@@ -103,6 +104,26 @@ describe("linked result references", () => {
       newer: null,
     });
     expect(resultReferenceState({ kind: "table", rows }, resolved(rows))).toBe("current");
+    const recorded = resolved(rows);
+    if (recorded._tag !== "resolved") throw new Error("Expected a recorded result");
+    expect(
+      resultReferenceState(
+        { kind: "table", rows },
+        {
+          ...recorded,
+          summary: { ...recorded.summary, inputsTruncated: true },
+        },
+      ),
+    ).toBe("incomplete");
+    expect(
+      resultReferenceState(
+        { kind: "table", rows },
+        {
+          ...recorded,
+          summary: { ...recorded.summary, inputCoverageIncomplete: true },
+        },
+      ),
+    ).toBe("incomplete");
     expect(
       resultReferenceState(
         {
@@ -115,6 +136,16 @@ describe("linked result references", () => {
         resolved(rows),
       ),
     ).toBe("edited");
+    const lockfile = { kind: "lockfile-changed", path: "uv.lock" } as const;
+    expect(resultReferenceState({ kind: "table", rows }, resolved(rows, [lockfile]))).toBe(
+      "current",
+    );
+    expect(
+      resultReferenceState(
+        { kind: "table", rows },
+        resolved(rows, [lockfile, { kind: "input-changed", path: "cohort.csv" }]),
+      ),
+    ).toBe("stale");
     expect(resultReferenceState({ kind: "table", rows: null }, resolved(rows))).toBe("current");
     expect(resultReferenceState({ kind: "table", rows }, resolved(null))).toBe("missing");
   });

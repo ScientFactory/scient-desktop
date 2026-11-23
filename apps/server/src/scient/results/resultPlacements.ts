@@ -13,7 +13,11 @@ import type {
   ComputeResultsPlaceLatexResult,
   ComputeResultsPlacementsResult,
 } from "@t3tools/contracts";
-import { readResultValues, resultCaption } from "@t3tools/shared/computeResults";
+import {
+  readResultValues,
+  resultCaption,
+  resultSourceChanged,
+} from "@t3tools/shared/computeResults";
 import * as Schema from "effect/Schema";
 
 import {
@@ -223,7 +227,7 @@ async function revisionById(context: PlacementContext, id: string) {
 }
 
 async function latestFor(context: PlacementContext, script: string) {
-  return (await context.reader.revisions()).find((candidate) => candidate.script.path === script);
+  return context.reader.latestPublished(script);
 }
 
 async function diskSha(context: PlacementContext, path: string): Promise<string | null> {
@@ -604,7 +608,7 @@ export function placeLatexResult(
     }
     // From the placed file, so two outputs with one base name get two labels.
     const label = outputSlug(path);
-    const caption = escapeLatexText(resultCaption(output.name, script));
+    const caption = escapeLatexText(resultCaption(output.name));
     if (output.kind === "figure")
       return {
         insert: {
@@ -844,7 +848,7 @@ export function placementStatus(
       const newer = latest === undefined || latest.revision === revision.revision ? null : latest;
       const placed: ComputeResultPlacedFile[] = [];
       for (const file of files) {
-        const state = await fileState(context, file, summary.causes.length > 0);
+        const state = await fileState(context, file, resultSourceChanged(summary));
         // The build's record covers .tex inputs, not figures.
         const usedByBuild =
           build === null || !/\.tex$/iu.test(file.path)
@@ -853,6 +857,7 @@ export function placementStatus(
         const built = build?.digests[file.path];
         placed.push({
           path: file.path,
+          ...(state === "missing" || state === "edited" ? {} : { sha256: file.sha256 }),
           state,
           usedByBuild,
           differsFromBuild:

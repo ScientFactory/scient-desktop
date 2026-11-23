@@ -1,3 +1,4 @@
+import { LatexResultFileDigests, latexPlacedImageUrl } from "./latexResultFileDigests";
 import { m } from "~/i18n/messages";
 import { msg, T, useGT, useMessages } from "gt-react";
 import type { PagedTableLayout } from "./latexPagedGeometry";
@@ -2611,6 +2612,11 @@ function LatexFigureImage(props: {
           relativePath,
         };
   const asset = useAssetUrlState(props.workspace.environmentId, resource);
+  const digests = useContext(LatexResultFileDigests);
+  const imageUrl =
+    asset._tag === "Success"
+      ? latexPlacedImageUrl(asset.url, relativePath === null ? undefined : digests?.[relativePath])
+      : null;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [intrinsic, setIntrinsic] = useState<{ url: string; width: number; height: number } | null>(
     null,
@@ -2618,14 +2624,10 @@ function LatexFigureImage(props: {
   // A candidate that failed hands over to the next search path.
   if (
     candidateIndex + 1 < candidates.length &&
-    (asset._tag === "Failure" || (asset._tag === "Success" && failedUrl === asset.url))
+    (asset._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl))
   )
     setAttempt({ identity, index: candidateIndex + 1 });
-  const previewIdentity = JSON.stringify([
-    props.workspace.cwd,
-    relativePath,
-    asset._tag === "Success" ? asset.url : null,
-  ]);
+  const previewIdentity = JSON.stringify([props.workspace.cwd, relativePath, imageUrl]);
   const [timedOutIdentity, setTimedOutIdentity] = useState<string | null>(null);
   const timedOut = timedOutIdentity === previewIdentity;
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
@@ -2645,7 +2647,6 @@ function LatexFigureImage(props: {
     };
   };
   const graphics = latexGraphicsOptions(props.options ?? "");
-  const imageUrl = asset._tag === "Success" ? asset.url : null;
   const trimIdentity = JSON.stringify(graphics?.trim ?? null);
   const [physical, setPhysical] = useState<{
     url: string;
@@ -2682,9 +2683,7 @@ function LatexFigureImage(props: {
         ? (latexGraphicsLength(graphics.height) ?? undefined)
         : undefined,
     // An automatic width lets max-height constrain the box without stretching the photo.
-    ...(graphics?.keepAspectRatio &&
-    graphics.height &&
-    intrinsic?.url === (asset._tag === "Success" ? asset.url : null)
+    ...(graphics?.keepAspectRatio && graphics.height && intrinsic?.url === imageUrl
       ? {
           width: "auto",
           maxWidth: visualFigureWidth(props.width || graphics.width),
@@ -2732,23 +2731,23 @@ function LatexFigureImage(props: {
       );
     }
   }
-  if (!graphics?.trim && asset._tag === "Success" && failedUrl !== asset.url && !timedOut)
+  if (!graphics?.trim && imageUrl !== null && failedUrl !== imageUrl && !timedOut)
     return (
       <img
         ref={attachPreview}
-        data-latex-preview-state={loadedUrl === asset.url ? "ready" : "pending"}
+        data-latex-preview-state={loadedUrl === imageUrl ? "ready" : "pending"}
         alt={props.alt || props.path}
         draggable={false}
         onLoad={(event) => {
-          setLoadedUrl(asset.url);
+          setLoadedUrl(imageUrl);
           setIntrinsic({
-            url: asset.url,
+            url: imageUrl,
             width: event.currentTarget.naturalWidth,
             height: event.currentTarget.naturalHeight,
           });
         }}
-        onError={() => setFailedUrl(asset.url)}
-        src={asset.url}
+        onError={() => setFailedUrl(imageUrl)}
+        src={imageUrl}
         style={style}
       />
     );

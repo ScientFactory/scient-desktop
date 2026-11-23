@@ -1,3 +1,4 @@
+import { LatexResultFileDigests } from "./latexResultFileDigests";
 import { m } from "~/i18n/messages";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { LatexSelect } from "./LatexSelect";
@@ -664,6 +665,23 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const build = useLatexBuild(target);
   const bindingChange = useLatexBindingChange(props.environmentId, build.snapshot);
   const status = latexStatusStripModel(build, props.cwd, messages);
+  const resultsRootPath =
+    resolvedRootRelativePath ?? props.latexRootRelativePath ?? props.relativePath;
+  const resultFileScope = JSON.stringify([props.environmentId, props.cwd, resultsRootPath]);
+  const [resultFileDigests, setResultFileDigests] = useState<{
+    scope: string;
+    digests: Readonly<Record<string, string>>;
+  } | null>(null);
+  const receiveResultFileDigests = useStableCallback(
+    (digests: Readonly<Record<string, string>>) => {
+      setResultFileDigests((current) =>
+        current?.scope === resultFileScope &&
+        JSON.stringify(current.digests) === JSON.stringify(digests)
+          ? current
+          : { scope: resultFileScope, digests },
+      );
+    },
+  );
   const [preferredMode, setPreferredMode] = useState(
     () => props.latexPresentationRequest?.mode ?? initialPreviewMode(),
   );
@@ -2102,21 +2120,21 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           </span>
         </ScientTooltip>
       )}
-      {target === null ? null : (
-        <LatexResultsStatus
-          environmentId={props.environmentId}
-          cwd={props.cwd}
-          rootPath={target.relativePath}
-          build={
-            build.snapshot?.finishedAtEpochMs == null
-              ? null
-              : {
-                  finishedAtEpochMs: build.snapshot.finishedAtEpochMs,
-                  digests: build.snapshot.visualSourceRevisions,
-                }
-          }
-        />
-      )}
+      <LatexResultsStatus
+        key={resultFileScope}
+        environmentId={props.environmentId}
+        cwd={props.cwd}
+        rootPath={resultsRootPath}
+        onDigests={receiveResultFileDigests}
+        build={
+          build.snapshot?.finishedAtEpochMs == null
+            ? null
+            : {
+                finishedAtEpochMs: build.snapshot.finishedAtEpochMs,
+                digests: build.snapshot.visualSourceRevisions,
+              }
+        }
+      />
       {status.errorCount > 0 ? (
         <button
           type="button"
@@ -2456,102 +2474,110 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               <div style={{ display: showVisual ? "contents" : "none" }}>
                 <ReaderBarHostContext value={readerBarHost(showVisual ? readerSlot : null, true)}>
                   <Suspense fallback={<LatexDocumentPreparation />}>
-                    <LatexProjectVisualEditor
-                      sourceNavigation={showVisual ? visualNavigation : null}
-                      citationSource={
-                        props.threadRef ? { ...props.threadRef, cwd: props.cwd } : undefined
-                      }
-                      onCite={props.onCite}
-                      onRevealSource={
-                        mode === "split" && splitPreview === "visual"
-                          ? (owner) => {
-                              visualSourceRequest.current += 1;
-                              setVisualSourceReveal({
-                                path: owner.path,
-                                from: owner.from,
-                                to: owner.to,
-                                source: owner.source,
-                                precise: owner.precise === true,
-                                rootRelativePath: owner.rootRelativePath,
-                                requestId: visualSourceRequest.current,
-                              });
-                            }
-                          : undefined
-                      }
-                      // The project's recovery copy is retired only when nothing is
-                      // unsaved, so a failed or queued save of this file counts too.
-                      selectedPending={sourcePending}
-                      fileTruncated={props.truncated}
-                      onSaved={() => {
-                        if (target) notifyLatexBindingChange(target);
-                      }}
-                      onProjectStateChange={setVisualProjectState}
-                      onOpenFileSource={(path, line) =>
-                        props.onOpenFileSource(
-                          path,
-                          line,
-                          resolvedRootRelativePath
-                            ? { latexRootRelativePath: resolvedRootRelativePath }
-                            : undefined,
-                        )
-                      }
-                      rootRelativePath={resolvedRootRelativePath}
-                      rootResolutionMessage={
-                        resolution.pending
-                          ? gt("Finding the document…")
-                          : (resolution.error ??
-                            gt("Choose the document to compile in the toolbar."))
-                      }
-                      onRetryRootResolution={resolution.error ? resolution.retry : undefined}
-                      rootResolutionPending={resolution.pending}
-                      compiledBibliography={
-                        build.snapshot?.rootRelativePath === resolvedRootRelativePath &&
-                        build.snapshot.state === "succeeded" &&
-                        !build.snapshot.pendingRerun
-                          ? (build.snapshot.compiledBibliography ?? null)
+                    <LatexResultFileDigests
+                      value={
+                        resultFileDigests?.scope === resultFileScope
+                          ? resultFileDigests.digests
                           : null
                       }
-                      // The open document, not its path: an in-place rename keeps
-                      // this editor, while its drafts move with `draftKey`.
-                      key={documentId ?? visualDraftKey}
-                      {...(documentId === null ? {} : { editorInstanceKey: documentId })}
-                      source={workingSource}
-                      sourceSnapshot={editorSourceSnapshot}
-                      buildPageAnchors={pageAnchors}
-                      onLocalDraftChange={reportLocalVisualDraft}
-                      draftKey={visualDraftKey}
-                      fileRevision={workingSnapshot?.baselineRevision ?? props.revision}
-                      environmentId={props.environmentId}
-                      cwd={props.cwd}
-                      relativePath={props.relativePath}
-                      disabled={
-                        props.truncated ||
-                        persistence === null ||
-                        renaming ||
-                        sourceRecovery.blocked ||
-                        sourceNeedsAttention
-                      }
-                      onEdit={handleVisualEdit}
-                      flushReferenceEdits={persistence?.flushNow}
-                      documentPersistence={persistence ? [persistence] : []}
-                      onEditingChange={ignoreVisualEditing}
-                      onOpenSource={() => selectMode("source")}
-                      onOpenRoot={(mode = "source") => {
-                        if (
-                          !resolvedRootRelativePath ||
-                          resolvedRootRelativePath === props.relativePath
-                        )
-                          selectMode(mode);
-                        else
+                    >
+                      <LatexProjectVisualEditor
+                        sourceNavigation={showVisual ? visualNavigation : null}
+                        citationSource={
+                          props.threadRef ? { ...props.threadRef, cwd: props.cwd } : undefined
+                        }
+                        onCite={props.onCite}
+                        onRevealSource={
+                          mode === "split" && splitPreview === "visual"
+                            ? (owner) => {
+                                visualSourceRequest.current += 1;
+                                setVisualSourceReveal({
+                                  path: owner.path,
+                                  from: owner.from,
+                                  to: owner.to,
+                                  source: owner.source,
+                                  precise: owner.precise === true,
+                                  rootRelativePath: owner.rootRelativePath,
+                                  requestId: visualSourceRequest.current,
+                                });
+                              }
+                            : undefined
+                        }
+                        // The project's recovery copy is retired only when nothing is
+                        // unsaved, so a failed or queued save of this file counts too.
+                        selectedPending={sourcePending}
+                        fileTruncated={props.truncated}
+                        onSaved={() => {
+                          if (target) notifyLatexBindingChange(target);
+                        }}
+                        onProjectStateChange={setVisualProjectState}
+                        onOpenFileSource={(path, line) =>
                           props.onOpenFileSource(
-                            resolvedRootRelativePath,
-                            mode === "source" ? 1 : undefined,
-                            mode === "visual" ? { latexPreviewMode: "visual" } : undefined,
-                          );
-                      }}
-                      registerFinishEditing={registerFinishVisualEditing}
-                      registerBackgroundCommit={registerBackgroundVisualCommit}
-                    />
+                            path,
+                            line,
+                            resolvedRootRelativePath
+                              ? { latexRootRelativePath: resolvedRootRelativePath }
+                              : undefined,
+                          )
+                        }
+                        rootRelativePath={resolvedRootRelativePath}
+                        rootResolutionMessage={
+                          resolution.pending
+                            ? gt("Finding the document…")
+                            : (resolution.error ??
+                              gt("Choose the document to compile in the toolbar."))
+                        }
+                        onRetryRootResolution={resolution.error ? resolution.retry : undefined}
+                        rootResolutionPending={resolution.pending}
+                        compiledBibliography={
+                          build.snapshot?.rootRelativePath === resolvedRootRelativePath &&
+                          build.snapshot.state === "succeeded" &&
+                          !build.snapshot.pendingRerun
+                            ? (build.snapshot.compiledBibliography ?? null)
+                            : null
+                        }
+                        // The open document, not its path: an in-place rename keeps
+                        // this editor, while its drafts move with `draftKey`.
+                        key={documentId ?? visualDraftKey}
+                        {...(documentId === null ? {} : { editorInstanceKey: documentId })}
+                        source={workingSource}
+                        sourceSnapshot={editorSourceSnapshot}
+                        buildPageAnchors={pageAnchors}
+                        onLocalDraftChange={reportLocalVisualDraft}
+                        draftKey={visualDraftKey}
+                        fileRevision={workingSnapshot?.baselineRevision ?? props.revision}
+                        environmentId={props.environmentId}
+                        cwd={props.cwd}
+                        relativePath={props.relativePath}
+                        disabled={
+                          props.truncated ||
+                          persistence === null ||
+                          renaming ||
+                          sourceRecovery.blocked ||
+                          sourceNeedsAttention
+                        }
+                        onEdit={handleVisualEdit}
+                        flushReferenceEdits={persistence?.flushNow}
+                        documentPersistence={persistence ? [persistence] : []}
+                        onEditingChange={ignoreVisualEditing}
+                        onOpenSource={() => selectMode("source")}
+                        onOpenRoot={(mode = "source") => {
+                          if (
+                            !resolvedRootRelativePath ||
+                            resolvedRootRelativePath === props.relativePath
+                          )
+                            selectMode(mode);
+                          else
+                            props.onOpenFileSource(
+                              resolvedRootRelativePath,
+                              mode === "source" ? 1 : undefined,
+                              mode === "visual" ? { latexPreviewMode: "visual" } : undefined,
+                            );
+                        }}
+                        registerFinishEditing={registerFinishVisualEditing}
+                        registerBackgroundCommit={registerBackgroundVisualCommit}
+                      />
+                    </LatexResultFileDigests>
                   </Suspense>
                 </ReaderBarHostContext>
               </div>
