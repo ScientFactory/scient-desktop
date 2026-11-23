@@ -30,6 +30,7 @@ export const MOST_USED_SERVER_IDS = [
   "exa",
   "canva",
   "playwright",
+  "context7",
   "vercel",
   "cloudflare",
 ] as const;
@@ -555,7 +556,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Fetch current, version-specific documentation and code examples for libraries and frameworks. Helps agents avoid outdated APIs.",
     url: "https://mcp.context7.com/mcp",
     registry: { name: "io.github.upstash/context7", version: "4.4.4" },
-    categories: ["code"],
+    categories: ["most-used", "code"],
     websiteUrl: "https://context7.com",
     icon: CURATED_ICONS["context7"],
   },

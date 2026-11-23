@@ -879,6 +879,40 @@ describe("Discover", () => {
     expect(fixture.row("Notion").textContent).toContain("Notes and docs");
   });
 
+  it("ends each field section on a full row, at most four rows, and leaves the rest to its page", async () => {
+    await using fixture = setup();
+    const field = (category: "data" | "papers", title: string, count: number) => ({
+      category,
+      title,
+      total: count,
+      entries: Array.from({ length: count }, (_, index) =>
+        entry(`io.example/${category}-${index + 1}`, {
+          title: `${title} ${index + 1}`,
+          categories: [category],
+        }),
+      ),
+    });
+    state.catalog = {
+      ...catalog,
+      sections: [...catalog.sections, field("data", "Data", 5), field("papers", "Papers", 6)],
+    };
+    await fixture.render(<DiscoverPage />);
+    // Five picks and no account services: the fifth waits on the category page.
+    expect(fixture.rowNames(fixture.section("Data"))).toEqual([
+      "Data 1",
+      "Data 2",
+      "Data 3",
+      "Data 4",
+    ]);
+    // Papers' account services lead; with six picks after them, four rows hold eight.
+    const papers = fixture.rowNames(fixture.section("Papers"));
+    expect(papers).toHaveLength(8);
+    expect(papers).toContain("Zotero");
+    expect(papers.slice(-5)).toEqual(["Papers 1", "Papers 2", "Papers 3", "Papers 4", "Papers 5"]);
+    // Most used still shows every item.
+    expect(fixture.rowNames(fixture.section("Popular"))).toContain("Local tool");
+  });
+
   it("offers + for servers not added and ⋯ for added ones", async () => {
     await using fixture = setup();
     await fixture.render(<DiscoverPage />);
