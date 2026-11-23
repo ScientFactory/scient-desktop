@@ -159,3 +159,54 @@ describe.each([260, 420, 900])("NotebookCell layout at %ipx", (width) => {
     expect(box().top).toBeCloseTo(before.top, 0);
   });
 });
+
+describe("Code cell chrome, line numbers, and wrapping", () => {
+  it("shows the language, parameters badge, copy, and wrap toggle inside the code box", async () => {
+    const { controller, screen } = await mountCell(420, {
+      cells: [{ ...cell, parameterCell: true }],
+    });
+    await using _screen = screen;
+
+    const cellBox = () =>
+      screen.container
+        .querySelector<HTMLElement>("[data-notebook-cell-box]")!
+        .getBoundingClientRect();
+
+    expect(screen.container.textContent).toContain("python");
+    expect(screen.container.textContent).toContain("Parameters");
+
+    const wrapButton = screen.getByRole("button", { name: "Disable line wrap" });
+    expect(wrapButton.element().getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Copy code" }).element()).toBeTruthy();
+
+    const wrappedHeight = cellBox().height;
+    await wrapButton.click();
+    await expect
+      .element(screen.getByRole("button", { name: "Wrap lines" }))
+      .toHaveAttribute("aria-pressed", "false");
+    const unwrappedHeight = cellBox().height;
+    expect(unwrappedHeight).toBeLessThan(wrappedHeight);
+
+    await act(async () => controller.edit(cell.id, 0));
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector(".cm-lineNumbers")).not.toBeNull(),
+    );
+    await vi.waitFor(() => expect(cellBox().height).toBeCloseTo(unwrappedHeight, 0));
+  });
+
+  it("keeps line numbers out of selected code text while preserving line count", async () => {
+    const { screen } = await mountCell(420);
+    await using _screen = screen;
+
+    const lines = screen.container.querySelectorAll<HTMLElement>(
+      "[data-notebook-cell-box] [data-line]",
+    );
+    expect([...lines].map((el) => el.dataset.line)).toEqual(["1", "2"]);
+
+    const code = screen.container.querySelector<HTMLElement>("[data-notebook-cell-box] pre")!;
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(code);
+    expect(selection.toString().replace(/\r?\n/g, "\n")).toBe(cell.source);
+    selection.removeAllRanges();
+  });
+});

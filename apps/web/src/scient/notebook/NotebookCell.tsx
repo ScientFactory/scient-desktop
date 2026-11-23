@@ -25,17 +25,21 @@ import { T, msg, useGT, useMessages } from "gt-react";
 import { useStore } from "zustand";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
+import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "~/pierre-icons";
 import {
   createScientNestedCodeEditor,
   highlightedCodeSpans,
   type HighlightedCodeSpan,
   type ScientNestedCodeEditor,
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
+import { CodeBlockActions, useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import type { NotebookCaret, NotebookCellActivity, NotebookController } from "./notebookController";
 import { NOTEBOOK_MARKDOWN, NotebookCellOutputs, type NotebookPlace } from "./NotebookOutputs";
@@ -65,6 +69,9 @@ export interface NotebookCellHandlers {
 function CellEditor(props: {
   readonly cell: Cell;
   readonly language: string;
+  readonly wrapped: boolean;
+  readonly lineNumbers: boolean;
+  readonly theme: "light" | "dark";
   readonly onChange: (source: string) => void;
   readonly onRun: (advance: boolean) => void;
   readonly onEscape: () => void;
@@ -81,7 +88,12 @@ function CellEditor(props: {
     props.onChange(code);
   });
   const onEscape = useStableCallback(() => props.onEscape());
-  const initial = useRef({ code: props.cell.source, language: props.language });
+  const initial = useRef({
+    code: props.cell.source,
+    language: props.language,
+    wrapped: props.wrapped,
+    lineNumbers: props.lineNumbers,
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the CodeMirror editor into its DOM node for this cell's lifetime.
   useLayoutEffect(() => {
     if (parent.current === null) return;
@@ -90,6 +102,8 @@ function CellEditor(props: {
       code: initial.current.code,
       editable: true,
       language: initial.current.language,
+      wordWrap: initial.current.wrapped,
+      lineNumbers: initial.current.lineNumbers,
       ariaLabel: m(msg("Notebook cell")),
       onUserCodeChange: onChange,
       onEscape,
@@ -111,10 +125,22 @@ function CellEditor(props: {
     shown.current = props.cell.source;
     editor.current?.replaceExternalCode(props.cell.source, props.language);
   }, [props.cell.source, props.language]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- propagates the cell's wrap toggle into the mounted CodeMirror view.
+  useEffect(() => {
+    editor.current?.setWordWrap(props.wrapped);
+  }, [props.wrapped]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates CodeMirror's light/dark theme compartment when app appearance changes.
+  useEffect(() => {
+    editor.current?.refreshAppearance(props.theme);
+  }, [props.theme]);
   return (
     <div
       ref={parent}
-      className="min-w-0 px-1 py-1 text-[13px] [&_.cm-scroller]:font-mono! [&_.cm-scroller]:leading-[1.4]!"
+      className={
+        props.lineNumbers
+          ? "min-w-0 px-3 pt-1.5 pb-3 text-[13px] [&_.cm-scroller]:font-mono! [&_.cm-scroller]:leading-5!"
+          : "min-w-0 px-1 py-1 text-[13px] [&_.cm-scroller]:font-mono! [&_.cm-scroller]:leading-[1.4]!"
+      }
       onKeyDownCapture={(event) => {
         if (event.key === "Enter" && (event.shiftKey || event.metaKey || event.ctrlKey)) {
           event.preventDefault();
@@ -202,8 +228,8 @@ function CellGutter(props: {
   const { cell, activity, stale } = props;
   const failed = cell.outputs.some((output) => output.outputType === "error");
   return (
-    <div className="sticky top-0 flex h-8 items-center justify-center self-start">
-      <span className="flex items-center justify-center group-focus-within/cell:hidden group-hover/cell:hidden">
+    <div className="sticky top-0 flex flex-col items-center self-start pt-1.5">
+      <span className="flex h-6 items-center justify-center group-focus-within/cell:hidden group-hover/cell:hidden">
         {activity === "running" ? (
           <LoaderCircle
             aria-label={gt("Running")}
@@ -230,7 +256,7 @@ function CellGutter(props: {
           </span>
         )}
       </span>
-      <span className="hidden group-focus-within/cell:inline-flex group-hover/cell:inline-flex">
+      <span className="hidden flex-col items-center gap-0.5 group-focus-within/cell:inline-flex group-hover/cell:inline-flex">
         {activity === null ? (
           <CellAction label={runLabel(cell, stale, messages)} onClick={props.onRun}>
             <Play />
@@ -243,7 +269,123 @@ function CellGutter(props: {
             <Square />
           </CellAction>
         )}
+        {cell.executionCount !== null ? (
+          <span
+            className={cn(
+              "font-mono text-[10px] leading-3.5 tabular-nums",
+              failed ? "text-destructive/80" : "text-muted-foreground/60",
+            )}
+          >
+            {cell.executionCount}
+          </span>
+        ) : null}
       </span>
+    </div>
+  );
+}
+
+/** Slim hover-only insert target above a code cell, keeping prose and code tight. */
+function CellInsertStrip(props: {
+  readonly editsDisabled?: boolean | undefined;
+  readonly onInsert: (type: NotebookCellType) => void;
+}) {
+  const gt = useGT();
+  return (
+    <div className="group/insert col-start-2 flex h-4 min-w-0 items-center">
+      <span className="flex gap-0.5 opacity-0 transition-opacity group-hover/insert:opacity-100 focus-within:opacity-100">
+        <Button
+          variant="ghost-muted"
+          size="micro"
+          disabled={props.editsDisabled}
+          onClick={() => props.onInsert("code")}
+        >
+          <Plus /> {gt("Code", { $context: "inserts a code cell" })}
+        </Button>
+        <Button
+          variant="ghost-muted"
+          size="micro"
+          disabled={props.editsDisabled}
+          onClick={() => props.onInsert("markdown")}
+        >
+          <Plus /> {gt("Text", { $context: "inserts a text cell" })}
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+/** Seamless top row inside a code cell card, matching Markdown and Chat code blocks. */
+function CodeCellTopRow(props: {
+  readonly language: string;
+  readonly theme: "light" | "dark";
+  readonly parameterCell?: boolean | undefined;
+  readonly injectedParameters?: boolean | undefined;
+  readonly wrapped: boolean;
+  readonly onWrapChange: (wrapped: boolean) => void;
+  readonly readCode: () => string;
+  readonly editsDisabled?: boolean | undefined;
+  readonly onAsk: (() => void) | null;
+  readonly onMove: (offset: -1 | 1) => void;
+  readonly onDelete: () => void;
+  readonly menu: ReactElement | null;
+}) {
+  const gt = useGT();
+  const fileName = syntheticFileNameForLanguageId(props.language);
+  const hasIcon = hasSpecificPierreIconForFileName(fileName);
+  return (
+    <div className="scient-markdown-code-header flex min-h-7 items-center justify-between gap-1.5 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
+      <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground/80">
+        {hasIcon ? (
+          <PierreEntryIcon
+            pathValue={fileName}
+            kind="file"
+            theme={props.theme}
+            className="size-3.5 shrink-0 opacity-85"
+          />
+        ) : null}
+        <span className={cn("truncate", hasIcon && "hidden @[19rem]/code-box:inline")}>
+          {props.language}
+        </span>
+        {props.parameterCell || props.injectedParameters ? (
+          <span className="hidden shrink-0 rounded-full border border-border/70 bg-background/60 px-1.5 py-px font-sans text-[10px] leading-tight text-muted-foreground @[22rem]/code-box:inline">
+            <T>Parameters</T>
+          </span>
+        ) : null}
+      </span>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
+          {props.onAsk !== null ? (
+            <CellAction label={gt("Ask in chat")} onClick={props.onAsk}>
+              <MessageSquarePlus />
+            </CellAction>
+          ) : null}
+          {props.editsDisabled ? null : (
+            <>
+              <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
+                <ArrowUp />
+              </CellAction>
+              <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
+                <ArrowDown />
+              </CellAction>
+            </>
+          )}
+          {props.menu}
+          {props.editsDisabled ? null : (
+            <CellAction
+              label={gt("Delete", { $context: "verb, deletes a cell" })}
+              onClick={props.onDelete}
+            >
+              <Trash2 />
+            </CellAction>
+          )}
+          <span aria-hidden className="mx-0.5 h-3 w-px bg-border/80" />
+        </div>
+        <CodeBlockActions
+          wrapped={props.wrapped}
+          onWrapChange={props.onWrapChange}
+          readCode={props.readCode}
+        />
+      </div>
     </div>
   );
 }
@@ -308,10 +450,59 @@ function CellRow(props: {
   );
 }
 
+interface HighlightedCodeLine {
+  readonly number: number;
+  readonly startOffset: number;
+  readonly spans: ReadonlyArray<HighlightedCodeSpan>;
+}
+
+function splitHighlightedLines(
+  source: string,
+  spans: ReadonlyArray<HighlightedCodeSpan> | null,
+): ReadonlyArray<HighlightedCodeLine> {
+  const input = spans ?? [{ text: source, className: "" }];
+  const lines: Array<{ number: number; startOffset: number; spans: HighlightedCodeSpan[] }> = [
+    { number: 1, startOffset: 0, spans: [] },
+  ];
+  let offset = 0;
+  for (const span of input) {
+    const parts = span.text.split("\n");
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index]!;
+      if (index > 0) {
+        offset += 1;
+        lines.push({ number: lines.length + 1, startOffset: offset, spans: [] });
+      }
+      if (part.length > 0) {
+        lines[lines.length - 1]!.spans.push({ text: part, className: span.className });
+        offset += part.length;
+      }
+    }
+  }
+  return lines;
+}
+
 /** Where a click landed in the code, so the editor opens with the caret there. */
 function textOffsetAt(root: HTMLElement, x: number, y: number): number | "end" {
   const point = root.ownerDocument.caretRangeFromPoint(x, y);
   if (point === null || !root.contains(point.startContainer)) return "end";
+  const anchorElement =
+    point.startContainer instanceof Element
+      ? point.startContainer
+      : point.startContainer.parentElement;
+  const lineElement = anchorElement?.closest<HTMLElement>("[data-line-start]");
+  if (lineElement !== null && lineElement !== undefined && root.contains(lineElement)) {
+    const base = Number(lineElement.dataset.lineStart);
+    if (!Number.isNaN(base)) {
+      const walker = root.ownerDocument.createTreeWalker(lineElement, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      while (walker.nextNode()) {
+        if (walker.currentNode === point.startContainer) return base + offset + point.startOffset;
+        offset += walker.currentNode.textContent?.length ?? 0;
+      }
+      return base;
+    }
+  }
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let offset = 0;
   while (walker.nextNode()) {
@@ -325,22 +516,70 @@ function textOffsetAt(root: HTMLElement, x: number, y: number): number | "end" {
 function StaticCode(props: {
   readonly source: string;
   readonly language: string;
+  readonly wrapped: boolean;
+  readonly lineNumbers: boolean;
+  readonly theme: "light" | "dark";
   readonly near: boolean;
   readonly onEdit: (offset: number | "end") => void;
 }) {
-  const { source, language, near } = props;
+  const { source, language, wrapped, lineNumbers, theme, near } = props;
   const [spans, setSpans] = useState<ReadonlyArray<HighlightedCodeSpan> | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- colors arrive once the language parser has loaded.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- colors arrive once the language parser has loaded or theme changes.
   useEffect(() => {
     if (!near) return;
     let cancelled = false;
-    void highlightedCodeSpans(source, language).then((next) => {
+    void highlightedCodeSpans(source, language, theme).then((next) => {
       if (!cancelled) setSpans(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [language, near, source]);
+  }, [language, near, source, theme]);
+  if (lineNumbers) {
+    const lines = splitHighlightedLines(source, spans);
+    return (
+      <pre
+        className={cn(
+          "min-w-0 cursor-text px-3 pt-1.5 pb-3 font-mono text-[13px] leading-5",
+          wrapped ? "wrap-anywhere whitespace-break-spaces" : "overflow-x-auto whitespace-pre",
+        )}
+        onClick={(event) => {
+          if (!selectingText()) {
+            props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY));
+          }
+        }}
+      >
+        <span className={wrapped ? "block" : "block w-max min-w-full"}>
+          {lines.map((line) => (
+            <span
+              key={line.number}
+              data-line={line.number}
+              data-line-start={line.startOffset}
+              className={cn(
+                "grid gap-x-2.5 before:content-[attr(data-line)] before:text-right before:font-mono before:text-[11px] before:leading-5 before:text-muted-foreground/65 before:tabular-nums before:select-none",
+                wrapped
+                  ? "grid-cols-[2rem_minmax(0,1fr)]"
+                  : "grid-cols-[2rem_max-content] before:sticky before:left-0 before:bg-(--markdown-code-block-background)",
+              )}
+            >
+              <span className="min-h-5 min-w-0">
+                {line.spans.map((span, index) =>
+                  span.className === "" ? (
+                    span.text
+                  ) : (
+                    // oxlint-disable-next-line react/no-array-index-key -- spans are the text in order and have no identity.
+                    <span key={index} className={span.className}>
+                      {span.text}
+                    </span>
+                  ),
+                )}
+              </span>
+            </span>
+          ))}
+        </span>
+      </pre>
+    );
+  }
   return (
     <pre
       className="min-w-0 cursor-text py-[calc(--spacing(1)+4px)] pr-[calc(--spacing(1)+2px)] pl-[calc(--spacing(1)+6px)] font-mono text-[13px] leading-[1.4] wrap-anywhere whitespace-break-spaces"
@@ -389,6 +628,8 @@ export function NotebookCell(props: {
   readonly editsDisabled?: boolean;
 }) {
   const gt = useGT();
+  const theme = useRenderedAppearance();
+  const [wrapped, setWrapped] = useCodeBlockWordWrap();
   const { controller, cellId, handlers } = props;
   const cell = useStore(controller.store, (state) => state.cells[cellId]);
   const selected = useStore(controller.store, (state) => state.selected === cellId);
@@ -419,6 +660,42 @@ export function NotebookCell(props: {
   const rendered = isText && !editing && cell.source.trim() !== "";
   const live = near || selected;
   const language = isCode ? props.language : isText ? "markdown" : "text";
+  const onAsk =
+    handlers.ask === null || cell.source.trim() === "" ? null : () => handlers.ask?.(cellId);
+  const cellMenu =
+    isCode || sectionHeading ? (
+      <Menu>
+        <MenuTrigger
+          render={<Button variant="ghost-muted" size="icon-xs" aria-label={gt("Cell actions")} />}
+        >
+          <Ellipsis />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {isCode ? (
+            <>
+              {cell.injectedParameters ? null : (
+                <MenuItem
+                  disabled={props.editsDisabled}
+                  onClick={() => controller.setParameterCell(cellId, !cell.parameterCell)}
+                >
+                  {cell.parameterCell ? <T>Untag parameters</T> : <T>Tag as parameters</T>}
+                </MenuItem>
+              )}
+              <MenuItem onClick={() => controller.setFold(cellId, "source", !sourceFolded)}>
+                {sourceFolded ? <T>Show code</T> : <T>Hide code</T>}
+              </MenuItem>
+              <MenuItem onClick={() => controller.setFold(cellId, "outputs", !outputsFolded)}>
+                {outputsFolded ? <T>Show outputs</T> : <T>Hide outputs</T>}
+              </MenuItem>
+            </>
+          ) : (
+            <MenuItem onClick={() => controller.setFold(cellId, "section", !sectionFolded)}>
+              {sectionFolded ? <T>Expand section</T> : <T>Collapse section</T>}
+            </MenuItem>
+          )}
+        </MenuPopup>
+      </Menu>
+    ) : null;
   return (
     // `application` keeps command-mode keys here instead of the chat's type-to-focus.
     <section
@@ -432,52 +709,21 @@ export function NotebookCell(props: {
       onFocusCapture={() => controller.select(cellId)}
       onClick={() => controller.select(cellId)}
     >
-      <CellRow
-        editsDisabled={props.editsDisabled}
-        onInsert={(type) => handlers.insert(cellId, type)}
-        onAsk={
-          handlers.ask === null || cell.source.trim() === "" ? null : () => handlers.ask?.(cellId)
-        }
-        onMove={(offset) => controller.move(cellId, offset)}
-        onDelete={() => handlers.delete(cellId)}
-        menu={
-          isCode || sectionHeading ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button variant="ghost-muted" size="icon-xs" aria-label={gt("Cell actions")} />
-                }
-              >
-                <Ellipsis />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {isCode ? (
-                  <>
-                    {cell.injectedParameters ? null : (
-                      <MenuItem
-                        disabled={props.editsDisabled}
-                        onClick={() => controller.setParameterCell(cellId, !cell.parameterCell)}
-                      >
-                        {cell.parameterCell ? <T>Untag parameters</T> : <T>Tag as parameters</T>}
-                      </MenuItem>
-                    )}
-                    <MenuItem onClick={() => controller.setFold(cellId, "source", !sourceFolded)}>
-                      {sourceFolded ? <T>Show code</T> : <T>Hide code</T>}
-                    </MenuItem>
-                    <MenuItem onClick={() => controller.setFold(cellId, "outputs", !outputsFolded)}>
-                      {outputsFolded ? <T>Show outputs</T> : <T>Hide outputs</T>}
-                    </MenuItem>
-                  </>
-                ) : (
-                  <MenuItem onClick={() => controller.setFold(cellId, "section", !sectionFolded)}>
-                    {sectionFolded ? <T>Expand section</T> : <T>Collapse section</T>}
-                  </MenuItem>
-                )}
-              </MenuPopup>
-            </Menu>
-          ) : null
-        }
-      />
+      {isCode ? (
+        <CellInsertStrip
+          editsDisabled={props.editsDisabled}
+          onInsert={(type) => handlers.insert(cellId, type)}
+        />
+      ) : (
+        <CellRow
+          editsDisabled={props.editsDisabled}
+          onInsert={(type) => handlers.insert(cellId, type)}
+          onAsk={onAsk}
+          onMove={(offset) => controller.move(cellId, offset)}
+          onDelete={() => handlers.delete(cellId)}
+          menu={cellMenu}
+        />
+      )}
       {isCode ? (
         <CellGutter
           cell={cell}
@@ -493,23 +739,47 @@ export function NotebookCell(props: {
         <div
           data-notebook-cell-box=""
           className={cn(
-            "rounded-md border",
-            isCode ? "bg-(--markdown-code-block-background)" : "bg-background",
-            selected
-              ? "border-foreground/25"
-              : rendered
-                ? "border-transparent"
-                : "border-border/60",
+            "border transition-colors",
+            isCode
+              ? "@container/code-box rounded-lg bg-(--markdown-code-block-background)"
+              : "rounded-md bg-background",
+            editing
+              ? "border-foreground/35"
+              : selected
+                ? "border-foreground/25"
+                : rendered
+                  ? "border-transparent"
+                  : isCode
+                    ? "border-(--markdown-code-block-border) group-hover/cell:border-border"
+                    : "border-border/60",
           )}
         >
+          {isCode ? (
+            <CodeCellTopRow
+              language={language}
+              theme={theme}
+              parameterCell={cell.parameterCell}
+              injectedParameters={cell.injectedParameters}
+              wrapped={wrapped}
+              onWrapChange={setWrapped}
+              readCode={() => cell.source}
+              editsDisabled={props.editsDisabled}
+              onAsk={onAsk}
+              onMove={(offset) => controller.move(cellId, offset)}
+              onDelete={() => handlers.delete(cellId)}
+              menu={cellMenu}
+            />
+          ) : null}
           {sourceFolded ? (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => controller.setFold(cellId, "source", false)}
-            >
-              <T>Show code</T>
-            </Button>
+            <div className="px-2 pb-1.5">
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => controller.setFold(cellId, "source", false)}
+              >
+                <T>Show code</T>
+              </Button>
+            </div>
           ) : rendered ? (
             <div
               className="min-h-8 cursor-text px-3 py-1"
@@ -540,6 +810,9 @@ export function NotebookCell(props: {
             <CellEditor
               cell={cell}
               language={language}
+              wrapped={wrapped}
+              lineNumbers={isCode}
+              theme={theme}
               onChange={(source) => controller.setSource(cellId, source)}
               onRun={(advance) => handlers.run(cellId, advance)}
               onEscape={() => handlers.escape(cellId)}
@@ -551,6 +824,9 @@ export function NotebookCell(props: {
             <StaticCode
               source={cell.source}
               language={language}
+              wrapped={wrapped}
+              lineNumbers={isCode}
+              theme={theme}
               near={live}
               onEdit={(offset) => handlers.edit(cellId, offset)}
             />

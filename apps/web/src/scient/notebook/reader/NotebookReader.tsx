@@ -272,10 +272,10 @@ export function NotebookReader(props: {
                 <CollapsiblePanel animate={false}>
                   <pre
                     className={cn(
-                      "mt-1 overflow-x-auto rounded-lg p-2 text-sm",
+                      "mt-1 overflow-x-auto rounded-lg text-sm",
                       cell.cellType === "code"
-                        ? "bg-(--markdown-code-block-background)"
-                        : "bg-muted/40",
+                        ? "border border-(--markdown-code-block-border) bg-(--markdown-code-block-background) px-3 py-2.5"
+                        : "bg-muted/40 p-2",
                     )}
                     dir="auto"
                   >
