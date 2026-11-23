@@ -737,6 +737,12 @@ export default function ScientNotebookSurface(props: {
                   </MenuItem>
                   <MenuItem
                     disabled={selectedIndex < 0}
+                    onClick={() => runCells(codeCellIds(0, selectedIndex + 1))}
+                  >
+                    <T>Run from top through this cell</T>
+                  </MenuItem>
+                  <MenuItem
+                    disabled={selectedIndex < 0}
                     onClick={() => runCells(codeCellIds(selectedIndex))}
                   >
                     <T>Run from this cell</T>

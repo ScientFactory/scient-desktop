@@ -23,9 +23,11 @@ import { computeEnvironment } from "~/state/compute";
 import ScientNotebookSurface from "./ScientNotebookSurface";
 import { useNotebookRunDrafts } from "./notebookRunDrafts";
 
-const { freshStart, freshStop, runtimeQuery } = vi.hoisted(() => ({
+const { freshStart, freshStop, startSession, submitCells, runtimeQuery } = vi.hoisted(() => ({
   freshStart: vi.fn(),
   freshStop: vi.fn(),
+  startSession: vi.fn(),
+  submitCells: vi.fn(),
   runtimeQuery: "test-notebook-runtime",
 }));
 
@@ -63,6 +65,8 @@ vi.mock("~/state/use-atom-command", async (original) => ({
   useAtomCommand: (command: unknown) => {
     if (command === computeEnvironment.notebookFreshStart) return freshStart;
     if (command === computeEnvironment.notebookFreshStop) return freshStop;
+    if (command === computeEnvironment.startSession) return startSession;
+    if (command === computeEnvironment.submitCells) return submitCells;
     if (command === computeEnvironment.notebookRead)
       return async () => AsyncResult.success(notebook);
     if (command === computeEnvironment.notebookEdit)
@@ -175,6 +179,7 @@ const notebook: NotebookView = {
     cell("intro", "markdown", home),
     {
       ...cell("parameter", "code", "threshold = 0.5"),
+      run: { execution: "setup-run", code: "old-code", at: "2026-11-23T14:10:00.000Z", ms: 1 },
       parameterCell: true,
       parameterHints: { threshold: { min: 0.3, max: 0.7, step: 0.1 } },
       savedParameters: { threshold: "0.5" },
@@ -192,6 +197,7 @@ const notebook: NotebookView = {
         },
       ],
     },
+    cell("after", "code", "print('later')"),
   ],
   alternatives: {
     publishedRevision: published.revision,
@@ -201,6 +207,39 @@ const notebook: NotebookView = {
 };
 
 const screenshots = import.meta.env.VITE_NOTEBOOK_DESIGN_SCREENSHOTS as string | undefined;
+
+it("replays through the selected cell and labels saved and empty output inline", async () => {
+  startSession.mockImplementationOnce(async ({ input }) =>
+    AsyncResult.success({ sessionId: input.sessionId, generation: 1 }),
+  );
+  submitCells.mockResolvedValueOnce(AsyncResult.success(null));
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <ScientNotebookSurface
+        environmentId={environmentId}
+        cwd="/project"
+        relativePath="recovery.ipynb"
+        threadRef={threadRef}
+        fileRevision="1.0"
+      />
+    </RegistryContext.Provider>,
+  );
+  const setupCell = page.elementLocator(
+    document.querySelector('[data-notebook-cell="parameter"]')!,
+  );
+  const outputCell = page.elementLocator(document.querySelector('[data-notebook-cell="compute"]')!);
+  await expect.element(setupCell.getByText("No output", { exact: true })).toBeVisible();
+  await expect.element(outputCell.getByText("Saved output", { exact: true })).toBeVisible();
+  await outputCell.getByText("Saved output", { exact: true }).click();
+  await screen.getByRole("button", { name: "Choose Python code to run" }).click();
+  await page.getByRole("menuitem", { name: "Run from top through this cell" }).click();
+  await vi.waitFor(() => expect(submitCells).toHaveBeenCalledOnce());
+  expect(
+    submitCells.mock.calls[0]?.[0].input.cells.map((item: { cellId: string }) => item.cellId),
+  ).toEqual(["parameter", "compute"]);
+});
 
 it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
   "returns keyboard focus from the outline and previews saved parameter settings in %s",

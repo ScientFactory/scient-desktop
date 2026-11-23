@@ -578,6 +578,19 @@ export function NotebookCell(props: {
           </Button>
         ) : isCode && !outputsFolded ? (
           <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
+            {activity === null &&
+            cell.pendingExecution === null &&
+            cell.run !== null &&
+            cell.outputs.length === 0 ? (
+              <p className="px-3 py-1 text-xs text-muted-foreground">
+                <T>No output</T>
+              </p>
+            ) : null}
+            {activity === null && cell.run === null && cell.outputs.length > 0 ? (
+              <p className="px-3 pt-1 text-xs text-muted-foreground">
+                <T>Saved output</T>
+              </p>
+            ) : null}
             <NotebookCellOutputs
               controller={controller}
               place={props.place}
