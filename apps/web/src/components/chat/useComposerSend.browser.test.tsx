@@ -64,6 +64,7 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 vi.mock("../../hooks/useHandleNewThread", () => ({
   useNewThreadHandler: () => async () => {},
+  readPendingWorkspaceDefault: () => null,
 }));
 vi.mock("@tanstack/react-router", { spy: true });
 vi.mock("../../state/session", { spy: true });
