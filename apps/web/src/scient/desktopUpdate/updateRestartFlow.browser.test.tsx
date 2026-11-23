@@ -97,6 +97,7 @@ const bridge = {
     return result(downloaded());
   }),
   installUpdate: vi.fn(async () => result(downloaded())),
+  onUpdateState: vi.fn(() => () => {}),
   checkForUpdate: vi.fn(),
   openExternal: vi.fn(async () => true),
 };
@@ -306,7 +307,8 @@ describe("update restart flow", () => {
     footerButton(_fixture).click();
     expect(bridge.installUpdate).toHaveBeenCalledOnce();
     expect(bridge.checkForUpdate).not.toHaveBeenCalled();
-    pending.resolve(result(downloaded(), false));
+    // An accepted install still preparing waits for a refusal; this one relaunches instead.
+    pending.resolve(result(downloaded()));
   });
 
   it("a retried download offers Restart even when nothing here is working", async () => {

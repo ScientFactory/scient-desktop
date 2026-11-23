@@ -67,8 +67,10 @@ function installResult(overrides: Partial<DesktopUpdateActionResult> = {}) {
   } satisfies DesktopUpdateActionResult;
 }
 
+const noUpdateStates = () => () => {};
+
 function shell(installUpdate = vi.fn(async () => installResult())) {
-  return { installUpdate, openExternal: vi.fn(async () => true) };
+  return { installUpdate, onUpdateState: noUpdateStates, openExternal: vi.fn(async () => true) };
 }
 
 function visibleAnchor(_fixture: _Fixture): HTMLElement {
@@ -227,7 +229,10 @@ describe("installDesktopUpdateNow", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    await installDesktopUpdateNow({ installUpdate: vi.fn(async () => installResult()) });
+    await installDesktopUpdateNow({
+      onUpdateState: noUpdateStates,
+      installUpdate: vi.fn(async () => installResult()),
+    });
     expect(toasts.add).not.toHaveBeenCalled();
   });
 
@@ -237,6 +242,7 @@ describe("installDesktopUpdateNow", () => {
     await _setupFixture0(_fixture);
 
     await installDesktopUpdateNow({
+      onUpdateState: noUpdateStates,
       installUpdate: vi.fn(async () =>
         installResult({
           accepted: false,
@@ -259,6 +265,7 @@ describe("installDesktopUpdateNow", () => {
     await _setupFixture0(_fixture);
 
     await installDesktopUpdateNow({
+      onUpdateState: noUpdateStates,
       installUpdate: vi.fn(async () => installResult({ accepted: false, completed: false })),
     });
     expect(toasts.add).toHaveBeenCalledWith(
@@ -278,8 +285,8 @@ describe("installDesktopUpdateNow", () => {
     const installUpdate = vi.fn(
       () => new Promise<DesktopUpdateActionResult>((resolve) => (finish = resolve)),
     );
-    const first = installDesktopUpdateNow({ installUpdate });
-    const second = installDesktopUpdateNow({ installUpdate });
+    const first = installDesktopUpdateNow({ onUpdateState: noUpdateStates, installUpdate });
+    const second = installDesktopUpdateNow({ onUpdateState: noUpdateStates, installUpdate });
     expect(second).toBe(first);
     expect(installUpdate).toHaveBeenCalledTimes(1);
 
@@ -287,7 +294,7 @@ describe("installDesktopUpdateNow", () => {
     await first;
 
     const third = vi.fn(async () => installResult());
-    await installDesktopUpdateNow({ installUpdate: third });
+    await installDesktopUpdateNow({ onUpdateState: noUpdateStates, installUpdate: third });
     expect(third).toHaveBeenCalledTimes(1);
   });
 
@@ -297,6 +304,7 @@ describe("installDesktopUpdateNow", () => {
     await _setupFixture0(_fixture);
 
     await installDesktopUpdateNow({
+      onUpdateState: noUpdateStates,
       installUpdate: vi.fn(async () =>
         installResult({
           completed: false,
@@ -312,12 +320,50 @@ describe("installDesktopUpdateNow", () => {
     );
   });
 
+  it("reports a restart macOS refuses after the install was accepted", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    let publish: (state: DesktopUpdateState) => void = () => {};
+    const relaunching = installDesktopUpdateNow({
+      installUpdate: vi.fn(async () =>
+        installResult({ completed: false, state: downloadedState({ status: "preparing" }) }),
+      ),
+      onUpdateState: (listener) => {
+        publish = listener;
+        return () => {};
+      },
+    });
+    let settled = false;
+    void relaunching.then(() => (settled = true));
+    // The refusal arrives once the accepted reply is in; until then it is not this install's.
+    await vi.waitFor(() => {
+      publish(
+        downloadedState({
+          status: "downloaded",
+          errorContext: "install",
+          message: "macOS did not allow the restart",
+        }),
+      );
+      expect(settled).toBe(true);
+    });
+    expect(await relaunching).toBe(false);
+    expect(toasts.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Could not install update",
+        description: "macOS did not allow the restart",
+      }),
+    );
+  });
+
   it("reports a rejected install call", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     await installDesktopUpdateNow({
+      onUpdateState: noUpdateStates,
       installUpdate: vi.fn(async () => {
         throw new Error("IPC closed");
       }),

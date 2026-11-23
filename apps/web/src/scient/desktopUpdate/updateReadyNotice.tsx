@@ -6,6 +6,7 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
+  installDesktopUpdate,
 } from "~/components/desktopUpdate.logic";
 import { openDesktopUpdateReleaseNotes } from "~/components/desktopUpdate.toast";
 import { anchoredToastManager, stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -18,8 +19,9 @@ import { isWindowsPlatform } from "~/lib/utils";
  */
 export const SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS = 5_000;
 
-type UpdateInstallShell = Pick<DesktopBridge, "installUpdate">;
-type UpdateNoticeShell = Pick<DesktopBridge, "installUpdate" | "openExternal">;
+// A refusal macOS reports after the install was accepted arrives as a later update state.
+type UpdateInstallShell = Pick<DesktopBridge, "installUpdate" | "onUpdateState">;
+type UpdateNoticeShell = Pick<DesktopBridge, "installUpdate" | "onUpdateState" | "openExternal">;
 
 export interface ScientUpdateReadyNoticeHandle {
   readonly close: () => void;
@@ -46,6 +48,7 @@ let installInFlight: Promise<boolean> | null = null;
 /**
  * Restart is an explicit user action and needs no second confirmation. Share concurrent calls and
  * report failure through the first caller; only an accepted, error-free install means relaunching.
+ * An accepted install that is still preparing settles only if the desktop later reports a refusal.
  * With `expectedVersion`, only that downloaded build installs, never one that replaced it.
  */
 export function installDesktopUpdateNow(
@@ -66,7 +69,7 @@ async function runInstall(
 ): Promise<boolean> {
   const title = m(msg("Could not install update"));
   try {
-    const result = await shell.installUpdate(expectedVersion);
+    const result = await installDesktopUpdate(shell, expectedVersion);
     if (!result.accepted) {
       const replaced =
         expectedVersion !== undefined && result.state.downloadedVersion !== expectedVersion;
