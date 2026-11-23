@@ -182,12 +182,17 @@ easy to lose or write invalidly:
   were positioned by hand in Excel can still differ in Excel. Report
   chart fidelity as "verified in LibreOffice render", not as pixel-proof.
 
-## 5. Close-out for edits
+## 5. Check a scoped edit
 
-Recalculate after every save of a workbook with formulas and read the
-gate JSON. Compare typed errors with the baseline and hand-check up to
-three formulas, including an affected downstream result when available.
-Render changed sheets and affected outputs. Review the final structural,
-part, and relationship checks and read back the edited cells and
-features that had to survive. List changed cells, the package checks
-that passed, and unresolved errors or preservation checks in the handoff.
+- Compare original and saved sheets by coordinate, after mapping any requested
+  structural shifts. Include hidden sheets, typed literals, formula definitions
+  and changed cell styles. Read populated cells or changed worksheet parts
+  instead of allocating the whole Excel grid. Check added and removed cells.
+- Read formula caches separately. An affected formula can keep its definition
+  and have a new result. Confirm affected outputs, check new errors or missing
+  caches by location, and report volatile or external results you cannot verify.
+- Review changed package parts and relationships. Check chart registration even
+  when a chart's contents should stay fixed. Refresh caches only for affected
+  series or when explicitly asked to repair inherited issues.
+- Check visible layout when it matters to the edit. If a narrower view needs a
+  temporary print setup, use a render-only copy. Preserve the output's settings.

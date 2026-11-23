@@ -176,7 +176,7 @@ export function prepareScientSkillTurn(
   const documentLabNote =
     catalogMarker &&
     skills.some(({ origin, id }) => origin === "scient" && documentLabSkillIds.has(id))
-      ? `[For Document Lab work, first load the matching built-in with \`${loadTool}\`. Use the Scient loader when a listed skill fits local Word, Excel, PowerPoint, PDF, or Google Workspace work, even if your provider offers a skill with overlapping coverage.]`
+      ? `[When a listed Document Lab skill fits the request, first load it with \`${loadTool}\`. This is the Scient loader for the listed skill, including when provider skills overlap. If the matching skill is absent, continue with the tools and skills available to you.]`
       : undefined;
   const runtimeInstruction = [
     documentLabNote,
