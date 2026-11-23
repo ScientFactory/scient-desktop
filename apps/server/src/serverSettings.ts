@@ -977,9 +977,13 @@ const make = Effect.gen(function* () {
   } = yield* ManagedPolicy.ManagedPolicy;
   // Locks are laid over every settings value that leaves this service, never persisted.
   const toEffective = (settings: ServerSettings) =>
-    resolveTextGenerationProvider(
-      managedProviders.applyLimits(managed.applyLocks(settings)),
-      managedProviders.isDriverAllowed,
+    // SCIENT-FORK:START — agent feedback stays off in Scient, whatever is saved or locked.
+    withScientAgentFeedbackOff(
+      // SCIENT-FORK:END
+      resolveTextGenerationProvider(
+        managedProviders.applyLimits(managed.applyLocks(settings)),
+        managedProviders.isDriverAllowed,
+      ),
     );
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
@@ -1664,7 +1668,12 @@ const make = Effect.gen(function* () {
       getMaterializedSettings.pipe(
         Effect.catchIf(
           (error) => options?.allowUnresolvedSecrets === true && error.operation === "read-secret",
-          () => getSettingsFromCache.pipe(Effect.map(resolveTextGenerationProvider)),
+          () =>
+            getSettingsFromCache.pipe(
+              Effect.map((settings) =>
+                withScientAgentFeedbackOff(resolveTextGenerationProvider(settings)),
+              ),
+            ),
         ),
         Effect.flatMap(use),
       ),
