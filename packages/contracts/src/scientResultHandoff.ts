@@ -18,12 +18,23 @@ export const ResultHandoffInputFile = Schema.Struct({
   origin: Schema.Literals(["observed", "declared", "both"]),
   via: Schema.optional(Path),
   size: Size,
+  /** Run-time digest in new packages. */
   sha256: Schema.NullOr(Sha256),
   changedDuringRun: Schema.Boolean,
+  /** The file checked at export, whether packaged or supplied separately. */
+  exportFile: Schema.optional(Schema.Struct({ size: Size, sha256: Sha256 })),
   changedSinceRun: Schema.optional(Schema.Boolean),
+  /** Legacy packages used sha256 for the export-time digest in this case. */
   hashAtExport: Schema.optional(Schema.Boolean),
 });
 export type ResultHandoffInputFile = typeof ResultHandoffInputFile.Type;
+
+const InputCoverage = Schema.Struct({
+  tracking: Schema.Literals(["observed", "not-tracked"]),
+  truncated: Schema.Boolean,
+  readsOutsideProject: Schema.NullOr(Size),
+  unresolvedViewInputs: Size,
+});
 
 export const ResultHandoffManifest = Schema.Struct({
   version: Schema.Literals([1, 2]),
@@ -49,6 +60,7 @@ export const ResultHandoffManifest = Schema.Struct({
   documentation: Schema.Struct({ readmeSha256: Sha256, crateSha256: Sha256 }),
   inputTracking: Schema.Literals(["observed", "not-tracked"]),
   inputsTruncated: Schema.Boolean,
+  inputCoverage: Schema.optional(InputCoverage),
   outputs: Schema.Array(ComputeResultOutput),
   outputsOmitted: Size,
   skippedOutputs: Schema.optional(Schema.Array(Path)),
@@ -182,7 +194,15 @@ export const ResultHandoffVerification = Schema.Struct({
   revision: Schema.NullOr(ComputeResultRevisionId),
   verifiedAt: Text,
   verifierName: Schema.optional(Text),
-  status: Schema.Literals(["verified", "differs", "could-not-run", "cancelled"]),
+  status: Schema.Literals([
+    "verified",
+    "outputs-matched-inputs-unconfirmed",
+    "differs",
+    "could-not-run",
+    "cancelled",
+  ]),
+  verdict: Schema.optional(Text),
+  inputCoverage: Schema.optional(InputCoverage),
   /** The rerun completed even when no retained output can establish a verdict. */
   rerunCompleted: Schema.optional(Schema.Boolean),
   message: Schema.optional(Text),
@@ -207,6 +227,55 @@ export const ResultHandoffVerification = Schema.Struct({
   outputs: Schema.Array(ResultHandoffOutputFinding),
 });
 export type ResultHandoffVerification = typeof ResultHandoffVerification.Type;
+
+export function resultHandoffOutcome(
+  report: Pick<
+    ResultHandoffVerification,
+    "status" | "rerunCompleted" | "message" | "environment" | "outputs"
+  >,
+) {
+  const review = report.outputs.some(
+    (output) => output.status === "differs" || output.status === "missing",
+  );
+  switch (report.status) {
+    case "outputs-matched-inputs-unconfirmed":
+      return { label: "Outputs matched · original inputs unconfirmed", completed: true } as const;
+    case "verified": {
+      const unchecked = report.outputs.some((output) => output.status === "unchecked");
+      return {
+        label: review
+          ? unchecked
+            ? "Checked outputs matched · review figures and unchecked outputs"
+            : "Checked outputs matched · figures need review"
+          : unchecked || report.message !== undefined
+            ? "Checked outputs matched · some outputs unchecked"
+            : "Verified",
+        completed: true,
+      } as const;
+    }
+    case "differs":
+      return { label: "Differs", completed: false } as const;
+    case "cancelled":
+      return { label: "Cancelled", completed: false } as const;
+    case "could-not-run": {
+      const matched = report.outputs.some((output) => output.status === "matched");
+      const completed =
+        report.rerunCompleted ??
+        (report.environment !== null &&
+          (review || matched || report.message?.startsWith("The rerun finished") === true));
+      return {
+        label: completed
+          ? review
+            ? "Rerun finished · figures need review"
+            : matched
+              ? "Rerun finished · figures matched"
+              : "Rerun finished · no checkable outputs"
+          : "Could not run",
+        completed,
+      } as const;
+    }
+  }
+}
 
 export const ResultHandoffVerifyResult = Schema.Struct({
   report: ResultHandoffVerification,

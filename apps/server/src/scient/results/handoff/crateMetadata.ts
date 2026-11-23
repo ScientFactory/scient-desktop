@@ -21,12 +21,16 @@ export function crateMetadata(
   });
   const inputs = manifest.inputs.map((input, index) =>
     input.included
-      ? makeFile(input.path, includedDataPath(input.path, manifest.version), input.size)
+      ? makeFile(
+          input.path,
+          includedDataPath(input.path, manifest.version),
+          input.exportFile?.size ?? input.size,
+        )
       : {
           ...ref(`#external-input-${index + 1}`),
           "@type": "File",
           name: input.path,
-          contentSize: String(input.size),
+          contentSize: String(input.exportFile?.size ?? input.size),
           description: "Input referenced by the manifest and supplied separately.",
         },
   );

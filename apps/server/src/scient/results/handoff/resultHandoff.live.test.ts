@@ -120,6 +120,7 @@ describe.runIf(Boolean(CORPUS && BASELINE && RECIPIENT))(
                 { path: dataFile, size: Number(stat.size), modifiedAtNs: stat.mtimeNs.toString() },
               ],
               truncated: false,
+              readsOutsideProject: 0,
             },
           });
           if (published._tag !== "published") throw new Error(published.message);
@@ -379,7 +380,7 @@ describe.runIf(Boolean(CORPUS && BASELINE && RECIPIENT))(
           executable: RECIPIENT!,
           allowExecution: true,
         });
-        expect(result.report.status).toBe("verified");
+        expect(["verified", "outputs-matched-inputs-unconfirmed"]).toContain(result.report.status);
       }).pipe(Effect.provide(Live)),
     );
   },

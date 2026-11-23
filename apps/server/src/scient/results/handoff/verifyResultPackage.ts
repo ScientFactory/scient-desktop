@@ -3,12 +3,13 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import type {
-  ResultHandoffManifest,
-  ResultHandoffOutputFinding,
-  ResultHandoffVerification,
-  ResultHandoffVerifyInput,
-  ResultHandoffVerifyResult,
+import {
+  resultHandoffOutcome,
+  type ResultHandoffManifest,
+  type ResultHandoffOutputFinding,
+  type ResultHandoffVerification,
+  type ResultHandoffVerifyInput,
+  type ResultHandoffVerifyResult,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -172,8 +173,9 @@ async function writeVerification(
       });
     }
     const reportPath = NodePath.join(destination, "verification.json");
-    await publishJson(reportPath, report, signal);
-    return { report, reportPath, figures };
+    const withVerdict = { ...report, verdict: resultHandoffOutcome(report).label };
+    await publishJson(reportPath, withVerdict, signal);
+    return { report: withVerdict, reportPath, figures };
   } catch (error) {
     await NodeFSP.rm(destination, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -320,7 +322,12 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
       } satisfies { report: ResultHandoffVerification; figures: ReadonlyArray<Figure> };
     }
     const manifest = parsed.success;
-    const report = { ...base, revision: manifest.revision };
+    const { inputCoverage } = manifest;
+    const report = {
+      ...base,
+      revision: manifest.revision,
+      ...(inputCoverage === undefined ? {} : { inputCoverage }),
+    };
     const couldNotRun = (
       message: string,
       files: VerifiedPackageFiles["files"] = [],
@@ -398,12 +405,28 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
     const matchedFigures = figureOutputs.some((output) => output.status === "matched");
     const hasUnchecked =
       manifest.outputsOmitted > 0 || outputs.some((output) => output.status === "unchecked");
+    const originalInputsConfirmed =
+      inputCoverage?.tracking === "observed" &&
+      !inputCoverage.truncated &&
+      inputCoverage.readsOutsideProject === 0 &&
+      inputCoverage.unresolvedViewInputs === 0 &&
+      manifest.inputs.every(
+        (file) =>
+          file.sha256 !== null &&
+          !file.changedDuringRun &&
+          !file.changedSinceRun &&
+          !file.hashAtExport &&
+          (file.exportFile === undefined ||
+            (file.exportFile.sha256 === file.sha256 && file.exportFile.size === file.size)),
+      );
     const status: ResultHandoffVerification["status"] =
       deciding.length === 0
         ? "could-not-run"
         : deciding.some((output) => output.status !== "matched")
           ? "differs"
-          : "verified";
+          : originalInputsConfirmed
+            ? "verified"
+            : "outputs-matched-inputs-unconfirmed";
     const message =
       deciding.length === 0
         ? differingFigures
@@ -411,7 +434,7 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
           : matchedFigures
             ? "The rerun finished and figure bytes matched, with no retained values, tables, or data files to verify automatically."
             : "The rerun finished. There were no retained values, tables, or other files to confirm."
-        : status === "verified"
+        : status !== "differs"
           ? differingFigures && hasUnchecked
             ? "Checked values, tables, and data files matched. Some figures need review, and some original outputs were unavailable."
             : differingFigures

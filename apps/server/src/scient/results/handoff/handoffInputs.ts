@@ -209,7 +209,7 @@ export async function exportHandoffInputs(options: {
       });
       const size = Number(status.size);
       const changedSinceRun =
-        changed(input, status) || (input.sha256 !== null && input.sha256 !== sha256);
+        input.sha256 === null ? changed(input, status) : input.sha256 !== sha256;
       if (
         included &&
         !(await copyPackageFile(file, pending, includedDataPath(input.path), sha256, size))
@@ -219,12 +219,8 @@ export async function exportHandoffInputs(options: {
       inputs.push({
         ...original,
         included,
-        size,
-        sha256,
+        exportFile: { size, sha256 },
         ...(changedSinceRun ? { changedSinceRun: true } : {}),
-        ...(input.sha256 === null || changedSinceRun || input.changedDuringRun
-          ? { hashAtExport: true }
-          : {}),
       });
     }
     filesHashed++;

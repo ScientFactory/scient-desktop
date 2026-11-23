@@ -1,72 +1,34 @@
-import type { ResultHandoffVerification } from "@t3tools/contracts";
+import { resultHandoffOutcome } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
-export interface VerificationOutcomeSummary {
-  readonly label: string;
-  readonly completed: boolean;
-}
+const labels = {
+  "Outputs matched · original inputs unconfirmed": msg(
+    "Outputs matched · original inputs unconfirmed",
+  ),
+  "Checked outputs matched · review figures and unchecked outputs": msg(
+    "Checked outputs matched · review figures and unchecked outputs",
+  ),
+  "Checked outputs matched · figures need review": msg(
+    "Checked outputs matched · figures need review",
+  ),
+  "Checked outputs matched · some outputs unchecked": msg(
+    "Checked outputs matched · some outputs unchecked",
+  ),
+  Verified: msg("Verified"),
+  Differs: msg("Differs"),
+  Cancelled: msg("Cancelled"),
+  "Rerun finished · figures need review": msg("Rerun finished · figures need review"),
+  "Rerun finished · figures matched": msg("Rerun finished · figures matched"),
+  "Rerun finished · no checkable outputs": msg("Rerun finished · no checkable outputs"),
+  "Could not run": msg("Could not run"),
+};
 
-/**
- * Turns a verification report into an honest headline without changing the
- * underlying comparison policy or `verification.json` status contract.
- */
 export function verificationOutcomeSummary(
-  report: Pick<
-    ResultHandoffVerification,
-    "status" | "rerunCompleted" | "message" | "environment" | "outputs"
-  >,
+  report: Parameters<typeof resultHandoffOutcome>[0],
   resolve: MessageResolver = m,
-): VerificationOutcomeSummary {
-  const hasReviewOutputs = report.outputs.some(
-    (output) => output.status === "differs" || output.status === "missing",
-  );
-  const hasUncheckedOutputs = report.outputs.some((output) => output.status === "unchecked");
-  const hasMatchedOutputs = report.outputs.some((output) => output.status === "matched");
-
-  if (report.status === "verified") {
-    if (hasReviewOutputs && hasUncheckedOutputs) {
-      return {
-        label: resolve(msg("Checked outputs matched · review figures and unchecked outputs")),
-        completed: true,
-      };
-    }
-    if (hasReviewOutputs) {
-      return {
-        label: resolve(msg("Checked outputs matched · figures need review")),
-        completed: true,
-      };
-    }
-    if (hasUncheckedOutputs || report.message !== undefined) {
-      return {
-        label: resolve(msg("Checked outputs matched · some outputs unchecked")),
-        completed: true,
-      };
-    }
-    return { label: resolve(msg("Verified")), completed: true };
-  }
-  if (report.status === "differs") {
-    return { label: resolve(msg("Differs")), completed: false };
-  }
-  if (report.status === "cancelled") {
-    return { label: resolve(msg("Cancelled")), completed: false };
-  }
-  const completedWithoutDeciding =
-    report.rerunCompleted ??
-    // Older reports only record the completion in their output checks and message.
-    (report.environment !== null &&
-      (hasReviewOutputs ||
-        hasMatchedOutputs ||
-        report.message?.startsWith("The rerun finished") === true));
-  if (completedWithoutDeciding) {
-    if (hasReviewOutputs) {
-      return { label: resolve(msg("Rerun finished · figures need review")), completed: true };
-    }
-    if (hasMatchedOutputs) {
-      return { label: resolve(msg("Rerun finished · figures matched")), completed: true };
-    }
-    return { label: resolve(msg("Rerun finished · no checkable outputs")), completed: true };
-  }
-  return { label: resolve(msg("Could not run")), completed: false };
+) {
+  const { label, completed } = resultHandoffOutcome(report);
+  return { label: resolve(labels[label]), completed };
 }

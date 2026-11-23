@@ -130,7 +130,11 @@ function readme(manifest: Omit<ResultHandoffManifest, "documentation">): string 
     "## Dataset and input files",
     "",
     ...manifest.inputs
-      .filter((file) => file.changedSinceRun || file.hashAtExport)
+      .filter(
+        (file) =>
+          file.changedSinceRun ||
+          (file.exportFile !== undefined && (file.sha256 === null || file.changedDuringRun)),
+      )
       .map((file) =>
         file.changedSinceRun
           ? `- ${file.path} changed since the run. This package describes the file at export.`
@@ -139,14 +143,22 @@ function readme(manifest: Omit<ResultHandoffManifest, "documentation">): string 
     "",
     ...included.map(
       (file) =>
-        `- Included: package \`${includedDataPath(file.path, manifest.version)}\` → working folder \`${file.path}\` (${file.size} bytes, ${file.origin}${file.via === undefined ? "" : ` through ${file.via}`})`,
+        `- Included: package \`${includedDataPath(file.path, manifest.version)}\` → working folder \`${file.path}\` (${file.exportFile?.size ?? file.size} bytes, ${file.origin}${file.via === undefined ? "" : ` through ${file.via}`})`,
     ),
-    ...excluded.map(
-      (file) =>
-        `- Supply separately: ${file.path} (${file.size} bytes, ${file.origin}${file.via === undefined ? "" : ` through ${file.via}`}, ${file.sha256 === null ? "no recorded digest" : `SHA-256 ${file.sha256}`}${file.changedDuringRun ? ", changed during the run" : ""})`,
-    ),
+    ...excluded.map((file) => {
+      const sha256 = file.exportFile?.sha256 ?? file.sha256;
+      return `- Supply separately: ${file.path} (${file.exportFile?.size ?? file.size} bytes, ${file.origin}${file.via === undefined ? "" : ` through ${file.via}`}, ${sha256 === null ? "no recorded digest" : `SHA-256 ${sha256}`}${file.changedDuringRun ? ", changed during the run" : ""})`;
+    }),
     ...(manifest.inputs.length === 0 ? ["No project input files were recorded."] : []),
-    ...(manifest.inputTracking === "not-tracked" || manifest.inputsTruncated
+    ...(manifest.inputCoverage?.readsOutsideProject
+      ? [`File reads outside the project (${manifest.inputCoverage.readsOutsideProject}).`]
+      : []),
+    ...(manifest.inputCoverage?.unresolvedViewInputs
+      ? [`Unresolved saved-view inputs (${manifest.inputCoverage.unresolvedViewInputs}).`]
+      : []),
+    ...(manifest.inputTracking === "not-tracked" ||
+    manifest.inputsTruncated ||
+    manifest.inputCoverage?.readsOutsideProject === null
       ? ["The original input record is incomplete. Other dependencies may be needed."]
       : []),
     "",
@@ -330,6 +342,19 @@ export async function exportResultPackage(options: {
       inputs,
       inputTracking: revision.inputs.tracking,
       inputsTruncated: revision.inputs.truncated,
+      inputCoverage: {
+        tracking: revision.inputs.tracking,
+        truncated: revision.inputs.truncated,
+        readsOutsideProject:
+          revision.inputs.readsOutsideProject === undefined &&
+          revision.inputs.outsideDataPaths === undefined
+            ? null
+            : Math.max(
+                revision.inputs.readsOutsideProject ?? 0,
+                revision.inputs.outsideDataPaths?.length ?? 0,
+              ),
+        unresolvedViewInputs: revision.inputs.unresolvedViewInputs?.length ?? 0,
+      },
       outputs,
       outputsOmitted: revision.omitted + skippedOutputs.length,
       ...(skippedOutputs.length === 0 ? {} : { skippedOutputs }),

@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import {
   ResultHandoffManifest,
   type ResultHandoffFinding,
+  type ResultHandoffInputFile,
   type ResultHandoffVerifyInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -28,6 +29,15 @@ import { notebookCode, notebookPackageDigest } from "./notebookSource.ts";
 const decodeManifest = Schema.decodeUnknownSync(ResultHandoffManifest);
 const ignoredMetadataFiles = new Set([".ds_store", "thumbs.db", "desktop.ini"]);
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
+
+function verificationInputBytes(input: ResultHandoffInputFile) {
+  return (
+    input.exportFile ??
+    (input.sha256 === null || (input.changedDuringRun && !input.hashAtExport)
+      ? null
+      : { sha256: input.sha256, size: input.size })
+  );
+}
 
 export async function readPackageManifest(folder: string) {
   const file = await regularPackageFile(folder, "manifest.json");
@@ -66,11 +76,8 @@ export async function readPackageManifest(folder: string) {
   for (const input of manifest.inputs) {
     if (input.via !== undefined) relativeInputPath(input.via);
     if (input.included) relativePackagePath(input.path);
-    if (
-      input.included &&
-      (input.sha256 === null || (input.changedDuringRun && !input.hashAtExport))
-    ) {
-      throw handoffRefusal("An included input has no recorded digest from the original run.");
+    if (input.included && verificationInputBytes(input) === null) {
+      throw handoffRefusal("An included input has no digest to check.");
     }
   }
   return manifest;
@@ -206,7 +213,8 @@ export async function stageVerificationFiles(
       });
       continue;
     }
-    if (recorded.sha256 === null || (recorded.changedDuringRun && !recorded.hashAtExport)) {
+    const bytes = verificationInputBytes(recorded);
+    if (bytes === null) {
       files.push({
         path: recorded.path,
         status: "unchecked",
@@ -218,8 +226,7 @@ export async function stageVerificationFiles(
       root: recorded.included ? folder : suppliedFolder,
       path: recorded.included ? includedDataPath(recorded.path, manifest.version) : recorded.path,
       label: recorded.path,
-      sha256: recorded.sha256,
-      size: recorded.size,
+      ...bytes,
       copyTo: { root: workspace, path: recorded.path, kind: "input" },
       ...(recorded.included ? {} : { kind: "input" }),
       ...(recorded.changedSinceRun
@@ -227,7 +234,10 @@ export async function stageVerificationFiles(
             matchedMessage:
               "This input changed since the original run. Its export-time copy matched.",
           }
-        : recorded.hashAtExport
+        : recorded.hashAtExport ||
+            recorded.changedDuringRun ||
+            recorded.sha256 === null ||
+            bytes.sha256 !== recorded.sha256
           ? { matchedMessage: "This input matched the digest computed at export." }
           : {}),
     });

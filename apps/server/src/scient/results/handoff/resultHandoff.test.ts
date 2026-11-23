@@ -105,6 +105,7 @@ it.effect(
                 },
               ],
               truncated: false,
+              readsOutsideProject: 0,
             },
           };
           const published = await publishScriptRun(layout, publication);
@@ -346,6 +347,36 @@ it.effect(
       yield* Effect.promise(() => NodeFSP.writeFile(manifestPath, manifestText));
       expect(launched).toBe(4);
 
+      const replacement = "x\n1\n2\n";
+      const inputPath = NodePath.join(root, "cohort.csv");
+      yield* Effect.promise(() => NodeFSP.writeFile(inputPath, replacement));
+      const { folder: changedFolder } = yield* handoff
+        .exportPackage({
+          cwd: root,
+          path: "analysis.py",
+          revision: newer,
+          destination: temp,
+          includeInputs: ["cohort.csv"],
+        })
+        .pipe(Effect.ensuring(Effect.promise(() => NodeFSP.writeFile(inputPath, originalTable))));
+      const changedManifest = yield* Effect.promise(async () =>
+        decodeManifest(
+          JSON.parse(await NodeFSP.readFile(NodePath.join(changedFolder, "manifest.json"), "utf8")),
+        ),
+      );
+      expect(changedManifest.inputs).toMatchObject([
+        { sha256: hashBytes(originalTable), exportFile: { sha256: hashBytes(replacement) } },
+      ]);
+      const changedVerification = yield* verifyResultPackage(process, {
+        packageFolder: changedFolder,
+        allowExecution: true,
+      });
+      expect(changedVerification.report).toMatchObject({
+        status: "outputs-matched-inputs-unconfirmed",
+        verdict: "Outputs matched · original inputs unconfirmed",
+        outputs: [{ path: "table.csv", status: "matched" }],
+      });
+
       for (const stop of ["request", "disconnect"] as const) {
         const copying = yield* Deferred.make<void>();
         const blocked = new NodeStream.PassThrough();
@@ -387,7 +418,7 @@ it.effect(
           requested: false,
         });
         expect(blocked.destroyed).toBe(true);
-        expect(launched).toBe(4);
+        expect(launched).toBe(6);
         expect(scratch).toBeDefined();
         yield* Effect.promise(() =>
           expect(NodeFSP.access(scratch!)).rejects.toMatchObject({ code: "ENOENT" }),
@@ -433,7 +464,25 @@ it.effect(
         ),
       );
       expect((yield* verify()).report).toMatchObject({ status: "could-not-run", revision: null });
-      expect(launched).toBe(4);
+      expect(launched).toBe(6);
+
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(folder, "outputs", "table.csv"), originalTable),
+      );
+      const inputCoverage = {
+        tracking: "observed",
+        truncated: false,
+        readsOutsideProject: 2,
+        unresolvedViewInputs: 1,
+      };
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(manifestPath, JSON.stringify({ ...manifest, inputCoverage })),
+      );
+      expect((yield* verify(root)).report).toMatchObject({
+        status: "outputs-matched-inputs-unconfirmed",
+        verdict: "Outputs matched · original inputs unconfirmed",
+        inputCoverage,
+      });
     }),
 );
 
@@ -469,11 +518,14 @@ it("hashes data beyond the recorder limit and marks a changed input at export", 
     expect(files).toMatchObject([
       {
         path: "large.csv",
-        size: bytes,
+        size: bytes - 1,
+        sha256: null,
         // SHA-256 of "x" followed by 256 MiB of zero bytes.
-        sha256: "31b91ae12dc384c86f1f527481da8895639b0a15efa42b6d5ebb6051bfeb888a",
+        exportFile: {
+          size: bytes,
+          sha256: "31b91ae12dc384c86f1f527481da8895639b0a15efa42b6d5ebb6051bfeb888a",
+        },
         changedSinceRun: true,
-        hashAtExport: true,
         included: false,
       },
     ]);
