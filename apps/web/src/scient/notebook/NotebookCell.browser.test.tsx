@@ -161,10 +161,8 @@ describe.each([260, 420, 900])("NotebookCell layout at %ipx", (width) => {
 });
 
 describe("Code cell chrome, line numbers, and wrapping", () => {
-  it("shows the language, parameters badge, copy, and wrap toggle inside the code box", async () => {
-    const { controller, screen } = await mountCell(420, {
-      cells: [{ ...cell, parameterCell: true }],
-    });
+  it("shows the language, copy, and wrap toggle inside the code box", async () => {
+    const { controller, screen } = await mountCell(420);
     await using _screen = screen;
 
     const cellBox = () =>
@@ -173,7 +171,6 @@ describe("Code cell chrome, line numbers, and wrapping", () => {
         .getBoundingClientRect();
 
     expect(screen.container.textContent).toContain("python");
-    expect(screen.container.textContent).toContain("Parameters");
 
     const wrapButton = screen.getByRole("button", { name: "Disable line wrap" });
     expect(wrapButton.element().getAttribute("aria-pressed")).toBe("true");

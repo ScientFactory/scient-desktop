@@ -318,8 +318,6 @@ function CellInsertStrip(props: {
 function CodeCellTopRow(props: {
   readonly language: string;
   readonly theme: "light" | "dark";
-  readonly parameterCell?: boolean | undefined;
-  readonly injectedParameters?: boolean | undefined;
   readonly wrapped: boolean;
   readonly onWrapChange: (wrapped: boolean) => void;
   readonly readCode: () => string;
@@ -346,11 +344,6 @@ function CodeCellTopRow(props: {
         <span className={cn("truncate", hasIcon && "hidden @[19rem]/code-box:inline")}>
           {props.language}
         </span>
-        {props.parameterCell || props.injectedParameters ? (
-          <span className="hidden shrink-0 rounded-full border border-border/70 bg-background/60 px-1.5 py-px font-sans text-[10px] leading-tight text-muted-foreground @[22rem]/code-box:inline">
-            <T>Parameters</T>
-          </span>
-        ) : null}
       </span>
       <div className="flex shrink-0 items-center gap-0.5">
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
@@ -758,8 +751,6 @@ export function NotebookCell(props: {
             <CodeCellTopRow
               language={language}
               theme={theme}
-              parameterCell={cell.parameterCell}
-              injectedParameters={cell.injectedParameters}
               wrapped={wrapped}
               onWrapChange={setWrapped}
               readCode={() => cell.source}
