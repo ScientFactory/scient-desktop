@@ -46,8 +46,11 @@ import * as DesktopWindow from "./DesktopWindow.ts";
 const MAIN_BOUNDS = { x: 100, y: 80, width: 1280, height: 840 };
 const TITLEBAR_HEIGHT = 40;
 
-function makeFakeWindow() {
+function makeFakeWindow(id: number) {
   const webContents = {
+    id,
+    // T3's remote request header policy installs on the window's session.
+    session: { webRequest: { onBeforeSendHeaders: vi.fn() } },
     getURL: vi.fn(() => ""),
     getZoomFactor: vi.fn(() => 1),
     isDestroyed: vi.fn(() => false),
@@ -119,7 +122,7 @@ const layerDesktopEnvironment = DesktopEnvironment.layer({
 const makeHarness = Effect.fnUntraced(function* (
   settings: DesktopAppSettings.DesktopSettings = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
 ) {
-  const fakes = [makeFakeWindow(), makeFakeWindow()] as const;
+  const fakes = [makeFakeWindow(1), makeFakeWindow(2)] as const;
   const createdOptions = yield* Ref.make<Electron.BrowserWindowConstructorOptions[]>([]);
   const mainWindow = yield* Ref.make(Option.none<Electron.BrowserWindow>());
   const revealed = yield* Ref.make<Electron.BrowserWindow[]>([]);
