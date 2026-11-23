@@ -18,6 +18,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1304,6 +1305,7 @@ it.effect("a retried worktree launch replays after its base ref is gone", () =>
 
 it.effect("a client launches with the fallback for an exhausted default", () =>
   Effect.gen(function* () {
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const launched: ThreadLaunch.ThreadLaunchInput[] = [];
     const fallbackModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
     const providers: ServerProvider[] = ["claudeAgent", "codex"].map((driver) => ({
@@ -1314,21 +1316,24 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
       status: "ready",
       version: null,
       auth: { status: "authenticated" },
-      checkedAt: "2026-01-01T00:00:00Z",
+      checkedAt,
       models:
         driver === "codex"
           ? [{ slug: fallbackModel.model, name: "Sol", isCustom: false, capabilities: null }]
           : [],
       slashCommands: [],
       skills: [],
-      ...(driver === "claudeAgent"
-        ? {
-            usageLimits: {
-              checkedAt: "2026-01-01T00:00:00Z",
-              windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
-            },
-          }
-        : {}),
+      usageLimits: {
+        checkedAt,
+        windows: [
+          {
+            id: "session",
+            kind: "session",
+            label: "Session",
+            usedPercent: driver === "claudeAgent" ? 100 : 20,
+          },
+        ],
+      },
     }));
     const { projectId, dependencies } = projectLaunchHarness({
       runtimeModeCeiling: "full-access",

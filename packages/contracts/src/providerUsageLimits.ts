@@ -9,6 +9,15 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
+/** Provider's own availability verdict for a usage window, separate from display percentage. */
+export const ServerProviderUsageWindowStatus = Schema.Literals([
+  "ok",
+  "warning",
+  "exhausted",
+  "unknown",
+]);
+export type ServerProviderUsageWindowStatus = typeof ServerProviderUsageWindowStatus.Type;
+
 /** Stable per-provider ids let sparse updates merge with full probes. */
 export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -17,6 +26,14 @@ export const ServerProviderUsageWindow = Schema.Struct({
   /** When present, this limit applies only to these provider model IDs. */
   modelIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   providerIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Distinguishes multiple credentials pooled behind one provider instance. */
+  accountId: Schema.optional(TrimmedNonEmptyString),
+  /** Provider's availability verdict; when present, availability follows this rather than usedPercent. */
+  status: Schema.optional(ServerProviderUsageWindowStatus),
+  /** False for informational or overflow caps that do not block model requests. */
+  gating: Schema.optional(Schema.Boolean),
+  /** When the upstream reading for this window was fetched, if distinct from checkedAt. */
+  fetchedAt: Schema.optional(IsoDateTime),
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
@@ -47,6 +64,8 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
+  /** Sub-providers inside a multi-account instance with at least one connected account lacking a current reading. */
+  unknownProviderIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** A $0 monthly spend cap has no percentage, so it cannot be a window. */
   zeroSpendCap: Schema.optional(Schema.Boolean),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),

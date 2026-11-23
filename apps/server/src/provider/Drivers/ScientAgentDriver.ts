@@ -330,6 +330,7 @@ export const ScientAgentDriver: ScientProviderDriver<
                     ? readScientAgentUsageLimits(
                         (args) => runPluginCommand(cwd, args),
                         snapshot.accounts,
+                        snapshot.models,
                       )
                     : Effect.undefined,
                   scientAgentCapabilities(

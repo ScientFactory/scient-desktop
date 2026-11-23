@@ -1,14 +1,21 @@
 # Upstream maintenance
 
 Scient owns subscription-model policy in `packages/shared/src/scientModel.ts` and quota
-fallback in `packages/shared/src/scientAgentModelFallback.ts`, mounted in `ChatView.tsx`.
+fallback in `packages/shared/src/scientAgentModelFallback.ts` and `packages/shared/src/usageLimits.ts`,
+mounted in `ChatView.tsx`.
 Preserve exact-ID hidden defaults (new IDs visible), saved visibility/order/favorites and
 custom models, and explicit/persisted thread and global selections. Preferred subscription
 models, not catalog order, drive implicit defaults and the shared new-turn/explicit-resume
 quota fallback: configured fallback first (including an explicitly chosen API route or
 same-family account; default hiding cannot override it, but explicit hiding can), then
 Scient Agent's OpenAI, Anthropic, Antigravity, Muse Code accounts,
-subject to visibility, availability, sign-in, quota and task compatibility. Never silently
+subject to visibility, availability, sign-in, quota and task compatibility. Automatic
+new-draft fallback triggers only when current credible runtime evidence confirms the
+default route is blocked and a replacement has remaining quota; unknown, stale,
+non-blocking, or unrelated model-scoped readings retain the default, and the composer notice
+names the exact applicable limit while omitting the switch-back shortcut during confirmed
+blocks. Composer `/usage-limits` in a Scient Agent thread shows only limits applicable to
+the selected route while Usage → Limits remains aggregate. Never silently
 choose metered API routes automatically or auto-resume a limited thread. This automatic
 chain can recover a standalone-provider thread too. Antigravity's native
 `google-antigravity` and CLI `antigravity-cli` catalog identities stay distinct; Hydrogen is

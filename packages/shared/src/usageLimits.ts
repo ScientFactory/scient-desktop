@@ -30,57 +30,255 @@ import { resolveProviderModelPreferences } from "./scientModel.ts";
 import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
+const USAGE_READING_MAX_AGE_MS = 60 * MINUTE;
+const SCIENT_USAGE_MAX_AGE_MS = 20 * MINUTE;
+const USAGE_CACHE_LAG_MAX_MS = 15 * MINUTE;
+
+const scopeToken = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/gu, "_");
+
+function parseEpochMs(iso: string | undefined): number | null {
+  if (iso === undefined) return null;
+  const parsed = Date.parse(iso);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveCanonicalModel(
+  provider: Pick<ServerProvider, "models"> | undefined,
+  model: string | null | undefined,
+): string | null | undefined {
+  if (!model || !provider) return model;
+  const matched = provider.models.find(
+    (candidate) => candidate.slug === model || candidate.aliases?.includes(model),
+  );
+  return matched?.slug ?? model;
+}
+
+function windowAppliesToModel(
+  provider: Pick<ServerProvider, "driver" | "models"> | undefined,
+  window: ServerProviderUsageWindow,
+  model: string | null | undefined,
+): boolean {
+  if (model === undefined || model === null) return true;
+  const canonical = resolveCanonicalModel(provider, model) ?? model;
+  if (window.modelIds !== undefined && !window.modelIds.includes(canonical)) {
+    return false;
+  }
+  if (window.providerIds !== undefined) {
+    const routeProvider = canonical.split("/")[0] ?? "";
+    if (!window.providerIds.includes(routeProvider)) return false;
+  }
+  switch (provider?.driver) {
+    case "claudeAgent":
+      if (window.id.startsWith("seven_day_")) {
+        return scopeToken(canonical).includes(window.id.slice("seven_day_".length));
+      }
+      return true;
+    case "antigravity": {
+      const family = canonical.match(/^(gemini|claude|gpt)-/)?.[1];
+      const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
+      return (
+        pool === undefined ||
+        family === undefined ||
+        pool === family ||
+        (pool === "3p" && (family === "claude" || family === "gpt"))
+      );
+    }
+    case "opencode":
+      return !window.id.startsWith("go_") || canonical.startsWith("opencode-go/");
+    default:
+      return true;
+  }
+}
+
+function isWindowGating(
+  provider: Pick<ServerProvider, "driver" | "usageLimits"> | undefined,
+  window: ServerProviderUsageWindow,
+): boolean {
+  if (window.gating === false) return false;
+  const windows = provider?.usageLimits?.windows ?? [];
+  if (provider?.driver === "codex" && window.id === "individual") {
+    // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
+    return !windows.some((entry) => entry.id === "primary" || entry.id === "secondary");
+  }
+  if (provider?.driver === "claudeAgent" && window.id === "monthly_spend") {
+    return !windows.some((entry) => entry.id === "five_hour" || entry.id === "seven_day");
+  }
+  return true;
+}
+
+function isWindowFresh(
+  limits: ServerProviderUsageLimits,
+  window: ServerProviderUsageWindow,
+  now: number,
+  isScient: boolean,
+): boolean {
+  const checkedAt = parseEpochMs(limits.checkedAt);
+  if (isScient && (window.fetchedAt === undefined || window.status === undefined)) return false;
+  if (window.fetchedAt !== undefined) {
+    const fetchedAt = parseEpochMs(window.fetchedAt);
+    if (fetchedAt === null) return false;
+    if (now - fetchedAt > (isScient ? SCIENT_USAGE_MAX_AGE_MS : USAGE_READING_MAX_AGE_MS)) {
+      return false;
+    }
+    if (checkedAt !== null && checkedAt - fetchedAt > USAGE_CACHE_LAG_MAX_MS) return false;
+    return true;
+  }
+  if (checkedAt === null) return false;
+  return now - checkedAt <= USAGE_READING_MAX_AGE_MS;
+}
+
+function windowAvailability(
+  window: ServerProviderUsageWindow,
+): "available" | "blocked" | "unknown" {
+  if (window.status !== undefined) {
+    if (window.status === "exhausted") return "blocked";
+    if (window.status === "ok" || window.status === "warning") return "available";
+    return "unknown";
+  }
+  return (window.usedPercent ?? 0) >= 100 ? "blocked" : "available";
+}
+
+function normalizedFutureResetIso(window: ServerProviderUsageWindow, now: number): string | null {
+  const resetsAt = parseEpochMs(window.resetsAt);
+  return resetsAt !== null && resetsAt > now ? (window.resetsAt ?? null) : null;
+}
+
+function pickGoverningBlockedWindow(
+  blocked: readonly ServerProviderUsageWindow[],
+  now: number,
+): { readonly window: ServerProviderUsageWindow; readonly resetsAt: string | null } {
+  const withoutReset = blocked.find((window) => normalizedFutureResetIso(window, now) === null);
+  if (withoutReset) return { window: withoutReset, resetsAt: null };
+  let chosen = blocked[0]!;
+  let chosenResetMs = parseEpochMs(normalizedFutureResetIso(chosen, now) ?? undefined);
+  for (const candidate of blocked.slice(1)) {
+    const candidateResetMs = parseEpochMs(normalizedFutureResetIso(candidate, now) ?? undefined);
+    if (candidateResetMs !== null && (chosenResetMs === null || candidateResetMs > chosenResetMs)) {
+      chosen = candidate;
+      chosenResetMs = candidateResetMs;
+    }
+  }
+  return { window: chosen, resetsAt: normalizedFutureResetIso(chosen, now) };
+}
+
+export type RouteQuotaEvaluation =
+  | {
+      readonly state: "blocked";
+      readonly window: ServerProviderUsageWindow;
+      readonly resetsAt: string | null;
+    }
+  | { readonly state: "available" }
+  | { readonly state: "unknown" };
+
+export function evaluateRouteQuota(
+  provider: ServerProvider | undefined,
+  now: number,
+  model?: string,
+): RouteQuotaEvaluation {
+  const limits = provider?.usageLimits;
+  if (!provider || !limits || limits.unavailable !== undefined) return { state: "unknown" };
+  const canonical = resolveCanonicalModel(provider, model);
+  const isScient = provider.driver === "scient";
+  const routeProvider = canonical?.includes("/") ? canonical.split("/", 1)[0] : undefined;
+  if (isScient && routeProvider === undefined) return { state: "unknown" };
+  const hasUnknownSiblingAccount =
+    routeProvider !== undefined && (limits.unknownProviderIds?.includes(routeProvider) ?? false);
+
+  const byAccount = new Map<string, ServerProviderUsageWindow[]>();
+  for (const window of limits.windows) {
+    if (isScient && (!routeProvider || !window.providerIds?.includes(routeProvider))) continue;
+    const key = window.accountId ?? "";
+    const group = byAccount.get(key) ?? [];
+    if (!byAccount.has(key)) byAccount.set(key, group);
+    if (windowAppliesToModel(provider, window, canonical) && isWindowGating(provider, window)) {
+      group.push(window);
+    }
+  }
+
+  const blockedAccounts: Array<{
+    readonly window: ServerProviderUsageWindow;
+    readonly resetsAt: string | null;
+  }> = [];
+  let hasAvailableAccount = false;
+  let hasUnknownAccount = false;
+
+  for (const accountWindows of byAccount.values()) {
+    const current = (window: ServerProviderUsageWindow) => {
+      if (!isWindowFresh(limits, window, now, isScient)) return "unknown";
+      const resetsAt = parseEpochMs(window.resetsAt);
+      return resetsAt !== null && resetsAt <= now ? "unknown" : windowAvailability(window);
+    };
+
+    if (provider.driver === "cursor" && canonical) {
+      const rails = /^(auto|default|grok|composer)/.test(canonical)
+        ? ["apiPercentUsed", "autoPercentUsed"]
+        : ["apiPercentUsed"];
+      const readings = rails.map((id) => accountWindows.find((window) => window.id === id));
+      const blocked = readings.filter(
+        (window): window is ServerProviderUsageWindow =>
+          window !== undefined && current(window) === "blocked",
+      );
+      if (blocked.length === rails.length) {
+        blockedAccounts.push(pickGoverningBlockedWindow(blocked, now));
+      } else if (readings.some((window) => window && current(window) === "available")) {
+        hasAvailableAccount = true;
+      } else {
+        hasUnknownAccount = true;
+      }
+      continue;
+    }
+
+    const blocked = accountWindows.filter((window) => current(window) === "blocked");
+    if (blocked.length > 0) {
+      blockedAccounts.push(pickGoverningBlockedWindow(blocked, now));
+    } else if (
+      accountWindows.length > 0 &&
+      accountWindows.every((window) => current(window) === "available")
+    ) {
+      hasAvailableAccount = true;
+    } else {
+      hasUnknownAccount = true;
+    }
+  }
+
+  if (hasAvailableAccount) return { state: "available" };
+  if (blockedAccounts.length > 0 && !hasUnknownAccount && !hasUnknownSiblingAccount) {
+    // Across pooled accounts for one route, the soonest account reset unblocks the route.
+    let soonest = blockedAccounts[0]!;
+    let soonestMs = parseEpochMs(soonest.resetsAt ?? undefined);
+    for (const candidate of blockedAccounts.slice(1)) {
+      const candidateMs = parseEpochMs(candidate.resetsAt ?? undefined);
+      if (candidateMs !== null && (soonestMs === null || candidateMs < soonestMs)) {
+        soonest = candidate;
+        soonestMs = candidateMs;
+      }
+    }
+    return { state: "blocked", window: soonest.window, resetsAt: soonest.resetsAt };
+  }
+  return { state: "unknown" };
+}
+
+function fallbackLimitLabel(
+  provider: Pick<ServerProvider, "driver" | "displayName">,
+  window: Pick<ServerProviderUsageWindow, "label">,
+): string {
+  const windowLabel = window.label.trim();
+  if (provider.driver === "scient") {
+    return windowLabel.replace(/ \([^()]*@[^()]*\)(?= · )/u, "");
+  }
+  const providerName = provider.displayName?.trim() || String(provider.driver);
+  if (!windowLabel) return providerName;
+  if (windowLabel.toLowerCase().startsWith(providerName.toLowerCase())) return windowLabel;
+  return `${providerName} · ${windowLabel}`;
+}
 
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
   now: number,
   model?: string,
 ) {
-  const windows = provider?.usageLimits?.windows ?? [];
-  const exhausted = windows.filter(
-    (window) =>
-      (window.usedPercent ?? 0) >= 100 &&
-      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
-      (model === undefined ||
-        window.providerIds === undefined ||
-        window.providerIds.includes(model.split("/")[0] ?? "")) &&
-      (!window.resetsAt ||
-        !Number.isFinite(Date.parse(window.resetsAt)) ||
-        Date.parse(window.resetsAt) > now),
-  );
-  if (model === undefined) return exhausted[0];
-  switch (provider?.driver) {
-    case "cursor": {
-      const api = exhausted.find((window) => window.id === "apiPercentUsed");
-      const auto = exhausted.find((window) => window.id === "autoPercentUsed");
-      return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
-    }
-    case "antigravity": {
-      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
-      return exhausted.find((window) => {
-        const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
-        return (
-          pool === undefined ||
-          family === undefined ||
-          pool === family ||
-          (pool === "3p" && (family === "claude" || family === "gpt"))
-        );
-      });
-    }
-    case "codex": {
-      // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
-      const hasPlanWindows = windows.some(
-        (window) => window.id === "primary" || window.id === "secondary",
-      );
-      return exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
-    }
-    case "opencode":
-      return exhausted.find(
-        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
-      );
-    default:
-      return exhausted[0];
-  }
+  const evaluation = evaluateRouteQuota(provider, now, model);
+  return evaluation.state === "blocked" ? evaluation.window : undefined;
 }
 
 // SCIENT-FORK:START — subscription fallback shares picker visibility and preferred models.
@@ -91,6 +289,7 @@ export function resolveUsageLimitFallback(input: {
   readonly now: number;
   readonly settings?: ServerSettings;
   readonly projectId?: ProjectId | null;
+  readonly requireReplacementQuota?: boolean;
 }): ModelSelection | undefined {
   const currentProvider = input.providers.find(
     (provider) => provider.instanceId === input.currentSelection.instanceId,
@@ -100,7 +299,7 @@ export function resolveUsageLimitFallback(input: {
   const eligible = (
     provider: ServerProvider,
     selection: ModelSelection,
-    includeDefaults = false,
+    options: { readonly includeDefaults?: boolean; readonly requireConfirmedQuota?: boolean } = {},
   ) => {
     const model = provider.models.find(
       (candidate) =>
@@ -115,7 +314,6 @@ export function resolveUsageLimitFallback(input: {
       !model ||
       model.unavailableReason ||
       model.supportsTextGeneration === false ||
-      exhaustedUsageWindow(provider, input.now, model.slug) ||
       (input.settings &&
         !resolveProjectProviderInstanceEnabled(
           input.settings,
@@ -125,8 +323,11 @@ export function resolveUsageLimitFallback(input: {
     ) {
       return false;
     }
+    const quota = evaluateRouteQuota(provider, input.now, model.slug);
+    if (quota.state === "blocked") return false;
+    if (options.requireConfirmedQuota && quota.state !== "available") return false;
     const preferences = input.settings?.providerModelPreferences?.[provider.instanceId];
-    const hidden = includeDefaults
+    const hidden = options.includeDefaults
       ? resolveProviderModelPreferences(provider.driver, provider.models, preferences).hiddenModels
       : (preferences?.hiddenModels ?? []);
     return !hidden.includes(selection.model) && !hidden.includes(model.slug);
@@ -135,7 +336,19 @@ export function resolveUsageLimitFallback(input: {
     const preferred = input.providers.find(
       (provider) => provider.instanceId === input.fallbackSelection?.instanceId,
     );
-    if (preferred && eligible(preferred, input.fallbackSelection)) return input.fallbackSelection;
+    const isCurrentRoute =
+      preferred?.instanceId === currentProvider.instanceId &&
+      resolveCanonicalModel(preferred, input.fallbackSelection.model) ===
+        resolveCanonicalModel(currentProvider, input.currentSelection.model);
+    if (
+      preferred &&
+      !isCurrentRoute &&
+      eligible(preferred, input.fallbackSelection, {
+        requireConfirmedQuota: input.requireReplacementQuota === true,
+      })
+    ) {
+      return input.fallbackSelection;
+    }
   }
   const agents = input.providers.filter((provider) => provider.driver === "scient");
   agents.sort(
@@ -143,16 +356,24 @@ export function resolveUsageLimitFallback(input: {
       Number(b.instanceId === input.currentSelection.instanceId) -
       Number(a.instanceId === input.currentSelection.instanceId),
   );
-  for (const agent of agents) {
-    const alternative = scientAgentAlternativeModel(
-      agent,
-      input.currentSelection.model,
-      (slug) => !eligible(agent, { instanceId: agent.instanceId, model: slug }, true),
-      currentFamily,
-    );
-    if (alternative) return { instanceId: agent.instanceId, model: alternative.slug };
-  }
-  return undefined;
+  const findAutomatic = (requireConfirmedQuota: boolean) => {
+    for (const agent of agents) {
+      const alternative = scientAgentAlternativeModel(
+        agent,
+        input.currentSelection.model,
+        (slug) =>
+          !eligible(
+            agent,
+            { instanceId: agent.instanceId, model: slug },
+            { includeDefaults: true, requireConfirmedQuota },
+          ),
+        currentFamily,
+      );
+      if (alternative) return { instanceId: agent.instanceId, model: alternative.slug };
+    }
+    return undefined;
+  };
+  return findAutomatic(true) ?? (input.requireReplacementQuota ? undefined : findAutomatic(false));
 }
 // SCIENT-FORK:END
 
@@ -169,13 +390,22 @@ export function resolveNewThreadModelSelection(input: {
   const unchanged = { selection, fallback: null };
   if (input.explicitSelection || !selection) return unchanged;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-  const window = exhaustedUsageWindow(provider, input.now, selection.model);
-  if (!provider || !window) return unchanged;
-  const fallback = resolveUsageLimitFallback({ ...input, currentSelection: selection });
+  const evaluation = evaluateRouteQuota(provider, input.now, selection.model);
+  if (!provider || evaluation.state !== "blocked") return unchanged;
+  const fallback = resolveUsageLimitFallback({
+    ...input,
+    currentSelection: selection,
+    requireReplacementQuota: true,
+  });
   return fallback
     ? {
         selection: fallback,
-        fallback: { provider, resetsAt: window.resetsAt ?? null },
+        fallback: {
+          provider,
+          window: evaluation.window,
+          limitLabel: fallbackLimitLabel(provider, evaluation.window),
+          resetsAt: evaluation.resetsAt,
+        },
       }
     : unchanged;
 }
@@ -1048,6 +1278,7 @@ export function collectProviderUsageLimits(
   >();
   for (const provider of providersWithLimits(providers)) {
     if (!drivers.has(provider.driver) || !provider.usageLimits) continue;
+    if (selected.driver === "scient" && provider.instanceId !== selected.instanceId) continue;
     const accountKey = resolveKey(nativeReport(provider));
     if (routedKeys && (accountKey === null || !routedKeys.has(accountKey))) continue;
     const snapshot = { provider, limits: provider.usageLimits };
@@ -1109,6 +1340,19 @@ export function collectProviderUsageLimits(
     const shownCredits = showHubCredits
       ? hubCredits.account.usageLimits.resetCredits
       : credits?.limits.resetCredits;
+    const scopedLimits =
+      provider.driver === "scient"
+        ? {
+            ...limits,
+            windows: limits.windows.filter(
+              (window) =>
+                model !== null &&
+                window.status !== undefined &&
+                window.providerIds !== undefined &&
+                windowAppliesToModel(provider, window, model),
+            ),
+          }
+        : limits;
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
@@ -1126,7 +1370,7 @@ export function collectProviderUsageLimits(
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
+      limits: shownCredits ? { ...scopedLimits, resetCredits: shownCredits } : scopedLimits,
     });
   }
   for (const source of shownHubs) {

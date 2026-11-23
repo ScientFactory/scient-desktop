@@ -1,14 +1,22 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderConnectionAccount,
   type ServerProvider,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { scientAgentAlternativeModel } from "./scientAgentModelFallback.ts";
-import { resolveNewThreadModelSelection, resolveUsageLimitFallback } from "./usageLimits.ts";
+import {
+  collectLimitAccounts,
+  collectProviderUsageLimits,
+  evaluateRouteQuota,
+  resolveNewThreadModelSelection,
+  resolveUsageLimitFallback,
+} from "./usageLimits.ts";
 
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
 const account = (
@@ -59,6 +67,8 @@ function scientAgent(
           kind: "session",
           label: "Google · 5 hours",
           providerIds: [exhaustedProvider],
+          status: "exhausted",
+          fetchedAt: "2026-11-13T11:59:00.000Z",
           usedPercent: 100,
           resetsAt: "2026-11-13T15:00:00.000Z",
         },
@@ -109,22 +119,62 @@ describe("scientAgentAlternativeModel", () => {
 });
 
 describe("resolveNewThreadModelSelection for Scient Agent", () => {
-  it("starts a new thread on another account's model while the default's account is out of quota", () => {
-    const provider = scientAgent([account("google-antigravity"), account("openai-codex")]);
+  it("starts a new thread on another account's model only when blocked and replacement has quota", () => {
+    const base = scientAgent([account("google-antigravity"), account("openai-codex")]);
+    const withHealthyCodex: ServerProvider = {
+      ...base,
+      usageLimits: {
+        checkedAt: base.usageLimits!.checkedAt,
+        windows: [
+          ...base.usageLimits!.windows,
+          {
+            id: "openai-codex:primary",
+            kind: "session",
+            label: "ChatGPT · 5 hours",
+            providerIds: ["openai-codex"],
+            accountId: "openai-codex:acct",
+            status: "ok",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 20,
+            resetsAt: "2026-11-13T16:00:00.000Z",
+          },
+        ],
+      },
+    };
     const resolved = resolveNewThreadModelSelection({
       defaultSelection: {
-        instanceId: provider.instanceId,
+        instanceId: withHealthyCodex.instanceId,
         model: "google-antigravity/gemini-3.8-flash",
       },
       fallbackSelection: null,
-      providers: [provider],
+      providers: [withHealthyCodex],
       now: NOW,
     });
     expect(resolved.selection).toEqual({
-      instanceId: provider.instanceId,
+      instanceId: withHealthyCodex.instanceId,
       model: "openai-codex/gpt-6.1-sol",
     });
     expect(resolved.fallback?.resetsAt).toBe("2026-11-13T15:00:00.000Z");
+    expect(resolved.fallback?.limitLabel).toBe("Google · 5 hours");
+
+    // Without credible quota evidence for Codex, automatic fallback does not switch blindly.
+    expect(
+      resolveNewThreadModelSelection({
+        defaultSelection: {
+          instanceId: base.instanceId,
+          model: "google-antigravity/gemini-3.8-flash",
+        },
+        fallbackSelection: null,
+        providers: [base],
+        now: NOW,
+      }),
+    ).toEqual({
+      selection: {
+        instanceId: base.instanceId,
+        model: "google-antigravity/gemini-3.8-flash",
+      },
+      fallback: null,
+    });
 
     // The agent's own choice stands while its account has quota left.
     const healthy = scientAgent([account("google-antigravity"), account("openai-codex")], "none");
@@ -139,6 +189,361 @@ describe("resolveNewThreadModelSelection for Scient Agent", () => {
         now: NOW,
       }).fallback,
     ).toBeNull();
+  });
+
+  it("retains Opus when shared Claude has quota, Fable is exhausted, and Codex has no reading", () => {
+    const opus = "anthropic/claude-opus-5-5";
+    const fable = "anthropic/claude-fable-5-1";
+    const sol = "openai-codex/gpt-6.1-sol";
+    const windows: ServerProviderUsageWindow[] = [
+      {
+        id: "anthropic:5h",
+        kind: "session",
+        label: "Claude · 5 Hour",
+        providerIds: ["anthropic"],
+        accountId: "anthropic:acct-1",
+        status: "ok",
+        fetchedAt: "2026-11-13T11:58:00.000Z",
+        usedPercent: 40,
+        resetsAt: "2026-11-13T15:00:00.000Z",
+      },
+      {
+        id: "anthropic:7d:fable",
+        kind: "weekly",
+        label: "Claude · 7 Day (Fable)",
+        providerIds: ["anthropic"],
+        modelIds: [fable],
+        accountId: "anthropic:acct-1",
+        status: "exhausted",
+        fetchedAt: "2026-11-13T11:58:00.000Z",
+        usedPercent: 100,
+        resetsAt: "2026-11-18T00:00:00.000Z",
+      },
+    ];
+    const provider: ServerProvider = {
+      ...scientAgent([account("anthropic"), account("openai-codex")]),
+      models: [model(opus), model(fable), model(sol)],
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        windows,
+      },
+    };
+
+    expect(
+      resolveNewThreadModelSelection({
+        defaultSelection: { instanceId: provider.instanceId, model: opus },
+        fallbackSelection: null,
+        providers: [provider],
+        now: NOW,
+      }),
+    ).toEqual({
+      selection: { instanceId: provider.instanceId, model: opus },
+      fallback: null,
+    });
+
+    // Even when Fable itself is selected, absent Codex reading prevents automatic fallback.
+    expect(
+      resolveNewThreadModelSelection({
+        defaultSelection: { instanceId: provider.instanceId, model: fable },
+        fallbackSelection: null,
+        providers: [provider],
+        now: NOW,
+      }).fallback,
+    ).toBeNull();
+
+    // Once Codex reports credible remaining quota, Fable switches to Codex with the Fable limit label,
+    // while Opus still stays on Opus.
+    const withCodex: ServerProvider = {
+      ...provider,
+      usageLimits: {
+        ...provider.usageLimits!,
+        windows: [
+          ...windows,
+          {
+            id: "openai-codex:primary",
+            kind: "session",
+            label: "ChatGPT · 5 hours",
+            providerIds: ["openai-codex"],
+            accountId: "openai-codex:acct-1",
+            status: "ok",
+            fetchedAt: "2026-11-13T11:58:00.000Z",
+            usedPercent: 25,
+            resetsAt: "2026-11-13T16:00:00.000Z",
+          },
+        ],
+      },
+    };
+    expect(
+      resolveNewThreadModelSelection({
+        defaultSelection: { instanceId: withCodex.instanceId, model: opus },
+        fallbackSelection: null,
+        providers: [withCodex],
+        now: NOW,
+      }).fallback,
+    ).toBeNull();
+
+    const fableResolved = resolveNewThreadModelSelection({
+      defaultSelection: { instanceId: withCodex.instanceId, model: fable },
+      fallbackSelection: null,
+      providers: [withCodex],
+      now: NOW,
+    });
+    expect(fableResolved.selection).toEqual({ instanceId: withCodex.instanceId, model: sol });
+    expect(fableResolved.fallback?.limitLabel).toBe("Claude · 7 Day (Fable)");
+    expect(fableResolved.fallback?.resetsAt).toBe("2026-11-18T00:00:00.000Z");
+  });
+
+  it("respects 100% warnings, multi-account pools, unknown siblings, and stale/expired readings", () => {
+    const opus = "anthropic/claude-opus-5-5";
+    const sol = "openai-codex/gpt-6.1-sol";
+    const base = {
+      ...scientAgent([account("anthropic"), account("openai-codex")]),
+      models: [model(opus), model(sol)],
+    };
+
+    // 100% warning is NOT blocked and counts as available.
+    const warningCodex: ServerProvider = {
+      ...base,
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        windows: [
+          {
+            id: "openai-codex:primary",
+            kind: "session",
+            label: "ChatGPT · 5 hours",
+            providerIds: ["openai-codex"],
+            accountId: "openai-codex:1",
+            status: "warning",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 100,
+            resetsAt: "2026-11-13T15:00:00.000Z",
+          },
+        ],
+      },
+    };
+    expect(evaluateRouteQuota(warningCodex, NOW, sol)).toEqual({ state: "available" });
+
+    const codexWindow = warningCodex.usageLimits!.windows[0]!;
+    for (const otherWindow of [
+      { ...codexWindow, id: "secondary", status: "unknown" as const },
+      { ...codexWindow, id: "secondary", fetchedAt: "2026-11-13T11:30:00.000Z" },
+      { ...codexWindow, id: "secondary", resetsAt: "2026-11-13T11:59:00.000Z" },
+    ]) {
+      expect(
+        evaluateRouteQuota(
+          {
+            ...base,
+            usageLimits: {
+              ...warningCodex.usageLimits!,
+              windows: [codexWindow, otherWindow],
+            },
+          },
+          NOW,
+          sol,
+        ),
+      ).toEqual({ state: "unknown" });
+    }
+    expect(
+      evaluateRouteQuota(
+        {
+          ...base,
+          usageLimits: {
+            ...warningCodex.usageLimits!,
+            windows: [
+              { ...codexWindow, status: undefined, fetchedAt: undefined, usedPercent: 100 },
+            ],
+          },
+        },
+        NOW,
+        sol,
+      ),
+    ).toEqual({ state: "unknown" });
+
+    // Multi-account pool: one exhausted + one healthy -> route available.
+    const twoAccountsHealthy: ServerProvider = {
+      ...base,
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        windows: [
+          {
+            id: "anthropic:5h",
+            kind: "session",
+            label: "Claude (a@example.invalid) · 5 Hour",
+            providerIds: ["anthropic"],
+            accountId: "anthropic:a",
+            status: "exhausted",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 100,
+            resetsAt: "2026-11-13T15:00:00.000Z",
+          },
+          {
+            id: "anthropic:5h#2",
+            kind: "session",
+            label: "Claude (b@example.invalid) · 5 Hour",
+            providerIds: ["anthropic"],
+            accountId: "anthropic:b",
+            status: "ok",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 20,
+            resetsAt: "2026-11-13T16:00:00.000Z",
+          },
+        ],
+      },
+    };
+    expect(evaluateRouteQuota(twoAccountsHealthy, NOW, opus)).toEqual({ state: "available" });
+
+    // One exhausted + one unreported sibling -> unknown (not confirmed blocked).
+    const unknownSibling: ServerProvider = {
+      ...base,
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        unknownProviderIds: ["anthropic"],
+        windows: [twoAccountsHealthy.usageLimits!.windows[0]!],
+      },
+    };
+    expect(evaluateRouteQuota(unknownSibling, NOW, opus)).toEqual({ state: "unknown" });
+
+    const outsideModel = {
+      ...twoAccountsHealthy.usageLimits!.windows[1]!,
+      modelIds: ["anthropic/claude-fable-5-1"],
+    };
+    expect(
+      evaluateRouteQuota(
+        {
+          ...base,
+          usageLimits: {
+            ...twoAccountsHealthy.usageLimits!,
+            windows: [twoAccountsHealthy.usageLimits!.windows[0]!, outsideModel],
+          },
+        },
+        NOW,
+        opus,
+      ),
+    ).toEqual({ state: "unknown" });
+
+    // Both accounts exhausted -> blocked, unblocks at earliest reset.
+    const bothExhausted: ServerProvider = {
+      ...base,
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        windows: [
+          twoAccountsHealthy.usageLimits!.windows[0]!,
+          {
+            ...twoAccountsHealthy.usageLimits!.windows[1]!,
+            status: "exhausted",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 100,
+            resetsAt: "2026-11-13T13:30:00.000Z",
+          },
+        ],
+      },
+    };
+    expect(evaluateRouteQuota(bothExhausted, NOW, opus)).toMatchObject({
+      state: "blocked",
+      resetsAt: "2026-11-13T13:30:00.000Z",
+    });
+
+    // Stale cached reading (fetchedAt 20 min before checkedAt) -> unknown.
+    const staleCached: ServerProvider = {
+      ...base,
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        windows: [
+          {
+            ...twoAccountsHealthy.usageLimits!.windows[0]!,
+            fetchedAt: "2026-11-13T11:30:00.000Z",
+          },
+        ],
+      },
+    };
+    expect(evaluateRouteQuota(staleCached, NOW, opus)).toEqual({ state: "unknown" });
+  });
+
+  it("scopes Scient Agent composer /usage-limits to the selected route while Usage -> Limits stays aggregate", () => {
+    const opus = "anthropic/claude-opus-5-5";
+    const fable = "anthropic/claude-fable-5-1";
+    const sol = "openai-codex/gpt-6.1-sol";
+    const provider: ServerProvider = {
+      ...scientAgent([account("anthropic"), account("openai-codex")]),
+      models: [model(opus), model(fable), model(sol)],
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        windows: [
+          {
+            id: "anthropic:5h",
+            kind: "session",
+            label: "Claude · 5 Hour",
+            providerIds: ["anthropic"],
+            status: "ok",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 40,
+          },
+          {
+            id: "anthropic:7d:fable",
+            kind: "weekly",
+            label: "Claude · 7 Day (Fable)",
+            providerIds: ["anthropic"],
+            modelIds: [fable],
+            status: "exhausted",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 100,
+          },
+          {
+            id: "openai-codex:primary",
+            kind: "session",
+            label: "ChatGPT · 5 hours",
+            providerIds: ["openai-codex"],
+            status: "ok",
+            fetchedAt: "2026-11-13T11:59:00.000Z",
+            usedPercent: 25,
+          },
+        ],
+      },
+    };
+
+    const gptReport = collectProviderUsageLimits(provider.instanceId, [provider], [], NOW, sol);
+    expect(gptReport?.accounts[0]?.limits.windows.map((window) => window.id)).toEqual([
+      "openai-codex:primary",
+    ]);
+
+    const opusReport = collectProviderUsageLimits(provider.instanceId, [provider], [], NOW, opus);
+    expect(opusReport?.accounts[0]?.limits.windows.map((window) => window.id)).toEqual([
+      "anthropic:5h",
+    ]);
+
+    const fableReport = collectProviderUsageLimits(provider.instanceId, [provider], [], NOW, fable);
+    expect(fableReport?.accounts[0]?.limits.windows.map((window) => window.id)).toEqual([
+      "anthropic:5h",
+      "anthropic:7d:fable",
+    ]);
+
+    // Absent Codex reading on a GPT route shows no unrelated Claude/Fable windows.
+    const noCodex: ServerProvider = {
+      ...provider,
+      usageLimits: {
+        checkedAt: "2026-11-13T11:59:00.000Z",
+        windows: provider.usageLimits!.windows.filter(
+          (window) => window.providerIds?.[0] !== "openai-codex",
+        ),
+      },
+    };
+    const absentGptReport = collectProviderUsageLimits(noCodex.instanceId, [noCodex], [], NOW, sol);
+    expect(absentGptReport?.accounts[0]?.limits.windows).toEqual([]);
+
+    // Global Usage -> Limits remains aggregate across all accounts and scoped windows.
+    const aggregate = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("local"),
+          { entry: { target: { label: "Local" } }, serverConfig: { providers: [provider] } },
+        ],
+      ]),
+    );
+    expect(aggregate[0]?.limits.windows.map((window) => window.id)).toEqual([
+      "anthropic:5h",
+      "anthropic:7d:fable",
+      "openai-codex:primary",
+    ]);
   });
 });
 
@@ -176,7 +581,10 @@ describe("subscription fallback policy", () => {
       driver: ProviderDriverKind.make("codex"),
       auth: { status: "authenticated", type: "chatgpt" },
       models: [model("gpt-6.1-sol")],
-      usageLimits: undefined,
+      usageLimits: {
+        checkedAt: agent.usageLimits!.checkedAt,
+        windows: [{ id: "primary", kind: "session", label: "5 Hour", usedPercent: 10 }],
+      },
     };
     const configured = {
       instanceId: native.instanceId,
@@ -201,7 +609,7 @@ describe("subscription fallback policy", () => {
         resolveUsageLimitFallback({
           ...input,
           currentSelection: input.defaultSelection,
-          providers: [agent, { ...native, auth }],
+          providers: [agent, { ...native, auth, usageLimits: undefined }],
         }),
       ).toEqual(configured);
     }
@@ -218,35 +626,38 @@ describe("subscription fallback policy", () => {
     { driver: "claudeAgent", model: "claude-sonnet-5-5" },
     { driver: "antigravity", model: "gemini-4-hydrogen" },
     { driver: "muse", model: "muse-wonder-full-1.0" },
-  ])("honors a configured $driver fallback without requiring quota telemetry", (candidate) => {
-    const agent = makeAgent();
-    const native: ServerProvider = {
-      ...agent,
-      instanceId: ProviderInstanceId.make("configured"),
-      driver: ProviderDriverKind.make(candidate.driver),
-      auth: { status: "authenticated" },
-      models: [model(candidate.model)],
-      usageLimits: undefined,
-    };
-    const configured = { instanceId: native.instanceId, model: candidate.model };
-    const input = {
-      defaultSelection: { instanceId: agent.instanceId, model: currentModel },
-      fallbackSelection: configured,
-      providers: [agent, native],
-      now: NOW,
-    };
-    expect(resolveNewThreadModelSelection(input).selection).toEqual(configured);
-    expect(
-      resolveUsageLimitFallback({ ...input, currentSelection: input.defaultSelection }),
-    ).toEqual(configured);
-    expect(
-      resolveUsageLimitFallback({
-        ...input,
-        currentSelection: input.defaultSelection,
-        providers: [agent, { ...native, models: [{ ...native.models[0]!, isCustom: true }] }],
-      }),
-    ).toEqual(configured);
-  });
+  ])(
+    "offers a configured $driver fallback without telemetry only during explicit recovery",
+    (candidate) => {
+      const agent = makeAgent();
+      const native: ServerProvider = {
+        ...agent,
+        instanceId: ProviderInstanceId.make("configured"),
+        driver: ProviderDriverKind.make(candidate.driver),
+        auth: { status: "authenticated" },
+        models: [model(candidate.model)],
+        usageLimits: undefined,
+      };
+      const configured = { instanceId: native.instanceId, model: candidate.model };
+      const input = {
+        defaultSelection: { instanceId: agent.instanceId, model: currentModel },
+        fallbackSelection: configured,
+        providers: [agent, native],
+        now: NOW,
+      };
+      expect(resolveNewThreadModelSelection(input).selection).toEqual(input.defaultSelection);
+      expect(
+        resolveUsageLimitFallback({ ...input, currentSelection: input.defaultSelection }),
+      ).toEqual(configured);
+      expect(
+        resolveUsageLimitFallback({
+          ...input,
+          currentSelection: input.defaultSelection,
+          providers: [agent, { ...native, models: [{ ...native.models[0]!, isCustom: true }] }],
+        }),
+      ).toEqual(configured);
+    },
+  );
 
   it.each(["gemini-3.8-flash", "antigravity-default"])(
     "keeps a saved fallback hidden only by defaults: %s",
@@ -287,7 +698,7 @@ describe("subscription fallback policy", () => {
             {
               ...native,
               usageLimits: {
-                checkedAt: native.checkedAt,
+                checkedAt: agent.usageLimits!.checkedAt,
                 windows: [
                   {
                     id: "gemini-pool",
@@ -378,7 +789,7 @@ describe("subscription fallback policy", () => {
       resolve({
         ...agent,
         usageLimits: {
-          checkedAt: agent.checkedAt,
+          checkedAt: agent.usageLimits!.checkedAt,
           windows: [
             ...agent.usageLimits!.windows,
             {
@@ -386,6 +797,8 @@ describe("subscription fallback policy", () => {
               kind: "weekly",
               label: "OpenAI",
               providerIds: ["openai-codex"],
+              status: "exhausted",
+              fetchedAt: "2026-11-13T11:59:00.000Z",
               usedPercent: 100,
               resetsAt: "2026-11-14T00:00:00Z",
             },
