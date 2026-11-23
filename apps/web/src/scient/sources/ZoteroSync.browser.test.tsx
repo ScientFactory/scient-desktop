@@ -111,6 +111,22 @@ describe("Refresh from Zotero", () => {
     ]);
   });
 
+  it("does not say everything matches when a source could not be refreshed", async () => {
+    const { onChanged } = setup();
+    const message = "This Zotero library's owner could not be verified. No source was refreshed.";
+    mocks.refreshZoteroSources.mockReset().mockResolvedValueOnce({
+      connection: "local",
+      items: [{ ...conflicted, outcome: "failed", conflicts: [], message }],
+    });
+    await using _screen = await render(<Harness onChanged={onChanged} />, { router: false });
+
+    await page.getByRole("button", { name: "Start" }).click();
+
+    await expect.element(page.getByText(message)).toBeVisible();
+    await expect.element(page.getByText("No source was updated from Zotero.")).toBeVisible();
+    await expect.element(page.getByText("Everything matches Zotero.")).not.toBeInTheDocument();
+  });
+
   it("explains why Zotero cannot be read instead of refreshing", async () => {
     const { onChanged } = setup();
     mocks.readZoteroStatus.mockResolvedValue({

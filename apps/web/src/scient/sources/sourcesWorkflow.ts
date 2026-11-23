@@ -286,6 +286,18 @@ function withReadingState<
   };
 }
 
+/**
+ * The pin and its project note change without the record's revision, so a detail read before
+ * either changed is read again.
+ */
+export function samePinState(row: OverviewRow, detail: ScientSourceDetailResult): boolean {
+  return (
+    !isLibraryRow(row) ||
+    ((row.pinned !== false) === (detail.pinned !== false) &&
+      (row.projectNote ?? null) === (detail.projectNote ?? null))
+  );
+}
+
 function pruneSourceDetails(
   details: SourcesWorkflowState["sourceDetails"],
   overview: ScientSourcesOverviewResult,
@@ -293,7 +305,10 @@ function pruneSourceDetails(
   return Object.fromEntries(
     Object.entries(details).flatMap(([sourceId, detail]) => {
       const summary = overview.records.find(
-        (entry) => entry.sourceId === sourceId && entry.revision === detail.revision,
+        (entry) =>
+          entry.sourceId === sourceId &&
+          entry.revision === detail.revision &&
+          samePinState(entry, detail),
       );
       return summary ? [[sourceId, withSummaryReadingState(detail, summary)]] : [];
     }),
@@ -346,7 +361,9 @@ export function shownSourceRecord(
   const row = state.overview?.records.find((record) => record.sourceId === sourceId);
   const detail = state.sourceDetails[sourceId];
   if (!row && detail?.label === "From this review's snapshot") return detail;
-  if (!row || !detail || detail.revision !== row.revision) return null;
+  if (!row || !detail || detail.revision !== row.revision || !samePinState(row, detail)) {
+    return null;
+  }
   if (!isLibraryRow(row)) return detail;
   if (
     row.citationKey === detail.citationKey &&

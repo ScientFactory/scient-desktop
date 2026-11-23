@@ -980,8 +980,10 @@ async function preserveSourceRevision(
 ): Promise<void> {
   const historyPath = sourceHistoryPath(paths, record.sourceId, record.revision);
   if (await atomicCreateJson(historyPath, record, MAX_RECORD_BYTES)) return;
-  const history = await readBoundedSourceRecord(historyPath);
-  if (JSON.stringify(history) !== JSON.stringify(record)) {
+  // Reading state changes without a revision: a star since this copy was kept is no conflict.
+  const versioned = (value: ScientSourceRecord) =>
+    JSON.stringify({ ...value, readingStatus: undefined, starred: undefined });
+  if (versioned(await readBoundedSourceRecord(historyPath)) !== versioned(record)) {
     throw new Error("The source revision history conflicts with the current record.");
   }
 }
@@ -1289,6 +1291,8 @@ async function deleteTrashEntries(
         MAX_TRASH_ENTRY_BYTES,
       );
     }
+    // Before the trash entry, which a retry needs to find this source again.
+    await NodeFSP.rm(zoteroSyncPath(paths, entry.sourceId), { force: true });
     await NodeFSP.rm(trashEntryPath(paths, entry.sourceId), { force: true });
     await NodeFSP.rm(NodePath.dirname(sourceHistoryPath(paths, entry.sourceId, 1)), {
       recursive: true,
@@ -1683,7 +1687,8 @@ interface LibraryRecordIndex extends RecordScan {
 /** Derived from the record files and rebuilt from them; the files stay the truth. */
 const libraryRecordIndexes = new Map<string, LibraryRecordIndex>();
 
-const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
+/** True when a file's timestamps are old enough that an unchanged stamp means unchanged bytes. */
+export const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
   scanStartedNs - stats.mtimeNs > RACY_TIMESTAMP_NS &&
   scanStartedNs - stats.ctimeNs > RACY_TIMESTAMP_NS;
 
@@ -2174,11 +2179,43 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 }
 
 /** The library's records, its running import and its trash count; reading writes nothing. */
+const recordRevisions = new WeakMap<LibraryRecordIndex, string>();
+const fileDigests = new WeakMap<IndexedRecordFile, string>();
+
+/** What was decoded, not the stamp: a file can change between its stat and its read. */
+function fileDigest(file: IndexedRecordFile): string {
+  const known = fileDigests.get(file);
+  if (known) return known;
+  const digest = NodeCrypto.createHash("sha256")
+    .update(JSON.stringify(file.result))
+    .digest("base64url");
+  fileDigests.set(file, digest);
+  return digest;
+}
+
+/**
+ * Changes whenever a record file is added, removed or read with other contents. Each entry's
+ * digest is kept with the entry, which the index reuses while its file is unchanged.
+ */
+function recordsRevisionOf(scan: RecordScan): string | undefined {
+  if (!("files" in scan)) return undefined;
+  const index = scan as LibraryRecordIndex;
+  const known = recordRevisions.get(index);
+  if (known) return known;
+  const hash = NodeCrypto.createHash("sha256");
+  for (const [name, file] of index.files) hash.update(`${name}\0${fileDigest(file)}\n`);
+  const revision = hash.digest("base64url");
+  recordRevisions.set(index, revision);
+  return revision;
+}
+
 export async function inspectScientLibrarySources(library: ScientLibraryLocation): Promise<{
   readonly records: ReadonlyArray<ScientSourceRecord>;
   readonly activeOperation: ScientSourceImportOperation | null;
   readonly unreadableRecords?: ReadonlyArray<ScientSourceStoreIssue>;
   readonly trashedCount?: number;
+  /** See `recordsRevisionOf`; absent when the records were not read through the index. */
+  readonly recordsRevision?: string;
 }> {
   const paths = await sourceStorePaths(library);
   const [scan, activeOperation, trash] = await Promise.all([
@@ -2186,7 +2223,9 @@ export async function inspectScientLibrarySources(library: ScientLibraryLocation
     findActiveOperation(paths, "read"),
     scanTrash(paths),
   ]);
+  const recordsRevision = recordsRevisionOf(scan);
   return {
+    ...(recordsRevision ? { recordsRevision } : {}),
     records: scan.records,
     activeOperation,
     ...(scan.issues.length > 0 ? { unreadableRecords: scan.issues } : {}),
@@ -3623,14 +3662,95 @@ export async function readScientSourceZoteroSync(
   return readBoundedJson(filePath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(() => null);
 }
 
+function fitZoteroSyncToBudget(
+  state: ScientSourceZoteroSyncType,
+  maxBytes: number,
+): {
+  readonly state: ScientSourceZoteroSyncType;
+  readonly omittedOriginalNoteHtmlCount: number;
+} {
+  const byteLength = (value: ScientSourceZoteroSyncType) =>
+    Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  if (!state.notes || byteLength(state) <= maxBytes) {
+    return { state, omittedOriginalNoteHtmlCount: 0 };
+  }
+  // Drop optional retained HTML from the end until the serialized UTF-8 sync file fits the
+  // record byte budget, always preserving note digests and both text baselines.
+  const notes = state.notes.map((entry) => ({ ...entry }));
+  let omittedOriginalNoteHtmlCount = 0;
+  for (let index = notes.length - 1; index >= 0; index -= 1) {
+    const entry = notes[index];
+    if (!entry || entry.html === undefined) continue;
+    notes[index] = { itemKey: entry.itemKey, sha256: entry.sha256 };
+    omittedOriginalNoteHtmlCount += 1;
+    const candidate: ScientSourceZoteroSyncType = { ...state, notes };
+    if (byteLength(candidate) <= maxBytes) {
+      return { state: candidate, omittedOriginalNoteHtmlCount };
+    }
+  }
+  return { state: { ...state, notes }, omittedOriginalNoteHtmlCount };
+}
+
 export async function writeScientSourceZoteroSync(
   root: ScientSourceStoreLocation,
   state: ScientSourceZoteroSyncType,
-): Promise<void> {
+  options?: { readonly initialImportOperationId?: string },
+): Promise<{ readonly omittedOriginalNoteHtmlCount: number }> {
   const paths = await sourceStorePaths(root);
-  await asLibraryWriter(paths, () =>
-    atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES),
-  );
+  let omittedOriginalNoteHtmlCount = 0;
+  // Under deletion's lock: a sync finishing after Delete for good must not bring its base back.
+  await withStoreLock(paths, "source-write", async () => {
+    const gone = async (path: string) => (await snapshot(path)) === "missing";
+    if (
+      (await gone(sourceRecordPath(paths, state.sourceId))) &&
+      (await gone(trashEntryPath(paths, state.sourceId)))
+    ) {
+      return;
+    }
+    const syncPath = zoteroSyncPath(paths, state.sourceId);
+    let prepared: ScientSourceZoteroSyncType;
+    if (options?.initialImportOperationId !== undefined) {
+      prepared = {
+        ...state,
+        importOperationId: options.initialImportOperationId,
+        importOmittedOriginalNoteHtml:
+          state.notes?.some((entry) => entry.html === undefined) ?? false,
+      };
+    } else if (
+      state.importOperationId === undefined ||
+      state.importOmittedOriginalNoteHtml === undefined
+    ) {
+      // A later sync write keeps the initial import's provenance and omission decision.
+      const existing =
+        (await snapshot(syncPath)) === "missing"
+          ? null
+          : await readBoundedJson(syncPath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(
+              () => null,
+            );
+      const importOperationId = state.importOperationId ?? existing?.importOperationId;
+      prepared = {
+        ...state,
+        ...(importOperationId !== undefined ? { importOperationId } : {}),
+        ...(state.importOmittedOriginalNoteHtml === undefined &&
+        existing?.importOmittedOriginalNoteHtml !== undefined &&
+        existing.importOperationId !== undefined &&
+        existing.importOperationId === importOperationId
+          ? { importOmittedOriginalNoteHtml: existing.importOmittedOriginalNoteHtml }
+          : {}),
+      };
+    } else {
+      prepared = state;
+    }
+    const bounded = fitZoteroSyncToBudget(prepared, MAX_RECORD_BYTES);
+    // Flipping false -> true shrinks JSON by 1 byte, so the bounded payload stays within MAX_RECORD_BYTES.
+    const finalState: ScientSourceZoteroSyncType =
+      options?.initialImportOperationId !== undefined && bounded.omittedOriginalNoteHtmlCount > 0
+        ? { ...bounded.state, importOmittedOriginalNoteHtml: true }
+        : bounded.state;
+    await atomicWriteJson(syncPath, finalState, MAX_RECORD_BYTES);
+    omittedOriginalNoteHtmlCount = bounded.omittedOriginalNoteHtmlCount;
+  });
+  return { omittedOriginalNoteHtmlCount };
 }
 
 /** Replaces a source's links to other reference managers, as a new revision. */

@@ -763,7 +763,7 @@ export function useSourceNoteControls(props: {
                 <T>Quick note</T>
               </p>
               <div className="flex items-center gap-px">
-                <ScientTooltip content="Bold">
+                <ScientTooltip content={gt("Bold")}>
                   <Button
                     size="icon-micro"
                     variant={activeFormats.bold ? "selected" : "ghost"}
@@ -777,7 +777,7 @@ export function useSourceNoteControls(props: {
                     </span>
                   </Button>
                 </ScientTooltip>
-                <ScientTooltip content="Italic">
+                <ScientTooltip content={gt("Italic")}>
                   <Button
                     size="icon-micro"
                     variant={activeFormats.italic ? "selected" : "ghost"}
@@ -792,7 +792,7 @@ export function useSourceNoteControls(props: {
                   </Button>
                 </ScientTooltip>
               </div>
-              <ScientTooltip content="Close quick note">
+              <ScientTooltip content={gt("Close quick note")}>
                 <PopoverClose
                   className="justify-self-end"
                   render={

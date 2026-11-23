@@ -73,17 +73,22 @@ function prepared(environmentId: EnvironmentId) {
   return connection;
 }
 
-/** `scope` is sent only to a server that offers scopes, and only for the Library view. */
+/**
+ * `scope` is sent only to a server that offers scopes, and only for the Library view.
+ * `knownRevision`: the revision of the answer the caller holds; see `unchanged` in the answer.
+ */
 export function readScientSources(
   environmentId: EnvironmentId,
   root: string,
   scope?: ScientSourcesScope,
+  knownRevision?: string,
 ) {
   return runtime.runPromise(
     getEnvironmentScientSourcesOverview({
       prepared: prepared(environmentId),
       root,
       ...(scope ? { scope } : {}),
+      ...(knownRevision ? { knownRevision } : {}),
     }),
   );
 }

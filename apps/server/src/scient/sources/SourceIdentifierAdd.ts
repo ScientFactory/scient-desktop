@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   detectSourceIdentifier,
+  editorialStatusFromNotices,
   isbn13,
   normalizePersistentIdentifier,
   type ScientSourceActor,
@@ -290,6 +291,14 @@ export async function addScientSourcesByIdentifier(
                 identifier: resolution.identifier,
                 checkedAt: resolution.retrievedAt,
               },
+          ...(!resolution.catalogueOnly && resolution.metadata.editorialNotices
+            ? {
+                editorialStatus: editorialStatusFromNotices(
+                  resolution.metadata.editorialNotices,
+                  resolution.retrievedAt,
+                ),
+              }
+            : {}),
           allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
         }),
       (result) => (result.outcome === "imported" ? "imported" : "skipped"),

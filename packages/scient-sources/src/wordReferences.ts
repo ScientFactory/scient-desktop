@@ -33,6 +33,8 @@ export interface WordContent {
 export interface WordCitedWork {
   /** Tells the cited works apart: the reference manager's address for the work, else its DOI or title. */
   readonly id: string;
+  /** Every address the reference manager gave the work, in its order. */
+  readonly addresses: ReadonlyArray<string>;
   /** The details the document holds for the work, as a CSL-JSON item. */
   readonly item: Readonly<Record<string, unknown>>;
   /** False when the reference manager's list was told to leave the work out. */
@@ -269,6 +271,7 @@ function readManaged(codes: ReadonlyArray<WordCode>): WordReferences | null {
     kind: "managed",
     works: [...works.values()].map(({ id, item, addresses }) => ({
       id,
+      addresses,
       item,
       listed: !addresses.some((address) => leftOut.has(address)),
     })),

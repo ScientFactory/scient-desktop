@@ -38,6 +38,8 @@ import {
   restoreScientSource,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  readScientSourceZoteroSync,
+  writeScientSourceZoteroSync,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import {
@@ -169,6 +171,21 @@ async function seed(root: string, records: ReadonlyArray<ScientSourceRecord>) {
       `${JSON.stringify(entry, null, 2)}\n`,
     );
   }
+}
+
+/** What an import from Zotero keeps for a source, its note included. */
+function zoteroBase(sourceId: string, attachmentKeys: ReadonlyArray<string> = []) {
+  return {
+    formatVersion: 1 as const,
+    sourceId,
+    libraryId: "475425",
+    itemKey: "ABCD2345",
+    itemVersion: 3,
+    syncedAt: "2026-11-21T08:00:00.000Z",
+    metadata: editableMetadataFromRecord(record(sourceId)),
+    note: "Zotero's note",
+    attachmentKeys: [...attachmentKeys],
+  };
 }
 
 const liveIds = async (library: ReturnType<typeof scientLibraryLocation>) =>
@@ -1408,6 +1425,44 @@ describe("library merge engine", () => {
     expect(await membership()).toEqual(["source_gone"]);
   });
 
+  it("takes the Zotero base with the link it gave the survivor, also when the merge stopped first", async () => {
+    const { root, library } = await newLibrary();
+    const zotero = {
+      system: "zotero",
+      libraryId: "475425",
+      itemKey: "ABCD2345",
+      itemVersion: 3,
+      rawItemType: "journalArticle",
+    };
+    await seed(root, [
+      record("source_keep", { title: "Linked" }),
+      record("source_gone", { title: "Linked", externalReferences: [zotero] }),
+    ]);
+    // The loser took one Zotero PDF and left the other, removed here.
+    await writeScientSourceZoteroSync(library, zoteroBase("source_gone", ["PDFA2345", "LEFT2345"]));
+    failNext("rename", /zotero[\\/]source_keep\.json$/u);
+    await expect(
+      mergeScientLibrarySources({
+        library,
+        sourceIds: ["source_keep", "source_gone"],
+        survivorId: "source_keep",
+      }),
+    ).rejects.toThrow("Injected");
+
+    await settleScientLibraryMerges(library);
+
+    expect(await readScientSourceRecord(library, "source_keep")).toMatchObject({
+      externalReferences: [zotero],
+    });
+    expect(await readScientSourceZoteroSync(library, "source_keep")).toEqual({
+      ...zoteroBase("source_gone", ["PDFA2345", "LEFT2345"]),
+      sourceId: "source_keep",
+    });
+    const [entry] = await readScientSourceTrashEntries(library);
+    await undoScientLibraryMerge({ library, mergeId: entry!.mergedInto!.mergeId });
+    expect(await readScientSourceZoteroSync(library, "source_keep")).toBeNull();
+  });
+
   it("pages every pair and undoable merge past 200 and 100 without writing, and restarts on a change", async () => {
     const { root, library } = await newLibrary();
     const numbered = (count: number, make: (index: number) => ScientSourceRecord[]) =>
@@ -1609,6 +1664,9 @@ describe("library merge engine", () => {
       record("source_copy", doi),
       record("source_other", { title: "Another paper" }),
     ]);
+    for (const sourceId of ["source_keep", "source_copy", "source_other"]) {
+      await writeScientSourceZoteroSync(library, zoteroBase(sourceId));
+    }
     const merged = await mergeScientLibrarySources({
       library,
       sourceIds: ["source_keep", "source_copy"],
@@ -1651,5 +1709,11 @@ describe("library merge engine", () => {
     });
     expect(deleted).toMatchObject({ outcome: "deleted" });
     expect(await readScientSourceTrashEntries(library)).toEqual([]);
+    // A Refresh still running when a paper went writes its base last.
+    await writeScientSourceZoteroSync(library, zoteroBase("source_other"));
+    // Nothing of a deleted paper's Zotero note stays behind for a backup to carry.
+    for (const sourceId of ["source_keep", "source_copy", "source_other"]) {
+      expect(await readScientSourceZoteroSync(library, sourceId)).toBeNull();
+    }
   });
 });

@@ -1,10 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real HTTP sockets and disposable synthetic files exercise transport lifetimes.
+// @effect-diagnostics globalTimers:off -- The fixtures answer slowly on purpose.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimers from "node:timers";
 
 import { describe, expect, it } from "@effect/vitest";
 
+import type { NodeHttpRequest } from "./nodeHttpResponse.ts";
 import { startHttpTransport, truncateHttpResponse } from "./nodeHttpResponse.testkit.ts";
 import type { ZoteroRawItem } from "./ZoteroItems.ts";
 import { makeLocalZoteroRequest } from "./ZoteroLocalAdapter.ts";
@@ -45,7 +50,163 @@ const account = {
   groupAccess: {},
 };
 
+/** A request whose connection never opens, so no socket idle timer ever starts. */
+const neverConnects: NodeHttpRequest = (url, options, onResponse) =>
+  NodeHttp.request(
+    new URL(`${url.pathname}${url.search}`, "http://127.0.0.1"),
+    {
+      ...options,
+      createConnection: () => Object.assign(new NodeNet.Socket(), { connecting: true }),
+    },
+    onResponse,
+  );
+
+/** Answers a byte at a time, each soon enough to keep any idle timer from firing. */
+function trickle(response: NodeHttp.ServerResponse) {
+  response.writeHead(200, { "Zotero-API-Version": "3" });
+  const timer = NodeTimers.setInterval(() => response.write("x"), 20);
+  response.once("close", () => NodeTimers.clearInterval(timer));
+}
+
+const BUDGET = { requestMs: 200, downloadMs: 200 };
+
 describe("Zotero Node HTTP completion", () => {
+  it.each([
+    { kind: "local", server: "never connects" },
+    { kind: "local", server: "trickles" },
+    { kind: "web", server: "never connects" },
+    { kind: "web", server: "trickles" },
+  ] as const)(
+    "ends a $kind request whose server $server at its deadline",
+    async ({ kind, server }) => {
+      await using fixture = await startHttpTransport((request, response) => {
+        request.resume();
+        trickle(response);
+      });
+      const send = server === "trickles" ? fixture.send : neverConnects;
+      const read =
+        kind === "local"
+          ? makeLocalZoteroRequest(send, BUDGET.requestMs)
+          : (path: string) =>
+              makeNodeZoteroWebHttp(send, BUDGET).request({
+                method: "GET",
+                url: apiUrl(path),
+                headers,
+              });
+
+      await expect(read("/api/items")).rejects.toThrow(/^Timed out while contacting zotero/iu);
+    },
+  );
+
+  it("gives a file one budget across its redirects and leaves no partial copy", async () => {
+    await using directory = await temporaryDirectory();
+    let slow = true;
+    const seen: string[] = [];
+    const signals: Array<AbortSignal | undefined> = [];
+    const partialOnDisk = Promise.withResolvers<boolean>();
+    let observedPartial = false;
+    let poll: ReturnType<typeof NodeTimers.setInterval> | undefined;
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      seen.push(request.url ?? "");
+      if (!slow) {
+        response.end("%PDF-synthetic-complete");
+        return;
+      }
+      if (request.url === "/storage") {
+        response.writeHead(200).write("%PDF-partial");
+        // Observe the partial file on disk; settle cleanly if the connection closes first.
+        poll = NodeTimers.setInterval(() => {
+          void NodeFSP.readdir(directory.path)
+            .then(async (entries) => {
+              for (const entry of entries) {
+                const sub = NodePath.join(directory.path, entry);
+                const files = await NodeFSP.readdir(sub).catch(() => []);
+                for (const file of files) {
+                  const stat = await NodeFSP.stat(NodePath.join(sub, file)).catch(() => null);
+                  if (stat && stat.size > 0) {
+                    observedPartial = true;
+                    if (poll !== undefined) NodeTimers.clearInterval(poll);
+                    partialOnDisk.resolve(true);
+                    return;
+                  }
+                }
+              }
+            })
+            .catch(() => undefined);
+        }, 10);
+        response.once("close", () => {
+          if (poll !== undefined) NodeTimers.clearInterval(poll);
+          partialOnDisk.resolve(observedPartial);
+        });
+      } else {
+        response.writeHead(302, { Location: "https://storage.example/storage" }).end();
+      }
+    });
+    const { transport } = makeZoteroWebLibrary({
+      apiKey: headers["Zotero-API-Key"],
+      account,
+      http: makeNodeZoteroWebHttp(
+        (url, options, onResponse) => {
+          if (slow) signals.push(options.signal);
+          return fixture.send(url, options, onResponse);
+        },
+        { requestMs: 300, downloadMs: 300 },
+      ),
+      temporaryDirectory: directory.path,
+    });
+
+    const download = transport.attachmentFile(attachment).finally(() => {
+      if (poll !== undefined) NodeTimers.clearInterval(poll);
+      partialOnDisk.resolve(observedPartial);
+    });
+    const [downloadResult, sawPartial] = await Promise.allSettled([
+      download,
+      partialOnDisk.promise,
+    ]);
+    expect(downloadResult.status).toBe("rejected");
+    if (downloadResult.status === "rejected") {
+      expect(downloadResult.reason).toBeInstanceOf(Error);
+      expect((downloadResult.reason as Error).message).toContain(
+        "Timed out while downloading a Zotero file.",
+      );
+    }
+    expect(sawPartial).toEqual({ status: "fulfilled", value: true });
+    expect(seen).toEqual([`/users/42/items/${attachment.key}/file`, "/storage"]);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBeDefined();
+    expect(signals[1]).toBe(signals[0]);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(await NodeFSP.readdir(directory.path)).toEqual([]);
+    slow = false;
+    const downloaded = await transport.attachmentFile(attachment);
+    expect(await NodeFSP.readFile(downloaded!.path, "utf8")).toBe("%PDF-synthetic-complete");
+    await downloaded!.release();
+  });
+
+  it("ends a stalled or trickling PDF upload at its wall-clock deadline", async () => {
+    await using directory = await temporaryDirectory();
+    const path = NodePath.join(directory.path, "upload.pdf");
+    await NodeFSP.writeFile(path, "%PDF-synthetic-upload");
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      request.on("end", () => trickle(response));
+    });
+    const http = makeNodeZoteroWebHttp(fixture.send, {
+      requestMs: 200,
+      downloadMs: 200,
+      uploadMs: 200,
+    });
+
+    await expect(
+      http.upload(new URL("https://storage.example/upload"), "application/pdf", {
+        path,
+        prefix: "prefix:",
+        suffix: ":suffix",
+      }),
+    ).rejects.toThrow("Timed out while sending a PDF to Zotero.");
+  });
+
   it.each(["local", "web"] as const)(
     "rejects a truncated %s response and permits the next request",
     async (kind) => {

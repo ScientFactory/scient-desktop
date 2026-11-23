@@ -1,9 +1,34 @@
 import type { ScientSourceStudyDesign, ScientSourceType } from "@scientfactory/scient-sources";
+import type { ScientSourceZoteroRefreshField } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
 import { LIBRARY_LABELS } from "./libraryLabels";
+
+/** A source field's name as a heading or label shows it. */
+export const SOURCE_FIELD_LABELS: Readonly<
+  Record<ScientSourceZoteroRefreshField, string> & Partial<Record<string, string>>
+> = {
+  type: msg("Type", { $context: "a source field" }),
+  customType: msg("Type", { $context: "a source field" }),
+  title: msg("Title", { $context: "a source field" }),
+  creators: msg("Creators", { $context: "a source field" }),
+  issuedRaw: msg("Date", { $context: "a source field" }),
+  issuedYear: msg("Year", { $context: "a source field" }),
+  identifiers: msg("Identifiers", { $context: "a source field" }),
+  abstract: msg("Abstract", { $context: "a source field" }),
+  containerTitle: msg("Journal or publication", { $context: "a source field" }),
+  more: msg("More details", { $context: "a source field" }),
+  publisher: msg("Publisher", { $context: "a source field" }),
+  volume: msg("Volume", { $context: "a source field" }),
+  issue: msg("Issue", { $context: "a source field" }),
+  pages: msg("Pages", { $context: "a source field" }),
+  language: msg("Language", { $context: "a source field" }),
+  url: "URL",
+  tags: msg("Tags", { $context: "a source field" }),
+  note: msg("Note", { $context: "a source field" }),
+};
 
 function isSameCalendarDay(left: Date, right: Date): boolean {
   return (

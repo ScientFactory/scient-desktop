@@ -13,6 +13,7 @@ import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindin
 import { scientOperationCatalog } from "./ScientOperationCatalog.ts";
 import { McpInvocationContext, type McpCapability } from "./McpInvocationContext.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
+import { outsideCall, withProjectInput } from "./toolkits/sources/outside.ts";
 
 class ScientToolList extends RpcMiddleware.Service<ScientToolList>()("scient/mcp/ToolList") {}
 // The adapter owns the dated wire schema. Inspect only the fields needed for
@@ -90,6 +91,13 @@ export function makeScientToolListLayer(
             if (!scientOperationCatalog.forTool(tool.name) && !host.owns(tool.name))
               return yield* Effect.die(new Error(`Undeclared MCP tool ownership: ${tool.name}`));
           }
+          // An outside client lists the tools it may call, each with its projectId input.
+          const outside = (name: string) => {
+            const operation = scientOperationCatalog.forTool(name);
+            const call =
+              operation === undefined ? undefined : outsideCall(mcpInvocation, name, operation);
+            return call !== undefined && "grants" in call;
+          };
           // Upstream tool text is renamed here, at the one listing every agent reads.
           const filtered = {
             ...listed,
@@ -98,9 +106,11 @@ export function makeScientToolListLayer(
                 const operation = scientOperationCatalog.forTool(tool.name);
                 return operation === undefined
                   ? host.listed(tool.name, mcpInvocation.capabilities)
-                  : ids.has(operation.id);
+                  : ids.has(operation.id) || outside(tool.name);
               })
-              .map(scientAgentToolCopy),
+              .map((tool) =>
+                scientAgentToolCopy(outside(tool.name) ? withProjectInput(tool) : tool),
+              ),
           };
           // RPC middleware erases the handler success type to an opaque marker.
           // This middleware is attached only to ListTools, checked above, and returns

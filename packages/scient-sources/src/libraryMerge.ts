@@ -332,16 +332,40 @@ async function libraryPaths(library: ScientLibraryLocation): Promise<StorePaths>
   return paths;
 }
 
+/** True when `toId` holds `fromId`'s Zotero base, also one an interrupted merge copied. */
 async function copyZoteroBase(paths: StorePaths, fromId: string, toId: string): Promise<boolean> {
   const from = zoteroSyncPath(paths, fromId);
   const to = zoteroSyncPath(paths, toId);
-  if ((await snapshot(from)) !== "file" || (await snapshot(to)) !== "missing") return false;
-  const base = await readBoundedJson(from, maxRecordBytes, ScientSourceZoteroSync).catch(
-    () => null,
-  );
+  if ((await snapshot(from)) !== "file") return false;
+  const read = (path: string) =>
+    readBoundedJson(path, maxRecordBytes, ScientSourceZoteroSync).catch(() => null);
+  const base = await read(from);
   if (!base) return false;
-  await atomicWriteJson(to, { ...base, sourceId: toId }, maxRecordBytes);
+  const copy = { ...base, sourceId: toId };
+  const there = await snapshot(to);
+  if (there !== "missing") return there === "file" && same(await read(to), copy);
+  await atomicWriteJson(to, copy, maxRecordBytes);
   return true;
+}
+
+/**
+ * A survivor whose Zotero link came with the merge takes the loser's base with it, which
+ * names the Zotero files the loser already took or left. Recovery runs this again.
+ */
+async function withGainedZoteroBase(
+  paths: StorePaths,
+  merge: ScientLibraryMerge,
+  survivor: ScientSourceRecord | null,
+): Promise<ScientLibraryMerge> {
+  if (merge.zoteroBaseCopied) return merge;
+  const link = survivor?.externalReferences.find((reference) => reference.system === "zotero");
+  const gained =
+    link !== undefined &&
+    merge.added.externalReferences.some((added) => referenceKey(added) === referenceKey(link));
+  if (!gained || !(await copyZoteroBase(paths, merge.loserId, merge.survivorId))) return merge;
+  const recorded = { ...merge, zoteroBaseCopied: true };
+  await atomicWriteJson(pendingMergePath(paths, merge.mergeId), recorded, MAX_MERGE_BYTES);
+  return recorded;
 }
 
 /**
@@ -363,9 +387,6 @@ async function mergeRecords(input: {
   const next: ScientSourceRecord = changed
     ? { ...plan.next, revision: survivor.revision + 1, updatedAt: mergedAt, updatedBy: actor }
     : survivor;
-  const gainsZotero =
-    plan.added.externalReferences.some((reference) => reference.system === "zotero") &&
-    !survivor.externalReferences.some((reference) => reference.system === "zotero");
   const merge: ScientLibraryMerge = {
     formatVersion: 1,
     mergeId: `merge_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
@@ -392,10 +413,7 @@ async function mergeRecords(input: {
     await NodeFSP.rm(pendingPath, { force: true });
     throw cause;
   }
-  const zoteroBaseCopied =
-    gainsZotero && (await copyZoteroBase(paths, loser.sourceId, survivor.sourceId));
-  const recorded = zoteroBaseCopied ? { ...merge, zoteroBaseCopied } : merge;
-  if (zoteroBaseCopied) await atomicWriteJson(pendingPath, recorded, MAX_MERGE_BYTES);
+  const recorded = await withGainedZoteroBase(paths, merge, next);
   await moveRecordToTrash(paths, loser, actor, {
     sourceId: survivor.sourceId,
     mergeId: merge.mergeId,
@@ -515,17 +533,18 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
     const trashedByMerge = trashed?.mergedInto?.mergeId === merge.mergeId;
     // The trash entry lands before the record goes, so it does not prove the loser left.
     const loser = await readScientSourceRecordIfPresent(paths, merge.loserId);
+    const survivor = await readScientSourceRecordIfPresent(paths, merge.survivorId);
     if (!loser && trashedByMerge) {
-      finishing.push(merge);
+      finishing.push(await withGainedZoteroBase(paths, merge, survivor));
       continue;
     }
-    const survivor = await readScientSourceRecordIfPresent(paths, merge.survivorId);
     if (loser?.revision === merge.loserRevision && survivor?.revision === merge.survivorRevision) {
+      const recorded = await withGainedZoteroBase(paths, merge, survivor);
       await moveRecordToTrash(paths, loser, merge.mergedBy, {
         sourceId: merge.survivorId,
         mergeId: merge.mergeId,
       });
-      finishing.push(merge);
+      finishing.push(recorded);
       continue;
     }
     // Edited since: the loser stays as it is now, so the entry holding its old revision goes.

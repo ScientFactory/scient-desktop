@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Joins real Libraries in temporary folders.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -12,6 +13,7 @@ import {
   createScientSourceCollection,
   placeScientSourceCollections,
   readScientSourcesOrganization,
+  renameScientSourceCollection,
 } from "./collections.ts";
 import { backUpScientLibrary, scientLibraryBackupLeavesOut } from "./libraryBackup.ts";
 import {
@@ -37,10 +39,12 @@ import {
   listScientSourceRecords,
   readScientSourceRecord,
   readScientSourceTrashEntries,
+  readScientSourceZoteroSync,
   removeScientSource,
   setScientLibraryReadingState,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  writeScientSourceZoteroSync,
 } from "./store.ts";
 import {
   applyStep,
@@ -178,6 +182,23 @@ describe("adding what another Library holds", () => {
     const highlights = NodePath.join(theirs.scenario.libraryRoot, "annotations", "v1");
     await NodeFSP.mkdir(highlights, { recursive: true });
     await NodeFSP.writeFile(NodePath.join(highlights, `${pdf}.json`), '{"highlights":1}\n');
+    // What n1 took from Zotero and left, as an import from Zotero keeps it.
+    await writeScientSourceZoteroSync(theirs.library, {
+      formatVersion: 1,
+      sourceId: n1,
+      libraryId: "475425",
+      itemKey: "ABCD2345",
+      itemVersion: 3,
+      syncedAt: "2026-11-21T08:00:00.000Z",
+      metadata: editableMetadataFromRecord((await readScientSourceRecord(theirs.library, n1))!),
+      note: null,
+      attachmentKeys: ["PDFA2345", "LEFT2345"],
+    });
+    // Damaged before the backup listed it: that Library reads no base for n2 either.
+    await NodeFSP.writeFile(
+      NodePath.join(theirs.scenario.libraryRoot, "zotero", `${n2}.json`),
+      "{",
+    );
     const backup = await backUp(theirs.scenario);
 
     const ours = await built([
@@ -204,12 +225,14 @@ describe("adding what another Library holds", () => {
         `records/${n1}.json`,
         `records/${n2}.json`,
         `history/${n1}/1.json`,
+        `zotero/${n1}.json`,
         `annotations/v1/${pdf}.json`,
         `files/sha256/${pdf.slice(0, 2)}/${pdf}.pdf`,
       ]),
     );
+    expect(brought).not.toContain(`zotero/${n2}.json`);
     // The source is as the other Library has it: the record file itself, byte for byte.
-    for (const path of [`records/${n1}.json`, `history/${n1}/1.json`]) {
+    for (const path of [`records/${n1}.json`, `history/${n1}/1.json`, `zotero/${n1}.json`]) {
       expect(await NodeFSP.readFile(NodePath.join(ours.scenario.libraryRoot, path))).toEqual(
         await NodeFSP.readFile(NodePath.join(theirs.scenario.libraryRoot, path)),
       );
@@ -286,7 +309,12 @@ describe("adding what another Library holds", () => {
         joinId: stopped!.joinId,
         actor: "user",
       }),
-    ).toEqual({ outcome: "undone", trashed: 0, left: 2 });
+    ).toEqual({
+      outcome: "undone",
+      trashed: 0,
+      left: 2,
+      leftSourceIds: expect.arrayContaining([first, second]),
+    });
     expect(await ids(ours.scenario)).toEqual(now);
   });
 
@@ -321,7 +349,12 @@ describe("adding what another Library holds", () => {
     });
     const undo = () =>
       undoScientLibraryJoin({ library: ours.library, joinId: joined.joinId, actor: "user" });
-    expect(await undo()).toEqual({ outcome: "undone", trashed: 2, left: 1 });
+    expect(await undo()).toEqual({
+      outcome: "undone",
+      trashed: 2,
+      left: 1,
+      leftSourceIds: [id("c")],
+    });
     expect(await undo()).toEqual({ outcome: "already-undone" });
     expect(await ids(ours.scenario)).toEqual(
       [id("c"), workOf(ours.model, "mine").sourceId].toSorted(),
@@ -362,6 +395,7 @@ describe("adding what another Library holds", () => {
       outcome: "undone",
       trashed: 0,
       left: 2,
+      leftSourceIds: [sourceId],
     });
     expect(await undoScientLibraryJoin({ library, joinId, actor: "user" })).toEqual({
       outcome: "already-undone",
@@ -415,7 +449,7 @@ describe("adding what another Library holds", () => {
       );
       resume.resolve();
       const [undone, changed] = await Promise.all([undoing, changing]);
-      expect(undone).toEqual({ outcome: "undone", trashed: 1, left: 0 });
+      expect(undone).toEqual({ outcome: "undone", trashed: 1, left: 0, leftSourceIds: [] });
       expect(changed.outcome).toBe("not-found");
       expect((await readScientSourcesOrganization(library)).collections).toEqual([]);
       expect(await ids(scenario)).toEqual([workOf(model, "mine").sourceId]);
@@ -424,6 +458,26 @@ describe("adding what another Library holds", () => {
       ]);
     },
   );
+
+  it("keeps on Undo a collection the join made and the person renamed since", async () => {
+    const { library, joinId, collectionId } = await joinedCollection();
+    await renameScientSourceCollection({
+      root: library,
+      collectionId,
+      name: "Methods",
+      actor: "user",
+    });
+
+    expect(await undoScientLibraryJoin({ library, joinId, actor: "user" })).toEqual({
+      outcome: "undone",
+      trashed: 1,
+      left: 1,
+      leftSourceIds: [],
+    });
+    expect((await readScientSourcesOrganization(library)).collections).toMatchObject([
+      { collectionId, name: "Methods" },
+    ]);
+  });
 
   it("counts a created collection left when its deletion fails after Undo reads it", async () => {
     const { scenario, library, joinId, collectionId } = await joinedCollection();
@@ -443,7 +497,7 @@ describe("adding what another Library holds", () => {
           afterCollectionRead: () => NodeFSP.writeFile(searchesPath, "{ damaged saved searches"),
         },
       }),
-    ).toEqual({ outcome: "undone", trashed: 1, left: 1 });
+    ).toEqual({ outcome: "undone", trashed: 1, left: 1, leftSourceIds: [] });
     expect(await NodeFSP.readFile(collectionPath)).toEqual(collectionBytes);
     expect(await listScientLibraryJoins(library)).toMatchObject([
       { joinId, state: "undone", added: 1, left: 1 },
@@ -674,7 +728,12 @@ describe("adding what another Library holds", () => {
 
     expect(
       await undoScientLibraryJoin({ library: ours.library, joinId: joined.joinId, actor: "user" }),
-    ).toEqual({ outcome: "undone", trashed: 1, left: 3 });
+    ).toEqual({
+      outcome: "undone",
+      trashed: 1,
+      left: 3,
+      leftSourceIds: expect.arrayContaining([id("a"), id("b"), id("c")]),
+    });
     expect(await ids(ours.scenario)).toEqual(
       [id("a"), id("b"), id("c"), workOf(ours.model, "mine").sourceId].toSorted(),
     );
@@ -948,10 +1007,10 @@ describe("adding what another Library holds", () => {
         joinId: stopped!.joinId,
         actor: "user",
       }),
-    ).toEqual({ outcome: "undone", trashed: 0, left: 1 });
+    ).toEqual({ outcome: "undone", trashed: 0, left: 1, leftSourceIds: [stoppedId] });
     expect(
       await undoScientLibraryJoin({ library: ours.library, joinId: second.joinId, actor: "user" }),
-    ).toEqual({ outcome: "undone", trashed: 0, left: 1 });
+    ).toEqual({ outcome: "undone", trashed: 0, left: 1, leftSourceIds: [pinned] });
     expect(await ids(ours.scenario)).toHaveLength(3);
   });
 
@@ -1371,8 +1430,14 @@ describe("what differs between the two Libraries, and taking one thing at a time
   });
 
   it("adds nothing separately when a file of the backup is not the one the backup lists", async () => {
-    for (const damaged of ["an earlier version", "the collections"] as const) {
-      // The other Library's paper has an earlier version: its note was written after it came.
+    for (const damaged of [
+      "an earlier version",
+      "a missing earlier version",
+      "a tampered Zotero base",
+      "a missing Zotero base",
+      "the collections",
+    ] as const) {
+      // The other Library's paper has an earlier version and a valid Zotero sync base.
       const { ours, alike, list, addSeparately, backup } = await alikeLeftBehind(
         async (theirs, sourceId) => {
           const record = (await readScientSourceRecord(theirs, sourceId))!;
@@ -1384,23 +1449,46 @@ describe("what differs between the two Libraries, and taking one thing at a time
             note: "Written before the backup.",
             actor: "user",
           });
+          await writeScientSourceZoteroSync(theirs, {
+            formatVersion: 1,
+            sourceId,
+            libraryId: "475425",
+            itemKey: "JOIN2345",
+            itemVersion: 2,
+            syncedAt: "2026-11-21T08:00:00.000Z",
+            metadata: editableMetadataFromRecord((await readScientSourceRecord(theirs, sourceId))!),
+            note: null,
+            attachmentKeys: ["LEFT2345"],
+          });
         },
       );
       const [shown] = (await list()).rows;
       const before = await inventory(ours.scenario.libraryRoot);
       const payload = NodePath.join(backup, "library");
-      if (damaged === "an earlier version") {
+      if (damaged === "an earlier version" || damaged === "a missing earlier version") {
         const history = NodePath.join(payload, "history", alike.sourceId);
         const [version] = await NodeFSP.readdir(history);
-        await NodeFSP.appendFile(NodePath.join(history, version!), " ");
+        const versionPath = NodePath.join(history, version!);
+        if (damaged === "an earlier version") {
+          await NodeFSP.appendFile(versionPath, " ");
+        } else {
+          await NodeFSP.rm(versionPath);
+        }
+      } else if (damaged === "a tampered Zotero base" || damaged === "a missing Zotero base") {
+        const zoteroPath = NodePath.join(payload, "zotero", `${alike.sourceId}.json`);
+        if (damaged === "a tampered Zotero base") {
+          await NodeFSP.appendFile(zoteroPath, " ");
+        } else {
+          await NodeFSP.rm(zoteroPath);
+        }
       } else {
         await NodeFSP.appendFile(NodePath.join(payload, "library.json"), " ");
       }
 
-      expect(await addSeparately(shown!, `op_${damaged.length}`), damaged).toEqual({
+      expect(await addSeparately(shown!, `op_${damaged.replaceAll(" ", "_")}`), damaged).toEqual({
         outcome: "unavailable",
       });
-      // Nothing of the paper is here: no record, no version, no decision about it.
+      // Nothing of the paper is here: no record, no version, no Zotero base, no decision about it.
       expect(await readScientSourceRecord(ours.library, alike.sourceId)).toBeNull();
       expect(changedSince(before, await inventory(ours.scenario.libraryRoot))).toEqual([]);
       expect(await readScientLibraryDistinctPairs(ours.scenario.libraryRoot)).toEqual([]);
@@ -1473,38 +1561,39 @@ describe("what differs between the two Libraries, and taking one thing at a time
       library: ours.library,
       folder: backup,
       actor: "user",
-      faults: { partSize: 1 },
-      shouldStop: () => {
-        asked += 1;
-        if (asked !== 2) return false;
-        // Between the parts, the paper here is given the details of the one still to come.
-        const coming = ["t1", "t2"]
-          .map((label) => workOf(theirs.model, label).sourceId)
-          .find(
-            (sourceId) =>
-              !NodeFS.existsSync(
-                NodePath.join(ours.scenario.libraryRoot, "records", `${sourceId}.json`),
-              ),
-          )!;
-        const other = JSON.parse(
-          NodeFS.readFileSync(
-            NodePath.join(theirs.scenario.libraryRoot, "records", `${coming}.json`),
-            "utf8",
-          ),
-        ) as Record<string, unknown>;
-        const here = JSON.parse(NodeFS.readFileSync(mine, "utf8")) as Record<string, unknown>;
-        NodeFS.writeFileSync(
-          mine,
-          JSON.stringify({
-            ...here,
-            title: other.title,
-            creators: other.creators,
-            issuedRaw: other.issuedRaw,
-            issuedYear: other.issuedYear,
-            identifiers: other.identifiers,
-          }),
-        );
-        return false;
+      faults: {
+        partSize: 1,
+        beforePart: () => {
+          asked += 1;
+          if (asked !== 2) return;
+          // Between the parts, the paper here is given the details of the one still to come.
+          const coming = ["t1", "t2"]
+            .map((label) => workOf(theirs.model, label).sourceId)
+            .find(
+              (sourceId) =>
+                !NodeFS.existsSync(
+                  NodePath.join(ours.scenario.libraryRoot, "records", `${sourceId}.json`),
+                ),
+            )!;
+          const other = JSON.parse(
+            NodeFS.readFileSync(
+              NodePath.join(theirs.scenario.libraryRoot, "records", `${coming}.json`),
+              "utf8",
+            ),
+          ) as Record<string, unknown>;
+          const here = JSON.parse(NodeFS.readFileSync(mine, "utf8")) as Record<string, unknown>;
+          NodeFS.writeFileSync(
+            mine,
+            JSON.stringify({
+              ...here,
+              title: other.title,
+              creators: other.creators,
+              issuedRaw: other.issuedRaw,
+              issuedYear: other.issuedYear,
+              identifiers: other.identifiers,
+            }),
+          );
+        },
       },
     });
     expect(result).toMatchObject({ outcome: "joined", added: 1, skipped: 1 });
@@ -1525,34 +1614,35 @@ describe("what differs between the two Libraries, and taking one thing at a time
       library: ours.library,
       folder: backup,
       actor: "user",
-      faults: { partSize: 1 },
-      shouldStop: () => {
-        asked += 1;
-        if (asked !== 2) return false;
-        // Between the parts, the paper that has just arrived is given, here, the details of
-        // the one still to come (the other Library keeps the two apart; this edit does not).
-        const [arrived, coming] = NodeFS.existsSync(
-          NodePath.join(records(ours.scenario), `${first}.json`),
-        )
-          ? [first!, second!]
-          : [second!, first!];
-        const other = JSON.parse(
-          NodeFS.readFileSync(NodePath.join(records(theirs.scenario), `${coming}.json`), "utf8"),
-        ) as Record<string, unknown>;
-        const file = NodePath.join(records(ours.scenario), `${arrived}.json`);
-        const here = JSON.parse(NodeFS.readFileSync(file, "utf8")) as Record<string, unknown>;
-        NodeFS.writeFileSync(
-          file,
-          JSON.stringify({
-            ...here,
-            title: other.title,
-            creators: other.creators,
-            issuedRaw: other.issuedRaw,
-            issuedYear: other.issuedYear,
-            identifiers: other.identifiers,
-          }),
-        );
-        return false;
+      faults: {
+        partSize: 1,
+        beforePart: () => {
+          asked += 1;
+          if (asked !== 2) return;
+          // Between the parts, the paper that has just arrived is given, here, the details of
+          // the one still to come (the other Library keeps the two apart; this edit does not).
+          const [arrived, coming] = NodeFS.existsSync(
+            NodePath.join(records(ours.scenario), `${first}.json`),
+          )
+            ? [first!, second!]
+            : [second!, first!];
+          const other = JSON.parse(
+            NodeFS.readFileSync(NodePath.join(records(theirs.scenario), `${coming}.json`), "utf8"),
+          ) as Record<string, unknown>;
+          const file = NodePath.join(records(ours.scenario), `${arrived}.json`);
+          const here = JSON.parse(NodeFS.readFileSync(file, "utf8")) as Record<string, unknown>;
+          NodeFS.writeFileSync(
+            file,
+            JSON.stringify({
+              ...here,
+              title: other.title,
+              creators: other.creators,
+              issuedRaw: other.issuedRaw,
+              issuedYear: other.issuedYear,
+              identifiers: other.identifiers,
+            }),
+          );
+        },
       },
     });
     expect(result).toMatchObject({ outcome: "joined", added: 1, skipped: 1 });
@@ -1583,5 +1673,159 @@ describe("what differs between the two Libraries, and taking one thing at a time
       }),
     ).toEqual({ outcome: "too-long" });
     expect((await readScientSourceRecord(ours.library, id("s2")))?.note).toHaveLength(99_990);
+  });
+
+  it("replaces or removes an abandoned Zotero base when a later backup adds the source", async () => {
+    const theirs = await built([{ op: "add", label: "fresh", pdf: false }]);
+    const id = workOf(theirs.model, "fresh").sourceId;
+    const record = (await readScientSourceRecord(theirs.library, id))!;
+    const baseOf = (
+      sourceId: string,
+      itemVersion: number,
+      attachmentKeys: ReadonlyArray<string>,
+    ) => ({
+      formatVersion: 1 as const,
+      sourceId,
+      libraryId: "475425",
+      itemKey: "ABCD2345",
+      itemVersion,
+      syncedAt: "2026-11-21T08:00:00.000Z",
+      metadata: editableMetadataFromRecord(record),
+      note: null,
+      attachmentKeys: [...attachmentKeys],
+    });
+
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    // Simulate an interrupted join with a pending receipt naming both a valid orphan the new
+    // backup never touches and a traversal ID, plus an abandoned sidecar for the incoming source.
+    const zoteroDir = NodePath.join(ours.scenario.libraryRoot, "zotero");
+    await NodeFSP.mkdir(zoteroDir, { recursive: true });
+    const orphanId = "src_interrupted_orphan";
+    const orphanFile = NodePath.join(zoteroDir, `${orphanId}.json`);
+    await NodeFSP.writeFile(orphanFile, JSON.stringify(baseOf(orphanId, 1, ["ORPHAN1"])));
+    await NodeFSP.writeFile(
+      NodePath.join(zoteroDir, `${id}.json`),
+      JSON.stringify(baseOf(id, 1, ["STALE234"])),
+    );
+    const outsideTarget = NodePath.join(ours.scenario.libraryRoot, "keep-me.json");
+    await NodeFSP.writeFile(outsideTarget, '{"kept":true}');
+    const pendingJoinDir = NodePath.join(ours.scenario.libraryRoot, "joins", "join_interrupted");
+    const pendingHeaderPath = NodePath.join(pendingJoinDir, "join.json");
+    await NodeFSP.mkdir(pendingJoinDir, { recursive: true });
+    await NodeFSP.writeFile(
+      pendingHeaderPath,
+      JSON.stringify({
+        formatVersion: 1,
+        joinId: "join_interrupted",
+        startedAt: "2026-11-21T08:00:00.000Z",
+        by: "user",
+        other: { libraryId: "lib_other", kind: "backup", folder: "/missing" },
+        state: "running",
+        planned: 2,
+        identical: 0,
+        removedThere: 0,
+        different: [],
+        removedHere: [],
+        collections: [],
+      }),
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(pendingJoinDir, "part-00001.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        number: 1,
+        sources: [
+          { sourceId: orphanId, fingerprint: "fp_orphan" },
+          { sourceId: "../keep-me", fingerprint: "fp_bad" },
+        ],
+        state: "pending",
+        added: [],
+        skipped: [],
+      }),
+    );
+    await writeScientSourceZoteroSync(theirs.library, baseOf(id, 5, ["NEW2345"]));
+    const updatedBackup = await backUp(theirs.scenario);
+
+    expect(
+      await joinScientLibrary({ library: ours.library, folder: updatedBackup, actor: "user" }),
+    ).toMatchObject({ outcome: "joined", added: 1 });
+    expect(JSON.parse(await NodeFSP.readFile(pendingHeaderPath, "utf8"))).toMatchObject({
+      state: "stopped",
+    });
+    expect(await readScientSourceZoteroSync(ours.library, orphanId)).toBeNull();
+    await expect(NodeFSP.stat(orphanFile)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readScientSourceZoteroSync(ours.library, id)).toMatchObject({
+      itemVersion: 5,
+      attachmentKeys: ["NEW2345"],
+    });
+    expect(await NodeFSP.readFile(outsideTarget, "utf8")).toBe('{"kept":true}');
+
+    // When a later backup has no Zotero base for the source, an abandoned orphan does not survive.
+    const oursTwo = await built([{ op: "add", label: "mine", pdf: false }]);
+    await NodeFSP.rm(NodePath.join(theirs.scenario.libraryRoot, "zotero", `${id}.json`), {
+      force: true,
+    });
+    const noBaseBackup = await backUp(theirs.scenario);
+    await NodeFSP.mkdir(NodePath.join(oursTwo.scenario.libraryRoot, "zotero"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(oursTwo.scenario.libraryRoot, "zotero", `${id}.json`),
+      JSON.stringify(baseOf(id, 1, ["ORPHAN01"])),
+    );
+    expect(
+      await joinScientLibrary({ library: oursTwo.library, folder: noBaseBackup, actor: "user" }),
+    ).toMatchObject({ outcome: "joined", added: 1 });
+    expect(await readScientSourceZoteroSync(oursTwo.library, id)).toBeNull();
+  });
+
+  it("refuses a symlinked or non-regular Zotero sidecar in a kept Library without blocking", async () => {
+    // Prepare a kept Library via restore, then plant a symlinked sidecar (and FIFO on POSIX).
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    const firstBackup = await backUp(ours.scenario);
+    const added = await further(ours.scenario, ours.model, [
+      { op: "add", label: "extra", pdf: false },
+    ]);
+    const extraId = workOf(added, "extra").sourceId;
+    const prepared = await prepareScientLibraryRestore({
+      libraryRoot: ours.scenario.libraryRoot,
+      backup: firstBackup,
+    });
+    if (prepared.outcome !== "ready") throw new Error("Expected ready restore.");
+    const finished = await finishScientLibraryRestore(ours.scenario.libraryRoot);
+    if (finished.outcome !== "restored" || !finished.keptReplaced) {
+      throw new Error("Expected kept Library.");
+    }
+    const keptZoteroDir = NodePath.join(finished.keptReplaced.path, "zotero");
+    const sidecarPath = NodePath.join(keptZoteroDir, `${extraId}.json`);
+    const secret = NodePath.join(ours.scenario.root, "outside-secret.json");
+    await NodeFSP.writeFile(secret, JSON.stringify({ secret: true }));
+    await NodeFSP.mkdir(keptZoteroDir, { recursive: true });
+    await NodeFSP.symlink(secret, sidecarPath);
+
+    expect(
+      await joinScientLibrary({
+        library: ours.library,
+        folder: finished.keptReplaced.path,
+        actor: "user",
+      }),
+    ).toMatchObject({ outcome: "joined", added: 0, skipped: 1 });
+    expect(await readScientSourceRecord(ours.library, extraId)).toBeNull();
+    expect(await readScientSourceZoteroSync(ours.library, extraId)).toBeNull();
+
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- POSIX-only mkfifo check in test fixture.
+    if (NodeOS.platform() !== "win32") {
+      await NodeFSP.rm(sidecarPath, { force: true });
+      const mkfifo = NodeChildProcess.spawnSync("mkfifo", [sidecarPath]);
+      if (mkfifo.status === 0) {
+        expect(
+          await joinScientLibrary({
+            library: ours.library,
+            folder: finished.keptReplaced.path,
+            actor: "user",
+          }),
+        ).toMatchObject({ outcome: "joined", added: 0, skipped: 1 });
+        expect(await readScientSourceRecord(ours.library, extraId)).toBeNull();
+        expect(await readScientSourceZoteroSync(ours.library, extraId)).toBeNull();
+      }
+    }
   });
 });

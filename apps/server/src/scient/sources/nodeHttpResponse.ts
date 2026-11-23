@@ -1,11 +1,36 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Node HTTP response completion and byte limits belong at the transport boundary.
+// @effect-diagnostics globalTimers:off -- Promise-based HTTP boundaries abort native requests at their deadline.
 import type * as NodeHttp from "node:http";
+import * as NodeTimers from "node:timers";
 
 export type NodeHttpRequest = (
   url: URL,
   options: NodeHttp.RequestOptions,
   onResponse: (response: NodeHttp.IncomingMessage) => void,
 ) => NodeHttp.ClientRequest;
+
+/**
+ * One wall-clock budget for a whole request, from before it connects through each redirect to
+ * its last byte: a socket's idle timer lets a slow trickle or a connect that never answers run
+ * on. `run` passes the signal to every request and stream; past the budget it rejects with
+ * `message`.
+ */
+export async function withRequestDeadline<A>(
+  ms: number,
+  message: string,
+  run: (signal: AbortSignal) => Promise<A>,
+): Promise<A> {
+  const controller = new AbortController();
+  const timer = NodeTimers.setTimeout(() => controller.abort(new Error(message)), ms);
+  timer.unref();
+  try {
+    return await run(controller.signal);
+  } catch (error) {
+    throw controller.signal.aborted ? controller.signal.reason : error;
+  } finally {
+    NodeTimers.clearTimeout(timer);
+  }
+}
 
 export async function readBoundedNodeResponse(
   response: NodeHttp.IncomingMessage,

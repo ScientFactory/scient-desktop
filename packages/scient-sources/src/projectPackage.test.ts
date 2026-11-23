@@ -38,6 +38,7 @@ import {
   type ScientLibraryLocation,
 } from "./libraryRoot.ts";
 import type { ScientSourceCandidate } from "./model.ts";
+import { keepScientDisplacedCopies } from "./projectDisplacedCopies.ts";
 import {
   exportScientProjectPackage,
   listScientProjectPackageImports,
@@ -1285,11 +1286,23 @@ describe("importing a project package", () => {
       change: { action: "create-collection", name: "Methods", sourceIds: [paper.sourceId] },
       actor: "user",
     });
+    // A value kept after a merge Undo stays in the project; the package says it left it.
+    await keepScientDisplacedCopies(await NodeFSP.realpath(source), { kind: "project" }, [
+      {
+        sourceId: paper.sourceId,
+        heldBy: "key",
+        undoneAt: "2026-11-01T00:00:00.000Z",
+        differs: ["title"],
+        work: { title: "Before the Undo" },
+      },
+    ]);
     const handoff = NodePath.join(base, "handoff");
-    await exportTo(source, mine, handoff);
-    expect(await NodeFSP.readFile(NodePath.join(handoff, "README.md"), "utf8")).toContain(
-      '"import-package"',
-    );
+    expect(await exportTo(source, mine, handoff)).toMatchObject({
+      keptCopies: { leftOut: 1, unreadable: 0 },
+    });
+    const readme = await NodeFSP.readFile(NodePath.join(handoff, "README.md"), "utf8");
+    expect(readme).toContain('"import-package"');
+    expect(readme).toContain("1 earlier copy of source details kept after a merge Undo is not");
 
     const theirs = await computer(base, "theirs");
     const received = await project(base, "received");

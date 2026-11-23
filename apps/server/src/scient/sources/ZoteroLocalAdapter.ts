@@ -6,19 +6,28 @@ import type { ZoteroConnectionStatus, ZoteroGroup } from "@scientfactory/scient-
 import * as Schema from "effect/Schema";
 
 import type { ZoteroResponse, ZoteroTransport } from "./ZoteroLibraryReader.ts";
-import { readBoundedNodeResponse, type NodeHttpRequest } from "./nodeHttpResponse.ts";
+import {
+  readBoundedNodeResponse,
+  withRequestDeadline,
+  type NodeHttpRequest,
+} from "./nodeHttpResponse.ts";
 
 const ZOTERO_HOST = "127.0.0.1";
 const ZOTERO_PORT = 23_119;
 const ZOTERO_API_VERSION = 3;
 const REQUEST_TIMEOUT_MS = 4_000;
+const REQUEST_DEADLINE_MS = 30_000;
 const BETTER_BIBTEX_TIMEOUT_MS = 2_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const USER_LIBRARY_PATH = "/api/users/0";
 const BETTER_BIBTEX_PATH = "/better-bibtex/json-rpc";
 
 export const makeLocalZoteroRequest =
-  (send: NodeHttpRequest = NodeHttp.request) =>
+  (
+    send: NodeHttpRequest = NodeHttp.request,
+    /** Tests only: a shorter budget. */
+    deadlineMs = REQUEST_DEADLINE_MS,
+  ) =>
   async (
     path: string,
     options: { readonly body?: string; readonly timeoutMs?: number } = {},
@@ -29,47 +38,59 @@ export const makeLocalZoteroRequest =
         ? path.startsWith("/api/") && url.pathname.startsWith("/api/")
         : path === BETTER_BIBTEX_PATH;
     if (!allowed) throw new Error("Zotero path must remain under the local API.");
-    const { promise, resolve, reject } = Promise.withResolvers<ZoteroResponse>();
-    const request = send(
-      url,
-      {
-        method: options.body === undefined ? "GET" : "POST",
-        headers: {
-          Accept: "application/json",
-          "Zotero-API-Version": String(ZOTERO_API_VERSION),
-          ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
-      },
-      (response) => {
-        void readBoundedNodeResponse(response, {
-          maxBytes: MAX_RESPONSE_BYTES,
-          tooLargeMessage: "Zotero returned more data than Scient can safely accept.",
-        }).then(
-          (body) => {
-            const headers: Record<string, string | undefined> = {};
-            for (const [name, value] of Object.entries(response.headers)) {
-              headers[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
-            }
-            resolve({
-              status: response.statusCode ?? 0,
-              headers,
-              body: body.toString("utf8"),
-            });
-          },
-          (error: unknown) => {
-            request.destroy();
-            reject(error);
-          },
-        );
-      },
+    return withRequestDeadline(deadlineMs, "Timed out while contacting Zotero.", (signal) =>
+      localRequestWithin(url, options, send, signal),
     );
-    request.setTimeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS, () => {
-      request.destroy(new Error("Timed out while contacting Zotero."));
-    });
-    request.on("error", reject);
-    request.end(options.body);
-    return promise;
   };
+
+function localRequestWithin(
+  url: URL,
+  options: { readonly body?: string; readonly timeoutMs?: number },
+  send: NodeHttpRequest,
+  signal: AbortSignal,
+): Promise<ZoteroResponse> {
+  const { promise, resolve, reject } = Promise.withResolvers<ZoteroResponse>();
+  const request = send(
+    url,
+    {
+      method: options.body === undefined ? "GET" : "POST",
+      signal,
+      headers: {
+        Accept: "application/json",
+        "Zotero-API-Version": String(ZOTERO_API_VERSION),
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+    },
+    (response) => {
+      void readBoundedNodeResponse(response, {
+        maxBytes: MAX_RESPONSE_BYTES,
+        tooLargeMessage: "Zotero returned more data than Scient can safely accept.",
+      }).then(
+        (body) => {
+          const headers: Record<string, string | undefined> = {};
+          for (const [name, value] of Object.entries(response.headers)) {
+            headers[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+          }
+          resolve({
+            status: response.statusCode ?? 0,
+            headers,
+            body: body.toString("utf8"),
+          });
+        },
+        (error: unknown) => {
+          request.destroy();
+          reject(error);
+        },
+      );
+    },
+  );
+  request.setTimeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS, () => {
+    request.destroy(new Error("Timed out while contacting Zotero."));
+  });
+  request.on("error", reject);
+  request.end(options.body);
+  return promise;
+}
 
 const localRequest = makeLocalZoteroRequest();
 

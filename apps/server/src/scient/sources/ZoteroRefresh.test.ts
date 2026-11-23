@@ -9,8 +9,11 @@ import {
   detachScientSourcePdf,
   listScientSourceRecords,
   readScientSourceRecord,
+  removeScientSource,
+  revertScientSource,
   readScientSourceZoteroSync,
   updateScientSourceMetadata,
+  updateScientSourceExternalReferences,
   updateScientSourceNote,
   writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
@@ -474,6 +477,51 @@ describe("Zotero refresh", () => {
     expect((await readScientSourceRecord(root, record.sourceId))?.note ?? null).toBeNull();
   });
 
+  it.each([
+    { meanwhile: "the title", note: "First, revised", clash: false },
+    { meanwhile: "the note", note: "Mine meanwhile", clash: true },
+  ])(
+    "keeps Zotero's new note in view when $meanwhile is edited here during the refresh",
+    async ({ meanwhile, note, clash }) => {
+      const { root, library, zotero, record } = await importedFromZotero(original, [
+        zoteroItem("NOTE2345", { itemType: "note", note: "<p>First</p>" }),
+      ]);
+      library.items.set("ABCD2345", {
+        item: original,
+        children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>First, revised</p>" })],
+      });
+      const transport = fakeZoteroTransport(library);
+      let edit = true;
+      const during = fakeZoteroAccess({
+        ...transport,
+        get: async (path) => {
+          const response = await transport.get(path);
+          if (edit && path.includes("/children")) {
+            edit = false;
+            if (meanwhile === "the title") await editHere(root, record.sourceId, { title: "Mine" });
+            else {
+              await updateScientSourceNote({
+                root,
+                sourceId: record.sourceId,
+                expectedRevision: record.revision,
+                note: "Mine meanwhile",
+              });
+            }
+          }
+          return response;
+        },
+      });
+
+      await refreshZoteroSources({ root, actor: "user", zotero: during });
+      const next = await refreshZoteroSources({ root, actor: "user", zotero });
+
+      expect(next.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(
+        clash ? ["note"] : [],
+      );
+      expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe(note);
+    },
+  );
+
   // The same Zotero note, as an import wrote it before notes became Markdown and as it is now.
   const noteHtml = '<h1>Aims</h1><p>See <a href="https://example.org">the errata</a>.</p>';
   const earlierText = "Aims\n\nSee the errata.";
@@ -587,6 +635,83 @@ describe("Zotero refresh", () => {
     expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("My own words");
   });
 
+  it("trims optional retained note HTML to fit the 2 MiB sync-file budget on legacy multi-byte notes", async () => {
+    const body = `<p>${"漢".repeat(1_000)}</p>`.repeat(65);
+    const children = Array.from({ length: 8 }, (_, index) =>
+      zoteroItem(`NOTE000${index + 1}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${body}`,
+      }),
+    );
+    const { root, library, zotero, record } = await importedFromZotero(original, children);
+    const { sourceId } = record;
+    const importedBase = (await readScientSourceZoteroSync(root, sourceId))!;
+    // Simulate a pre-Markdown import baseline (plain text, no `notes`) plus a local edit.
+    const legacyPlain = children
+      .map((_, index) => `Note ${index + 1}\n\n${Array(65).fill("漢".repeat(1_000)).join("\n\n")}`)
+      .join("\n\n---\n\n")
+      .slice(0, 100_000);
+    const { notes: _notes, ...earlier } = importedBase;
+    await writeScientSourceZoteroSync(root, { ...earlier, note: legacyPlain });
+    await updateScientSourceNote({
+      root,
+      sourceId,
+      expectedRevision: record.revision,
+      note: "My own words",
+    });
+
+    for (const _round of [1, 2]) {
+      const refreshed = await refreshZoteroSources({ root, actor: "user", zotero });
+      expect(refreshed.items[0]?.outcome).toBe("unchanged");
+      expect(refreshed.items[0]?.conflicts).toEqual([]);
+      expect(refreshed.items[0]?.notBrought).toEqual([
+        { kind: "note-cut", name: "original", count: 1 },
+      ]);
+      expect((await readScientSourceRecord(root, sourceId))?.note).toBe("My own words");
+    }
+    const saved = await readScientSourceZoteroSync(root, sourceId);
+    expect(saved?.note).toBe(legacyPlain);
+    expect(saved?.zoteroNote).toBe(record.note);
+    expect(saved?.notes).toHaveLength(8);
+    expect(saved?.notes?.some((entry) => entry.html === undefined)).toBe(true);
+
+    // Even a note whose optional HTML was trimmed still detects a later Zotero edit via its digest.
+    library.items.set("ABCD2345", {
+      item: original,
+      children: [
+        ...children.slice(0, 7),
+        zoteroItem("NOTE0008", {
+          itemType: "note",
+          note: "<h1>A Note 8</h1><p>Edited in Zotero</p>",
+        }),
+      ],
+    });
+    const afterEdit = await refreshZoteroSources({ root, actor: "user", zotero });
+    expect(afterEdit.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("My own words");
+
+    // A fresh import whose multi-byte notes fit 1,000,000 characters but cross the 2 MiB sync-file
+    // byte limit also discloses the omitted original HTML in the import receipt.
+    const tenChildren = Array.from({ length: 10 }, (_, index) =>
+      zoteroItem(`NOTE00${String(index + 1).padStart(2, "0")}`, {
+        itemType: "note",
+        note: `<h1>Note ${index + 1}</h1>${body}`,
+      }),
+    );
+    const freshImport = await importedFromZotero(original, tenChildren);
+    expect(freshImport.operation.items[0]?.notBrought).toContainEqual({
+      kind: "note-cut",
+      name: "original",
+      count: 1,
+    });
+    const freshSaved = await readScientSourceZoteroSync(
+      freshImport.root,
+      freshImport.record.sourceId,
+    );
+    expect(freshSaved?.notes).toHaveLength(10);
+    expect(freshSaved?.notes?.some((entry) => entry.html === undefined)).toBe(true);
+  });
+
   it("leaves a source alone when its item is gone from Zotero", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);
     library.items.delete("ABCD2345");
@@ -628,6 +753,133 @@ describe("Zotero refresh", () => {
       itemVersion: 4,
     });
     expect(result.items.map((item) => item.outcome)).toEqual(["updated"]);
+  });
+
+  it("does not plan from a legacy personal baseline for a group item while the legacy link remains", async () => {
+    const legacy = rawZoteroItem("ABCD2345", {
+      title: "Original title",
+      abstractNote: "Original abstract.",
+      DOI: "10.1000/refresh-original",
+      version: 3,
+    });
+    const { root, record, library } = await importedFromZotero(legacy, [
+      rawZoteroItem("NOTE2345", { itemType: "note", note: "<p>Personal note</p>" }),
+    ]);
+    expect((await readScientSourceZoteroSync(root, record.sourceId))?.note).toBe("Personal note");
+    // As after merging in a group record and Sending to its item: the group link leads,
+    // the legacy "0" link remains behind it.
+    const promoted = await updateScientSourceExternalReferences({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      externalReferences: [
+        {
+          system: "zotero",
+          libraryId: "groups/4321",
+          itemKey: "ABCD2345",
+          itemVersion: 3,
+          rawItemType: "journalArticle",
+        },
+        ...record.externalReferences,
+      ],
+      actor: "user",
+    });
+    expect(promoted.record.externalReferences[1]).toMatchObject({ libraryId: "0" });
+    const group = {
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroGroupItem(
+              "ABCD2345",
+              { ...legacy.data, title: "Original title", version: 4 },
+              "4321",
+            ),
+            children: [
+              zoteroGroupItem(
+                "NOTE2345",
+                { itemType: "note", note: "<p>Group note</p>", version: 4 },
+                "4321",
+              ),
+            ],
+          },
+        ],
+      ]),
+    };
+    const zotero = fakeZoteroAccessWithGroup(
+      fakeZoteroTransport(library),
+      "4321",
+      fakeZoteroTransport(group),
+    );
+
+    const result = await refreshZoteroSources({
+      root,
+      sourceIds: [record.sourceId],
+      actor: "user",
+      zotero,
+    });
+
+    expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("Personal note");
+  });
+
+  it("does not plan from a re-import's legacy baseline after restoring the prior owner's revision", async () => {
+    const {
+      root,
+      record: first,
+      library,
+      zotero,
+    } = await importedFromZotero(original, [
+      zoteroItem("NOTE2345", { itemType: "note", note: "<p>Shared note</p>" }),
+    ]);
+    const firstRevision = first.revision;
+    const edited = await editHere(root, first.sourceId, { title: "Original title, edited" });
+    await removeScientSource({
+      root,
+      sourceId: first.sourceId,
+      expectedRevision: edited.revision,
+    });
+    library.items.set("ABCD2345", {
+      item: rawZoteroItem("ABCD2345", { ...original.data, version: 3 }),
+      children: [rawZoteroItem("NOTE2345", { itemType: "note", note: "<p>Shared note</p>" })],
+    });
+    await beginZoteroScopedImport({
+      root,
+      operationId: "import-second-owner",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "import-second-owner", zotero });
+    const [second] = await listScientSourceRecords(root);
+    expect(second?.sourceId).toBe(first.sourceId);
+    expect((await readScientSourceZoteroSync(root, first.sourceId))?.libraryId).toBe("0");
+
+    const reverted = await revertScientSource({
+      root,
+      sourceId: first.sourceId,
+      expectedRevision: second!.revision,
+      toRevision: firstRevision,
+      actor: "user",
+    });
+    expect(reverted.outcome).toBe("reverted");
+    expect(reverted.record.externalReferences[0]).toMatchObject({ libraryId: "475425" });
+    expect(reverted.record.origin?.operationId).toBe(second?.origin?.operationId);
+    library.items.set("ABCD2345", {
+      item: zoteroItem("ABCD2345", { ...original.data, version: 4 }),
+      children: [
+        zoteroItem("NOTE2345", { itemType: "note", note: "<p>Changed by first owner</p>" }),
+      ],
+    });
+
+    const result = await refreshZoteroSources({
+      root,
+      sourceIds: [first.sourceId],
+      actor: "user",
+      zotero,
+    });
+
+    expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, first.sourceId))?.note).toBe("Shared note");
   });
 
   // Constructed in Zotero's documented item format: public libraries do not hand out the PDFs.

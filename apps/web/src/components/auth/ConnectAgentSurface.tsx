@@ -41,7 +41,11 @@ export const accessConfig: Record<
 > = {
   "read-only": {
     label: msg("Read only"),
-    description: msg("Read projects and threads. Cannot start, message or change anything."),
+    // SCIENT-FORK:START — an approved agent also reads the personal Library.
+    description: msg(
+      "Read projects, threads and your Library. Cannot start, message or change anything.",
+    ),
+    // SCIENT-FORK:END
     icon: EyeIcon,
   },
   ...runtimeModeConfig,

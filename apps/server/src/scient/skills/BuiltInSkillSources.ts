@@ -244,7 +244,7 @@ Finish the whole check in this turn. If something can't be finished, say exactly
 
 \`scient_references_resolve\` applies a finding's \`fix\` as the check returned it; a stale fix means the file changed, so check again. Search the Library before anything else. Many computer-science conference papers and mathematics books have no DOI: use proceedings, publisher and zbMATH records for them, and the issuing body for editions of guidelines, manuals and software.
 
-The writing calls are \`scient_references_resolve\`, \`scient_paper_get\` (saves a PDF), \`scient_sources_add\`, \`scient_sources_cite\` (pins sources and updates \`references.bib\`) and \`scient_sources_bibliography\` (rewrites \`references.bib\`). Keep to the project folder, and leave \`.scient\` files to the tools.
+The writing calls are \`scient_references_resolve\`, \`scient_paper_get\` (saves a PDF), \`scient_sources_add\`, \`scient_sources_import_file\` (adds a project's .bib, .ris or CSL-JSON file to the Library, skipping entries it holds), \`scient_sources_cite\` (pins sources and updates \`references.bib\`) and \`scient_sources_bibliography\` (rewrites \`references.bib\`). Keep to the project folder, and leave \`.scient\` files to the tools.
 
 ## What to check
 
@@ -2425,7 +2425,7 @@ if __name__ == "__main__":
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.references",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "category": "Research",
   "categoryDescription": "Check, find and cite the literature.",
   "displayOrder": 80,

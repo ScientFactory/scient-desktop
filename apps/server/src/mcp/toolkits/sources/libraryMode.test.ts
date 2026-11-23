@@ -18,8 +18,10 @@ import {
 import {
   markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
+  undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
 import { bulkUpdateScientSources } from "@scientfactory/scient-sources/collections";
+import { keepScientDisplacedCopies } from "@scientfactory/scient-sources/project-displaced-copies";
 import {
   pinScientLibrarySource,
   readScientProjectPins,
@@ -33,10 +35,10 @@ import {
   updateScientSourceMetadata,
 } from "@scientfactory/scient-sources/store";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ScientSourceAgentDetail } from "./tools.ts";
+import { ScientSourceAgentDetail, ScientSourcesLibraryToolkit } from "./tools.ts";
 
 import { ServerConfig } from "../../../config.ts";
 import { exportLibraryProjectPackage } from "../../../scient/sources/LibraryProjectPackage.ts";
@@ -60,6 +62,11 @@ import {
   libraryReviewConflicts,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import {
+  changeLibraryRestore,
+  finishLibraryRestoreAtStart,
+  readLibraryCopies,
+} from "../../../scient/sources/LibraryRestoreRuns.ts";
+import {
   resolveScientLibraryStoreAt,
   ScientSourcesBackend,
   type ScientSourcesBackendKind,
@@ -75,6 +82,7 @@ import {
   checkScientSourceQuotesForInvocation,
   citeScientSourcesForInvocation,
   getScientSourceForInvocation,
+  libraryCopyFolder,
   listScientSourcesForInvocation,
   removeScientSourceForInvocation,
   organizeLibrarySourcesForInvocation,
@@ -438,6 +446,189 @@ describe("Sources tools on the library backend", () => {
         pin: { note: "First reading" },
       });
     }),
+  );
+
+  it.effect("an agent reads the values kept after a merge Undo, also from a pin's snapshot", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const added = yield* addSource(fixture, "Kept trial", "10.1000/kept");
+      const sourceId = added.sourceId!;
+      // As the tool answers: encoded against its own result schema.
+      const get = () =>
+        run(getScientSourceForInvocation({ sourceId }), fixture).pipe(
+          Effect.flatMap(
+            Schema.encodeUnknownEffect(
+              ScientSourcesLibraryToolkit.tools.scient_sources_get.successSchema,
+            ),
+          ),
+        );
+      const before = yield* get();
+      expect(before).not.toHaveProperty("keptCopies");
+      yield* Effect.promise(() =>
+        keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
+          {
+            sourceId,
+            heldBy: before.citationKey!,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            differs: ["containerTitle"],
+            work: { title: "Kept trial", containerTitle: "Journal before the merge" },
+          },
+        ]),
+      );
+      const kept = {
+        holder: "citation-key",
+        heldBy: before.citationKey,
+        holderPresent: true,
+        fields: [
+          {
+            field: "containerTitle",
+            earlier: "Journal before the merge",
+            current: "Scient Journal",
+          },
+        ],
+      };
+      expect(yield* get()).toMatchObject({ keptCopies: [kept] });
+
+      // In Trash, the pin is served from its snapshot, and the kept values still show.
+      yield* run(
+        removeScientSourceForInvocation({ sourceId, expectedRevision: before.revision }),
+        fixture,
+      );
+      expect(yield* get()).toMatchObject({ fromSnapshot: true, keptCopies: [kept] });
+    }),
+  );
+
+  it.effect(
+    "an agent reads kept values from a trashed pin whose alias points to another Library record",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const a = (yield* run(
+          addScientSourceForInvocation({
+            type: "article",
+            title: "Chain A",
+            creators: [ada],
+            issuedYear: 2026,
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-a" }],
+            containerTitle: "Journal A",
+          }),
+          fixture,
+        )).sourceId!;
+        const d = (yield* run(
+          addScientSourceForInvocation({
+            type: "article",
+            title: "Chain D",
+            creators: [ada],
+            issuedYear: 2026,
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-d" }],
+            containerTitle: "Journal D",
+          }),
+          fixture,
+        )).sourceId!;
+        // B and C live only in the Library: only A and sibling D are pinned in this project.
+        const b = (yield* Effect.promise(() =>
+          libraryRecord(fixture, "chain-b", {
+            title: "Chain B",
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-b" }],
+            containerTitle: "Journal B",
+          }),
+        )).sourceId;
+        const c = (yield* Effect.promise(() =>
+          libraryRecord(fixture, "chain-c", {
+            title: "Chain C",
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-c" }],
+            containerTitle: "Journal C",
+          }),
+        )).sourceId;
+        const pins = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+        const pinA = pins.find((entry) => entry.sourceId === a)!;
+        const pinD = pins.find((entry) => entry.sourceId === d)!;
+        const firstMerge = yield* Effect.promise(() =>
+          mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [a, b],
+            survivorId: b,
+            actor: "user",
+          }),
+        );
+        if (firstMerge.outcome !== "merged") throw new Error("Expected A -> B merge.");
+        const siblingMerge = yield* Effect.promise(() =>
+          mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [d, b],
+            survivorId: b,
+            actor: "user",
+          }),
+        );
+        if (siblingMerge.outcome !== "merged") throw new Error("Expected D -> B merge.");
+        const secondMerge = yield* Effect.promise(() =>
+          mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [b, c],
+            survivorId: c,
+            actor: "user",
+          }),
+        );
+        if (secondMerge.outcome !== "merged") throw new Error("Expected B -> C merge.");
+        yield* Effect.promise(() =>
+          refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          }),
+        );
+        const undone = yield* Effect.promise(() =>
+          undoScientLibraryMerge({
+            library: fixture.library,
+            mergeId: secondMerge.merge.mergeId,
+            actor: "user",
+          }),
+        );
+        if (undone.outcome !== "undone") throw new Error("Expected B -> C undo.");
+        yield* Effect.promise(() =>
+          refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          }),
+        );
+        yield* run(
+          removeScientSourceForInvocation({
+            sourceId: undone.loser.sourceId,
+            expectedRevision: undone.loser.revision,
+          }),
+          fixture,
+        );
+        const detail = yield* run(getScientSourceForInvocation({ sourceId: a }), fixture).pipe(
+          Effect.flatMap(
+            Schema.encodeUnknownEffect(
+              ScientSourcesLibraryToolkit.tools.scient_sources_get.successSchema,
+            ),
+          ),
+        );
+        expect(detail).toMatchObject({
+          fromSnapshot: true,
+          keptCopies: expect.arrayContaining([
+            expect.objectContaining({
+              holder: "citation-key",
+              heldBy: pinA.citationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
+            }),
+            expect.objectContaining({
+              holder: "citation-key",
+              heldBy: pinD.citationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
+            }),
+          ]),
+        });
+        expect(
+          (detail as { readonly keptCopies?: ReadonlyArray<unknown> }).keptCopies,
+        ).toHaveLength(2);
+      }),
   );
 
   it.effect("reads and writes each merged pin's project note by its own key", () =>
@@ -1827,6 +2018,135 @@ describe("Sources tools on the library backend", () => {
         run(updateLibrarySourceForInvocation({ sourceId, expectedRevision: 1 }), fixture),
       );
       expect(empty.message).toBe("Give metadata, readingStatus or starred.");
+    }),
+  );
+
+  it("reads an agent's ~ folder from the home folder and leaves other folders alone", () => {
+    const home = NodePath.join(NodePath.sep, "home", "ada");
+    expect(libraryCopyFolder("~", home)).toBe(home);
+    expect(libraryCopyFolder("~/Backups", home)).toBe(NodePath.join(home, "Backups"));
+    expect(libraryCopyFolder("/srv/~/Backups", home)).toBe("/srv/~/Backups");
+    expect(libraryCopyFolder("~ada/Backups", home)).toBe("~ada/Backups");
+  });
+
+  it.effect(
+    "an agent's backup is restored the panel's way, and an older restore ID cancels nothing",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const kept = yield* Effect.promise(() => libraryRecord(fixture, "kept"));
+        const destination = NodePath.join(fixture.base, "backups");
+        yield* Effect.promise(() => NodeFSP.mkdir(destination));
+        // The runners' own record, which the list tool's libraryCopies reads.
+        const copies = () => readLibraryCopies(fixture.libraryRoot);
+
+        const started = yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "back-up-library", inFolder: destination },
+          }),
+          fixture,
+        );
+        // The run ends later, so the answer says where to watch it.
+        expect(started).toMatchObject({
+          outcome: "backup-started",
+          message: expect.stringContaining("libraryCopies"),
+        });
+        const backup = yield* Effect.promise(() =>
+          vi.waitFor(async () => {
+            const { backup } = await copies();
+            if (backup.state !== "done") throw new Error(`The backup is ${backup.state}.`);
+            return backup.path;
+          }),
+        );
+        expect(
+          (yield* run(listScientSourcesForInvocation({ libraryCopies: true }), fixture))
+            .libraryCopies?.backup,
+        ).toMatchObject({ state: "done", path: backup, sources: 1 });
+        yield* Effect.promise(() => libraryRecord(fixture, "added-later"));
+
+        const requested = yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "restore-library", fromFolder: backup },
+          }),
+          fixture,
+        );
+        // Nothing is swapped now; the agent is told so, to tell the user.
+        expect(requested).toMatchObject({
+          outcome: "restore-requested",
+          message: expect.stringContaining("next starts"),
+        });
+        const ready = () =>
+          vi.waitFor(async () => {
+            const { restore } = await copies();
+            if (restore.state !== "ready") throw new Error(`The restore is ${restore.state}.`);
+            return restore.restoreId!;
+          });
+        const older = yield* Effect.promise(ready);
+        // The copy's own Recent changes credits the agent, not the person.
+        const staged = yield* Effect.promise(async () =>
+          JSON.parse(
+            await NodeFSP.readFile(
+              `${await NodeFSP.realpath(fixture.libraryRoot)}.restoring-${older}/restores.json`,
+              "utf8",
+            ),
+          ),
+        );
+        expect(staged.restores.at(-1)).toMatchObject({ restoreId: older, by: "agent" });
+        // The panel asks again; the agent's cancel names the restore it saw, which is gone.
+        yield* Effect.promise(() =>
+          changeLibraryRestore(fixture.libraryRoot, { action: "prepare", fromFolder: backup }),
+        );
+        // While that copy is being made, another request is not taken as asked.
+        expect(
+          (yield* run(
+            organizeLibrarySourcesForInvocation({
+              change: { action: "restore-library", fromFolder: backup },
+            }),
+            fixture,
+          )).outcome,
+        ).toBe("restore-preparing");
+        const newer = yield* Effect.promise(() =>
+          vi.waitFor(async () => {
+            const restoreId = await ready();
+            if (restoreId === older) throw new Error("The first restore still waits.");
+            return restoreId;
+          }),
+        );
+        const cancelled = yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "cancel-restore", restoreId: older },
+          }),
+          fixture,
+        );
+        expect(cancelled).toMatchObject({
+          outcome: "another-restore",
+          libraryCopies: { restore: { state: "ready", restoreId: newer } },
+        });
+
+        yield* finishLibraryRestoreAtStart(fixture.stateDir).pipe(
+          Effect.provideService(ScientSourcesBackend, "library"),
+        );
+        expect(
+          (yield* Effect.promise(() => listScientSourceRecords(fixture.library))).map(
+            (record) => record.sourceId,
+          ),
+        ).toEqual([kept.sourceId]);
+      }),
+  );
+
+  it.effect("tells an agent its put back was refused, not that it was requested", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const refused = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "put-back-library", folder: NodePath.join(fixture.base, "nothing") },
+        }),
+        fixture,
+      );
+      expect(refused).toMatchObject({
+        outcome: "restore-failed",
+        libraryCopies: { restore: { state: "failed" } },
+      });
     }),
   );
 });

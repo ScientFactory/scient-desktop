@@ -11,6 +11,7 @@ import { useScientSources } from "./useScientSources";
 
 const mocks = vi.hoisted(() => ({
   readScientSources: vi.fn(),
+  readScientSource: vi.fn(),
   preflightZoteroItems: vi.fn(),
   importScientSourcesFile: vi.fn(),
   advanceSourcesImport: vi.fn(),
@@ -21,7 +22,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./client", () => ({
   readScientSources: mocks.readScientSources,
-  readScientSource: vi.fn(),
+  readScientSource: mocks.readScientSource,
   advanceSourcesImport: mocks.advanceSourcesImport,
   importScientSourcesFile: mocks.importScientSourcesFile,
   beginLocalSourcesImport: mocks.beginLocalSourcesImport,
@@ -80,6 +81,8 @@ interface HookProbe {
   uploadLocalFiles: ReturnType<typeof useScientSources>["uploadLocalFiles"];
   operation: ReturnType<typeof useScientSources>["operation"];
   selectScope: ReturnType<typeof useScientSources>["selectScope"];
+  loadSource: ReturnType<typeof useScientSources>["loadSource"];
+  sourceDetails: ReturnType<typeof useScientSources>["sourceDetails"];
 }
 
 async function withMountedHook(
@@ -226,6 +229,7 @@ describe("useScientSources mounted behavior", () => {
         environmentId,
         "/project",
         undefined,
+        undefined,
       );
       await act(async () => {
         await probe.current.importReferenceFile(new File([""], "here.bib"));
@@ -239,6 +243,7 @@ describe("useScientSources mounted behavior", () => {
         environmentId,
         "/project",
         "library",
+        undefined,
       );
       expect(probe.current.overview?.scopes?.listed).toBe("library");
       expect(probe.current.overview?.records).toHaveLength(2);
@@ -265,6 +270,51 @@ describe("useScientSources mounted behavior", () => {
       ]);
       expect(probe.current.busy).toBe(false);
       expect(probe.current.error).toBeNull();
+    });
+  });
+
+  it("sends the revision it holds and keeps its rows when the list is unchanged", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    const full = {
+      ...overviewWith(["one", "two"]),
+      revision: "rev-1",
+      organization: { collections: [], savedSearches: [] },
+    };
+    mocks.readScientSources
+      .mockResolvedValueOnce(full)
+      .mockResolvedValueOnce({ ...overviewWith([]), revision: "rev-1", unchanged: true })
+      .mockResolvedValueOnce({ ...overviewWith(["three"]), revision: "rev-2" });
+
+    await withMountedHook(_fixture, async (probe) => {
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project",
+        undefined,
+        undefined,
+      );
+      await act(async () => {
+        await probe.current.reloadOverview();
+      });
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project",
+        undefined,
+        "rev-1",
+      );
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual([
+        "one",
+        "two",
+      ]);
+      expect(probe.current.overview?.organization).toEqual(full.organization);
+      expect(probe.current.overview).not.toHaveProperty("unchanged");
+
+      // A new revision replaces the rows.
+      await act(async () => {
+        await probe.current.reloadOverview();
+      });
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual(["three"]);
     });
   });
 
@@ -477,6 +527,43 @@ describe("useScientSources mounted behavior", () => {
     });
   });
 
+  it("keeps the current project's held list when a late reply of the project left arrives", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    const oldReload = Promise.withResolvers<ScientSourcesOverviewResult>();
+    mocks.readScientSources
+      .mockResolvedValueOnce({ ...overviewWith(["project-a"]), revision: "rev-a" })
+      .mockImplementationOnce(() => oldReload.promise)
+      .mockResolvedValueOnce({ ...overviewWith(["project-b"]), revision: "rev-b" })
+      .mockResolvedValueOnce({ ...overviewWith([]), revision: "rev-b", unchanged: true });
+
+    await withMountedHook(_fixture, async (probe, controls) => {
+      let pending: Promise<unknown> | undefined;
+      await act(async () => {
+        pending = probe.current.reloadOverview();
+        await Promise.resolve();
+      });
+      await controls.rerender("/project-b");
+      await act(async () => {
+        oldReload.resolve({ ...overviewWith(["stale-project-a"]), revision: "rev-a2" });
+        await pending;
+      });
+      await act(async () => {
+        await probe.current.reloadOverview();
+      });
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project-b",
+        undefined,
+        "rev-b",
+      );
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual([
+        "project-b",
+      ]);
+    });
+  });
+
   it("reads the list without marking work busy, and a read cannot end an import's busy", async () => {
     await using _fixture = _createFixture();
     await _setupFixture0(_fixture);
@@ -543,6 +630,86 @@ describe("useScientSources mounted behavior", () => {
       expect(probe.current.overviewLoading).toBe(false);
       // The list on screen stays; only its freshness is in doubt.
       expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual(["one"]);
+    });
+  });
+
+  it("revalidates Library source details when reopened even if revision and pin state are unchanged", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    const libraryOverview = {
+      ...overviewWith(["one"]),
+      scopes: { listed: "project" as const, project: 1, library: 1 },
+    };
+    mocks.readScientSources.mockResolvedValue(libraryOverview);
+    const baseDetail = {
+      ...libraryOverview.records[0]!,
+      creators: [],
+      issuedRaw: "2026",
+      abstract: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      tags: [],
+      note: null,
+      fieldProvenance: [],
+      revisions: [],
+      metadataDiagnostics: [],
+      sourceKey: "one",
+      customType: null,
+      citationKey: "one2026",
+      createdAt: "2026-11-01T00:00:00.000Z",
+      updatedAt: "2026-11-01T00:00:00.000Z",
+      updatedBy: "user" as const,
+      schemaVersion: 1 as const,
+    };
+    mocks.readScientSource
+      .mockResolvedValueOnce({
+        ...baseDetail,
+        keptCopies: [
+          {
+            holder: "review" as const,
+            heldBy: "review_1",
+            holderName: "Original review",
+            holderPresent: true,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [{ field: "abstract", earlier: "Old abstract", current: null }],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ...baseDetail,
+        keptCopies: [
+          {
+            holder: "review" as const,
+            heldBy: "review_1",
+            holderPresent: false,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [{ field: "abstract", earlier: "Old abstract", current: null }],
+          },
+        ],
+      });
+
+    await withMountedHook(_fixture, async (probe) => {
+      await act(async () => {
+        await probe.current.loadSource("one");
+      });
+      expect(probe.current.sourceDetails["one"]?.keptCopies?.[0]).toMatchObject({
+        holderName: "Original review",
+        holderPresent: true,
+      });
+
+      // Review is removed while source revision & pin state stay fixed: reopening revalidates.
+      await act(async () => {
+        await probe.current.loadSource("one");
+      });
+      expect(mocks.readScientSource).toHaveBeenCalledTimes(2);
+      expect(probe.current.sourceDetails["one"]?.keptCopies?.[0]).toMatchObject({
+        holderPresent: false,
+      });
+      expect(probe.current.sourceDetails["one"]?.keptCopies?.[0]).not.toHaveProperty("holderName");
     });
   });
 });

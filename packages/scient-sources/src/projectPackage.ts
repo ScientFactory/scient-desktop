@@ -31,6 +31,7 @@ import {
   type ScientReviewWork,
 } from "./libraryReviews.ts";
 import { registerScientLibraryInstance, type ScientLibraryLocation } from "./libraryRoot.ts";
+import { countScientDisplacedCopiesInProject } from "./projectDisplacedCopies.ts";
 import { SCIENT_ANNOTATION_FILE_MAX_BYTES } from "./projectFiles.ts";
 import type { ScientSourceActor, ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
 import {
@@ -187,7 +188,23 @@ function packagedRecord(record: ScientSourceRecord): Record<string, unknown> {
   return rest;
 }
 
-function readme(manifest: ScientProjectPackageManifest): string {
+/** Values kept after a merge Undo stay in the project; a package only says how many it left. */
+function keptCopiesLine(kept: ScientProjectPackageExport["keptCopies"]): string {
+  const parts = [
+    kept.leftOut > 0
+      ? `${kept.leftOut} earlier ${kept.leftOut === 1 ? "copy" : "copies"} of source details kept after a merge Undo ${kept.leftOut === 1 ? "is" : "are"} not included; ${kept.leftOut === 1 ? "it stays" : "they stay"} in the project, in \`.scient/library/displaced/\`.`
+      : "",
+    kept.unreadable > 0
+      ? `${kept.unreadable} ${kept.unreadable === 1 ? "file" : "files"} of such copies could not be read.`
+      : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? `\n${parts.join(" ")}\n` : "";
+}
+
+function readme(
+  manifest: ScientProjectPackageManifest,
+  kept: ScientProjectPackageExport["keptCopies"],
+): string {
   const { counts } = manifest;
   return `# Scient project package: ${manifest.project.title}
 
@@ -198,7 +215,7 @@ and decisions (${counts.reviewOnlySources} sources only a review names), ${count
 their highlights, and ${counts.collections} collections they are in, with the collections
 around them. Personal notes, reading state, saved searches and the rest of the Library are not
 included.
-
+${keptCopiesLine(kept)}
 - \`project/\`: the project's pins, note history and reviews, as Scient keeps them.
 - \`sources/\`: one Library record per source, under this project's source ID.
 - \`pdfs/\`, \`annotations/\`: the exact PDFs and their highlight files, by SHA-256.
@@ -218,6 +235,8 @@ export interface ScientProjectPackageExport {
   readonly insideProject: boolean;
   readonly counts: ScientProjectPackageManifest["counts"];
   readonly unavailable: ScientProjectPackageManifest["unavailable"];
+  /** Kept copies left in the project, and their files that could not be read. */
+  readonly keptCopies: { readonly leftOut: number; readonly unreadable: number };
 }
 
 /**
@@ -250,13 +269,14 @@ export async function exportScientProjectPackage(input: {
   );
   await ensureDirectory(staging);
   try {
-    const manifest = await buildPackage({ ...input, root, projectId, staging });
+    const { manifest, keptCopies } = await buildPackage({ ...input, root, projectId, staging });
     await NodeFSP.rename(staging, destination);
     return {
       relativePath,
       insideProject: !outside,
       counts: manifest.counts,
       unavailable: manifest.unavailable,
+      keptCopies,
     };
   } finally {
     await NodeFSP.rm(staging, { recursive: true, force: true });
@@ -269,7 +289,10 @@ async function buildPackage(input: {
   readonly staging: string;
   readonly library: ScientLibraryLocation;
   readonly title?: string;
-}): Promise<ScientProjectPackageManifest> {
+}): Promise<{
+  readonly manifest: ScientProjectPackageManifest;
+  readonly keptCopies: ScientProjectPackageExport["keptCopies"];
+}> {
   const { root, staging, library } = input;
   const files: Array<typeof PackageFile.Type> = [];
   const unavailable: Array<typeof Unavailable.Type> = [];
@@ -429,9 +452,15 @@ async function buildPackage(input: {
     files,
     unavailable,
   };
-  await NodeFSP.writeFile(NodePath.join(staging, "README.md"), readme(manifest), "utf8");
+  const kept = await countScientDisplacedCopiesInProject(root);
+  const keptCopies = { leftOut: kept.copies, unreadable: kept.unreadable };
+  await NodeFSP.writeFile(
+    NodePath.join(staging, "README.md"),
+    readme(manifest, keptCopies),
+    "utf8",
+  );
   await atomicWriteJson(NodePath.join(staging, MANIFEST_FILE), manifest, MAX_JSON_BYTES);
-  return manifest;
+  return { manifest, keptCopies };
 }
 
 /** A package's manifest, or null when the folder is not one. */

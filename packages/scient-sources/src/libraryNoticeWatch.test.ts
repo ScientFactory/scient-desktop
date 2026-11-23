@@ -5,24 +5,33 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
+import { editableMetadataFromRecord } from "./editable.ts";
+import { editorialStatusFromNotices } from "./editorialStatus.ts";
+import * as Lock from "./libraryLock.ts";
 import {
   dismissScientLibraryNoticeChanges,
   listScientLibraryNoticeChanges,
+  readScientLibraryNoticeWatch,
   recordScientLibraryNoticeCheck,
   retractionWatchReader,
+  withScientLibraryWatchNotices,
 } from "./libraryNoticeWatch.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import type {
   ScientSourceCandidate,
   ScientSourceEditorialNotice,
   ScientSourceIdentifier,
+  ScientSourceRecord,
 } from "./model.ts";
+import * as Store from "./store.ts";
 import {
   importScientSource,
   listScientSourceRevisions,
   readScientSourceRecord,
   recordScientSourceCheck,
+  updateScientSourceMetadata,
 } from "./store.ts";
 import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
@@ -49,9 +58,17 @@ function fileNotices(wanted: ReadonlyArray<string>, text = slice) {
   return reader.end();
 }
 
+vi.mock("./store.ts", { spy: true });
+vi.mock("./libraryLock.ts", { spy: true });
+const actual = {
+  ...(await vi.importActual<typeof Store>("./store.ts")),
+  ...(await vi.importActual<typeof Lock>("./libraryLock.ts")),
+};
+
 const fixtures: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -231,12 +248,424 @@ describe("the weekly notice check", () => {
     ]);
   });
 
+  it("reads the whole file at the next check when a source did not take its notice", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add("Edited while the file was read", [RETRACTED], []);
+    // Someone edits the source between the check's read of it and its write.
+    vi.spyOn(Store, "recordScientSourceCheck").mockImplementationOnce(async () => ({
+      outcome: "stale",
+      record: await record(sourceId),
+    }));
+
+    expect(await check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z")).toEqual({ changedSources: 0 });
+    expect(await readScientLibraryNoticeWatch(library)).not.toHaveProperty("covered");
+    expect(await check([RETRACTED_KEY], "2026-11-22T10:00:00.000Z")).toEqual({ changedSources: 1 });
+    expect(await readScientLibraryNoticeWatch(library)).toHaveProperty("covered");
+  });
+
+  it("puts a notice on a source together with who keeps it, so a registry check meanwhile keeps it", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add("Retracted after it was added", [RETRACTED], []);
+    const written = Promise.withResolvers<void>();
+    const refreshing = Promise.withResolvers<void>();
+    let refreshStarted = false;
+    vi.spyOn(Lock, "withScientLibraryLock").mockImplementation((root, run, options) => {
+      if (refreshStarted) refreshing.resolve();
+      return actual.withScientLibraryLock(root, run, options);
+    });
+    // The check waits once its notice is on the source, until the refresh reads or waits.
+    vi.spyOn(Store, "recordScientSourceCheck").mockImplementationOnce(async (input) => {
+      const result = await actual.recordScientSourceCheck(input);
+      written.resolve();
+      await refreshing.promise;
+      return result;
+    });
+
+    const checked = check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z");
+    await written.promise;
+    refreshStarted = true;
+    const seen = await record(sourceId);
+    // A registry that reports no notice for the paper.
+    const refreshed = withScientLibraryWatchNotices(library, seen, async (kept) => {
+      refreshing.resolve();
+      return recordScientSourceCheck({
+        root: library,
+        sourceId,
+        expectedRevision: seen.revision,
+        editorialStatus: editorialStatusFromNotices(kept, "2026-11-16T10:00:00.000Z"),
+      });
+    });
+    await Promise.all([checked, refreshed]);
+
+    expect((await record(sourceId)).editorialStatus?.state).toBe("retracted");
+  });
+
   it("does not read a paper it never asked about as withdrawn", async () => {
     const { add, check, record } = await setup();
     // Added while the file was being read: its identifier was not among those asked for.
     const sourceId = await add("Added during the download", [RETRACTED], [WATCH_RETRACTION]);
 
     expect(await check([], "2026-11-15T10:00:00.000Z")).toEqual({ changedSources: 0 });
+    expect((await record(sourceId)).editorialStatus?.state).toBe("retracted");
+  });
+
+  it("drops watch ownership once a source's identifier is corrected to another paper", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add("Misidentified paper", [RETRACTED], []);
+    await check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z");
+    const flagged = await record(sourceId);
+    expect(flagged.editorialStatus?.state).toBe("retracted");
+
+    // Correcting the DOI clears editorialStatus; a later registry check must not reattach the old retraction.
+    const edited = await updateScientSourceMetadata({
+      root: library,
+      sourceId,
+      expectedRevision: flagged.revision,
+      metadata: {
+        ...editableMetadataFromRecord(flagged),
+        identifiers: [{ scheme: "doi", value: "10.1000/clean-paper" }],
+      },
+      actor: "user",
+    });
+    expect(edited.record.editorialStatus).toBeUndefined();
+
+    let keptByWatch: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, edited.record, async (kept) => {
+      keptByWatch = kept;
+    });
+    expect(keptByWatch).toEqual([]);
+
+    // The next full read clears stale ownership for the old identifier too.
+    await check(["doi:10.1000/clean-paper"], "2026-11-22T10:00:00.000Z");
+    expect((await readScientLibraryNoticeWatch(library))?.changes).toEqual([]);
+  });
+
+  it("drops only the notice tied to a removed identifier when another identifier on the source still matches the same kind", async () => {
+    const { library, add, record } = await setup();
+    const badDoi = { scheme: "doi", value: "10.1000/wrong-doi" } as const;
+    const keptPmid = { scheme: "pmid", value: "99887766" } as const;
+    const sourceId = await add("Paper with two identifiers", [badDoi, keptPmid], []);
+
+    const doiNotice: ScientSourceEditorialNotice = {
+      kind: "retraction",
+      date: "2020-01-01",
+      doi: "10.1000/retraction-doi-row",
+      source: "retraction-watch",
+    };
+    const pmidNotice: ScientSourceEditorialNotice = {
+      kind: "retraction",
+      date: "2021-02-02",
+      doi: "10.1000/retraction-pmid-row",
+      source: "retraction-watch",
+    };
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"both"',
+      checkedAt: "2026-11-15T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/wrong-doi", [doiNotice]],
+          ["pmid:99887766", [pmidNotice]],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+    const flagged = await record(sourceId);
+    expect(flagged.editorialStatus?.notices.map((n) => n.doi)).toEqual([
+      "10.1000/retraction-pmid-row",
+      "10.1000/retraction-doi-row",
+    ]);
+
+    // Correct the DOI while keeping the PMID.
+    const edited = await updateScientSourceMetadata({
+      root: library,
+      sourceId,
+      expectedRevision: flagged.revision,
+      metadata: {
+        ...editableMetadataFromRecord(flagged),
+        identifiers: [{ scheme: "doi", value: "10.1000/clean-doi" }, keptPmid],
+      },
+      actor: "user",
+    });
+
+    // Even if the record still held both old watch notices, reuse reconciles down to the PMID match only.
+    const withStaleHeld: ScientSourceRecord = {
+      ...edited.record,
+      editorialStatus: flagged.editorialStatus!,
+    };
+    let keptAfterEdit: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, edited.record, async (kept) => {
+      keptAfterEdit = kept;
+    });
+    expect(keptAfterEdit.map((n) => n.doi)).toEqual(["10.1000/retraction-pmid-row"]);
+
+    let keptFromStaleHeld: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, withStaleHeld, async (kept) => {
+      keptFromStaleHeld = kept;
+    });
+    expect(keptFromStaleHeld.map((n) => n.doi)).toEqual(["10.1000/retraction-pmid-row"]);
+
+    // Re-attach the stale combined notices (as merge Undo preserves editorialStatus when dropping a DOI)
+    // so the next full pass must actively prune the stale DOI retraction from the record.
+    const restoredStale = await Store.recordScientSourceCheck({
+      root: library,
+      sourceId,
+      expectedRevision: edited.record.revision,
+      editorialStatus: flagged.editorialStatus!,
+      actor: "user",
+    });
+    expect(restoredStale.outcome).toBe("updated");
+    expect((await record(sourceId)).editorialStatus?.notices.map((n) => n.doi)).toEqual([
+      "10.1000/retraction-pmid-row",
+      "10.1000/retraction-doi-row",
+    ]);
+
+    // Next full pass reconciles both the record and stored matched notices to the surviving PMID row only.
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"after-correction"',
+      checkedAt: "2026-11-22T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/clean-doi", []],
+          ["pmid:99887766", [pmidNotice]],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+    expect((await record(sourceId)).editorialStatus?.notices.map((n) => n.doi)).toEqual([
+      "10.1000/retraction-pmid-row",
+    ]);
+    expect((await readScientLibraryNoticeWatch(library))?.changes).toEqual([
+      expect.objectContaining({
+        sourceId,
+        kind: "retraction",
+        change: "added",
+        matched: [{ notice: pmidNotice, identifiers: ["pmid:99887766"] }],
+      }),
+    ]);
+  });
+
+  it("keeps prior per-notice ownership when a later full feed omits one of two still-owned retractions", async () => {
+    const { library, add, record } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/still-retracted-doi" } as const;
+    const pmid = { scheme: "pmid", value: "55443322" } as const;
+    const sourceId = await add("Paper with two retractions", [doi, pmid], []);
+
+    const doiNotice: ScientSourceEditorialNotice = {
+      kind: "retraction",
+      date: "2020-01-01",
+      doi: "10.1000/retraction-one",
+      source: "retraction-watch",
+    };
+    const pmidNotice: ScientSourceEditorialNotice = {
+      kind: "retraction",
+      date: "2021-02-02",
+      doi: "10.1000/retraction-two",
+      source: "retraction-watch",
+    };
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"both-present"',
+      checkedAt: "2026-11-15T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/still-retracted-doi", [doiNotice]],
+          ["pmid:55443322", [pmidNotice]],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+
+    // Next full pass omits the DOI row without any reinstatement while both identifiers stay on the source.
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"partial-feed"',
+      checkedAt: "2026-11-22T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/still-retracted-doi", []],
+          ["pmid:55443322", [pmidNotice]],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+
+    const current = await record(sourceId);
+    let keptOnRefresh: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, current, async (kept) => {
+      keptOnRefresh = kept;
+    });
+    expect(keptOnRefresh.map((n) => n.doi).toSorted()).toEqual([
+      "10.1000/retraction-one",
+      "10.1000/retraction-two",
+    ]);
+  });
+
+  it("keeps a still-valid identifier on the same notice when a later partial feed omits it", async () => {
+    const { library, add, record } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/shared-retraction-doi" } as const;
+    const pmid = { scheme: "pmid", value: "77665544" } as const;
+    const sourceId = await add("Paper matched by both DOI and PMID", [doi, pmid], []);
+
+    const sharedNotice: ScientSourceEditorialNotice = {
+      kind: "retraction",
+      date: "2022-03-04",
+      doi: "10.1000/shared-retraction-notice",
+      source: "retraction-watch",
+    };
+    // Initial full pass matches the same retraction row on both DOI and PMID.
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"both-ids"',
+      checkedAt: "2026-11-15T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/shared-retraction-doi", [sharedNotice]],
+          ["pmid:77665544", [sharedNotice]],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+    // Later partial feed only reports the DOI match; PMID stays on the source and is not reinstated.
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"doi-only"',
+      checkedAt: "2026-11-22T10:00:00.000Z",
+      found: {
+        notices: new Map([
+          ["doi:10.1000/shared-retraction-doi", [sharedNotice]],
+          ["pmid:77665544", []],
+        ]),
+        reinstated: new Set(),
+      },
+    });
+    // Correct the DOI while keeping the PMID; registry refresh must still retain the retraction via PMID.
+    const current = await record(sourceId);
+    const edited = await updateScientSourceMetadata({
+      root: library,
+      sourceId,
+      expectedRevision: current.revision,
+      metadata: {
+        ...editableMetadataFromRecord(current),
+        identifiers: [{ scheme: "doi", value: "10.1000/other-clean-doi" }, pmid],
+      },
+      actor: "user",
+    });
+    let keptOnRefresh: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, edited.record, async (kept) => {
+      keptOnRefresh = kept;
+    });
+    expect(keptOnRefresh).toEqual([sharedNotice]);
+  });
+
+  it("preserves legacy v2 confirmed watch ownership on registry refresh before v3 backfill runs", async () => {
+    const { library, add, record } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/v2-confirmed" } as const;
+    const sourceId = await add(
+      "Legacy v2 paper",
+      [doi],
+      [{ kind: "retraction", date: "2018-05-01", source: "publisher" }],
+    );
+    const rwNotice: ScientSourceEditorialNotice = {
+      kind: "retraction",
+      date: "2018-05-01",
+      doi: "10.1000/v2-retraction",
+      source: "retraction-watch",
+    };
+    await NodeFSP.writeFile(
+      NodePath.join(library.root, "notice-watch.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        checkedAt: "2026-11-20T10:00:00.000Z",
+        etag: '"v2"',
+        changes: [
+          {
+            sourceId,
+            kind: "retraction",
+            change: "added",
+            at: "2026-11-20T10:00:00.000Z",
+            dismissed: true,
+            notices: [rwNotice],
+            identifiers: ["doi:10.1000/v2-confirmed"],
+          },
+        ],
+      }),
+    );
+
+    // Registry refresh before any v3 full pass still keeps the confirmed Retraction Watch notice.
+    const current = await record(sourceId);
+    let keptBeforeBackfill: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, current, async (kept) => {
+      keptBeforeBackfill = kept;
+    });
+    expect(keptBeforeBackfill).toEqual([rwNotice]);
+
+    // If the DOI was corrected before backfill, the v2 notice is not reattached.
+    const corrected: ScientSourceRecord = {
+      ...current,
+      identifiers: [{ scheme: "doi", value: "10.1000/v2-clean" }],
+    };
+    let keptAfterCorrection: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, corrected, async (kept) => {
+      keptAfterCorrection = kept;
+    });
+    expect(keptAfterCorrection).toEqual([]);
+
+    // Once v3 backfill runs, legacy notices/identifiers keys are replaced with matched.
+    await recordScientLibraryNoticeCheck({
+      library,
+      etag: '"v3"',
+      checkedAt: "2026-11-27T10:00:00.000Z",
+      found: {
+        notices: new Map([["doi:10.1000/v2-confirmed", [rwNotice]]]),
+        reinstated: new Set(),
+      },
+    });
+    const upgraded = (await readScientLibraryNoticeWatch(library))?.changes[0];
+    expect(upgraded?.matched).toEqual([
+      { notice: rwNotice, identifiers: ["doi:10.1000/v2-confirmed"] },
+    ]);
+    expect(upgraded?.notices).toBeUndefined();
+    expect(upgraded?.identifiers).toBeUndefined();
+    expect(upgraded?.dismissed).toBe(true);
+  });
+
+  it("re-reads a source under the lock when a registry check clears a publisher retraction before the lock", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add(
+      "Publisher retraction cleared mid-check",
+      [RETRACTED],
+      [{ kind: "retraction", date: "2015-02-03", source: "publisher" }],
+    );
+    const initial = await record(sourceId);
+    const locked = Promise.withResolvers<void>();
+    const weeklyWaitingForLock = Promise.withResolvers<void>();
+    const lockSpy = vi.mocked(Lock.withScientLibraryLock);
+    const callsBefore = lockSpy.mock.calls.length;
+    lockSpy.mockImplementation(((root: string, fn: () => Promise<unknown>) => {
+      if (lockSpy.mock.calls.length > callsBefore + 1) {
+        weeklyWaitingForLock.resolve();
+      }
+      return actual.withScientLibraryLock(root, fn);
+    }) as typeof Lock.withScientLibraryLock);
+
+    const holder = Lock.withScientLibraryLock(library.root, async () => {
+      locked.resolve();
+      // Wait until the weekly check has actually reached lock acquisition before clearing the notice.
+      await weeklyWaitingForLock.promise;
+      await actual.recordScientSourceCheck({
+        root: library,
+        sourceId,
+        expectedRevision: initial.revision,
+        editorialStatus: { state: "none", notices: [], checkedAt: "2026-11-15T09:59:00.000Z" },
+      });
+    });
+    await locked.promise;
+
+    const checked = check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z");
+    await Promise.all([holder, checked]);
+
     expect((await record(sourceId)).editorialStatus?.state).toBe("retracted");
   });
 

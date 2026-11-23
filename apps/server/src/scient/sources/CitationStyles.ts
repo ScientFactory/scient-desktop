@@ -39,7 +39,7 @@ const styleUrl = (id: string) => new URL(`https://www.zotero.org/styles/${id}`);
 const INDEX_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 /** After a failed catalogue download, searches use what is at hand for this long. */
 const INDEX_RETRY_MS = 60 * 1000;
-const INDEX_LIMITS = { maxBytes: 16 * 1024 * 1024, timeoutMs: 30_000 };
+const INDEX_LIMITS = { maxBytes: 16 * 1024 * 1024, timeoutMs: 30_000, deadlineMs: 120_000 };
 const STYLE_LIMITS = { maxBytes: 2 * 1024 * 1024, timeoutMs: 15_000 };
 const MAX_STYLE_FILE_BYTES = 2 * 1024 * 1024;
 const SEARCH_LIMIT = 20;

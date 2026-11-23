@@ -141,6 +141,8 @@ import {
   ScientSourcesToolkitHandlersLive,
 } from "./toolkits/sources/handlers.ts";
 import { ScientSourcesLibraryToolkit, ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { callAsOutsideClient, outsideCall } from "./toolkits/sources/outside.ts";
+import { ProjectService } from "../project/ProjectService.ts";
 import { ScientSourcesBackend } from "../scient/sources/SourcesBackend.ts";
 import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
 import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
@@ -1085,9 +1087,19 @@ const registerRequestToolkit = Effect.fn("McpHttpServer.registerRequestToolkit")
   }
 });
 
-/** Intercepts registration, preserving Effect's schemas and result encoding. */
+const errorResult = (error: { readonly message: string }) =>
+  new McpSchema.CallToolResult({
+    isError: true,
+    content: [{ type: "text", text: error.message }],
+  });
+
+/**
+ * Intercepts registration, preserving Effect's schemas and result encoding. With `outside`,
+ * the project registry, a client with no thread may call the tools `outsideCall` allows.
+ */
 export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
+  outside?: ProjectService["Service"],
 ) =>
   Layer.effectDiscard(
     // Outermost, so a call the guard refuses is recorded as a failure too, as for T3's tools.
@@ -1116,8 +1128,30 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
               handle: (payload) =>
                 Effect.withFiber((fiber) =>
                   Effect.gen(function* () {
+                    const current = Context.getUnsafe(
+                      fiber.context,
+                      McpInvocationContext.McpInvocationContext,
+                    );
+                    const call =
+                      outside === undefined
+                        ? undefined
+                        : outsideCall(current, registration.tool.name, operation);
+                    if (call !== undefined && "refused" in call)
+                      return errorResult({ message: call.refused });
+                    if (outside !== undefined && call !== undefined) {
+                      return yield* callAsOutsideClient(
+                        { scope: current, grants: call.grants, projects: outside, payload },
+                        registration.handle,
+                      ).pipe(
+                        Effect.map(liftScientToolImages),
+                        Effect.provideService(WorkspaceBindingResolver, resolver),
+                        Effect.catchTags({
+                          ScientSourcesToolError: (error) => Effect.succeed(errorResult(error)),
+                        }),
+                      );
+                    }
                     const scope = yield* McpInvocationContext.requireThreadScope(
-                      Context.getUnsafe(fiber.context, McpInvocationContext.McpInvocationContext),
+                      current,
                       operation.id,
                     );
                     const invocation = scientInvocationForMcp(scope);
@@ -1129,32 +1163,14 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
                       Effect.provideService(WorkspaceBindingResolver, resolver),
                       Effect.provideService(AgentInvocationContext, invocation),
                       Effect.catchTags({
-                        AgentOperationUnavailable: (error) =>
-                          Effect.succeed(
-                            new McpSchema.CallToolResult({
-                              isError: true,
-                              content: [{ type: "text", text: error.message }],
-                            }),
-                          ),
-                        AgentWorkspaceError: (error) =>
-                          Effect.succeed(
-                            new McpSchema.CallToolResult({
-                              isError: true,
-                              content: [{ type: "text", text: error.message }],
-                            }),
-                          ),
+                        AgentOperationUnavailable: (error) => Effect.succeed(errorResult(error)),
+                        AgentWorkspaceError: (error) => Effect.succeed(errorResult(error)),
                       }),
                     );
                   }),
                 ).pipe(
                   Effect.catchTags({
-                    OrchestratorMcpFailure: (error) =>
-                      Effect.succeed(
-                        new McpSchema.CallToolResult({
-                          isError: true,
-                          content: [{ type: "text", text: error.message }],
-                        }),
-                      ),
+                    OrchestratorMcpFailure: (error) => Effect.succeed(errorResult(error)),
                   }),
                 ),
             });
@@ -1657,10 +1673,12 @@ export const layerPreviewToolkit = Layer.mergeAll(
 );
 
 // The backend constant picks the Sources tool list; both lists share operations and handlers.
+// Only the Library's list serves outside clients; the project backend predates the Library.
 export const ScientSourcesToolkitRegistrationLive = Layer.unwrap(
   Effect.gen(function* () {
+    const projects = yield* ProjectService;
     return (yield* ScientSourcesBackend) === "library"
-      ? registerScientToolkit(ScientSourcesLibraryToolkit).pipe(
+      ? registerScientToolkit(ScientSourcesLibraryToolkit, projects).pipe(
           Layer.provide(ScientSourcesLibraryToolkitHandlersLive),
         )
       : registerScientToolkit(ScientSourcesToolkit).pipe(
@@ -1805,6 +1823,8 @@ export const layerDeviceToolkit = Layer.mergeAll(
 // `orchestration` here, and `pull-requests` only when they run locally.
 const orchestrationTools = [
   ...Object.values(OrchestratorToolkit.tools),
+  // Durable workflow runs, shown to clients outside a thread (EnabledWhen), as the CLI.
+  ...Object.values(WorkflowToolkit.tools),
   ...Object.values(ThreadToolkit.tools),
   ...Object.values(AttachmentToolkit.tools),
   ...Object.values(ProjectToolkit.tools),

@@ -31,27 +31,7 @@ import {
   notBroughtName,
 } from "./notBroughtLabels";
 import { settleAfter } from "./settleAfter";
-
-const FIELD_LABELS: Readonly<Record<ScientSourceZoteroRefreshField, string>> = {
-  type: msg("Type", { $context: "a source field" }),
-  customType: msg("Type", { $context: "a source field" }),
-  title: msg("Title", { $context: "a source field" }),
-  creators: msg("Creators", { $context: "a source field" }),
-  issuedRaw: msg("Date", { $context: "a source field" }),
-  issuedYear: msg("Year", { $context: "a source field" }),
-  identifiers: msg("Identifiers", { $context: "a source field" }),
-  abstract: msg("Abstract", { $context: "a source field" }),
-  containerTitle: msg("Journal or publication", { $context: "a source field" }),
-  more: msg("More details", { $context: "a source field" }),
-  publisher: msg("Publisher", { $context: "a source field" }),
-  volume: msg("Volume", { $context: "a source field" }),
-  issue: msg("Issue", { $context: "a source field" }),
-  pages: msg("Pages", { $context: "a source field" }),
-  language: msg("Language", { $context: "a source field" }),
-  url: "URL",
-  tags: msg("Tags", { $context: "a source field" }),
-  note: msg("Note", { $context: "a source field" }),
-};
+import { SOURCE_FIELD_LABELS } from "./sourceLabels";
 
 type RefreshState =
   | { readonly phase: "running"; readonly checked?: number; readonly total?: number }
@@ -262,10 +242,16 @@ export function useZoteroSync(input: {
   };
 }
 
+const refreshProblem = (item: ScientSourceZoteroRefreshResult["items"][number]) =>
+  item.outcome === "missing" || item.outcome === "failed" || item.outcome === "stale";
+
 function refreshSummary(result: ScientSourceZoteroRefreshResult, resolve: MessageResolver): string {
   const updated = result.items.filter((item) => item.outcome === "updated").length;
   if (result.items.length === 0) return resolve(msg("No sources here came from Zotero."));
   if (updated === 0) {
+    if (result.items.some((item) => item.conflicts.length > 0 || refreshProblem(item))) {
+      return resolve(msg("No source was updated from Zotero."));
+    }
     return result.items.some((item) => item.notBrought)
       ? resolve(msg("Nothing new came from Zotero."))
       : resolve(msg("Everything matches Zotero."));
@@ -297,9 +283,7 @@ export function ZoteroRefreshDialog(props: {
   const conflicts = (done?.items ?? []).flatMap((item) =>
     item.conflicts.map((conflict) => ({ item, conflict })),
   );
-  const problems = (done?.items ?? []).filter(
-    (item) => item.outcome === "missing" || item.outcome === "failed" || item.outcome === "stale",
-  );
+  const problems = (done?.items ?? []).filter(refreshProblem);
   const notBrought = notBroughtBySource(done?.items ?? []);
   return (
     <Dialog open={state !== null} onOpenChange={(open) => (open ? undefined : props.onClose())}>
@@ -339,7 +323,8 @@ export function ZoteroRefreshDialog(props: {
                     return (
                       <div key={key} className="grid gap-1 border-t border-border pt-3">
                         <div className="truncate font-medium">
-                          {item.title ?? gt("Untitled source")} · {m(FIELD_LABELS[conflict.field])}
+                          {item.title ?? gt("Untitled source")} ·{" "}
+                          {m(SOURCE_FIELD_LABELS[conflict.field])}
                         </div>
                         <div className="text-xs text-muted-foreground">
                           <div className="line-clamp-2">

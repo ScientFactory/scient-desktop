@@ -21,6 +21,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import { ServerConfig } from "../../apps/server/src/config.ts";
 import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
+import { ProjectService } from "../../apps/server/src/project/ProjectService.ts";
 import { ScientSourcesLibraryToolkit } from "../../apps/server/src/mcp/toolkits/sources/tools.ts";
 import { cancelSourceImport } from "../../apps/server/src/scient/sources/ScientSourcesCoordinator.ts";
 import { WorkspaceBindingResolver } from "../../apps/server/src/scient/projectScope/WorkspaceBindingResolver.ts";
@@ -432,6 +433,8 @@ export const makeSourcesLibrary = Effect.fn("evaluateMcpToolUse.makeSourcesLibra
   const context = yield* Layer.build(
     McpHttpServer.ScientSourcesToolkitRegistrationLive.pipe(
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      // Thread callers only: the project registry serves outside clients.
+      Layer.provide(Layer.mock(ProjectService)({})),
       Layer.provide(
         Layer.succeed(WorkspaceBindingResolver, {
           ...resolver,

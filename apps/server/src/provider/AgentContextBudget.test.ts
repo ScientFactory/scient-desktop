@@ -18,6 +18,8 @@ import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { TaskFolders } from "../workspace/TaskFolders.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { hostToolVisibility } from "../mcp/ScientMcpProtocol.ts";
+import { scientOperationCatalog } from "../mcp/ScientOperationCatalog.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -192,6 +194,22 @@ it.effect("only request_secret and send_to_user ask Claude Code to load them up 
       ["request_secret", { "anthropic/alwaysLoad": true }],
       ["send_to_user", { "anthropic/alwaysLoad": true }],
     ]);
+  }).pipe(Effect.provide(layerAdvertisedTools)),
+);
+
+// The tool list dies on a tool no one owns, and an outside client lists every tool.
+it.effect("every advertised tool is owned by a Scient operation or declared as a host tool", () =>
+  Effect.gen(function* () {
+    const mcp = yield* McpServer.McpServer;
+    const host = hostToolVisibility(McpHttpServer.hostMcpTools, McpHttpServer.hostMcpToolGrants);
+    const unowned = mcp.tools
+      .map(({ tool }) => tool.name)
+      // ScientAgentFeedbackGate keeps agentFeedback off in Scient, so t3_feedback is never listed.
+      .filter(
+        (name) =>
+          name !== "t3_feedback" && !scientOperationCatalog.forTool(name) && !host.owns(name),
+      );
+    expect(unowned).toEqual([]);
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
 

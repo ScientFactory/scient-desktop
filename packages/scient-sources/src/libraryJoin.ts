@@ -3,6 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
 
@@ -47,7 +48,14 @@ import {
   type ScientLibraryJoinSide,
   type ScientSourceCandidate,
   type ScientSourceRecord,
+  ScientSourceZoteroSync,
 } from "./model.ts";
+import {
+  ScientSourceCollectionMadeAs,
+  scientSourceCollectionChangedSince,
+  scientSourceCollectionMadeAs,
+} from "./organize.ts";
+import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { readScientProjectPins } from "./projectPins.ts";
 import { SCIENT_SOURCE_MORE_FIELDS } from "./sourceMore.ts";
 import {
@@ -69,6 +77,7 @@ import {
   isNodeError,
   readBoundedJson,
   snapshot,
+  stableJson,
 } from "./storeFiles.ts";
 
 const JOINS_DIRECTORY = "joins";
@@ -76,6 +85,14 @@ const HEADER_FILE = "join.json";
 const ANNOTATIONS_DIRECTORY = NodePath.join("annotations", "v1");
 const MAX_HEADER_BYTES = 128 * 1024 * 1024;
 const MAX_PART_BYTES = 8 * 1024 * 1024;
+const MAX_JOIN_SIDECAR_BYTES = 32 * 1024 * 1024;
+const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node filesystem adapter has no Effect runtime.
+const PLATFORM = NodeOS.platform();
+const OPEN_SAFE_READ_FLAGS =
+  NodeFS.constants.O_RDONLY |
+  (NodeFS.constants.O_NONBLOCK ?? 0) |
+  (PLATFORM === "darwin" ? DARWIN_O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0));
 /** Sources added under one hold of the Library's lock, so other changes get their turn. */
 const PART_SIZE = 100;
 
@@ -151,6 +168,7 @@ const JoinHeader = Schema.Struct({
       collectionId: Schema.NullOr(Schema.String),
       /** Made by this join; Undo deletes it once nothing here is in it. */
       created: Schema.Boolean,
+      madeAs: Schema.optionalKey(ScientSourceCollectionMadeAs),
       why: Schema.optionalKey(Schema.String),
     }),
   ),
@@ -197,18 +215,6 @@ const JoinPart = Schema.Struct({
   skipped: Schema.Array(Schema.Struct({ sourceId: Schema.String, why: Schema.String })),
 });
 type JoinPart = typeof JoinPart.Type;
-
-/** Sorted keys at every level, so equal content compares equal whatever order wrote it. */
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value)
-      .toSorted()
-      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
 
 const sha256Of = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
 
@@ -286,6 +292,92 @@ async function fileBytes(path: string): Promise<Buffer | null> {
 }
 
 /**
+ * Reads a bounded regular file under `otherRoot` without following symlinks or blocking on a FIFO.
+ * Missing directories or files return null; symlinks, special files and oversized files throw.
+ */
+async function safeOtherFileBytes(
+  otherRoot: string,
+  path: string,
+  maxBytes = MAX_JOIN_SIDECAR_BYTES,
+): Promise<Buffer | null> {
+  const canonicalRoot = await NodeFSP.realpath(otherRoot);
+  const relative = NodePath.relative(otherRoot, path);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(relative)
+  ) {
+    throw new Error(`${NodePath.basename(path)} escapes the other Library.`);
+  }
+  const resolvedPath = NodePath.join(canonicalRoot, relative);
+  try {
+    await assertScientProjectDirectory(canonicalRoot, NodePath.dirname(resolvedPath));
+  } catch (error) {
+    if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR")) return null;
+    throw error;
+  }
+  let pre: NodeFS.BigIntStats;
+  try {
+    pre = await NodeFSP.lstat(resolvedPath, { bigint: true });
+  } catch (error) {
+    if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR")) return null;
+    throw error;
+  }
+  if (pre.isSymbolicLink() || !pre.isFile()) {
+    throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
+  }
+  if (pre.size > BigInt(maxBytes)) {
+    throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+  }
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(resolvedPath, OPEN_SAFE_READ_FLAGS);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR")) return null;
+    if (isNodeError(error, "ELOOP")) {
+      throw new Error(`${NodePath.basename(path)} is not a safe regular file.`, { cause: error });
+    }
+    throw error;
+  }
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile() || opened.dev !== pre.dev || opened.ino !== pre.ino) {
+      throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
+    }
+    if (opened.size > BigInt(maxBytes)) {
+      throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+    }
+    const current = await NodeFSP.lstat(resolvedPath, { bigint: true });
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      current.dev !== opened.dev ||
+      current.ino !== opened.ino ||
+      (await NodeFSP.realpath(resolvedPath)) !== resolvedPath
+    ) {
+      throw new Error(`${NodePath.basename(path)} is not a safe regular file.`);
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const remaining = maxBytes - total + 1;
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes) {
+        throw new Error(`${NodePath.basename(path)} exceeds the safe size limit.`);
+      }
+      chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * A file of the other Library, for copying into this one. From a backup it must be the file the
  * backup's own list names, byte for byte: a file changed or added since the backup was made is
  * refused, never copied.
@@ -295,13 +387,28 @@ async function checkedBytes(
   listed: ReadonlyMap<string, string> | null,
   path: string,
 ): Promise<Buffer | null> {
-  const bytes = await fileBytes(path);
-  if (!bytes || !listed) return bytes;
   const relative = NodePath.relative(otherRoot, path).split(NodePath.sep).join("/");
+  if (listed && !listed.has(relative)) return null;
+  const bytes = await safeOtherFileBytes(otherRoot, path);
+  if (!listed) return bytes;
+  if (!bytes) {
+    throw new Error(`The backup's file ${relative} is missing.`);
+  }
   if (listed.get(relative) !== hashOfBytes(bytes)) {
     throw new Error(`The backup's file ${relative} is not the one the backup lists.`);
   }
   return bytes;
+}
+
+const decodeZoteroSync = Schema.decodeUnknownSync(ScientSourceZoteroSync);
+
+/** One that does not decode was no base in the other Library either, so it stays behind. */
+function isZoteroBaseOf(bytes: Buffer, sourceId: string): boolean {
+  try {
+    return decodeZoteroSync(JSON.parse(bytes.toString("utf8"))).sourceId === sourceId;
+  } catch {
+    return false;
+  }
 }
 
 /** The big folders that hold one file or more per source; what else a backup lists is small. */
@@ -343,6 +450,8 @@ export type ScientLibraryJoinSource =
       readonly other: typeof Other.Type;
       /** A backup's own list of its files and their checksums; null for a kept Library. */
       readonly listed: ReadonlyMap<string, string> | null;
+      /** Listed history filenames indexed by source ID; null for a kept Library. */
+      readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>> | null;
     }
   /** Not a finished backup, and not a Library this Library's own restore moved aside. */
   | { readonly outcome: "not-a-library" }
@@ -357,6 +466,34 @@ export type ScientLibraryJoinSource =
  * Reads only. `check: "as-read"` skips hashing every file of a backup: the caller compares
  * each file it reads with `listed` instead (the list of differences, one thing taken).
  */
+/** Indexes a backup manifest once: file checksums and each source's listed history filenames. */
+function indexBackupFiles(
+  files: ReadonlyArray<{ readonly path: string; readonly sha256: string }>,
+): {
+  readonly listed: ReadonlyMap<string, string>;
+  readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>>;
+} {
+  const listed = new Map<string, string>();
+  const listedHistory = new Map<string, Array<string>>();
+  for (const file of files) {
+    listed.set(file.path, file.sha256);
+    if (!file.path.startsWith("history/")) continue;
+    const rest = file.path.slice("history/".length);
+    const slash = rest.indexOf("/");
+    if (slash <= 0) continue;
+    const sourceId = rest.slice(0, slash);
+    const name = rest.slice(slash + 1);
+    if (!name || name.includes("/")) continue;
+    const names = listedHistory.get(sourceId);
+    if (names) {
+      names.push(name);
+    } else {
+      listedHistory.set(sourceId, [name]);
+    }
+  }
+  return { listed, listedHistory };
+}
+
 export async function openScientLibraryJoinSource(
   library: ScientLibraryLocation,
   folder: string,
@@ -381,10 +518,12 @@ export async function openScientLibraryJoinSource(
       ScientLibraryBackupManifest,
     ).catch(() => null);
     if (!manifest) return { outcome: "not-a-library" };
+    const { listed, listedHistory } = indexBackupFiles(manifest.files);
     return {
       outcome: "ready",
       root: NodePath.join(chosen, SCIENT_LIBRARY_BACKUP_PAYLOAD),
-      listed: new Map(manifest.files.map((file) => [file.path, file.sha256])),
+      listed,
+      listedHistory,
       other: {
         libraryId: manifest.library.libraryId,
         kind: "backup",
@@ -405,6 +544,7 @@ export async function openScientLibraryJoinSource(
     outcome: "ready",
     root: chosen,
     listed: null,
+    listedHistory: null,
     other: { libraryId: manifest.libraryId, kind: "replaced", folder: chosen },
   };
 }
@@ -671,8 +811,7 @@ async function exists(path: string): Promise<boolean> {
  * lock, as every writer of these files does, so that stays true until the flushed temporary
  * file is renamed into place: a kill never leaves half a file under the final name.
  */
-async function createUnderLock(path: string, bytes: Uint8Array): Promise<boolean> {
-  if (await exists(path)) return false;
+async function writeUnderLock(path: string, bytes: Uint8Array): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
@@ -683,11 +822,16 @@ async function createUnderLock(path: string, bytes: Uint8Array): Promise<boolean
     await handle.close();
     handle = null;
     await NodeFSP.rename(temporary, path);
-    return true;
   } finally {
     await handle?.close();
     await NodeFSP.rm(temporary, { force: true });
   }
+}
+
+async function createUnderLock(path: string, bytes: Uint8Array): Promise<boolean> {
+  if (await exists(path)) return false;
+  await writeUnderLock(path, bytes);
+  return true;
 }
 
 /** Copies a PDF by its hash, checking the bytes. A file already here is left. */
@@ -819,7 +963,11 @@ async function ensureCollections(input: {
     name: names.get(otherId) ?? "",
     ...(result.collection === null
       ? { collectionId: null, created: false, why: result.why }
-      : { collectionId: result.collection.collectionId, created: result.created }),
+      : {
+          collectionId: result.collection.collectionId,
+          created: result.created,
+          ...(result.created ? { madeAs: scientSourceCollectionMadeAs(result.collection) } : {}),
+        }),
   }));
 }
 
@@ -889,6 +1037,8 @@ async function addSource(input: {
   readonly otherRoot: string;
   /** A backup's own checksums: every file read from it must be the one its list names. */
   readonly listed: ReadonlyMap<string, string> | null;
+  /** Listed history filenames indexed by source ID; null for a kept Library. */
+  readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>> | null;
   readonly record: ScientSourceRecord;
   readonly beforeRecord: () => Promise<void>;
   readonly afterFiles?: (() => void) | undefined;
@@ -913,12 +1063,20 @@ async function addSource(input: {
   if (!bytes) throw new Error("The other Library no longer has it.");
   decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
   const history = NodePath.join(otherRoot, "history", id);
+  const historyNames = new Set(await NodeFSP.readdir(history).catch(() => [] as string[]));
+  for (const name of input.listedHistory?.get(id) ?? []) {
+    historyNames.add(name);
+  }
   const versions: Array<{ readonly name: string; readonly bytes: Buffer }> = [];
-  for (const name of await NodeFSP.readdir(history).catch(() => [] as string[])) {
+  for (const name of historyNames) {
     if (!/^\d+\.json$/u.test(name)) continue;
     const version = await theirBytes(NodePath.join(history, name));
     if (version) versions.push({ name, bytes: version });
   }
+  // The Zotero base names the files this source already took or left; without it a refresh
+  // would bring back a PDF removed here.
+  const zotero = await theirBytes(NodePath.join(otherRoot, "zotero", `${id}.json`));
+  const zoteroBase = zotero && isZoteroBaseOf(zotero, id) ? zotero : null;
   const theirHighlights = new Map<string, Buffer | null>();
   for (const attachment of record.attachments) {
     theirHighlights.set(
@@ -966,7 +1124,14 @@ async function addSource(input: {
     await createUnderLock(NodePath.join(libraryRoot, "history", id, name), versionBytes);
   }
   // The record is written last, as the other Library keeps it; the decisions come before
-  // it exists, so no automatic merge ever sees it without them.
+  // it exists, so no automatic merge ever sees it without them. Any abandoned Zotero base
+  // left by an earlier interrupted join for this absent source is replaced or removed.
+  const zoteroPath = NodePath.join(libraryRoot, "zotero", `${id}.json`);
+  if (zoteroBase) {
+    await writeUnderLock(zoteroPath, zoteroBase);
+  } else {
+    await NodeFSP.rm(zoteroPath, { force: true });
+  }
   await input.beforeRecord();
   if (!(await createUnderLock(recordPath, bytes))) return "it is here now";
   return { sourceId: id, highlights, missingPdfs, highlightsKept };
@@ -999,13 +1164,27 @@ async function settleStopped(
       if (part.state === "done") continue;
       const added: Arrived[] = [];
       for (const planned of part.sources) {
+        try {
+          assertSafeIdentifier(planned.sourceId, "Source ID");
+        } catch {
+          continue;
+        }
         const name = `${planned.sourceId}.json`;
         const anywhere = await Promise.all(
           ["records", "trash", "deleted"].map((folder) =>
             exists(NodePath.join(libraryRoot, folder, name)),
           ),
         );
-        if (!anywhere.some(Boolean)) continue;
+        if (!anywhere.some(Boolean)) {
+          const zoteroDir = NodePath.join(libraryRoot, "zotero");
+          const safeZoteroDir = await assertScientProjectDirectory(libraryRoot, zoteroDir)
+            .then(() => true)
+            .catch(() => false);
+          if (safeZoteroDir) {
+            await NodeFSP.unlink(NodePath.join(zoteroDir, name)).catch(() => undefined);
+          }
+          continue;
+        }
         const record = await readScientSourceRecord(library, planned.sourceId);
         // Only a source still exactly as planned is organised: a changed one is the person's.
         const asPlanned = record !== null && fingerprintOf(record) === planned.fingerprint;
@@ -1147,7 +1326,6 @@ export type ScientLibraryJoinResult =
       /** Collections some added source could not be put in, by name. */
       readonly unplacedIn: ReadonlyArray<string>;
     }
-  | { readonly outcome: "stopped"; readonly joinId: string; readonly added: number }
   /** Another join, or an Undo of one, is running in this Library. */
   | { readonly outcome: "busy" }
   | { readonly outcome: "not-a-library" | "damaged" | "same-library" };
@@ -1170,14 +1348,13 @@ export async function joinScientLibrary(input: {
   }) => void;
   /** Called once the join has its record, before it adds anything. */
   readonly onStarted?: (joinId: string) => void;
-  /** Asked between parts; true stops the join where it is. */
-  readonly shouldStop?: () => boolean;
   /** Tests only: a smaller part, and stops at named points as a killed process would. */
   readonly faults?: {
     readonly partSize?: number;
     readonly stopAfter?: number;
     readonly afterFiles?: () => void;
     readonly beforeOrganise?: () => void;
+    readonly beforePart?: () => void;
   };
 }): Promise<ScientLibraryJoinResult> {
   const source = await openScientLibraryJoinSource(input.library, input.folder);
@@ -1238,7 +1415,7 @@ export async function joinScientLibrary(input: {
     /** This Library as last read in full; null while the first comparison still stands. */
     let state: LocalState | null = null;
     for (let start = 0, number = 1; start < compared.fresh.length; start += size, number += 1) {
-      if (input.shouldStop?.()) return { outcome: "stopped", joinId, added: own.size };
+      input.faults?.beforePart?.();
       const records = compared.fresh.slice(start, start + size);
       const part: JoinPart = {
         formatVersion: 1,
@@ -1296,6 +1473,7 @@ export async function joinScientLibrary(input: {
                   libraryRoot,
                   otherRoot: source.root,
                   listed: source.listed,
+                  listedHistory: source.listedHistory,
                   record,
                   beforeRecord: () =>
                     keepApart({ library, sourceId: id, decisions, present, actor: input.actor }),
@@ -1394,6 +1572,8 @@ export type ScientLibraryJoinUndo =
       readonly trashed: number;
       /** Sources and created collections kept because later use or unreadable state prevents Undo. */
       readonly left: number;
+      /** The sources among `left`: edited, used, filed or highlighted since the join. */
+      readonly leftSourceIds: ReadonlyArray<string>;
     }
   /** `running`: that join, another one, or another Undo is under way. */
   | { readonly outcome: "not-found" | "already-undone" | "running" };
@@ -1427,6 +1607,7 @@ export async function undoScientLibraryJoin(input: {
     const directory = joinDirectory(libraryRoot, input.joinId);
     let trashed = 0;
     let left = 0;
+    const leftSourceIds: string[] = [];
     for (const part of await readParts(directory)) {
       const planned = new Map(part.sources.map((entry) => [entry.sourceId, entry.fingerprint]));
       // One hold of the lock for the part: nothing changes between the look and the removal.
@@ -1464,13 +1645,17 @@ export async function undoScientLibraryJoin(input: {
               })
             : null;
           if (removed?.outcome === "removed") trashed += 1;
-          else left += 1;
+          else {
+            left += 1;
+            leftSourceIds.push(sourceId);
+          }
         }
       });
     }
-    // Children first; a collection goes only when nothing here is in it and nothing is under it.
+    // Children first; a collection goes only when nothing here is in it, nothing is under it
+    // and the person has not renamed or moved it.
     const created = header.collections.filter((entry) => entry.created).toReversed();
-    for (const { collectionId } of created) {
+    for (const { collectionId, madeAs } of created) {
       if (!collectionId) continue;
       await withScientLibraryLock(libraryRoot, async () => {
         const present = new Set((await listScientSourceRecords(library)).map((r) => r.sourceId));
@@ -1485,6 +1670,7 @@ export async function undoScientLibraryJoin(input: {
         if (!collection) return;
         await input.faults?.afterCollectionRead?.();
         const inUse =
+          scientSourceCollectionChangedSince(collection, madeAs) ||
           collection.sourceIds.some((sourceId) => present.has(sourceId)) ||
           organization.collections.some((entry) => entry.parentCollectionId === collectionId);
         if (inUse) left += 1;
@@ -1507,10 +1693,26 @@ export async function undoScientLibraryJoin(input: {
       } satisfies JoinHeader,
       MAX_HEADER_BYTES,
     );
-    return { outcome: "undone", trashed, left };
+    return { outcome: "undone", trashed, left, leftSourceIds };
   });
   return undone === "busy" ? { outcome: "running" } : undone;
 }
+
+/** Every difference a join recorded, with added sources that kept this Library's highlights. */
+const differencesOf = (
+  header: JoinHeader,
+  arrived: ReadonlyArray<Arrived>,
+): ReadonlyArray<ScientLibraryJoinDifference> => [
+  ...header.different,
+  ...arrived
+    .filter((entry) => entry.highlightsKept)
+    .map((entry) => ({
+      otherSourceId: entry.sourceId,
+      sourceId: entry.sourceId,
+      relation: "same-id" as const,
+      parts: ["highlights" as const],
+    })),
+];
 
 /** One join as "Recent changes" and the differences view show it. */
 export interface ScientLibraryJoinRecord {
@@ -1574,17 +1776,7 @@ export async function listScientLibraryJoins(
       other: header.other,
       state: header.state === "running" ? "stopped" : header.state,
       added,
-      different: [
-        ...header.different,
-        ...arrived
-          .filter((entry) => entry.highlightsKept)
-          .map((entry) => ({
-            otherSourceId: entry.sourceId,
-            sourceId: entry.sourceId,
-            relation: "same-id" as const,
-            parts: ["highlights" as const],
-          })),
-      ],
+      different: differencesOf(header, arrived),
       removedHere: header.removedHere.length,
       removedThere: header.removedThere,
       missingPdfs: arrived.reduce((sum, entry) => sum + entry.missingPdfs, 0),
@@ -1671,6 +1863,8 @@ interface OtherFolder {
   readonly root: string;
   /** A backup's own checksums by path; null for a Library a restore kept. */
   readonly listed: ReadonlyMap<string, string> | null;
+  /** Listed history filenames indexed by source ID; null for a kept Library. */
+  readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>> | null;
 }
 
 /**
@@ -1690,7 +1884,7 @@ async function sameSnapshot(
   if (header.other.backupId !== undefined && source.other.backupId !== header.other.backupId) {
     return null;
   }
-  return { root: source.root, listed: source.listed };
+  return { root: source.root, listed: source.listed, listedHistory: source.listedHistory };
 }
 
 async function otherRecord(
@@ -1726,24 +1920,16 @@ const candidatesOf = (standing: Standing): ReadonlyArray<string> =>
       ].toSorted()
     : [];
 
-/** Every difference a join recorded, with added sources that kept this Library's highlights. */
+/** What a join recorded as differing, read from its parts. */
 async function recordedDifferences(
   libraryRoot: string,
   header: JoinHeader,
 ): Promise<ReadonlyArray<ScientLibraryJoinDifference>> {
   const parts = await readParts(joinDirectory(libraryRoot, header.joinId)).catch(() => []);
-  return [
-    ...header.different,
-    ...parts
-      .flatMap((part) => part.added)
-      .filter((entry) => entry.highlightsKept)
-      .map((entry) => ({
-        otherSourceId: entry.sourceId,
-        sourceId: entry.sourceId,
-        relation: "same-id" as const,
-        parts: ["highlights" as const],
-      })),
-  ];
+  return differencesOf(
+    header,
+    parts.flatMap((part) => part.added),
+  );
 }
 
 /**
@@ -1953,6 +2139,7 @@ export async function takeFromScientLibraryJoin(input: {
         libraryRoot,
         otherRoot,
         listed: otherFolder.listed,
+        listedHistory: otherFolder.listedHistory,
         record: theirs,
         // Kept apart from every paper it resembled before it exists, so nothing merges them.
         beforeRecord: async () => {

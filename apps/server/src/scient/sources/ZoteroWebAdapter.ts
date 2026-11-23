@@ -11,13 +11,22 @@ import type { ZoteroConnectionStatus, ZoteroGroup } from "@scientfactory/scient-
 import * as Schema from "effect/Schema";
 
 import { METADATA_USER_AGENT } from "./metadataHttp.ts";
-import { readBoundedNodeResponse, type NodeHttpRequest } from "./nodeHttpResponse.ts";
+import {
+  readBoundedNodeResponse,
+  withRequestDeadline,
+  type NodeHttpRequest,
+} from "./nodeHttpResponse.ts";
+import { decodeZoteroRawItem, type ZoteroRawItem } from "./ZoteroItems.ts";
 import type { ZoteroResponse, ZoteroTransport } from "./ZoteroLibraryReader.ts";
 import type { ZoteroItemTemplate } from "./ZoteroWrite.ts";
 
 const ZOTERO_API_ORIGIN = "https://api.zotero.org";
 const ZOTERO_API_HOST = "api.zotero.org";
 const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_DEADLINE_MS = 60_000;
+/** Long enough for the largest file at under 1 MB a second. */
+const DOWNLOAD_DEADLINE_MS = 10 * 60_000;
+const UPLOAD_DEADLINE_MS = 10 * 60_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_PDF_BYTES = 512 * 1024 * 1024;
 const MAX_REDIRECTS = 4;
@@ -62,7 +71,11 @@ function withoutKeyOffZotero(url: URL, headers: Readonly<Record<string, string>>
   return rest;
 }
 
-function nodeRequest(request: ZoteroWebRequest, send: NodeHttpRequest): Promise<ZoteroResponse> {
+function nodeRequest(
+  request: ZoteroWebRequest,
+  send: NodeHttpRequest,
+  signal: AbortSignal,
+): Promise<ZoteroResponse> {
   if (request.url.protocol !== "https:" || request.url.hostname !== ZOTERO_API_HOST) {
     return Promise.reject(new Error("Zotero web requests must go to api.zotero.org."));
   }
@@ -71,6 +84,7 @@ function nodeRequest(request: ZoteroWebRequest, send: NodeHttpRequest): Promise<
       request.url,
       {
         method: request.method,
+        signal,
         headers: {
           ...request.headers,
           ...(request.body === undefined
@@ -109,6 +123,7 @@ function nodeDownload(
   headers: Readonly<Record<string, string>>,
   destination: string,
   send: NodeHttpRequest,
+  signal: AbortSignal,
   redirects = 0,
 ): Promise<{ readonly status: number }> {
   if (url.protocol !== "https:") return Promise.reject(new Error("Zotero files must use HTTPS."));
@@ -119,7 +134,7 @@ function nodeDownload(
     let receiving = false;
     const outgoing = send(
       url,
-      { method: "GET", headers: withoutKeyOffZotero(url, headers) },
+      { method: "GET", headers: withoutKeyOffZotero(url, headers), signal },
       (response) => {
         receiving = true;
         const status = response.statusCode ?? 0;
@@ -136,6 +151,7 @@ function nodeDownload(
                 headers,
                 destination,
                 send,
+                signal,
                 redirects + 1,
               );
             }
@@ -156,6 +172,7 @@ function nodeDownload(
               }
             },
             file,
+            { signal },
           );
           if (!response.complete) throw new Error("The Zotero file ended before it was complete.");
           return { status };
@@ -181,6 +198,7 @@ async function nodeUpload(
   contentType: string,
   body: ZoteroUploadBody,
   send: NodeHttpRequest,
+  signal: AbortSignal,
 ): Promise<number> {
   if (url.protocol !== "https:") throw new Error("Zotero files must use HTTPS.");
   const { size } = await NodeFSP.stat(body.path);
@@ -192,9 +210,13 @@ async function nodeUpload(
     file.destroy();
     await NodeStreamPromises.finished(file, { cleanup: true }).catch(() => undefined);
   };
+  const onAbort = () => {
+    fail(signal.reason ?? new Error("Timed out while sending a PDF to Zotero."));
+  };
   const fail = (error: unknown) => {
     if (settled) return;
     settled = true;
+    signal.removeEventListener("abort", onAbort);
     outgoing.destroy();
     void closeFile().then(() => reject(error));
   };
@@ -202,6 +224,7 @@ async function nodeUpload(
     url,
     {
       method: "POST",
+      signal,
       headers: {
         "Content-Type": contentType,
         "Content-Length": String(
@@ -218,11 +241,13 @@ async function nodeUpload(
       }).then(() => {
         if (settled) return;
         settled = true;
+        signal.removeEventListener("abort", onAbort);
         outgoing.destroy();
         void closeFile().then(() => resolve(response.statusCode ?? 0));
       }, fail);
     },
   );
+  signal.addEventListener("abort", onAbort, { once: true });
   outgoing.setTimeout(REQUEST_TIMEOUT_MS, () => {
     fail(new Error("Timed out while sending a PDF to Zotero."));
   });
@@ -235,15 +260,41 @@ async function nodeUpload(
   });
   outgoing.write(body.prefix);
   file.pipe(outgoing, { end: false });
+  if (signal.aborted) onAbort();
   return promise;
 }
 
 /** Socket injection keeps loopback fixtures separate from production URL and credential rules. */
-export function makeNodeZoteroWebHttp(send: NodeHttpRequest = NodeHttps.request): ZoteroWebHttp {
+export function makeNodeZoteroWebHttp(
+  send: NodeHttpRequest = NodeHttps.request,
+  /** Tests only: shorter budgets. */
+  deadlines: {
+    readonly requestMs: number;
+    readonly downloadMs: number;
+    readonly uploadMs?: number;
+  } = {
+    requestMs: REQUEST_DEADLINE_MS,
+    downloadMs: DOWNLOAD_DEADLINE_MS,
+    uploadMs: UPLOAD_DEADLINE_MS,
+  },
+): ZoteroWebHttp {
   return {
-    request: (request) => nodeRequest(request, send),
-    download: (url, headers, destination) => nodeDownload(url, headers, destination, send),
-    upload: (url, contentType, body) => nodeUpload(url, contentType, body, send),
+    request: (request) =>
+      withRequestDeadline(deadlines.requestMs, "Timed out while contacting zotero.org.", (signal) =>
+        nodeRequest(request, send, signal),
+      ),
+    download: (url, headers, destination) =>
+      withRequestDeadline(
+        deadlines.downloadMs,
+        "Timed out while downloading a Zotero file.",
+        (signal) => nodeDownload(url, headers, destination, send, signal),
+      ),
+    upload: (url, contentType, body) =>
+      withRequestDeadline(
+        deadlines.uploadMs ?? deadlines.downloadMs,
+        "Timed out while sending a PDF to Zotero.",
+        (signal) => nodeUpload(url, contentType, body, send, signal),
+      ),
   };
 }
 
@@ -604,7 +655,13 @@ export function makeZoteroWebLibrary(input: {
     createItems: async (
       items: ReadonlyArray<Readonly<Record<string, unknown>>>,
       writeToken: string,
-    ): Promise<ReadonlyArray<{ readonly key: string; readonly version: number } | null>> => {
+    ): Promise<
+      ReadonlyArray<{
+        readonly key: string;
+        readonly version: number;
+        readonly item?: ZoteroRawItem;
+      } | null>
+    > => {
       const response = await write("POST", "/items", items, { "Zotero-Write-Token": writeToken });
       // A reused token: an earlier request made these items, and Zotero does not say which.
       if (response.status === 412) {
@@ -621,9 +678,14 @@ export function makeZoteroWebLibrary(input: {
       };
       return items.map((_, index) => {
         const created = parsed.successful?.[String(index)];
-        return typeof created?.key === "string" && typeof created.version === "number"
-          ? { key: created.key, version: created.version }
-          : null;
+        if (typeof created?.key !== "string" || typeof created.version !== "number") return null;
+        let item: ZoteroRawItem | undefined;
+        try {
+          item = decodeZoteroRawItem(created);
+        } catch {
+          item = undefined;
+        }
+        return { key: created.key, version: created.version, ...(item ? { item } : {}) };
       });
     },
     /** Replaces the given fields only if the item is still at `version`. */
