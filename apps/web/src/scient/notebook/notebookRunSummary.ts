@@ -5,7 +5,7 @@ import {
   type ComputeSessionRecord,
   type NotebookCellView,
 } from "@t3tools/contracts";
-import { definedNames } from "@t3tools/shared/notebookStaleness";
+import { definedNames, usedNames } from "@t3tools/shared/notebookStaleness";
 
 export interface NotebookBatchFailureSummary {
   readonly batchId: string;
@@ -158,17 +158,54 @@ export function notebookDefiningCell(input: {
     }
   }
   if (match === null) return null;
+  const status = sessionRunStatus(cellRuns.get(match.cellId), liveSessionGeneration);
+  return { name, cellId: match.cellId, cellNumber: match.cellNumber, status };
+}
 
-  const run = cellRuns.get(match.cellId);
+function sessionRunStatus(
+  run: ComputeExecutionRecord | undefined,
+  liveSessionGeneration: number | null,
+): NotebookDefiningCell["status"] {
   const inCurrentSession =
     run !== undefined &&
     (liveSessionGeneration === null || run.request.generation === liveSessionGeneration);
-  const status: NotebookDefiningCell["status"] =
-    inCurrentSession && run.result?.status === "failed"
-      ? "failed"
-      : inCurrentSession && run.result?.status === "succeeded"
-        ? "ran"
-        : "not-run";
+  if (inCurrentSession && run.result?.status === "failed") return "failed";
+  if (inCurrentSession && run.result?.status === "succeeded") return "ran";
+  return "not-run";
+}
 
-  return { name, cellId: match.cellId, cellNumber: match.cellNumber, status };
+/**
+ * Whether the target cell reads a name that only an earlier cell defines, and that cell has not
+ * run successfully in this session. Then running from the top is the useful first action.
+ */
+export function notebookNeedsSetup(input: {
+  readonly order: ReadonlyArray<string>;
+  readonly cells: Readonly<Record<string, NotebookCellView>>;
+  readonly targetCellId: string;
+  readonly cellRuns: ReadonlyMap<string, ComputeExecutionRecord>;
+  readonly liveSessionGeneration: number | null;
+}): boolean {
+  const target = input.cells[input.targetCellId];
+  const targetIndex = input.order.indexOf(input.targetCellId);
+  if (target?.cellType !== "code" || targetIndex <= 0) return false;
+  const own = definedNames(target.source);
+  const used = [...usedNames(target.source)].filter((name) => !own.has(name));
+  if (used.length === 0) return false;
+  const pending = new Set<string>();
+  for (const id of input.order.slice(0, targetIndex)) {
+    const cell = input.cells[id];
+    if (cell?.cellType !== "code") continue;
+    const defined = definedNames(cell.source);
+    // Without a live session the next run starts empty, so nothing above has run in it.
+    const ran =
+      input.liveSessionGeneration !== null &&
+      sessionRunStatus(input.cellRuns.get(id), input.liveSessionGeneration) === "ran";
+    // A later definition that ran settles the name; an unrun one leaves it pending.
+    for (const name of used) {
+      if (!defined.has(name)) continue;
+      if (ran) pending.delete(name);
+      else pending.add(name);
+    }
+  }
+  return pending.size > 0;
 }

@@ -77,7 +77,8 @@ export function definedNames(source: string): ReadonlySet<string> {
   );
 }
 
-function usedNames(source: string): ReadonlySet<string> {
+/** Names a cell reads. A token scan, so it over-reports; callers intersect it with defined names. */
+export function usedNames(source: string): ReadonlySet<string> {
   const names = source.replace(COMMENT, "$1").match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
   return new Set(names.flatMap((name) => [name, name.toLowerCase()]));
 }

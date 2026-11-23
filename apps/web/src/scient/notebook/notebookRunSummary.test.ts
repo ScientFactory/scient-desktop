@@ -10,6 +10,7 @@ import {
   extractUndefinedName,
   notebookBatchFailureSummary,
   notebookDefiningCell,
+  notebookNeedsSetup,
 } from "./notebookRunSummary";
 
 const makeCell = (
@@ -260,5 +261,49 @@ describe("notebookDefiningCell", () => {
         liveSessionGeneration: 1,
       }),
     ).toEqual({ name: "os", cellId: "setup", cellNumber: 1, status: "failed" });
+  });
+});
+
+describe("notebookNeedsSetup", () => {
+  const order = ["setup", "target", "local"];
+  const cells: Record<string, NotebookCellView> = {
+    setup: makeCell("setup", "run_date = '20261123'"),
+    target: makeCell("target", "print(run_date)"),
+    local: makeCell("local", "x = 2\nprint(x)"),
+  };
+  const ranSetup = makeBatchExecution({
+    id: "e1",
+    cellId: "setup",
+    batchId: "b1",
+    index: 0,
+    count: 1,
+    status: "succeeded",
+    generation: 2,
+  });
+  const needs = (cellRuns: Map<string, ComputeExecutionRecord>, generation: number | null) =>
+    notebookNeedsSetup({
+      order,
+      cells,
+      targetCellId: "target",
+      cellRuns,
+      liveSessionGeneration: generation,
+    });
+
+  it("asks for setup until the defining cell has run in this session", () => {
+    expect(needs(new Map(), 2)).toBe(true);
+    expect(needs(new Map([["setup", ranSetup]]), 2)).toBe(false);
+    // A run from an earlier session, or no session at all, leaves the name undefined.
+    expect(needs(new Map([["setup", ranSetup]]), 3)).toBe(true);
+    expect(needs(new Map([["setup", ranSetup]]), null)).toBe(true);
+    // Names the cell defines itself need nothing above.
+    expect(
+      notebookNeedsSetup({
+        order,
+        cells,
+        targetCellId: "local",
+        cellRuns: new Map(),
+        liveSessionGeneration: 2,
+      }),
+    ).toBe(false);
   });
 });

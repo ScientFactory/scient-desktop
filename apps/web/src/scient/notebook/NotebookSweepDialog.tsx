@@ -15,6 +15,24 @@ import { Textarea } from "~/components/ui/textarea";
 import { validNotebookParameter } from "./NotebookParameters";
 import { sweepValues } from "./reader/notebookReaderModel";
 
+/** Every step when there are few; otherwise five evenly spaced points of a range. */
+function suggestedValues(
+  control: Parameters<typeof validNotebookParameter>[0]["control"],
+): ReadonlyArray<string> {
+  const every = sweepValues(control);
+  if (every.length > 0 || control === undefined || "options" in control) return every;
+  const steps = Math.floor((control.max - control.min) / control.step + 1e-9);
+  return [
+    ...new Set(
+      [0, 1, 2, 3, 4].map((point) =>
+        JSON.stringify(
+          Number((control.min + Math.round((steps * point) / 4) * control.step).toPrecision(14)),
+        ),
+      ),
+    ),
+  ];
+}
+
 export function NotebookSweepDialog(props: {
   readonly parameter: Parameters<typeof validNotebookParameter>[0];
   readonly onClose: () => void;
@@ -22,7 +40,7 @@ export function NotebookSweepDialog(props: {
 }) {
   const gt = useGT();
   const { parameter } = props;
-  const [draft, setDraft] = useState(() => sweepValues(parameter.control).join("\n"));
+  const [draft, setDraft] = useState(() => suggestedValues(parameter.control).join("\n"));
   const lines = draft
     .split(/\r?\n/u)
     .map((value) => value.trim())

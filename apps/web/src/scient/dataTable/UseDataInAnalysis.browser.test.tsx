@@ -116,7 +116,7 @@ it("lets a run omit every previously declared input", async () => {
   );
   const setup = page.getByRole("dialog", { name: "Run setup" });
   await setup.getByRole("button", { name: "Add file…" }).click();
-  const picker = page.getByRole("dialog", { name: "Add a declared input" });
+  const picker = page.getByRole("dialog", { name: "Add an input file" });
   await picker.getByRole("button", { name: "threshold.ipynb", exact: true }).click();
   await setup.getByRole("button", { name: "Remove input threshold.ipynb" }).click();
   await setup.getByRole("button", { name: "Remove input views/shortlist.sql" }).click();

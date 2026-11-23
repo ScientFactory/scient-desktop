@@ -221,10 +221,10 @@ export function ResultDeclaredInputs(
     <>
       <fieldset className="flex min-w-0 flex-col gap-2" disabled={props.disabled}>
         <legend className="text-sm font-medium">
-          <T>Declared inputs</T>
+          <T>Input files</T>
         </legend>
         <p className="text-xs text-muted-foreground">
-          <T>Declaring a file records it as a dependency of the run.</T>
+          <T>The run records these files. If one changes, its results show as out of date.</T>
         </p>
         {inputs.map((path) => (
           <div key={path} className="flex min-w-0 items-center justify-between gap-2 rounded-lg">
@@ -255,7 +255,7 @@ export function ResultDeclaredInputs(
       {suggestions.length > 0 ? (
         <fieldset className="flex min-w-0 flex-col gap-2" disabled={props.disabled}>
           <legend className="text-sm font-medium">
-            <T>Suggested from the script</T>
+            <T>Suggested from the code</T>
           </legend>
           {suggestions.map((path) => (
             <div key={path} className="flex min-w-0 items-center justify-between gap-2 rounded-lg">
@@ -282,7 +282,7 @@ export function ResultDeclaredInputs(
             gap="none"
             bottomStickOnMobile={false}
             showCloseButton={false}
-            aria-label={gt("Add a declared input")}
+            aria-label={gt("Add an input file")}
           >
             <ProjectFilePickerForTarget
               target={{

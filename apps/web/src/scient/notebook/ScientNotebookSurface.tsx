@@ -15,6 +15,15 @@ import { useAtomValue } from "@effect/atom-react";
 
 import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { MenuItem, MenuSeparator } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
@@ -57,14 +66,13 @@ import {
 import { NotebookReader } from "./reader/NotebookReader";
 import { useNotebookFreshRun } from "./useNotebookFreshRun";
 import { notebookRunDraftKey, useNotebookRunDrafts } from "./notebookRunDrafts";
-import { sweepValues } from "./reader/notebookReaderModel";
 import { notebookCommand, type NotebookCommand, type NotebookKeyPress } from "./notebookCommands";
 import {
   createNotebookController,
   type NotebookCaret,
   type NotebookController,
 } from "./notebookController";
-import { notebookBatchFailureSummary } from "./notebookRunSummary";
+import { notebookBatchFailureSummary, notebookNeedsSetup } from "./notebookRunSummary";
 
 /** Where focus goes next: the cell itself (command mode) or a place in its editor. */
 type NotebookFocusTarget = "cell" | NotebookCaret;
@@ -191,6 +199,7 @@ export default function ScientNotebookSurface(props: {
     computeEnvironment.notebookFreshStop.permissionAtom(props.environmentId),
   );
   const [readerOpen, setReaderOpen] = useState(false);
+  const [inputFilesOpen, setInputFilesOpen] = useState(false);
   const [sweepParameter, setSweepParameter] = useState<
     Parameters<typeof validNotebookParameter>[0] | null
   >(null);
@@ -715,6 +724,24 @@ export default function ScientNotebookSurface(props: {
           lastNotebookBatch: liveSession?.lastNotebookBatch,
           liveSessionGeneration: liveSession?.generation ?? null,
         });
+  // Promoted to the top of the Run menu when the selected cell reads setup that has not run.
+  const selectedNeedsSetup =
+    selected !== null &&
+    notebookNeedsSetup({
+      order,
+      cells: controller.store.getState().cells,
+      targetCellId: selected,
+      cellRuns,
+      liveSessionGeneration: liveSession?.generation ?? null,
+    });
+  const runThroughItem = (
+    <MenuItem
+      disabled={selectedIndex < 0}
+      onClick={() => selected !== null && replayThroughCell(selected)}
+    >
+      <T>Run from top through this cell</T>
+    </MenuItem>
+  );
   const place = {
     environmentId: props.environmentId,
     cwd: props.cwd,
@@ -761,6 +788,7 @@ export default function ScientNotebookSurface(props: {
               runAllDisabled,
               menu: (
                 <>
+                  {selectedNeedsSetup ? runThroughItem : null}
                   <MenuItem disabled={outOfDate.length === 0} onClick={() => runCells(outOfDate)}>
                     <T>Run out-of-date cells</T>
                   </MenuItem>
@@ -770,12 +798,7 @@ export default function ScientNotebookSurface(props: {
                   >
                     <T>Run cells above</T>
                   </MenuItem>
-                  <MenuItem
-                    disabled={selectedIndex < 0}
-                    onClick={() => selected !== null && replayThroughCell(selected)}
-                  >
-                    <T>Run from top through this cell</T>
-                  </MenuItem>
+                  {selectedNeedsSetup ? null : runThroughItem}
                   <MenuItem
                     disabled={selectedIndex < 0}
                     onClick={() => runCells(codeCellIds(selectedIndex))}
@@ -789,20 +812,21 @@ export default function ScientNotebookSurface(props: {
                   >
                     <T>Run fresh and publish</T>
                   </MenuItem>
-                  {parameters.flatMap((parameter) => {
-                    const values = sweepValues(parameter.control);
-                    return values.length === 0
-                      ? []
-                      : [
-                          <MenuItem
-                            key={parameter.name}
-                            disabled={freshRunDisabled}
-                            onClick={() => setSweepParameter(parameter)}
-                          >
-                            {gt("Run for each {parameter} value", { parameter: parameter.name })}
-                          </MenuItem>,
-                        ];
-                  })}
+                  <MenuItem
+                    disabled={!canRerun || runningFresh}
+                    onClick={() => setInputFilesOpen(true)}
+                  >
+                    <T>Input files…</T>
+                  </MenuItem>
+                  {parameters.map((parameter) => (
+                    <MenuItem
+                      key={parameter.name}
+                      disabled={freshRunDisabled}
+                      onClick={() => setSweepParameter(parameter)}
+                    >
+                      {gt("Run for each {parameter} value", { parameter: parameter.name })}
+                    </MenuItem>
+                  ))}
                   <MenuItem
                     disabled={runAllDisabled}
                     onClick={() => {
@@ -924,7 +948,18 @@ export default function ScientNotebookSurface(props: {
             }}
             anchor={restartAnchor}
             title={gt("Run fresh and replace saved outputs?")}
-            description={<NotebookFreshRunWarning />}
+            description={
+              <>
+                <NotebookFreshRunWarning />
+                {inputs !== undefined && inputs.length > 0 ? (
+                  <span className="mt-1 block wrap-anywhere">
+                    {gt("Records {files}", {
+                      files: inputs.map((path) => path.split("/").at(-1) ?? path).join(", "),
+                    })}
+                  </span>
+                ) : null}
+              </>
+            }
             confirmLabel={gt("Run fresh")}
             destructive
             onConfirm={() => {
@@ -996,32 +1031,47 @@ export default function ScientNotebookSurface(props: {
           />
         </div>
       )}
-      {status !== "ready" ? null : (
-        <div className="max-h-40 shrink-0 overflow-auto border-b border-border/60 px-4 py-2 text-xs">
-          {inputs !== undefined ? (
-            <ResultDeclaredInputs
-              {...setupTarget}
-              inputs={inputs}
-              suggestedInputs={savedSetup?.suggestedInputs ?? []}
-              disabled={!canRerun || runningFresh}
-              onChange={(next) =>
-                useNotebookRunDrafts.getState().update(draftKey, { inputs: next })
-              }
-            />
-          ) : setup !== null && "message" in setup ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <p role="alert">{setup.message}</p>
-              <Button size="xs" variant="outline" onClick={retrySetup}>
-                <T>Try again</T>
-              </Button>
-            </div>
-          ) : (
-            <p role="status" className="text-muted-foreground">
-              <T>Loading declared inputs…</T>
-            </p>
-          )}
-        </div>
-      )}
+      <Dialog open={inputFilesOpen} onOpenChange={setInputFilesOpen}>
+        <DialogPopup layer="above-popovers" bottomStickOnMobile={false} gap="none">
+          <DialogHeader className="shrink-0">
+            <DialogTitle>
+              <T>Input files</T>
+            </DialogTitle>
+            <DialogDescription className="wrap-anywhere">
+              <bdi>{props.relativePath}</bdi>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="min-w-0">
+            {inputs !== undefined ? (
+              <ResultDeclaredInputs
+                {...setupTarget}
+                inputs={inputs}
+                suggestedInputs={savedSetup?.suggestedInputs ?? []}
+                disabled={!canRerun || runningFresh}
+                onChange={(next) =>
+                  useNotebookRunDrafts.getState().update(draftKey, { inputs: next })
+                }
+              />
+            ) : setup !== null && "message" in setup ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <p role="alert">{setup.message}</p>
+                <Button size="xs" variant="outline" onClick={retrySetup}>
+                  <T>Try again</T>
+                </Button>
+              </div>
+            ) : (
+              <p role="status" className="text-sm text-muted-foreground">
+                <T>Loading run setup…</T>
+              </p>
+            )}
+          </DialogPanel>
+          <DialogFooter className="shrink-0">
+            <Button type="button" onClick={() => setInputFilesOpen(false)}>
+              <T>Done</T>
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       {runStatus}
       <div className="flex min-h-0 flex-1">
         {dockedOutline && dockOpen ? (
