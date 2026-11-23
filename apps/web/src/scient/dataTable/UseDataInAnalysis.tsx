@@ -135,27 +135,18 @@ export function UseDataInAnalysis(props: {
       .finally(() => setBusy(false));
   };
 
+  if (menu === null) return null;
   return (
     <>
-      {menu ? (
-        <MenuItem
-          focus="edge"
-          disabled={!canRun}
-          onClick={() => menu.launch(() => setPicking(true))}
-        >
-          {gt("Use in analysis…")}
-        </MenuItem>
-      ) : (
-        <Button size="xs" variant="ghost" disabled={!canRun} onClick={() => setPicking(true)}>
-          {gt("Use in analysis…")}
-        </Button>
-      )}
+      <MenuItem focus="edge" disabled={!canRun} onClick={() => menu.launch(() => setPicking(true))}>
+        {gt("Use in analysis…")}
+      </MenuItem>
       <CommandDialog open={picking} onOpenChange={setPicking}>
         {picking ? (
           <CommandDialogPopup
             aria-label={gt("Choose analysis file")}
             padding="none"
-            finalFocus={menu?.finalFocus}
+            finalFocus={menu.finalFocus}
           >
             <ProjectFilePickerForTarget
               setOpen={setPicking}
@@ -177,7 +168,7 @@ export function UseDataInAnalysis(props: {
           if (!open && !busy) setScriptPath(null);
         }}
       >
-        <DialogPopup finalFocus={menu?.finalFocus}>
+        <DialogPopup finalFocus={menu.finalFocus}>
           <DialogHeader>
             <DialogTitle>{gt("Use in analysis")}</DialogTitle>
             <DialogDescription>

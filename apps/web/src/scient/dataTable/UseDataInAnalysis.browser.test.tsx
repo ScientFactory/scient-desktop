@@ -52,6 +52,7 @@ vi.mock("~/components/files/ProjectFilePicker", () => ({
 
 import { ResultRunSetup } from "../results/ResultRunSetup";
 import { notebookRunDraftKey, useNotebookRunDrafts } from "../notebook/notebookRunDrafts";
+import { DataGrid } from "./DataGrid";
 import { UseDataInAnalysis } from "./UseDataInAnalysis";
 
 it.each([
@@ -75,15 +76,31 @@ it.each([
         });
     }
     await using screen = await render(
-      <UseDataInAnalysis
-        environmentId={environmentId}
-        threadId={ThreadId.make("thread")}
-        file={{ cwd: "/project", path, onOpenPath: () => undefined }}
-        sheet={0}
+      <DataGrid
+        label="Input data"
+        revision="test"
+        loadPage={async () => ({
+          columns: [],
+          columnCount: 0,
+          offset: 0,
+          rowCount: 0,
+          matchCount: 0,
+          rows: [],
+          truncated: false,
+        })}
+        renderMenuActions={() => (
+          <UseDataInAnalysis
+            environmentId={environmentId}
+            threadId={ThreadId.make("thread")}
+            file={{ cwd: "/project", path, onOpenPath: () => undefined }}
+            sheet={0}
+          />
+        )}
       />,
       { router: false },
     );
-    await screen.getByRole("button", { name: "Use in analysis…" }).click();
+    await screen.getByRole("button", { name: "Grid actions" }).click();
+    await page.getByRole("menuitem", { name: "Use in analysis…" }).click();
     await page.getByRole("button", { name: analysis }).click();
     await expect.element(page.getByRole("button", { name: "Copy code" })).toBeEnabled();
     if (path === "views/high_risk.sql") {
