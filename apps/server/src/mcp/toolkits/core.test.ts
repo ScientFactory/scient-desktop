@@ -564,6 +564,18 @@ it.effect("captures send_to_user results for providers that drop MCP outputs", (
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    // SCIENT-FORK:START — results are captured only for the thread's open provider session.
+    yield* mcpSessions.set({
+      environmentId: scope.environmentId,
+      threadId,
+      providerSessionId: scope.thread!.providerSessionId,
+      providerInstanceId: scope.thread!.providerInstanceId,
+      endpoint: "http://127.0.0.1:12345/mcp",
+      authorizationHeader: "Bearer fixture",
+      capabilities: new Set<string>(),
+      connectors: [],
+    });
+    // SCIENT-FORK:END
     const draft = "### Status\n\nAll checks passed.";
     const result = yield* server
       .callTool({ name: "send_to_user", arguments: { message: draft } })
