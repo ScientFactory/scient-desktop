@@ -203,14 +203,14 @@ test("no mobile production job mints a release app token", () => {
 });
 // SCIENT-FORK:END
 
-test("the release version bump is pushed by a job that installs nothing, with a token for this repository only", () => {
-  const { finalize } = jobs("workflows/release.yml");
-  const mint = steps(finalize).find((step) => step.includes("create-github-app-token"));
-  assert.doesNotMatch(mint, /^\s+(?:owner|repositories):/m);
-  assert.match(mint, /^\s+permission-contents: write$/m);
-  assert.ok(!runsProjectCode(finalize), "finalize holds a write token and runs code");
-  assert.match(finalize, /run: node \.github\/scripts\/set-release-version\.cjs /);
+// SCIENT-FORK:START — Scient's release builds with the release version and pushes nothing back,
+// so no job holds a repository write token to push a version bump.
+test("the release workflow pushes no version bump back to the repository", () => {
+  const release = read("workflows/release.yml");
+  assert.equal(jobs("workflows/release.yml").finalize, undefined);
+  assert.doesNotMatch(release, /git push|create-github-app-token|RELEASE_APP/);
 });
+// SCIENT-FORK:END
 
 test("the Vite+ toolchain is cached before the job installs or runs project code", () => {
   const names = Array.from(
