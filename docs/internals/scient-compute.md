@@ -26,6 +26,16 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
 - **Scient-managed Python** is a private, uv-built CPython with reviewed Toolkits, installed as
   immutable generations (`ManagedPythonEnvironment`, `ManagedPythonProvisioner`, recipes in
   `managed-python/`). See [Managed compute recipes](../operations/managed-compute-recipes.md).
+- **Added packages** (`PythonLibraries`) live in `kernels/python-libraries/<hash of sys.prefix and
+  version>` under the compute directory, never in the person's environment. Each addition is one
+  folder in it, published with one rename; before each cell a kernel appends any new one, in order,
+  after its own packages. An add names a ready session; the server takes the interpreter and
+  folders from that session's launch and refuses if the interpreter now maps elsewhere. It
+  resolves with `uv pip compile`, constrained by what the kernel can already import (a local build
+  by its public version), refuses a resolution that needs another version of something installed,
+  and installs only the missing pins with `--no-deps`. Python's descriptor carries the `packages`
+  capability only when this is available. The app offers it for the reviewed names in
+  `computeDependencyRecovery`; agents use `scient_compute_setup` with `package`.
 - Compute is trusted local execution with the server account's authority. Launches drop
   Python/Jupyter overrides and the app's own sign-in tokens (`ComputeEnvironmentPolicy`); the user's
   own credentials stay available to their code.

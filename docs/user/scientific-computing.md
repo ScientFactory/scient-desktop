@@ -176,8 +176,8 @@ discovery; it does not remove your other Python installations.
 
 An existing Python can run ordinary code without every scientific library. If the reviewed
 Scientific Python Toolkit packages are missing, the status tooltip notes that some Scientific Python Toolkit packages are missing.
-Run remains available for code that does not need those packages; Scient does not
-silently install them into a user-owned environment.
+Run remains available for code that does not need those packages; Scient never installs anything
+into a user-owned environment.
 An unrelated managed setup or removal failure does not disable or replace the status of a usable
 independent runtime. The file keeps its healthy live session status, or the independent runtime's
 status before startup. A cached probe alone does not clear a failure of the managed runtime itself.
@@ -186,13 +186,22 @@ remain visible on the file. Select the file's Python status to open
 the right server's Scientific Computing settings. After choosing or repairing an environment, rerun
 the code yourself; Scient never replays a failed run automatically.
 
-For a missing, recognized Python dependency, the error offers one action. When Scient-managed
-Python is installed and has the package, it is **Switch to Scient-managed Python**: one click
-rechecks the environment and package, stops this tab's idle session with confirmed cleanup, and
-starts an empty managed session. Variables reset, as the note beside the button says; nothing is
-installed, rerun, or changed in your default environment. Otherwise the error offers
-**Python settings**. Package presence is not a guarantee that the script will succeed. Unknown
-project imports and missing submodules get neither action.
+### Missing packages
+
+When code stops on a missing package that Scient recognizes, the error offers **Add** with the
+package's name, such as **Add scikit-learn** for `import sklearn`. One click adds that package, and
+only what it needs that your environment does not already have, to a folder Scient keeps beside
+that environment. Your environment is never changed. The session keeps its variables; run the code
+again and the import works. The package must work with the versions you already have, so Scient
+installs a release that does, or the error explains why none does. Your own packages always win
+over the ones Scient added.
+
+When Scient-managed Python already has the package, **Use managed Python** appears beside **Add**.
+It rechecks the environment, stops this tab's idle session, and starts an empty managed session, so
+variables reset. Scient recognizes about 120 common scientific packages. An unknown import is often
+one of your own modules, and the package index may have an unrelated package under that name, so
+Scient does not guess. Ask the agent instead: it can read your code and add any package the same
+way. Missing submodules get no action.
 
 ## R, Julia, and SQL
 
@@ -493,8 +502,8 @@ package.
 Scientific code runs with the filesystem and network authority of the selected Scient server
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
-Nothing is installed until you or an agent runs something that needs it. Arbitrary package installation into Scient-managed Python, interactive widgets,
-and saving a session's state as a portable result remain future work.
+Nothing is installed until you or an agent runs something that needs it. Interactive widgets and
+saving a session's state as a portable result remain future work.
 
 ### Run fresh and MATLAB batch
 
