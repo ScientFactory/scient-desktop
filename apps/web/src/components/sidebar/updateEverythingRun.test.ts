@@ -333,6 +333,7 @@ describe("retryFailedUpdateRunServers", () => {
       (_target: ServerUpdateTarget) => new Promise<ServerUpdateOutcome>(() => {}),
     );
 
+    publishQualifiedUpdateRunServers([target]); // SCIENT-FORK: the sidebar still qualifies it
     retryFailedUpdateRunServers(
       update,
       new Map<EnvironmentId, RestoredRetry>([
@@ -341,6 +342,7 @@ describe("retryFailedUpdateRunServers", () => {
         [staleId, "current"],
       ]),
     );
+    publishQualifiedUpdateRunServers([]); // SCIENT-FORK: the sidebar owner leaves
 
     let run: UpdateEverythingRun | null = null;
     setUpdateEverythingRun((current) => {

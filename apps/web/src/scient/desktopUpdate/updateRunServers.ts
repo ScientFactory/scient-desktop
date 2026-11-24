@@ -4,48 +4,84 @@ import type { ServerUpdateOutcome, ServerUpdateTarget } from "~/components/Serve
 import {
   closeFinishedUpdateRun,
   currentConfirmedServerTargets,
+  resolveRestoredRetry,
+  type UpdateEverythingMachine,
 } from "~/components/sidebar/updateEverything.logic";
 import {
   setUpdateEverythingRun,
   settleUpdateRunMachine,
 } from "~/components/sidebar/updateEverythingRun";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { serverEnvironment } from "~/state/server";
+import { resolveVersionMismatch } from "~/versionSkew";
 
 type ServerUpdate = (
   target: ServerUpdateTarget,
   options: { readonly quiet: boolean },
 ) => Promise<ServerUpdateOutcome>;
 
+/** The server runs `targetVersion` now, read at the click; the host rejects a same-version update. */
+function runsTargetVersion(environmentId: EnvironmentId, targetVersion: string | null): boolean {
+  const config = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId));
+  return (
+    targetVersion !== null &&
+    config !== null &&
+    resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null
+  );
+}
+
 /**
- * Retries one server a pass failed or withdrew. Like the pass's own retry, it keeps the
- * confirmed version and mechanism, takes the current flags, and sends nothing unless that
- * target is qualified now. Returns whether it started.
+ * Retries one server a pass failed or withdrew, keeping its confirmed version and mechanism and
+ * sending nothing unless that target is qualified now. A row restored after a relaunch rebuilds
+ * its target from `current`; a server already on its target settles. Returns whether it started.
  */
 export function retryUpdateRunServer(
   environmentId: EnvironmentId,
   qualified: ReadonlyArray<ServerUpdateTarget>,
   update: ServerUpdate,
+  current: ReadonlyArray<UpdateEverythingMachine> = [],
 ): boolean {
-  const found: { retry?: { target: ServerUpdateTarget; providerFailure: string | null } } = {};
+  const found: {
+    retry?: { target: ServerUpdateTarget; providerFailure: string | null };
+    settled?: { providerFailure: string | null };
+  } = {};
   setUpdateEverythingRun((run) => {
     const machine = run?.machines.find(
-      (candidate) =>
-        candidate.environmentId === environmentId &&
-        candidate.result === "failed" &&
-        candidate.server !== null,
+      (candidate) => candidate.environmentId === environmentId && candidate.result === "failed",
     );
-    const target = machine?.server && currentConfirmedServerTargets([machine.server], qualified)[0];
-    if (!run || !machine || !target) return run;
+    const attempted = machine && (machine.server ?? resolveRestoredRetry(machine, current));
+    if (!run || !machine || !attempted) return run;
+    const targetVersion =
+      attempted === "current" ? machine.handedOffVersion : attempted.targetVersion;
+    if (runsTargetVersion(environmentId, targetVersion)) {
+      found.settled = { providerFailure: machine.providerFailure };
+      return run;
+    }
+    if (attempted === "current") return run;
+    const target = currentConfirmedServerTargets([attempted], qualified)[0];
+    if (!target) return run;
     found.retry = { target, providerFailure: machine.providerFailure };
     const startedAt = Date.now();
     return {
       ...run,
       machines: run.machines.map((candidate) =>
         candidate === machine
-          ? { ...candidate, result: null, failure: null, startedAt }
+          ? {
+              ...candidate,
+              server: target,
+              handedOffVersion: null,
+              result: null,
+              failure: null,
+              startedAt,
+            }
           : candidate,
       ),
     };
   });
+  if (found.settled !== undefined) {
+    settleUpdateRunMachine(environmentId, found.settled.providerFailure, { serverUpdated: true });
+    return false;
+  }
   const started = found.retry;
   if (started === undefined) return false;
   void update(started.target, { quiet: false }).then((outcome) =>

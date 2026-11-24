@@ -98,6 +98,8 @@ vi.mock("~/state/server", async () => {
       updateStateAtom: () => testState.updateStateAtom!,
       updateServer: Symbol("update-server"),
       providersValueAtom: (id: string) => Atom.make(() => machineProviders.get(id) ?? []),
+      // SCIENT-FORK: a circle Retry reads the server's version at the click.
+      configValueAtom: () => Atom.make(null),
     },
     updateOutdatedServer: Symbol("update-outdated-server"),
   };

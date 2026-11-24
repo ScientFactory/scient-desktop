@@ -104,7 +104,7 @@ export function SidebarUpdateCapsule({
   const qualifiedServers = useQualifiedUpdateRunServers();
   const view = offerEligibleUpdateRetry(
     describeUpdateCapsule(run, machines, local, now, m),
-    run.machines,
+    machines,
     qualifiedServers,
   );
   // SCIENT-FORK:END
