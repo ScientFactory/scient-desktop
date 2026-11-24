@@ -8,7 +8,9 @@ import {
 } from "@scientfactory/document-artifacts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import {
@@ -85,6 +87,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
   "malformed-part": "A part of the file is not supported XML.",
   "unsafe-entry": "The package has an unsafe or encrypted entry.",
   "too-large": "The file is larger than this operation accepts (32 MiB of input).",
+  "blank-edit-text": "The text to find and the replacement must contain non-whitespace text.",
   "text-not-found": "The text was not found in the document.",
   "text-ambiguous": "The text occurs more than once; pass a longer, unique passage.",
   "text-spans-runs": "The text crosses formatting runs or other markup; pass text inside one run.",
@@ -177,16 +180,42 @@ export const replaceDocxTextForInvocation = Effect.fn("ScientDocxTrackedReplace.
   const authority = yield* resolveDocumentBuildProject().pipe(Effect.mapError(boundaryError));
   const { root, invocation } = authority;
   const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-  const located = yield* resolveProjectSourceFile(root, input.sourcePath, {
+  const locateSource = resolveProjectSourceFile(root, input.sourcePath, {
     label: "Word",
     extensions: [".docx"],
   }).pipe(Effect.mapError((cause) => toolError(cause.code, cause.message)));
+  const located = yield* locateSource;
   const docxOutput = yield* resolveProjectDocxOutput(root, input.outputPath).pipe(
     Effect.mapError(boundaryError),
   );
   const pdfOutput = yield* resolveProjectPdfOutput(root, input.pdfOutputPath).pipe(
     Effect.mapError(boundaryError),
   );
+  const fs = yield* FileSystem.FileSystem;
+  const checkPdfDestination = Effect.gen(function* () {
+    if (pdfOutput.expectedRevision === null) return;
+    const [source, destination, destinationPath] = yield* Effect.all([
+      fs.stat(located.canonicalPath),
+      fs.stat(pdfOutput.absolutePath),
+      fs.realPath(pdfOutput.absolutePath),
+    ]).pipe(
+      Effect.mapError(() =>
+        toolError("invalid-output-path", "Could not check the existing PDF destination."),
+      ),
+    );
+    if (
+      destinationPath === located.canonicalPath ||
+      (source.dev === destination.dev &&
+        Option.isSome(source.ino) &&
+        Option.isSome(destination.ino) &&
+        source.ino.value === destination.ino.value)
+    )
+      return yield* toolError(
+        "invalid-output-path",
+        "Choose a PDF destination separate from the Word source.",
+      );
+  });
+  yield* checkPdfDestination;
   const epoch = workspace
     .getMutationEpoch({ cwd: root })
     .pipe(
@@ -224,52 +253,77 @@ export const replaceDocxTextForInvocation = Effect.fn("ScientDocxTrackedReplace.
   );
 
   const store = yield* GeneratedDocumentStore.GeneratedDocumentStore;
-  const handle = yield* store
-    .beginProduction({
-      logicalDocumentKey: LogicalDocumentKey.make(
-        `docx-tracked:${NodeCrypto.createHash("sha256").update(pdfOutput.absolutePath).digest("hex")}`,
-      ),
-      operationId: ProducingOperationId.make(`docx-tracked-${NodeCrypto.randomUUID()}`),
-      producerId: PRODUCER_ID,
-    })
-    .pipe(
-      Effect.mapError(() => toolError("publication-failed", "Scient could not start the PDF.")),
-    );
-  const abandon = (reason: string) =>
-    store.abandonProduction({ ...handle, reason }).pipe(Effect.ignore);
-
-  const pdf = yield* workspace
-    .withWorkspacePublicationFence({ cwd: root, expectedEpoch: mutationEpoch }, () =>
-      Effect.gen(function* () {
-        yield* assertCurrentDocumentBuildProject(authority).pipe(Effect.mapError(boundaryError));
-        const current = yield* captureSource(located);
-        if (current.revision !== captured.revision)
-          return yield* toolError(
-            "source-changed",
-            "The Word file changed while the copy was made. Nothing was saved.",
-          );
-        return yield* store
-          .publishPdf({
-            ...handle,
-            bytes: job.candidatePdf,
-            title: titleOf(docxOutput.outputPath),
-            provenanceKind: "document-build",
+  const { pdf, handle } = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* Effect.acquireRelease(
+        store
+          .beginProduction({
+            logicalDocumentKey: LogicalDocumentKey.make(
+              `docx-tracked:${NodeCrypto.createHash("sha256").update(pdfOutput.absolutePath).digest("hex")}`,
+            ),
+            operationId: ProducingOperationId.make(`docx-tracked-${NodeCrypto.randomUUID()}`),
+            producerId: PRODUCER_ID,
           })
           .pipe(
             Effect.mapError(() =>
-              toolError("publication-failed", "Scient rejected or could not store the PDF."),
+              toolError("publication-failed", "Scient could not start the PDF."),
             ),
-          );
-      }),
-    )
-    .pipe(
-      Effect.mapError((cause) =>
-        cause._tag === "ScientDocxTrackedReplaceToolError"
-          ? cause
-          : toolError("source-changed", cause.message, workspaceReceipt(cause)),
-      ),
-      Effect.tapError(() => abandon("Publication admission failed.")),
-    );
+          ),
+        (handle, exit) =>
+          Exit.isFailure(exit)
+            ? store
+                .abandonProduction({ ...handle, reason: "PDF publication did not complete." })
+                .pipe(Effect.ignore)
+            : Effect.void,
+      );
+
+      const pdf = yield* workspace
+        .withWorkspacePublicationFence({ cwd: root, expectedEpoch: mutationEpoch }, () =>
+          Effect.gen(function* () {
+            yield* assertCurrentDocumentBuildProject(authority).pipe(
+              Effect.mapError(boundaryError),
+            );
+            const currentLocation = yield* locateSource.pipe(
+              Effect.mapError(() =>
+                toolError("source-changed", "The Word source path changed before publication."),
+              ),
+            );
+            if (currentLocation.canonicalPath !== located.canonicalPath)
+              return yield* toolError(
+                "source-changed",
+                "The Word source path changed before publication.",
+              );
+            const current = yield* captureSource(currentLocation);
+            if (current.revision !== captured.revision)
+              return yield* toolError(
+                "source-changed",
+                "The Word file changed while the copy was made. Nothing was saved.",
+              );
+            yield* checkPdfDestination;
+            return yield* store
+              .publishPdf({
+                ...handle,
+                bytes: job.candidatePdf,
+                title: titleOf(docxOutput.outputPath),
+                provenanceKind: "document-build",
+              })
+              .pipe(
+                Effect.mapError(() =>
+                  toolError("publication-failed", "Scient rejected or could not store the PDF."),
+                ),
+              );
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "ScientDocxTrackedReplaceToolError"
+              ? cause
+              : toolError("source-changed", cause.message, workspaceReceipt(cause)),
+          ),
+        );
+      return { pdf, handle };
+    }),
+  );
 
   const write = (
     output: typeof docxOutput | typeof pdfOutput,
@@ -322,17 +376,18 @@ export const replaceDocxTextForInvocation = Effect.fn("ScientDocxTrackedReplace.
   );
 
   const broker = yield* DocumentHostBroker.DocumentHostBroker;
-  const presented = yield* broker
-    .invoke({
-      scope: invocation,
-      operation: "documentPdfPresent",
-      input: { source: pdf },
-      timeoutMs: 10_000,
-    })
-    .pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false),
-    );
+  const presented = yield* assertCurrentDocumentBuildProject(authority).pipe(
+    Effect.flatMap(() =>
+      broker.invoke({
+        scope: invocation,
+        operation: "documentPdfPresent",
+        input: { source: pdf },
+        timeoutMs: 10_000,
+      }),
+    ),
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
 
   return {
     sourcePath: located.sourcePath,

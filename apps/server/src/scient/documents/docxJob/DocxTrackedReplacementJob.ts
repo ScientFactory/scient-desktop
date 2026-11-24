@@ -68,6 +68,8 @@ export const runDocxTrackedReplacement = Effect.fn("DocxTrackedReplacement.run")
   sourceBytes: Uint8Array,
   request: TrackedReplacementRequest,
 ) {
+  if (request.find.trim() === "" || request.replace.trim() === "")
+    return yield* jobError("unsupported-edit", "blank-edit-text");
   if (sourceBytes.byteLength > MAX_DOCX_JOB_INPUT_BYTES)
     return yield* jobError("unsupported-input", "too-large");
   const renderer = yield* OfficeRenderer;

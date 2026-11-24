@@ -80,6 +80,17 @@ describe("tracked replacement in an existing bilingual Word file", () => {
     }),
   );
 
+  it.effect("preserves a UTF-8 BOM in the original Word part", () =>
+    Effect.gen(function* () {
+      const entries = withMainPart(yield* fixtureEntries(), (xml) => "\uFEFF" + xml);
+      const { result, candidate } = yield* edited(entries);
+      expect(result.xml.startsWith("\uFEFF")).toBe(true);
+      expect(verifyTrackedReplacement(entries, candidate, request).passed).toBe(true);
+      const withoutBom = withMainPart(candidate, (xml) => xml.slice(1));
+      expect(verifyTrackedReplacement(entries, withoutBom, request).passed).toBe(false);
+    }),
+  );
+
   it("warns about adjacent punctuation when the paragraph inherits RTL", () => {
     const namespace = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
     const document = (properties: string, text: string) =>

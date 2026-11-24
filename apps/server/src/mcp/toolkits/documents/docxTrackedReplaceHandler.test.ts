@@ -10,7 +10,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
@@ -36,6 +38,7 @@ import {
   WorkspaceAuthorityGeneration,
   WorkspaceAuthorityScopeRevision,
   WorkspaceBindingId,
+  WorkspaceBindingResolutionError,
 } from "../../../scient/projectScope/WorkspaceBinding.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { filePublicationTestHelper } from "../../../scient/workspace/fileExchange.testkit.ts";
@@ -106,16 +109,20 @@ function harness(
   options: {
     readonly sameRender?: boolean;
     readonly status?: DocumentOfficeToolchain.OfficeToolchainStatus;
+    readonly beforeRender?: () => Promise<void>;
+    readonly changeWorkspaceAfterWrites?: boolean;
   } = {},
 ) {
   const sourcePdf = new Uint8Array(NodeFS.readFileSync(TINY_SOURCE_PDF));
   const candidatePdf = new Uint8Array(NodeFS.readFileSync(TINY_CANDIDATE_PDF));
   const render = vi.fn(() =>
-    Effect.succeed(
-      new Map([
-        ["source.docx", sourcePdf],
-        ["candidate.docx", options.sameRender === true ? sourcePdf : candidatePdf],
-      ]) as ReadonlyMap<string, Uint8Array>,
+    Effect.promise(options.beforeRender ?? (async () => {})).pipe(
+      Effect.as(
+        new Map([
+          ["source.docx", sourcePdf],
+          ["candidate.docx", options.sameRender === true ? sourcePdf : candidatePdf],
+        ]) as ReadonlyMap<string, Uint8Array>,
+      ),
     ),
   );
   const handle = {
@@ -171,7 +178,18 @@ function harness(
         WorkspaceBindingResolver,
         WorkspaceBindingResolver.of({
           resolveThread: () => Effect.succeed(resolved),
-          assertCurrentThreadScope: () => Effect.succeed(binding),
+          assertCurrentThreadScope: () =>
+            Effect.suspend(() =>
+              options.changeWorkspaceAfterWrites &&
+              NodeFS.existsSync(NodePath.join(root, "docs/report-reviewed.pdf"))
+                ? Effect.fail(
+                    new WorkspaceBindingResolutionError({
+                      operation: "assert-current-thread-scope",
+                      kind: "stale-authority",
+                    }),
+                  )
+                : Effect.succeed(binding),
+            ),
         } as unknown as WorkspaceBindingResolver["Service"]),
       ),
       Effect.provideService(
@@ -303,6 +321,75 @@ describe("Word tracked replacement tool", () => {
     }),
   );
 
+  it.effect("abandons PDF production when interrupted before publication", () =>
+    Effect.gen(function* () {
+      const { root, revision } = yield* project();
+      const h = harness(root);
+      const enteredFence = yield* Deferred.make<void>();
+      const replace = Effect.gen(function* () {
+        const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        return yield* replaceDocxTextForInvocation(input(revision)).pipe(
+          Effect.provideService(WorkspaceFileSystem.WorkspaceFileSystem, {
+            ...workspace,
+            withWorkspacePublicationFence: () =>
+              Deferred.succeed(enteredFence, undefined).pipe(Effect.andThen(Effect.never)),
+          }),
+        );
+      });
+      const fiber = yield* h.provide(replace).pipe(Effect.forkChild);
+      yield* Deferred.await(enteredFence);
+      yield* Fiber.interrupt(fiber);
+      expect(h.store.abandonProduction).toHaveBeenCalledOnce();
+      expect(h.store.publishPdf).not.toHaveBeenCalled();
+      expect(yield* exists(root, "docs/report-reviewed.docx")).toBe(false);
+      expect(yield* exists(root, "docs/report-reviewed.pdf")).toBe(false);
+    }),
+  );
+
+  it.effect("refuses when the caller's source path is retargeted during rendering", () =>
+    Effect.gen(function* () {
+      const { root, revision } = yield* project();
+      const selected = NodePath.join(root, "selected");
+      const first = NodePath.join(root, "docs");
+      const second = NodePath.join(root, "other");
+      const linkType = (yield* HostProcess.Platform) === "win32" ? "junction" : "dir";
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(second);
+        await NodeFSP.copyFile(
+          NodePath.join(first, "report.docx"),
+          NodePath.join(second, "report.docx"),
+        );
+        await NodeFSP.symlink(first, selected, linkType);
+      });
+      const h = harness(root, {
+        beforeRender: async () => {
+          await NodeFSP.unlink(selected);
+          await NodeFSP.symlink(second, selected, linkType);
+        },
+      });
+      const error = yield* h
+        .provide(
+          replaceDocxTextForInvocation(input(revision, { sourcePath: "selected/report.docx" })),
+        )
+        .pipe(Effect.flip);
+      expect(error.code).toBe("source-changed");
+      expect(h.store.abandonProduction).toHaveBeenCalledOnce();
+      expect(h.store.publishPdf).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("returns the saved outputs without presenting into a different workspace", () =>
+    Effect.gen(function* () {
+      const { root, revision } = yield* project();
+      const h = harness(root, { changeWorkspaceAfterWrites: true });
+      const result = yield* h.provide(replaceDocxTextForInvocation(input(revision)));
+      expect(result.warnings).toContain("presentation-unavailable");
+      expect(h.present).not.toHaveBeenCalled();
+      expect(yield* exists(root, result.outputPath)).toBe(true);
+      expect(yield* exists(root, result.pdfOutputPath)).toBe(true);
+    }),
+  );
+
   it.effect("works only on the revision the caller named, and only into a new copy", () =>
     Effect.gen(function* () {
       const { root, revision } = yield* project();
@@ -323,6 +410,14 @@ describe("Word tracked replacement tool", () => {
         .provide(replaceDocxTextForInvocation(input(revision, { outputPath: alias })))
         .pipe(Effect.flip);
       expect(aliased.code).toBe("invalid-output-path");
+      const pdfAlias = "docs/source-alias.pdf";
+      yield* Effect.promise(() =>
+        NodeFSP.link(NodePath.join(root, "docs/report.docx"), NodePath.join(root, pdfAlias)),
+      );
+      const aliasedPdf = yield* h
+        .provide(replaceDocxTextForInvocation(input(revision, { pdfOutputPath: pdfAlias })))
+        .pipe(Effect.flip);
+      expect(aliasedPdf.code).toBe("invalid-output-path");
       const escaping = yield* h
         .provide(replaceDocxTextForInvocation(input(revision, { outputPath: "../outside.docx" })))
         .pipe(Effect.flip);
@@ -333,6 +428,11 @@ describe("Word tracked replacement tool", () => {
       expect(
         yield* Effect.promise(async () =>
           bytesRevision(await NodeFSP.readFile(NodePath.join(root, alias))),
+        ),
+      ).toBe(revision);
+      expect(
+        yield* Effect.promise(async () =>
+          bytesRevision(await NodeFSP.readFile(NodePath.join(root, pdfAlias))),
         ),
       ).toBe(revision);
     }),

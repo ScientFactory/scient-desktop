@@ -99,32 +99,67 @@ export interface PdfCheck {
 
 interface Located {
   readonly page: number;
+  readonly offset: number;
   readonly item: PdfTextItem;
 }
 
 const strip = (value: string) => value.replace(/\s+/gu, "");
 
-function locate(layout: PdfLayout, needle: string): ReadonlyArray<Located> {
-  const wanted = strip(needle);
-  const found: Located[] = [];
-  layout.pages.forEach((items, page) => {
-    let stream = "";
-    const owner: number[] = [];
-    items.forEach((item, index) => {
-      for (const c of strip(item.str)) {
-        stream += c;
-        for (let unit = 0; unit < c.length; unit += 1) owner.push(index);
-      }
-    });
-    for (let at = stream.indexOf(wanted); at !== -1; at = stream.indexOf(wanted, at + 1)) {
-      found.push({ page, item: items[owner[at]!]! });
-    }
+function indexPage(items: ReadonlyArray<PdfTextItem>) {
+  let end = 0;
+  const ends: number[] = [];
+  const pieces = items.map((item) => {
+    const piece = strip(item.str);
+    end += piece.length;
+    ends.push(end);
+    return piece;
   });
+  return {
+    text: pieces.join(""),
+    itemAt: (offset: number) => items[ends.findIndex((end) => offset < end)]!,
+  };
+}
+
+function locate(pages: ReadonlyArray<ReturnType<typeof indexPage>>, needle: string) {
+  const found: Located[] = [];
+  if (needle === "") return found;
+  for (const [page, { text, itemAt }] of pages.entries()) {
+    for (
+      let offset = text.indexOf(needle);
+      offset !== -1;
+      offset = text.indexOf(needle, offset + 1)
+    ) {
+      found.push({ page, offset, item: itemAt(offset) });
+      if (found.length > 1) return found;
+    }
+  }
   return found;
 }
 
 const sameLine = (a: PdfTextItem, b: PdfTextItem) =>
   Math.abs(a.y - b.y) <= Math.max(a.size, b.size) * 0.5;
+
+function editIsPlaced(original: PdfTextItem, deleted: PdfTextItem, inserted: PdfTextItem) {
+  if (!sameLine(deleted, original)) return false;
+  const onSameLine = sameLine(inserted, deleted);
+  const tolerance = Math.max(original.size, deleted.size, inserted.size) * 1.5;
+  const left = onSameLine ? Math.min(deleted.x, inserted.x) : deleted.x;
+  const right = onSameLine
+    ? Math.max(deleted.x + deleted.width, inserted.x + inserted.width)
+    : deleted.x + deleted.width;
+  if (left > original.x + original.width + tolerance || right < original.x - tolerance)
+    return false;
+  if (onSameLine) {
+    if (inserted === deleted) return true;
+    const gap = Math.min(
+      Math.abs(inserted.x - (deleted.x + deleted.width)),
+      Math.abs(deleted.x - (inserted.x + inserted.width)),
+    );
+    return gap <= tolerance;
+  }
+  const drop = deleted.y - inserted.y;
+  return drop > 0 && drop <= Math.max(inserted.size, deleted.size) * 2.5;
+}
 
 const pageSignature = (items: ReadonlyArray<PdfTextItem>) =>
   JSON.stringify(items.map((item) => [item.str, Math.round(item.x * 10), Math.round(item.y * 10)]));
@@ -151,39 +186,38 @@ export function checkPdfPlacement(
 ): PdfPlacement {
   const checks: PdfCheck[] = [];
   checks.push({ id: "pdf-page-count", passed: source.pages.length === candidate.pages.length });
-  const original = locate(source, find);
+  const needle = strip(find);
+  const addition = strip(replace);
+  const sourcePages = source.pages.map(indexPage);
+  const candidatePages = candidate.pages.map(indexPage);
+  const original = locate(sourcePages, needle);
   checks.push({ id: "pdf-source-text-located", passed: original.length === 1 });
-  const deleted = locate(candidate, find);
-  const sourceReplacements = locate(source, replace).length;
-  const inserted = locate(candidate, replace);
-  const at = original[0];
-  const shown =
-    at !== undefined &&
-    deleted.length === 1 &&
-    deleted[0]!.page === at.page &&
-    inserted.length === sourceReplacements + 1 &&
-    inserted.some((entry) => entry.page === at.page);
-  checks.push({ id: "pdf-tracked-text-shown", passed: shown });
-
-  let placed = false;
-  if (shown) {
-    const del = deleted[0]!.item;
-    placed =
-      sameLine(del, at.item) &&
-      inserted.some(({ page, item }) => {
-        if (page !== at.page) return false;
-        if (sameLine(item, del)) {
-          const gap = Math.min(
-            Math.abs(item.x - (del.x + del.width)),
-            Math.abs(del.x - (item.x + item.width)),
-          );
-          return gap <= Math.max(item.size, del.size) * 1.5;
-        }
-        const drop = del.y - item.y;
-        return drop > 0 && drop <= Math.max(item.size, del.size) * 2.5;
+  const at = original.length === 1 ? original[0] : undefined;
+  const editedPage = at === undefined ? undefined : candidatePages[at.page];
+  const edits: Array<{ deleted: PdfTextItem; inserted: PdfTextItem }> = [];
+  if (at !== undefined && editedPage !== undefined && addition !== "") {
+    const { offset } = at;
+    const span = editedPage.text.slice(offset, offset + needle.length + addition.length);
+    if (span === needle + addition) {
+      edits.push({
+        deleted: editedPage.itemAt(offset),
+        inserted: editedPage.itemAt(offset + needle.length),
       });
+    }
+    if (span === addition + needle) {
+      edits.push({
+        deleted: editedPage.itemAt(offset + addition.length),
+        inserted: editedPage.itemAt(offset),
+      });
+    }
   }
-  checks.push({ id: "pdf-edit-placement", passed: placed });
+  checks.push({ id: "pdf-tracked-text-shown", passed: edits.length > 0 });
+  checks.push({
+    id: "pdf-edit-placement",
+    passed:
+      at !== undefined &&
+      edits.some(({ deleted, inserted }) => editIsPlaced(at.item, deleted, inserted)),
+  });
 
   const earlier =
     at !== undefined &&
@@ -192,21 +226,19 @@ export function checkPdfPlacement(
       .every((items, page) => pageSignature(items) === pageSignature(candidate.pages[page] ?? []));
   checks.push({ id: "pdf-earlier-pages-unchanged", passed: earlier });
 
-  const whole = (layout: PdfLayout) =>
-    layout.pages.map((items) => items.map((item) => strip(item.str)).join("")).join("");
-  const sourceText = whole(source);
-  const candidateText = whole(candidate);
-  const needle = strip(find);
-  const index = sourceText.indexOf(needle);
-  const addition = strip(replace);
+  const sourceText = sourcePages.map(({ text }) => text).join("");
+  const candidateText = candidatePages.map(({ text }) => text).join("");
+  const index =
+    at === undefined
+      ? -1
+      : sourcePages.slice(0, at.page).reduce((sum, { text }) => sum + text.length, at.offset);
   const sequence =
     index !== -1 &&
-    sourceText.indexOf(needle, index + 1) === -1 &&
-    (candidateText ===
-      sourceText.slice(0, index + needle.length) +
-        addition +
-        sourceText.slice(index + needle.length) ||
-      candidateText === sourceText.slice(0, index) + addition + sourceText.slice(index));
+    addition !== "" &&
+    [index, index + needle.length].some(
+      (offset) =>
+        candidateText === sourceText.slice(0, offset) + addition + sourceText.slice(offset),
+    );
   checks.push({ id: "pdf-text-sequence-preserved", passed: sequence });
   checks.push({ id: "pdf-fonts-embedded", passed: candidate.unembeddedFonts.length === 0 });
   return {

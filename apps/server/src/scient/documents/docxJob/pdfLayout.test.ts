@@ -62,6 +62,20 @@ describe("PDF placement of a tracked replacement", () => {
     expect(failed(result)).toEqual([]);
   });
 
+  it("checks the edited span when one revision contains the other", () => {
+    const original = layout([[item("trial", 60, 600)]]);
+    const edit = (x: number) => layout([[item("trial", x, 600), item("trials", x + 30, 600)]]);
+    expect(failed(checkPdfPlacement(original, edit(60), "trial", "trials"))).toEqual([]);
+    expect(failed(checkPdfPlacement(original, edit(420), "trial", "trials"))).toEqual([
+      "pdf-edit-placement",
+    ]);
+  });
+
+  it("refuses blank search and replacement text", () => {
+    expect(checkPdfPlacement(source, source, " ", "QC-2").passed).toBe(false);
+    expect(checkPdfPlacement(source, source, "QC-1", " ").passed).toBe(false);
+  });
+
   it("names each way the render can disagree with the source", () => {
     const edited = [
       item("before", 300, 600),

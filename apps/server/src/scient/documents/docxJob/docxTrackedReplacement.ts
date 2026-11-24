@@ -44,7 +44,7 @@ export type DocxEditRefusal =
 const tag = (token: XmlToken | undefined) =>
   token?.kind === "open" || token?.kind === "empty" ? token : undefined;
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 
 export const partText = (entries: ReadonlyArray<DocxEntry>, name: string): string | null => {
