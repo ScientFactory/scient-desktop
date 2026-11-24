@@ -87,14 +87,16 @@ it.live("Stop before native Droid start offer cancels the pending attempt withou
         yield* h.worker.drain(12);
         yield* h.waitFor(
           (p) =>
-            p.runs[1]?.status === "waiting" &&
+            p.runs[1]?.status === "completed" &&
             p.providerTurns.some(
               (turn) =>
                 turn.status === "completed" && turn.runAttemptId === p.runs[1]?.activeAttemptId,
             ),
         );
         yield* h.worker.drain(12);
-        const recovered = yield* h.waitFor((p) => p.runs[1]?.status === "completed");
+        const recovered = yield* h.waitFor(
+          (p) => p.runs[1]?.status === "completed" && p.runs[1].checkpointId !== null,
+        );
         assert.equal(recovered.runs[0]?.status, "interrupted");
         assert.lengthOf(promptTexts(yield* h.log), 1);
         assert.isTrue(promptTexts(yield* h.log)[0]?.endsWith("again"));

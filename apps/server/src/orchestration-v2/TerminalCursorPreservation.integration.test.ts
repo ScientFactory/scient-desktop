@@ -285,7 +285,10 @@ it.live(
             yield* sessions.closeInstance(instanceId);
             yield* create(sourceId);
             yield* send(sourceId, "real-source");
-            yield* waitFor(sourceId, (p) => p.runs[0]?.status === "completed");
+            yield* waitFor(
+              sourceId,
+              (p) => p.runs[0]?.status === "completed" && p.runs[0].checkpointId !== null,
+            );
             yield* (yield* OrchestrationEffectWorkerV2).drain();
             const source = yield* orchestrator.getThreadProjection(sourceId);
             const target = yield* orchestrator.getThreadProjection(targetId);

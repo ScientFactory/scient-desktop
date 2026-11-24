@@ -575,7 +575,10 @@ it.live.each(
                 projection.providerTurns.some((turn) => turn.status === "running"),
             );
           } else {
-            yield* waitFor(source, (projection) => projection.runs.at(-1)?.status === "completed");
+            yield* waitFor(source, (projection) => {
+              const run = projection.runs.at(-1);
+              return run?.status === "completed" && run.checkpointId !== null;
+            });
           }
           if (sourceDaemon !== undefined) yield* Fiber.interrupt(sourceDaemon);
         }

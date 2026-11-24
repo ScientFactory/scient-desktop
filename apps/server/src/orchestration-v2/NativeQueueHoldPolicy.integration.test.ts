@@ -1477,10 +1477,9 @@ it.live("normal native completion automatically drains queued messages in FIFO o
         )!;
         assert.equal(answer.text, "Persisted native foreground answer");
         assert.isFalse(answer.streaming);
-        assert.equal(
-          parked.runs.find((run) => run.id === foreground.input.runId)!.status,
-          "waiting",
-        );
+        const parkedRun = parked.runs.find((run) => run.id === foreground.input.runId)!;
+        assert.equal(parkedRun.status, "completed");
+        assert.isNull(parkedRun.checkpointId);
         const root = parked.nodes.find((node) => node.id === foreground.input.rootNodeId)!;
         const scope = parked.checkpointScopes.find((row) => row.id === root.checkpointScopeId)!;
         assert.isFalse(
@@ -1915,11 +1914,10 @@ it.live(
             );
             yield* assertHeld(`${label} started`);
             yield* started.settle("completed");
-            yield* waitFor(
-              (projection) =>
-                projection.runs.find((run) => run.id === started.input.runId)?.status ===
-                "completed",
-            );
+            yield* waitFor((projection) => {
+              const run = projection.runs.find((run) => run.id === started.input.runId);
+              return run?.status === "completed" && run.checkpointId !== null;
+            });
             yield* assertHeld(`${label} completed`);
           }
           assert.deepEqual(
@@ -3065,7 +3063,8 @@ it.live.each(
             (entry) =>
               entry.event.type === "run.updated" &&
               entry.event.payload.id === foreground.input.runId &&
-              entry.event.payload.status === "completed",
+              entry.event.payload.status === "completed" &&
+              entry.event.payload.checkpointId !== null,
           ).length,
           1,
         );
@@ -3177,11 +3176,10 @@ it.live(
           const capturedContent = "Captured native output survives a comparison failure\n";
           yield* fs.writeFileString(`${cwd}/README.md`, capturedContent);
           yield* foreground.settle("completed");
-          const after = yield* waitFor(
-            (projection) =>
-              projection.runs.find((run) => run.id === foreground.input.runId)?.status ===
-              "completed",
-          );
+          const after = yield* waitFor((projection) => {
+            const run = projection.runs.find((run) => run.id === foreground.input.runId);
+            return run?.status === "completed" && run.checkpointId !== null;
+          });
           const checkpoint = after.checkpoints.find(
             (checkpoint) => checkpoint.runId === foreground.input.runId,
           );
@@ -3637,11 +3635,12 @@ it.live(
           );
           yield* queued.settle("completed");
           const complete = yield* waitFor((projection) =>
-            projection.runs.every((candidate) => candidate.status === "completed"),
+            projection.runs.every(
+              (candidate) => candidate.status === "completed" && candidate.checkpointId !== null,
+            ),
           );
           assert.deepEqual(refreshed, [complete.thread.projectId, complete.thread.projectId]);
           assert.deepEqual(offers, ["first", "waiting"]);
-          assert.ok(complete.runs.every((candidate) => candidate.checkpointId !== null));
         }),
     ).pipe(
       Effect.provideService(RunFinalizationObserver, {
@@ -3827,6 +3826,41 @@ it.live(
                   message: "Historical owner Stop",
                 },
               })),
+            });
+            // A historical Stop was answered; an unanswered one would stop this run (T3 #41685).
+            const historicalResultId = (yield* IdAllocatorV2).derive.runSignalTurnItem({
+              runId: foreground.input.runId,
+              signal: "interrupt-result",
+            });
+            yield* (yield* EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make(`${threadId}:historical-Stop-result`),
+                  type: "turn-item.updated" as const,
+                  threadId,
+                  runId: foreground.input.runId,
+                  providerInstanceId: active.runs[0]!.providerInstanceId,
+                  occurredAt: historicalAt,
+                  payload: {
+                    id: historicalResultId,
+                    nodeId: NodeId.make(`${threadId}:historical-root`),
+                    providerTurnId: null,
+                    threadId,
+                    runId: foreground.input.runId,
+                    providerThreadId: nativeTurn.providerThreadId,
+                    nativeItemRef: null,
+                    parentItemId: historicalStopId,
+                    ordinal: Math.max(...active.turnItems.map((item) => item.ordinal)) + 3,
+                    status: "interrupted" as const,
+                    title: "Interrupted",
+                    startedAt: historicalAt,
+                    completedAt: historicalAt,
+                    updatedAt: historicalAt,
+                    type: "run_interrupt_result" as const,
+                    message: "Historical owner Stop",
+                  },
+                },
+              ],
             });
             const messageId = MessageId.make(`${threadId}:original-queued-message`);
             const attachment = {
@@ -4273,7 +4307,7 @@ it.live(
                 yield* first.settle("completed");
                 yield* trace.at(
                   "initial-A-waiting",
-                  waitFor((p) => p.runs[0]?.status === "waiting"),
+                  waitFor((p) => p.runs[0]?.status === "completed"),
                 );
                 yield* trace.capture("A-checkpoint-before-drain", { offers });
                 const draining = yield* trace
@@ -4395,7 +4429,7 @@ it.live(
                   "B-waiting",
                   waitFor(
                     (p) =>
-                      p.runs.find((run) => run.id === second.input.runId)?.status === "waiting",
+                      p.runs.find((run) => run.id === second.input.runId)?.status === "completed",
                   ),
                 );
                 yield* trace.capture("B-checkpoint-before-drain", { offers });
@@ -4436,7 +4470,8 @@ it.live(
                 yield* trace.at(
                   "returned-A-waiting",
                   waitFor(
-                    (p) => p.runs.find((run) => run.id === third.input.runId)?.status === "waiting",
+                    (p) =>
+                      p.runs.find((run) => run.id === third.input.runId)?.status === "completed",
                   ),
                 );
                 yield* trace.capture("returned-A-checkpoint-before-drain", { offers });
@@ -4444,7 +4479,9 @@ it.live(
                 yield* trace.capture("returned-A-checkpoint-after-drain", { offers });
                 const completed = yield* trace.at(
                   "final-runs-completed",
-                  waitFor((p) => p.runs.every((run) => run.status === "completed")),
+                  waitFor((p) =>
+                    p.runs.every((run) => run.status === "completed" && run.checkpointId !== null),
+                  ),
                 );
                 const checkpointReturnA = completed.checkpoints.find(
                   (row) =>
@@ -4828,12 +4865,13 @@ it.live(
                 yield* offer.answer(`${output} answer`);
                 yield* offer.settle("completed");
                 yield* waitFor(
-                  (p) => p.runs.find((run) => run.id === offer.input.runId)?.status === "waiting",
-                );
-                yield* worker.drain(12);
-                const projection = yield* waitFor(
                   (p) => p.runs.find((run) => run.id === offer.input.runId)?.status === "completed",
                 );
+                yield* worker.drain(12);
+                const projection = yield* waitFor((p) => {
+                  const run = p.runs.find((run) => run.id === offer.input.runId);
+                  return run?.status === "completed" && run.checkpointId !== null;
+                });
                 const checkpoint = projection.checkpoints.find(
                   (row) =>
                     row.id ===
@@ -5131,7 +5169,7 @@ it.live.each(["failed", "interrupted"] as const)(
             assert.equal(retry.input.runtimePolicy.cwd, preparedCwd);
             yield* retry.settle("completed");
             yield* waitFor((projection) =>
-              projection.runs.some((run) => run.id === preparing.id && run.status === "waiting"),
+              projection.runs.some((run) => run.id === preparing.id && run.status === "completed"),
             );
             yield* worker.drain();
             // The terminal listener commits queue promotion after checkpoint

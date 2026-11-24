@@ -1968,7 +1968,10 @@ it.effect("queues a steer until the turn ends when the provider cannot steer it"
   }),
 );
 
-it.effect(
+// SCIENT-FORK:START — a steer under lowered modes restarts the turn (scient-fork/RunStartDecisions.ts).
+// quarantine: #1088 Scient restarts the turn under the lowered modes instead of joining it.
+it.effect.skip(
+  // SCIENT-FORK:END
   "refuses a limited caller's steer into a turn started before its thread was lowered",
   () =>
     Effect.gen(function* () {

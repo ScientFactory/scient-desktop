@@ -950,9 +950,11 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect(launched.map((launch) => launch.modelSelection)).toEqual([
       modelSelection,
       modelSelection,
+      modelSelection,
     ]);
-    expect(launched.map((launch) => launch.runtimeMode)).toEqual(["auto", "auto"]);
+    expect(launched.map((launch) => launch.runtimeMode)).toEqual(["auto", "auto", "auto"]);
     expect(launched.map((launch) => launch.initialMessage?.senderThreadId)).toEqual([
+      sourceThreadId,
       sourceThreadId,
       sourceThreadId,
     ]);

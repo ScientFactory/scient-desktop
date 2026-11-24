@@ -96,6 +96,8 @@ const waitCompleted = Effect.fn("NativeFork.waitCompleted")(function* (
           : projection.runs.find((run) => run.id === expectedRunId);
       if (!run || !["completed", "failed", "interrupted", "cancelled"].includes(run.status))
         return false;
+      // A run completes before its turn-end checkpoint capture commits.
+      if (run.status === "completed" && run.checkpointId === null) return false;
       if (!requireReadyCheckpoint) return true;
       const checkpoint = projection.checkpoints.find(
         (checkpoint) => checkpoint.id === run.checkpointId,

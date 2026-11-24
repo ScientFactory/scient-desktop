@@ -6744,6 +6744,8 @@ describe("orchestration v2 provider switching", () => {
           yield* orchestrator.dispatch(commands[0]!);
           yield* orchestrator.dispatch(commands[1]!);
           yield* waitForIdle(threadId);
+          // The run completes before its checkpoint capture; let the capture finish first.
+          yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
           yield* orchestrator.dispatch(commands[2]!);
           assert.deepEqual(
             (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
