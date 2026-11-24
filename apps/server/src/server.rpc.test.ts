@@ -113,7 +113,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           });
           const wsTicketBody = yield* responseJsonEffect<{
             readonly ticket: string;
+            readonly expiresAt: string;
           }>(wsTicketResponse);
+          assert.equal(wsTicketResponse.status, 200);
+          assert.equal(typeof wsTicketBody.ticket, "string");
+          assert.isTrue(wsTicketBody.ticket.length > 0);
+          assert.equal(typeof wsTicketBody.expiresAt, "string");
           const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}&wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
 
           const response = yield* Effect.scoped(

@@ -232,30 +232,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.scoped, Effect.provide(NodeHttpServerTestWithWsDeflate)),
     );
 
-    it.effect("issues short-lived websocket tickets for authenticated bearer sessions", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const bearerToken = yield* getAuthenticatedBearerSessionToken();
-        const wsTicketUrl = yield* getHttpServerUrl("/api/auth/websocket-ticket");
-        const wsTicketResponse = yield* fetchEffect(wsTicketUrl, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${bearerToken}`,
-          },
-        });
-        const wsTicketBody = yield* responseJsonEffect<{
-          readonly ticket: string;
-          readonly expiresAt: string;
-        }>(wsTicketResponse);
-
-        assert.equal(wsTicketResponse.status, 200);
-        assert.equal(typeof wsTicketBody.ticket, "string");
-        assert.isTrue(wsTicketBody.ticket.length > 0);
-        assert.equal(typeof wsTicketBody.expiresAt, "string");
-      }).pipe(Effect.provide(NodeHttpServerTest)),
-    );
-
     it.effect("does not allow management-only access tokens to operate the environment", () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest();
