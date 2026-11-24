@@ -293,6 +293,40 @@ describe("sweep", () => {
     }
   });
 
+  it("deletes project-specific outputs only at their own path, and keeps logs", () => {
+    const fixture = makeFixture();
+    NodeFS.writeFileSync(
+      NodePath.join(fixture.repo, ".git", "info", "exclude"),
+      "export-assets/\n.logs/\ndev-app.log\n",
+    );
+    const generated = fixture.add("generated-output");
+    // As in the real repository, the package around the output has tracked files.
+    const agentPackage = NodePath.join(generated, "packages", "coding-agent");
+    NodeFS.mkdirSync(agentPackage, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(agentPackage, "package.json"), "{}");
+    sh(generated, "add", "packages");
+    sh(generated, "commit", "-q", "-m", "package");
+    ageCheckout(generated);
+    const exportDir = NodePath.join(agentPackage, "export-assets");
+    NodeFS.mkdirSync(exportDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(exportDir, "viewer.js"), "built");
+    const stray = fixture.add("stray-export-assets");
+    NodeFS.mkdirSync(NodePath.join(stray, "export-assets"));
+    NodeFS.writeFileSync(NodePath.join(stray, "export-assets", ".env.local"), "SECRET=1");
+    const logs = fixture.add("logs");
+    NodeFS.mkdirSync(NodePath.join(logs, ".logs"));
+    NodeFS.writeFileSync(NodePath.join(logs, ".logs", "incident-handoff.md"), "notes");
+    const devLog = fixture.add("dev-log");
+    NodeFS.mkdirSync(NodePath.join(devLog, "dev-app.log"));
+    NodeFS.writeFileSync(NodePath.join(devLog, "dev-app.log", "session-trace.json"), "{}");
+    assert.deepEqual(actions(sweep(options(fixture), { listProcesses: noProcesses })), {
+      "dev-log": "keep",
+      "generated-output": "remove",
+      logs: "keep",
+      "stray-export-assets": "keep",
+    });
+  });
+
   it("sees processes and threads that name the checkout through a root alias", () => {
     const fixture = makeFixture();
     const alias = NodePath.join(fixture.root, "alias");

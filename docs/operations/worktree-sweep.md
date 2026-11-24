@@ -30,14 +30,17 @@ Checked in this order; the first match wins:
    projects, so the owner removes it by hand after reviewing them.
 7. A nested repository anywhere inside it, bare or not and in any letter case (the folder is
    walked, since Git doesn't always list one), a folder that can't be read, or ignored files other
-   than rebuildable outputs and symlinks, for example `.env.local`, notes or an older dev app's
-   `.t3/userdata`. Git would delete them with the checkout. The rebuildable list (`DISPOSABLE` in
-   the script) comes from the ignored entries actually found across the owner's checkouts:
-   `node_modules`, `dist*`, `build`, `out`, `target`, caches, generated files, logs, and a `.t3`
-   folder holding only setup marker files.
+   than rebuildable outputs and symlinks, for example `.env.local`, notes, logs or an older dev
+   app's `.t3/userdata`. Git would delete them with the checkout. Rebuildable means conventional
+   build and cache folders anywhere (`node_modules`, `dist*`, `build`, `out`, `target`,
+   `coverage`, `.next`, `.turbo`, `.vite`, `.vitest`, `.cache`, `.astro`, `__pycache__`,
+   `.electron-runtime`), generated outputs only at the exact path their generator writes, and a
+   `.t3` folder holding only setup marker files. A secret saved inside a conventional build folder
+   would still be removed with it.
 
-If `ps`, `lsof` or the database can't be read, the sweep stops instead of guessing. A checkout
-that can't be inspected is kept and reported, and the others still run.
+If `ps`, `lsof` or the database can't be read at the start, the sweep stops before removing
+anything. If a check fails later, for one checkout or during its recheck, that checkout is kept
+and reported, and the others still run.
 
 ## What it removes
 

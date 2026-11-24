@@ -227,33 +227,40 @@ function usedByProcess(spellings, processes) {
 
 // Ignored entries git would delete with the checkout. Only rebuildable outputs and
 // symlinks may go; anything else (notes, .env.local, a nested repo) keeps it.
-const DISPOSABLE = new Set([
+// Conventional build and tool-cache folders, anywhere in the tree (folders only).
+const DISPOSABLE_DIRS = new Set([
   "__pycache__",
   ".astro",
   ".cache",
-  ".generated",
-  ".logs",
-  ".pytest_cache",
-  ".DS_Store",
   ".electron-runtime",
   ".next",
+  ".pytest_cache",
   ".turbo",
   ".vite",
   ".vitest",
   "build",
   "coverage",
-  "dev-app.log",
   "dist",
   "dist-electron",
-  "export-assets",
-  "extension.generated.json",
   "node_modules",
   "out",
   "target",
-  "whisper-runtime",
 ]);
-const DISPOSABLE_PATTERNS = [/\.tsbuildinfo$/u, /\.bun-build$/u, /^pi_natives\..+\.node$/u];
-const DISPOSABLE_PATHS = new Set([".vite-hooks/_"]);
+// Project-specific outputs, only at the path their generator writes, with their type.
+const DISPOSABLE_PATHS = new Map([
+  [".generated", "dir"],
+  [".vite-hooks/_", "dir"],
+  ["apps/mobile/.generated", "dir"],
+  ["native/whisper-runtime", "dir"],
+  ["packages/coding-agent/export-assets", "dir"],
+  ["packages/coding-agent/src/tools/browser/relay/extension.generated.json", "file"],
+]);
+const DISPOSABLE_FILE_PATTERNS = [
+  /(?:^|\/)\.DS_Store$/u,
+  /\.tsbuildinfo$/u,
+  /\.bun-build$/u,
+  /^packages\/natives\/native\/pi_natives\.[^/]+\.node$/u,
+];
 
 // `.t3/` holds setup markers, but older dev apps kept their database there too.
 const SETUP_MARKERS = new Set(["setup-running", "setup-done", "setup-failed"]);
@@ -302,11 +309,10 @@ function disposable(relative, absolute, stats) {
       (file) => file.isFile() && SETUP_MARKERS.has(file.name),
     );
   }
-  return (
-    DISPOSABLE.has(name) ||
-    DISPOSABLE_PATHS.has(relative) ||
-    DISPOSABLE_PATTERNS.some((pattern) => pattern.test(name))
-  );
+  const pathKind = DISPOSABLE_PATHS.get(relative);
+  if (pathKind) return pathKind === "dir" ? stats.isDirectory() : stats.isFile();
+  if (stats.isDirectory()) return DISPOSABLE_DIRS.has(name);
+  return stats.isFile() && DISPOSABLE_FILE_PATTERNS.some((pattern) => pattern.test(relative));
 }
 
 export function keptIgnoredEntries(checkout, statusOutput) {
