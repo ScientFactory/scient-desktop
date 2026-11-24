@@ -60,6 +60,7 @@ jobs:
           run-install: |
             args:
               - --filter=t3...
+              - --filter=@t3tools/scripts...
 
       # Libraries the official Linux build loads even when headless.
       - name: Install LibreOffice runtime libraries
@@ -71,6 +72,7 @@ jobs:
             libx11-xcb1 libcairo2 libglib2.0-0t64 fontconfig
 
       - name: Provision the pinned LibreOffice
+        id: office
         run: |
           set -euo pipefail
           node scripts/document-lab-office.mjs provision --dest "$RUNNER_TEMP/office" > "$RUNNER_TEMP/office.json"
@@ -88,6 +90,7 @@ jobs:
 
       # The suite skips without SCIENT_DOCUMENT_LAB_SOFFICE; a skip must not pass as a run.
       - name: Run the real-engine cases
+        if: ${{ !cancelled() && steps.office.outcome == 'success' }}
         working-directory: apps/server
         run: |
           set -euo pipefail
