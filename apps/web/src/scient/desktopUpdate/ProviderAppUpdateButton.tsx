@@ -1,4 +1,3 @@
-import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import type { DesktopBridge, EnvironmentId } from "@t3tools/contracts";
 import { T, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
@@ -8,7 +7,6 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { Button } from "~/components/ui/button";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import { usePrimaryEnvironmentId } from "~/state/environments";
-import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 
 import { checkForDesktopUpdate, downloadLocalUpdate } from "./desktopUpdateActions";
 import { resolveProviderAppUpdateAction } from "./providerAppUpdate.logic";
@@ -38,7 +36,6 @@ export function ProviderAppUpdateButton({
 function DesktopAppUpdateButton({ bridge }: { readonly bridge: DesktopBridge }) {
   const state = useDesktopUpdateState();
   const messages = useMessages();
-  const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy(), messages);
   const [pending, setPending] = useState(false);
   const readyNotice = useRef<ScientUpdateReadyNoticeHandle | null>(null);
   const action = resolveProviderAppUpdateAction(state);
@@ -84,7 +81,8 @@ function DesktopAppUpdateButton({ bridge }: { readonly bridge: DesktopBridge }) 
     } else if (action === "download") {
       await downloadLocalUpdate(bridge);
     } else {
-      await checkForDesktopUpdate(bridge, updatesDenial);
+      // The check reports a refused update itself, in the updater state's message.
+      await checkForDesktopUpdate(bridge, undefined);
     }
     setPending(false);
   };
