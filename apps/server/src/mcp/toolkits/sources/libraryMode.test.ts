@@ -35,9 +35,10 @@ import {
   updateScientSourceMetadata,
 } from "@scientfactory/scient-sources/store";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { vi } from "vite-plus/test";
 import { ScientSourceAgentDetail, ScientSourcesLibraryToolkit } from "./tools.ts";
 
 import { ServerConfig } from "../../../config.ts";
@@ -95,6 +96,28 @@ import {
   updateLibrarySourceForInvocation,
 } from "./handlers.ts";
 
+// Public abstract services answer as for an unknown DOI (HTTP 404); any other request is an escape.
+const metadataRequests = vi.hoisted(() => ({ abstracts: [] as string[], escaped: [] as string[] }));
+vi.mock("../../../scient/sources/metadataHttp.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../scient/sources/metadataHttp.ts")>();
+  const abstractHosts = new Set(["api.crossref.org", "www.ebi.ac.uk", "api.openalex.org"]);
+  const noRecord = async (url: URL): Promise<never> => {
+    (abstractHosts.has(url.hostname) ? metadataRequests.abstracts : metadataRequests.escaped).push(
+      url.href,
+    );
+    throw new Error("The metadata service returned HTTP 404.");
+  };
+  return {
+    ...actual,
+    requestMetadata: async (url: URL) => {
+      metadataRequests.escaped.push(url.href);
+      return { status: 404, body: "", url };
+    },
+    requestMetadataText: noRecord,
+    requestMetadataJson: noRecord,
+  };
+});
+
 const fixtures: string[] = [];
 const environmentId = EnvironmentId.make("environment-sources-library");
 const threadId = ThreadId.make("thread-sources-library");
@@ -105,6 +128,8 @@ afterEach(async () => {
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
+  metadataRequests.abstracts.splice(0);
+  expect(metadataRequests.escaped.splice(0)).toEqual([]);
 });
 
 async function setup() {
@@ -282,6 +307,13 @@ const addSource = (fixture: Fixture, title: string, doi: string, pdfRelativePath
       ...(pdfRelativePath ? { pdfRelativePath } : {}),
     }),
     fixture,
+  ).pipe(
+    // The omitted `enrich` option still asks for the missing abstract.
+    Effect.tap(() =>
+      Effect.sync(() =>
+        expect(metadataRequests.abstracts).toContain(`https://api.crossref.org/works/${doi}`),
+      ),
+    ),
   );
 
 describe("Sources tools on the library backend", () => {
