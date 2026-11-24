@@ -38,7 +38,7 @@ class _WorkSpent(Exception):
 class _Matcher(SequenceMatcher):
 
     def __init__(self, a, b, allowance):
-        self.allowance = allowance  
+        self.allowance = allowance
         super().__init__(None, a, b, autojunk=False)
 
     def find_longest_match(self, alo=0, ahi=None, blo=0, bhi=None):
@@ -98,7 +98,7 @@ class RedliningValidator:
                             f"FAILED - Error parsing {part} of the {side} document: {e}"
                         )
                 if len(roots) < len(sides):
-                    continue  
+                    continue
                 new_changes, original_text, modified_text = self._compare_part(*roots)
                 change_count += len(new_changes)
                 if modified_text != original_text:
@@ -214,7 +214,7 @@ class RedliningValidator:
         for key, elems in by_group.items():
             rebuilt = text_of(elems)
             if rebuilt and rebuilt == text_of(unmatched_original.get(key, [])):
-                continue  
+                continue
             new.update(elems)
         return new
 
@@ -246,7 +246,7 @@ class RedliningValidator:
             body = part == "word/document.xml"
             heading = "Differences:" if body else f"Differences in {part}:"
             if error_parts[-1]:
-                error_parts.append("")  
+                error_parts.append("")
             word_diff = self._word_diff(original_text, modified_text)
             error_parts.extend([heading, "=" * len(heading), word_diff])
             if original_text.replace("\n", "") == modified_text.replace("\n", ""):
@@ -437,7 +437,7 @@ class RedliningValidator:
             return "{%s}" % name if self.PAGE_NUMBER.fullmatch(result) else result
 
         parts, fields = [], []
-        skipped = set()  
+        skipped = set()
 
         def sink():
             for *_, result in reversed(fields):

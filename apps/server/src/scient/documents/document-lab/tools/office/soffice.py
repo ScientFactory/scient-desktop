@@ -104,7 +104,7 @@ def _without_outside_links(arg: str, folder: Path) -> str:
     if not os.path.isfile(arg) or not zipfile.is_zipfile(arg):
         return arg
     with open(arg, "rb") as file:
-        if file.read(4) != b"PK\x03\x04":  
+        if file.read(4) != b"PK\x03\x04":
             return arg
     with zipfile.ZipFile(arg) as package:
         cut = {}
@@ -112,7 +112,7 @@ def _without_outside_links(arg: str, folder: Path) -> str:
             if member.filename.lower().endswith(".rels"):
                 try:
                     data = package.read(member) if member.file_size <= _MAX_RELS_BYTES else None
-                except Exception:  
+                except Exception:
                     data = None
                 rels = _NO_RELS if data is None else _cut_outside_links(data)
                 if rels is not None:
@@ -126,7 +126,7 @@ def _without_outside_links(arg: str, folder: Path) -> str:
                 entry = zipfile.ZipInfo(member.filename, member.date_time)
                 entry.compress_type = member.compress_type
                 if member.filename in cut:
-                    entry.compress_type = zipfile.ZIP_DEFLATED  
+                    entry.compress_type = zipfile.ZIP_DEFLATED
                     out.writestr(entry, cut[member.filename])
                 else:
                     with package.open(member) as source, out.open(entry, "w", force_zip64=True) as target:

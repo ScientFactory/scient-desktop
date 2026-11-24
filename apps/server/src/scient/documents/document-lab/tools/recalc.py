@@ -85,7 +85,7 @@ def setup_libreoffice_macro(profile_dir: Path, timeout=30):
 
 
 def _existing_cells(ws):
-    if not hasattr(ws, "iter_rows"):  
+    if not hasattr(ws, "iter_rows"):
         return []
     return [ws._cells[key] for key in sorted(ws._cells)]
 
@@ -94,7 +94,7 @@ def _is_workbook(path):
     try:
         with zipfile.ZipFile(path) as archive:
             return _workbook_part(archive) is not None
-    except Exception:  
+    except Exception:
         return False
 
 
@@ -122,10 +122,10 @@ def _has_formulas(path):
                 plain = raw.replace(b"\x00", b"") if b"\x00" in raw[:64] else raw
                 if re.search(rb"<(?:\w+:)?f[\s/>]", plain):
                     return True
-                if b"<!" not in plain:  
-                    expat.ParserCreate().Parse(raw, True)  
+                if b"<!" not in plain:
+                    expat.ParserCreate().Parse(raw, True)
         return False
-    except Exception:  
+    except Exception:
         return True
 
 
@@ -154,7 +154,7 @@ def recalc(filename, timeout=30, force=False):
 
     try:
         get_soffice_env()
-    except Exception as e:  
+    except Exception as e:
         return {"error": f"Could not prepare the LibreOffice environment: {e}"}
 
     with tempfile.TemporaryDirectory(prefix="recalc-lo-", ignore_cleanup_errors=True) as work:
@@ -213,7 +213,7 @@ def _recalc_with_profile(filename, abs_path, copy, timeout, profile_dir: Path):
 
     try:
         rewritten = _stamp(copy) != before
-    except OSError:  
+    except OSError:
         rewritten = False
     if not rewritten:
         return {
@@ -226,7 +226,7 @@ def _recalc_with_profile(filename, abs_path, copy, timeout, profile_dir: Path):
 
     try:
         found = _write_values(abs_path, copy)
-    except Exception as e:  
+    except Exception as e:
         why = f"which is unchanged: {str(e) or type(e).__name__}"
         return {"error": f"Could not write the new values into {filename}, {why}"}
 
@@ -237,7 +237,7 @@ EXCEL_ERRORS = ["#VALUE!", "#DIV/0!", "#REF!", "#NAME?", "#NULL!", "#NUM!", "#N/
 
 _MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
-_CELL_REF_RE = re.compile(r"([A-Z]{1,3})([0-9]+)")  
+_CELL_REF_RE = re.compile(r"([A-Z]{1,3})([0-9]+)")
 MAX_MERGE_CHECKS = 1_000_000
 _MERGE_RE = re.compile(rb'<(?:\w+:)?mergeCell\b[^>]*\bref="([^"]*)"')
 
@@ -292,7 +292,7 @@ def _xml(data, what="an XML part"):
     try:
         from defusedxml.ElementTree import fromstring
     except ImportError:
-        _utf8_or_refuse(data, what)  
+        _utf8_or_refuse(data, what)
         if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
             raise ValueError("XML with a DTD, and defusedxml is not installed") from None
         from xml.etree.ElementTree import fromstring
@@ -322,7 +322,7 @@ def _worksheets(archive, any_namespace=False):
     workbook = _workbook_xml(archive)
     if not any_namespace and workbook.tag != f"{_MAIN_NS}workbook":
         namespace = workbook.tag.partition("}")[0].lstrip("{")
-        if "/ooxml/" in namespace:  
+        if "/ooxml/" in namespace:
             raise ValueError("it is in Strict Open XML format, which this script cannot edit")
         raise ValueError(f"its XML is in a namespace this script does not read ({namespace})")
     folder, file_name = posixpath.split(_workbook_part(archive))
@@ -335,7 +335,7 @@ def _worksheets(archive, any_namespace=False):
         rel_id = next((value for key, value in sheet.attrib.items() if key.endswith("}id")), None)
         rel = rels.get(rel_id)
         if rel is None or not rel.get("Type", "").endswith("/worksheet"):
-            continue  
+            continue
         target = rel.get("Target")
         if target.startswith("/"):
             part_name = target.lstrip("/")
@@ -448,7 +448,7 @@ def _sheet_names_too_long(filename):
     try:
         with zipfile.ZipFile(filename) as archive:
             return [name for name in _sheet_names(archive) if len(name or "") > 31]
-    except Exception:  
+    except Exception:
         return []
 
 
@@ -456,9 +456,9 @@ def _report(filename, found=None):
     try:
         try:
             error_details, formula_count = _scan_xml(filename)
-        except Exception:  
+        except Exception:
             error_details, formula_count = _scan_with_openpyxl(filename)
-    except Exception as e:  
+    except Exception as e:
         return {"error": str(e)}
 
     found = found or {}
@@ -497,7 +497,7 @@ def _report(filename, found=None):
 
 MAX_ARRAY_CELLS = 1_000_000
 
-_ATTRS = rb"""((?:[^>"']|"[^"]*"|'[^']*')*?)"""  
+_ATTRS = rb"""((?:[^>"']|"[^"]*"|'[^']*')*?)"""
 _ROW_OR_CELL_RE = re.compile(
     rb"<((?:\w+:)?)(?:row(?=[\s/>])" + _ATTRS + rb"/?>"
     rb"|c(?=[\s/>])" + _ATTRS + rb"(?:/>|>(.*?)</\1c\s*>))",
@@ -508,13 +508,13 @@ _V_RE = re.compile(rb"<(?:\w+:)?v(?=[\s/>])[^>]*?(?:/>|>(.*?)</(?:\w+:)?v\s*>)",
 _T_OR_VM_RE = re.compile(rb"""\s(?:t|vm)\s*=\s*(?:"[^"]*"|'[^']*')""")
 _EXT_LST_RE = re.compile(rb"<(?:\w+:)?extLst\b.*</(?:\w+:)?extLst\s*>", re.S)
 _NAME_ERROR = (b"e", b"#NAME?")
-_STRING_RE = re.compile(r'"[^"]*"')  
+_STRING_RE = re.compile(r'"[^"]*"')
 _QUOTED_RE = re.compile(r""""[^"]*"|'[^']*'|\[[^\[\]]*\]""")
 _CALL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\(")
-_DELIMS = r"\s+\-*/^&=<>(),;:!%{}#@~|"  
+_DELIMS = r"\s+\-*/^&=<>(),;:!%{}#@~|"
 _WORD_RE = re.compile(rf"(?<![^{_DELIMS}])[^{_DELIMS}]+(?![^{_DELIMS}]|[(!])")
 _EXTERNAL_REF_RE = re.compile(r"""(?<![\w"\[])'?\[[1-9]\d*\][^!"\[\]]*'?!""")
-_PREFIX_RE = re.compile(r"^(?:_xlfn\.|_xlws\.)+", re.I)  
+_PREFIX_RE = re.compile(r"^(?:_xlfn\.|_xlws\.)+", re.I)
 UNBALANCED = "unbalanced brackets"
 TOO_LONG = "sheet name over 31 characters"
 _STORED_BARE = frozenset(
@@ -546,7 +546,7 @@ def _attr(pattern, attrs):
 
 
 def _sheet_data_span(xml):
-    if b"<!" in xml:  
+    if b"<!" in xml:
         return None
     parser = expat.ParserCreate(namespace_separator="}")
     depth, found = [0], []
@@ -645,7 +645,7 @@ def _computed(copy_path, array_cells, names):
                     kind, text = b"str", html.escape(strings[int(text)], quote=False).encode()
                 f = _F_RE.search(content)
                 its_formula = (f and f[2]) or b""
-                if re.search(rb"[a-z]", its_formula):  
+                if re.search(rb"[a-z]", its_formula):
                     called = [_PREFIX_RE.sub("", n) for n in _called(_text(its_formula))]
                     if any(n != n.upper() and n.upper() in LIBREOFFICE_LACKS for n in called):
                         lacks.add((row, column))
@@ -692,7 +692,7 @@ def _text(formula):
     text = formula.decode()
     for entity, character in (("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&apos;", "'")):
         text = text.replace(entity, character)
-    return text.replace("&amp;", "&")  
+    return text.replace("&amp;", "&")
 
 
 def _called(formula):
@@ -734,7 +734,7 @@ def _names_reaching_another_workbook(archive):
         for word in _WORD_RE.findall(_QUOTED_RE.sub("", plain)):
             used_by.setdefault(word.lower(), set()).add(key)
     todo = list(reaching)
-    while todo:  
+    while todo:
         for user in used_by.get(todo.pop(), ()):
             if user not in reaching:
                 reaching.add(user)
@@ -758,9 +758,9 @@ def _splice(xml, computed, lacked, array_cells, sheet_name, reaching, found):
         content = m[4] or b""
         f = _F_RE.search(content)
         if f is None and array_cells.get((row, column)) not in filling:
-            continue  
+            continue
         v = _V_RE.search(content, f.end() if f else 0)
-        old = v and (v[1] or b"")  
+        old = v and (v[1] or b"")
         kind = _attr(_T_RE, m[3]) or b"n"
         new = computed.get((row, column))
         verdict = None
@@ -773,7 +773,7 @@ def _splice(xml, computed, lacked, array_cells, sheet_name, reaching, found):
             if text and si:
                 shared[si] = verdict
             if verdict == "lacks" and (row, column) not in lacked:
-                verdict = None  
+                verdict = None
             if _unbalanced(text):
                 found[UNBALANCED].append(where)
         if verdict or new is None or new == _NAME_ERROR:
@@ -843,7 +843,7 @@ def _write_values(path, copy_path):
         computed, lacked = _computed(copy_path, array_cells, _sheet_names(archive))
         parts, found = {}, {"#NAME?": [], UNBALANCED: [], "not_computed": []}
         for name, part_name in sheets:
-            xml = archive.read(part_name)  
+            xml = archive.read(part_name)
             if name not in computed and _F_RE.search(xml):
                 raise ValueError(
                     f"LibreOffice's copy has no sheet called {name!r}: it renames or drops some "

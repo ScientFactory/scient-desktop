@@ -253,7 +253,7 @@ def _count_slide_in_app_properties(unpacked_dir: Path, position: int) -> None:
         if not _add_slide_title(dom, was, position):
             return
     except (AttributeError, LookupError, ValueError, TypeError, OSError, ExpatError, DefusedXmlException):
-        return  
+        return
     slides.firstChild.data = str(was + 1)
     path.write_bytes(dom.toxml(encoding="UTF-8", standalone=dom.standalone))
 
