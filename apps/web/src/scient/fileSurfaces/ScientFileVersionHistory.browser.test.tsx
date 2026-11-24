@@ -15,7 +15,9 @@ const commands = vi.hoisted(() => ({
   read: vi.fn(),
   write: vi.fn(),
   resolve: vi.fn(),
+  editNotebook: vi.fn(),
 }));
+vi.mock("~/state/compute", () => ({ computeEnvironment: { notebookEdit: "editNotebook" } }));
 vi.mock("~/state/projects", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/state/projects")>();
   return {
@@ -129,6 +131,7 @@ describe("retained file history actions", () => {
     canWrite = true,
     onAcceptCurrent?: (recoveryId: string, currentRevision: string | null) => Promise<boolean>,
     canAcceptCurrent = true,
+    relativePath = "notes.md",
   ) {
     await act(
       async () =>
@@ -136,7 +139,7 @@ describe("retained file history actions", () => {
           <ScientFileVersionHistory
             environmentId={EnvironmentId.make("history-test")}
             cwd="/synthetic"
-            relativePath="notes.md"
+            relativePath={relativePath}
             canWrite={canWrite}
             onOpenFile={open}
             {...(onAcceptCurrent ? { onAcceptCurrent } : {})}
@@ -171,6 +174,42 @@ describe("retained file history actions", () => {
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
     );
   }
+
+  it("restores a large notebook history version through the server without reading it as text", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const versionId = `history:1750000000000-${"a".repeat(64)}.ipynb`;
+    commands.list.mockResolvedValue(
+      AsyncResult.success({
+        ...history,
+        versions: [
+          {
+            ...version,
+            versionId,
+            retainedPath: "/retained/analysis.ipynb",
+            byteLength: 114977932,
+          },
+        ],
+      }),
+    );
+    commands.editNotebook.mockResolvedValue(
+      AsyncResult.success({ revision: "restored", refused: [] }),
+    );
+    await mount(_fixture, true, undefined, true, "analysis.ipynb");
+    await click(_fixture, "Restore…");
+    expect(commands.editNotebook).not.toHaveBeenCalled();
+    await click(_fixture, "Restore notebook");
+    expect(commands.editNotebook).toHaveBeenCalledExactlyOnceWith({
+      environmentId: EnvironmentId.make("history-test"),
+      input: {
+        cwd: "/synthetic",
+        path: "analysis.ipynb",
+        edits: [{ _tag: "restore-file-version", versionId }],
+      },
+    });
+    expect(commands.read).not.toHaveBeenCalled();
+  });
 
   it("fetches retained evidence on each opening rather than remembering a previous session list", async () => {
     await using _fixture = _createFixture();

@@ -35,9 +35,7 @@ vi.mock("./mathReadingNodeView", async (importOriginal) => ({
   mathReadingNodeView: (props: NodeViewRendererProps, interactive: NodeViewRenderer) =>
     interactive(props),
 }));
-vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
-}));
+vi.mock("~/assets/assetUrls", () => import("./latexAssetUrls.testkit"));
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { setLatexPageMarkers } from "./latexPageMarkers";
 import { latexPagedKey, pagedLayoutSettled } from "./latexPagedGeometry";

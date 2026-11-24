@@ -25,7 +25,7 @@ import {
 } from "./scient/sourcesPermissions.ts";
 export * from "./scient/sourcesPermissions.ts";
 // Linked results write project files, so they take the file-write grant.
-import { AuthFilesystemWriteScope } from "./auth.ts";
+import { AuthFilesystemReadScope, AuthFilesystemWriteScope } from "./auth.ts";
 // SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -45,6 +45,22 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.computeResultsPlaceLatex]: AuthFilesystemWriteScope,
   [WS_METHODS.computeResultsUpdateFiles]: AuthFilesystemWriteScope,
   [WS_METHODS.computeResultsUndoUpdate]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — fresh notebooks submit work and read its status.
+  [WS_METHODS.notebookEdit]: AuthFilesystemWriteScope,
+  [WS_METHODS.notebookFreshStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notebookFreshStatus]: AuthFilesystemReadScope,
+  [WS_METHODS.notebookFreshStop]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — save views and export derived dataset files.
+  [WS_METHODS.dataSaveView]: AuthFilesystemWriteScope,
+  [WS_METHODS.dataMaterializeView]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — result package writes and verification require current grants.
+  [WS_METHODS.computeResultsExport]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsExportProgress]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsVerify]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsCancelVerification]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
   ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,
@@ -252,6 +268,18 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.guestShareCreate) {
     return [AuthAccessWriteScope, AuthOrchestrationReadScope];
   }
+  // SCIENT-FORK:START — package operations require file access and the matching Compute grant.
+  if (
+    method === WS_METHODS.computeResultsExport ||
+    method === WS_METHODS.computeResultsExportProgress
+  )
+    return [AuthOrchestrationReadScope, AuthFilesystemReadScope, AuthFilesystemWriteScope];
+  if (
+    method === WS_METHODS.computeResultsVerify ||
+    method === WS_METHODS.computeResultsCancelVerification
+  )
+    return [AuthOrchestrationOperateScope, AuthFilesystemReadScope, AuthFilesystemWriteScope];
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — guarded HTTP commands and Library paper requests share this check.
   const paperScopes = scientPaperRequestScopes(method, input);
   if (paperScopes !== undefined) return paperScopes;

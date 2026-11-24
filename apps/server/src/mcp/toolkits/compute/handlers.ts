@@ -9,6 +9,8 @@ import {
   ComputeLanguageId,
   ComputeSessionId,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
+  TERMINAL_COMPUTE_SESSION_STATUSES,
+  ComputeResultParameterValues,
   ComputeToolkitId,
   computeRunRoutesForPath,
   isSqliteScript,
@@ -17,14 +19,18 @@ import {
   type ComputeExecutionRecord,
   type ComputeManagedRuntimeStatus,
   type ComputeSessionRecord,
+  type ComputeRunHistoryInput,
+  type ComputeSubmitProjectExecutionInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
+  agentComputeLanguageId,
   agentScope,
   computeFailed,
   isLive,
@@ -34,17 +40,32 @@ import {
 } from "./agentComputeScope.ts";
 import { inventorySummary } from "./inventorySummary.ts";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
+import {
+  materializeScientDataView,
+  saveScientDataView,
+  previewScientDataView,
+  profileScientData,
+} from "./dataHandlers.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { computeTranscript } from "./computeTranscript.ts";
-import { editScientNotebook, readScientNotebook, runScientNotebook } from "./notebookHandlers.ts";
+import { fileSessionLanguage, matchSavedScript } from "./savedScriptMatch.ts";
+import { exportScientResults, verifyScientResults } from "./handoffHandlers.ts";
+import {
+  editScientNotebook,
+  readScientNotebook,
+  runScientNotebook,
+  stopScientNotebook,
+} from "./notebookHandlers.ts";
 import {
   checkScientResults,
+  compareScientResults,
   listScientResults,
   runScientResults,
   scientResultMarkdown,
 } from "./resultHandlers.ts";
 import {
   ScientComputeToolkit,
+  type AgentFileParameters,
   type ComputeToolImage,
   type ComputeToolRun,
   type ComputeToolSession,
@@ -128,9 +149,10 @@ const isFinished = (execution: ComputeExecutionRecord) =>
 /** Waits on the session stream; `null` means the run is still going when the wait ends. */
 const awaitFinished = (
   scope: AgentScope,
-  session: ComputeSessionRecord,
+  sessionId: ComputeSessionId,
   executionId: ComputeExecutionId,
   waitSeconds: number,
+  fresh = false,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -138,10 +160,14 @@ const awaitFinished = (
       return yield* events.pipe(
         Stream.filter(
           (event) =>
-            event._tag === "execution-updated" &&
-            event.sessionId === session.sessionId &&
-            event.execution.request.executionId === executionId &&
-            isFinished(event.execution),
+            (event._tag === "execution-updated" &&
+              event.sessionId === sessionId &&
+              event.execution.request.executionId === executionId &&
+              isFinished(event.execution)) ||
+            (fresh &&
+              event._tag === "session-updated" &&
+              event.session.sessionId === sessionId &&
+              TERMINAL_COMPUTE_SESSION_STATUSES.has(event.session.status)),
         ),
         Stream.runHead,
         Effect.timeoutOption(Duration.seconds(waitSeconds)),
@@ -225,10 +251,16 @@ const describeRun = Effect.fn("ScientComputeToolkit.describeRun")(function* (
           ? "(no output)"
           : "(still running)",
     figures: transcript.figures.length,
+    ...(execution.request.parameters === undefined
+      ? {}
+      : { parameters: execution.request.parameters }),
+    ...(execution.request.inputs === undefined ? {} : { inputs: execution.request.inputs }),
   };
   return {
     session: sessionSummary(session, scope.threadId),
     run,
+    ...(result?.writtenFiles === undefined ? {} : { wrote: result.writtenFiles }),
+    ...(result?.changedFiles === undefined ? {} : { changed: result.changedFiles }),
     ...(images.length > 0 ? { images } : {}),
   };
 });
@@ -239,25 +271,20 @@ const refreshed = (scope: AgentScope, session: ComputeSessionRecord) =>
     Effect.orElseSucceed(() => session),
   );
 
-export const runScientCompute = Effect.fn("ScientComputeToolkit.run")(function* (input: {
-  readonly code: string;
-  readonly language?: string | undefined;
-  readonly session?: string | undefined;
-  readonly waitSeconds?: number | undefined;
-  readonly includeImages?: boolean | undefined;
-}) {
-  const scope = yield* agentScope();
-  const session =
-    input.session === undefined
-      ? yield* agentSession(scope, input.language)
-      : yield* requireSession(scope, input.session);
+const submitAgentExecution = Effect.fn("ScientComputeToolkit.submitAgentExecution")(function* (
+  scope: AgentScope,
+  session: ComputeSessionRecord,
+  input: Pick<ComputeSubmitProjectExecutionInput, "code" | "source"> & {
+    readonly waitSeconds?: number | undefined;
+  },
+) {
   const executionId = ComputeExecutionId.make(NodeCrypto.randomUUID());
   const submitted = yield* Effect.scoped(
     Effect.gen(function* () {
       // Subscribe before submitting so a fast run cannot finish unobserved.
       const finished = yield* awaitFinished(
         scope,
-        session,
+        session.sessionId,
         executionId,
         input.waitSeconds ?? DEFAULT_RUN_WAIT_SECONDS,
       ).pipe(Effect.forkScoped);
@@ -268,7 +295,7 @@ export const runScientCompute = Effect.fn("ScientComputeToolkit.run")(function* 
           executionId,
           expectedGeneration: session.generation,
           code: input.code,
-          source: { _tag: "console" },
+          source: input.source,
           actor: { _tag: "agent", threadId: scope.threadId },
         })
         .pipe(Effect.mapError(computeFailed));
@@ -277,9 +304,30 @@ export const runScientCompute = Effect.fn("ScientComputeToolkit.run")(function* 
       return Option.getOrElse(done, () => execution);
     }),
   );
-  const execution = isFinished(submitted)
-    ? submitted
-    : yield* latestExecution(scope, session, executionId);
+  return isFinished(submitted) ? submitted : yield* latestExecution(scope, session, executionId);
+});
+
+export const runScientCompute = Effect.fn("ScientComputeToolkit.run")(function* (input: {
+  readonly code: string;
+  readonly language?: string | undefined;
+  readonly session?: string | undefined;
+  readonly waitSeconds?: number | undefined;
+  readonly includeImages?: boolean | undefined;
+}) {
+  const scope = yield* agentScope();
+  const requestedSession =
+    input.session === undefined ? undefined : yield* requireSession(scope, input.session);
+  const language =
+    requestedSession?.languageId ??
+    (input.language === undefined ? undefined : agentComputeLanguageId(input.language));
+  const file = yield* matchSavedScript(scope, input.code, language);
+  const session =
+    requestedSession ?? (yield* agentSession(scope, file?.language ?? input.language));
+  const execution = yield* submitAgentExecution(scope, session, {
+    code: input.code,
+    source: file?.source ?? { _tag: "console" },
+    waitSeconds: input.waitSeconds,
+  });
   return yield* describeRun(
     scope,
     yield* refreshed(scope, session),
@@ -306,8 +354,12 @@ const describeFileRun = (run: AnalysisRunSnapshot) => {
         .filter((part) => part !== null && part !== undefined && part.length > 0)
         .join("\n"),
       figures: run.artifacts.length,
+      ...(run.parameters === undefined ? {} : { parameters: run.parameters }),
+      ...(run.inputs === undefined ? {} : { inputs: run.inputs }),
     },
-    wrote: [...(run.writtenFiles ?? []), ...run.artifacts.map((artifact) => artifact.label)],
+    // A separate program reports nothing it wrote; files are only seen changing while it ran.
+    wrote: [],
+    changed: [...(run.writtenFiles ?? []), ...run.artifacts.map((artifact) => artifact.label)],
   };
 };
 
@@ -322,15 +374,65 @@ export function projectRelativePath(root: string, path: string, separator = Node
   return inside === null || inside.includes("..") ? path : inside.join("/");
 }
 
+const normalizeFileParameters = Schema.decodeUnknownEffect(ComputeResultParameterValues);
+
+function parameterJsonText(value: Schema.Json): string {
+  // Existing callers can still send a value already encoded as JSON text.
+  if (typeof value === "string") {
+    try {
+      JSON.parse(value);
+      return value;
+    } catch {
+      // Plain strings are also accepted.
+    }
+  }
+  return JSON.stringify(value);
+}
+
 export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(function* (input: {
   readonly path: string;
+  readonly parameters?: AgentFileParameters | undefined;
+  readonly inputs?: ReadonlyArray<string> | undefined;
+  readonly session?: string | undefined;
+  readonly includeImages?: boolean | undefined;
   readonly run?: string | undefined;
   readonly waitSeconds?: number | undefined;
 }) {
   const scope = yield* agentScope();
   const { gateway } = scope;
-  const relativePath = projectRelativePath(scope.cwd, input.path);
+  const parameters =
+    input.parameters === undefined
+      ? undefined
+      : yield* normalizeFileParameters(
+          Object.fromEntries(
+            Object.entries(input.parameters).map(([name, value]) => [
+              name,
+              parameterJsonText(value),
+            ]),
+          ),
+        ).pipe(
+          Effect.mapError(() => toolError("compute-failed", "The run parameters are too large.")),
+        );
+  const setup = {
+    ...(parameters === undefined ? {} : { parameters }),
+    ...(input.inputs === undefined ? {} : { inputs: input.inputs }),
+  };
+  const hasSetup = parameters !== undefined || input.inputs !== undefined;
+  if (hasSetup && (input.session !== undefined || input.run !== undefined)) {
+    return yield* toolError(
+      "compute-failed",
+      "Omit session and run when starting a file with parameters or declared inputs.",
+    );
+  }
+  const requestedPath = projectRelativePath(scope.cwd, input.path);
+  if (NodePath.isAbsolute(requestedPath)) {
+    return yield* toolError("compute-failed", "Choose a file inside this project.");
+  }
+  if (input.run !== undefined && input.session !== undefined) {
+    return yield* toolError("compute-failed", "Read a session run with scient_compute_output.");
+  }
   const waited = (
+    relativePath: string,
     runId: AnalysisRunId,
     start: Effect.Effect<AnalysisRunSnapshot, AnalysisOperationError>,
   ) =>
@@ -358,33 +460,153 @@ export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(fu
     );
   if (input.run !== undefined) {
     const runId = AnalysisRunId.make(input.run);
-    const run = yield* waited(runId, gateway.getFileRun({ cwd: scope.cwd, runId })).pipe(
-      Effect.mapError(computeFailed),
-    );
+    const run = yield* waited(
+      requestedPath,
+      runId,
+      gateway.getFileRun({ cwd: scope.cwd, runId }),
+    ).pipe(Effect.mapError(computeFailed));
     return describeFileRun(run);
   }
   const file = yield* gateway
-    .readFile({ cwd: scope.cwd, relativePath })
+    .readFile({ cwd: scope.cwd, relativePath: requestedPath })
     .pipe(Effect.mapError(() => toolError("compute-failed", `Cannot read '${input.path}'.`)));
-  const { runtimes } = yield* gateway
-    .inspectFileRuntimes({ cwd: scope.cwd })
-    .pipe(Effect.mapError(computeFailed));
-  const runtime = computeRunRoutesForPath(relativePath)
-    .filter((route) => route.languageId !== "sqlite" || isSqliteScript(file.contents))
-    .flatMap((route) =>
-      runtimes.filter(
-        (candidate) =>
-          candidate.kind === route.languageId && candidate.availability === "available",
-      ),
-    )[0];
+  if (file.outsideWorkspace || file.exists === false) {
+    return yield* toolError("compute-failed", "Choose a saved file inside this project.");
+  }
+  const relativePath = file.relativePath;
+  const language = fileSessionLanguage(relativePath);
+  const requestedSession =
+    input.session === undefined ? undefined : yield* requireSession(scope, input.session);
+  if (requestedSession !== undefined && requestedSession.languageId !== language) {
+    return yield* toolError("compute-failed", "Choose a session that matches the file language.");
+  }
+  const sqlite = language === "sql" && isSqliteScript(file.contents);
+  const matlab = language === "matlab";
+  const routes = computeRunRoutesForPath(relativePath).filter(
+    (route) => route.languageId !== "sqlite" || sqlite,
+  );
+  const candidates =
+    routes.length > 0 &&
+    requestedSession === undefined &&
+    (language === undefined || sqlite || matlab)
+      ? (yield* gateway
+          .inspectFileRuntimes({ cwd: scope.cwd })
+          .pipe(Effect.mapError(computeFailed))).runtimes
+      : [];
+  const runtime = routes.flatMap((route) =>
+    candidates.filter(
+      (candidate) => candidate.kind === route.languageId && candidate.availability === "available",
+    ),
+  )[0];
+  const preferAlternative =
+    sqlite ||
+    (matlab &&
+      !candidates.some(
+        (candidate) => candidate.kind === "matlab" && candidate.availability === "available",
+      ));
+  const useSession =
+    language !== undefined &&
+    (requestedSession !== undefined || runtime === undefined || !preferAlternative);
+  if (useSession) {
+    if (file.truncated || file.contents.length > 1024 * 1024 || file.contents.trim().length === 0) {
+      return yield* toolError("compute-failed", "Choose a nonempty saved script up to 1 MiB.");
+    }
+    const source = {
+      _tag: "document",
+      origin: "file",
+      path: relativePath,
+      revision: file.revision,
+      bufferState: "saved",
+      range: null,
+    } as const;
+    if (hasSetup) {
+      const sessionId = ComputeSessionId.make(NodeCrypto.randomUUID());
+      const executionId = ComputeExecutionId.make(NodeCrypto.randomUUID());
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const finished = yield* awaitFinished(
+            scope,
+            sessionId,
+            executionId,
+            input.waitSeconds ?? DEFAULT_RUN_WAIT_SECONDS,
+            true,
+          ).pipe(Effect.forkScoped);
+          const session = yield* gateway
+            .startSession({
+              cwd: scope.cwd,
+              sessionId,
+              languageId: ComputeLanguageId.make(language),
+              executable: null,
+              owner: { _tag: "agent", threadId: scope.threadId },
+              publishResults: false,
+              runOnce: {
+                executionId,
+                code: file.contents,
+                source,
+                actor: { _tag: "agent", threadId: scope.threadId },
+                ...setup,
+              },
+            })
+            .pipe(Effect.mapError(computeFailed));
+          const done = yield* Fiber.join(finished);
+          const current = yield* refreshed(scope, session);
+          const execution = Option.isSome(done)
+            ? done.value
+            : yield* gateway.listExecutions({ cwd: scope.cwd, sessionId, limit: 1 }).pipe(
+                Effect.map((records) => records[0]),
+                Effect.mapError(computeFailed),
+              );
+          const runtime = current.runtime?.displayName ?? current.label;
+          if (execution !== undefined) {
+            return {
+              ...(yield* describeRun(scope, current, execution, input.includeImages ?? true)),
+              runtime,
+              wrote: execution.result?.writtenFiles ?? [],
+            };
+          }
+          if (TERMINAL_COMPUTE_SESSION_STATUSES.has(current.status)) {
+            return yield* toolError(
+              "compute-failed",
+              current.lostReason ?? "The runtime stopped before the script ran.",
+            );
+          }
+          return {
+            runtime,
+            session: sessionSummary(current, scope.threadId),
+            run: {
+              run: executionId,
+              status: "queued",
+              source: `agent: ${relativePath}`,
+              submittedAt: current.createdAt,
+              finishedAt: null,
+              output: "(runtime is starting)",
+              figures: 0,
+              ...setup,
+            },
+            wrote: [],
+          };
+        }),
+      );
+    }
+    const session = requestedSession ?? (yield* agentSession(scope, language));
+    const execution = yield* submitAgentExecution(scope, session, {
+      code: file.contents,
+      source,
+      waitSeconds: input.waitSeconds,
+    });
+    const current = yield* refreshed(scope, session);
+    return {
+      ...(yield* describeRun(scope, current, execution, input.includeImages ?? true)),
+      runtime: current.runtime?.displayName ?? current.label,
+      wrote: execution.result?.writtenFiles ?? [],
+    };
+  }
   if (runtime === undefined) {
-    return yield* toolError(
-      "compute-failed",
-      `Nothing on this computer runs '${input.path}'. Python, R, Julia, SQL and MATLAB run through scient_compute_run.`,
-    );
+    return yield* toolError("compute-failed", `Nothing on this computer runs '${relativePath}'.`);
   }
   const runId = AnalysisRunId.make(NodeCrypto.randomUUID());
   const run = yield* waited(
+    relativePath,
     runId,
     gateway.startFileRun({
       runId,
@@ -392,6 +614,8 @@ export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(fu
       relativePath,
       sourceRevision: AnalysisSourceRevision.make(file.revision),
       runtimeId: runtime.id,
+      agentThreadId: scope.threadId,
+      ...setup,
     }),
   ).pipe(Effect.mapError(computeFailed));
   return describeFileRun(run);
@@ -405,9 +629,18 @@ export const readScientComputeOutput = Effect.fn("ScientComputeToolkit.output")(
 }) {
   const scope = yield* agentScope();
   const session = yield* requireSession(scope, input.session, "existing");
+  const wait = input.waitSeconds ?? 0;
+  const waitForStartup =
+    input.run !== undefined &&
+    session.lifetime === "fresh" &&
+    session.status === "starting" &&
+    wait > 0;
+  if (waitForStartup) {
+    yield* awaitFinished(scope, session.sessionId, ComputeExecutionId.make(input.run), wait, true);
+  }
   let execution = yield* latestExecution(scope, session, input.run);
-  if (!isFinished(execution) && (input.waitSeconds ?? 0) > 0) {
-    yield* awaitFinished(scope, session, execution.request.executionId, input.waitSeconds ?? 0);
+  if (!waitForStartup && !isFinished(execution) && wait > 0) {
+    yield* awaitFinished(scope, session.sessionId, execution.request.executionId, wait);
     execution = yield* latestExecution(scope, session, execution.request.executionId);
   }
   return yield* describeRun(
@@ -418,8 +651,53 @@ export const readScientComputeOutput = Effect.fn("ScientComputeToolkit.output")(
   );
 });
 
-export const listScientComputeSessions = Effect.fn("ScientComputeToolkit.sessions")(function* () {
+export const listScientComputeSessions = Effect.fn("ScientComputeToolkit.sessions")(function* (
+  input: {
+    readonly history?:
+      | Pick<ComputeRunHistoryInput, "filter" | "before" | "notebookBatchId">
+      | undefined;
+  } = {},
+) {
   const scope = yield* agentScope();
+  if (input.history !== undefined) {
+    const { runs, fileRuns, next } = yield* scope.gateway
+      .runHistory({ cwd: scope.cwd, limit: 30, ...input.history })
+      .pipe(Effect.mapError(computeFailed));
+    return {
+      sessions: [],
+      runs: [
+        ...runs.map(({ session, execution, notebookBatch }) => ({
+          run: execution.request.executionId,
+          session: session.sessionId,
+          ...(execution.request.source._tag === "document"
+            ? { file: execution.request.source.path }
+            : {}),
+          language: session.languageId,
+          status: notebookBatch?.status ?? execution.result?.status ?? "queued",
+          ...(notebookBatch === undefined
+            ? {}
+            : { notebookBatch: { id: notebookBatch.id, count: notebookBatch.count } }),
+          submittedAt: execution.request.submittedAt,
+          ...(execution.request.actor === undefined
+            ? {}
+            : { agentThread: execution.request.actor.threadId }),
+        })),
+        ...fileRuns.map((run) => ({
+          run: run.receipt.runId,
+          file: run.source.relativePath,
+          language: run.runtime.kind,
+          status: run.receipt.status,
+          submittedAt: run.receipt.startedAt,
+          ...(run.agentThreadId === undefined ? {} : { agentThread: run.agentThreadId }),
+        })),
+      ].toSorted(
+        (left, right) =>
+          right.submittedAt.localeCompare(left.submittedAt) ||
+          (right.run > left.run ? 1 : right.run < left.run ? -1 : 0),
+      ),
+      next,
+    };
+  }
   const sessions = yield* scope.gateway
     .listSessions({ cwd: scope.cwd })
     .pipe(Effect.mapError(computeFailed));
@@ -500,11 +778,36 @@ const setupSummary = (status: ComputeManagedRuntimeStatus) => ({
   failure: status.failureMessage,
 });
 
+/** Adds a package beside the Python a session runs, which its next run finds. */
+const addPythonPackage = Effect.fn("ScientComputeToolkit.addPythonPackage")(function* (
+  scope: AgentScope,
+  distribution: string,
+  sessionId: string | undefined,
+) {
+  const session =
+    sessionId === undefined
+      ? yield* agentSession(scope, "python")
+      : yield* requireSession(scope, sessionId);
+  if (session.languageId !== PYTHON)
+    return yield* toolError("compute-failed", `Session '${session.sessionId}' is not Python.`);
+  yield* scope.gateway
+    .addPythonLibrary({ cwd: scope.cwd, sessionId: session.sessionId, distribution })
+    .pipe(Effect.mapError(computeFailed));
+  return { package: distribution, session: session.sessionId };
+});
+
 const setupScientCompute = Effect.fn("ScientComputeToolkit.setup")(function* (input: {
+  readonly package?: string | undefined;
+  readonly session?: string | undefined;
   readonly toolkits?: ReadonlyArray<string> | undefined;
   readonly waitSeconds?: number | undefined;
 }) {
   const scope = yield* agentScope();
+  if (input.package !== undefined) {
+    const added = yield* addPythonPackage(scope, input.package, input.session);
+    const status = yield* scope.gateway.managedRuntimeStatus({ languageId: PYTHON });
+    return { added, ...setupSummary(status) };
+  }
   const requested = (input.toolkits ?? []).map((id) => ComputeToolkitId.make(id));
   let status = yield* scope.gateway.managedRuntimeStatus({ languageId: PYTHON });
   if (status.operation === null && !status.installed) {
@@ -551,18 +854,26 @@ const handlers = {
   scient_notebook_read: readScientNotebook,
   scient_notebook_edit: editScientNotebook,
   scient_notebook_run: runScientNotebook,
+  scient_notebook_stop: stopScientNotebook,
   scient_compute_run: runScientCompute,
   scient_compute_run_file: runScientComputeFile,
   scient_compute_output: readScientComputeOutput,
-  scient_compute_sessions: () => listScientComputeSessions(),
+  scient_compute_sessions: listScientComputeSessions,
   scient_compute_variables: listScientComputeVariables,
   scient_compute_control: controlScientCompute,
   scient_compute_setup: setupScientCompute,
   scient_compute_inventory: () => listScientComputeInventory(),
   scient_results_run: runScientResults,
-  scient_results_list: () => listScientResults(),
+  scient_data_profile: profileScientData,
+  scient_data_preview_view: previewScientDataView,
+  scient_data_save_view: saveScientDataView,
+  scient_data_materialize_view: materializeScientDataView,
+  scient_results_list: listScientResults,
+  scient_results_compare: compareScientResults,
   scient_results_markdown: scientResultMarkdown,
   scient_results_check: checkScientResults,
+  scient_results_export: exportScientResults,
+  scient_results_verify: verifyScientResults,
 } satisfies Parameters<typeof ScientComputeToolkit.toLayer>[0];
 
 export const ScientComputeToolkitHandlersLive = ScientComputeToolkit.toLayer(handlers);

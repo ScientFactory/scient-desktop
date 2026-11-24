@@ -35,14 +35,25 @@ function fakeTransport(initial: NotebookView) {
   let failEdits = false;
   let release: (() => void) | null = null;
   let hold = false;
+  // Like the server, every change makes a new revision, and a read at the current one answers null.
+  let version = 0;
+  const revision = () => `1.${version}`;
+  const outputToken = (cellId: string, index: number) =>
+    current.cells.find((entry) => entry.id === cellId)?.outputs[index]?.token;
   const transport: NotebookTransport = {
-    read: async () => current,
-    readOutput: async () => null,
-    edit: async (edits): Promise<NotebookEditResult | null> => {
+    read: async (known) => (known === current.revision ? null : current),
+    readOutput: async (cellId, index, token) =>
+      token === outputToken(cellId, index)
+        ? { json: `figure ${token}` }
+        : { json: null, stale: true },
+    edit: async ({ edits, durable }): Promise<NotebookEditResult | null> => {
+      if (durable) return { revision: revision(), refused: [] };
       sent.push(edits);
       if (hold) await new Promise<void>((resolve) => (release = resolve));
       if (failEdits) return null;
-      const answer = { revision: `1.${sent.length}`, refused };
+      version += 1;
+      current = { ...current, revision: revision() };
+      const answer = { revision: revision(), refused };
       refused = [];
       return answer;
     },
@@ -61,7 +72,8 @@ function fakeTransport(initial: NotebookView) {
     recordResult: (cell: NotebookCellView) => (recorded = cell),
     recorded: () => recordings,
     otherWriter: (next: NotebookView, cells: ReadonlyArray<string>) => {
-      current = next;
+      version += 1;
+      current = { ...next, revision: revision() };
       refused = cells;
     },
     hold: () => (hold = true),
@@ -98,7 +110,8 @@ describe("notebookController", () => {
     fake.otherWriter(view([cell("a", "theirs"), cell("b", "other")]), ["a"]);
     controller.edit("a", "end");
     controller.setSource("a", "mine");
-    await controller.flush();
+    // A run must not go ahead with text the server refused.
+    expect(await controller.flush()).toBe(false);
     await vi.waitFor(() => expect(controller.store.getState().order).toHaveLength(3));
     const state = controller.store.getState();
     const [first, kept, last] = state.order;
@@ -187,15 +200,33 @@ describe("notebookController", () => {
     const { fake, controller } = await opened([cell("a", "saved")]);
     fake.setFailing(true);
     controller.setSource("a", "typed");
-    await controller.flush();
+    expect(await controller.flush()).toBe(false);
     await controller.flush();
     expect(fake.errors).toEqual(["This notebook could not be saved. Trying again."]);
     expect(controller.store.getState().cells.a?.source).toBe("typed");
     fake.setFailing(false);
-    await controller.flush();
+    expect(await controller.flush()).toBe(true);
     expect(fake.sent.at(-1)).toEqual([
       { _tag: "set-source", cellId: "a", source: "typed", base: notebookCodeHash("saved") },
     ]);
+  });
+
+  it("shows a stored figure from the cell's current outputs after the file changed", async () => {
+    const figure = (token: string) => ({
+      ...cell("plot"),
+      outputs: [
+        { outputType: "display_data", mediaTypes: ["image/png"], bytes: 9, json: null, token },
+      ],
+    });
+    const { fake, controller } = await opened([figure("a"), cell("note")]);
+    // The file changes, and an unrelated edit learns its revision before the page reads it.
+    fake.otherWriter(view([figure("b"), cell("note")]), []);
+    controller.setSource("note", "x");
+    await controller.flush();
+    expect(await controller.readOutput("plot", 0, figure("a").outputs[0]!)).toBeNull();
+    await vi.waitFor(() =>
+      expect(controller.store.getState().cells.plot?.outputs[0]?.token).toBe("b"),
+    );
   });
 
   it("puts a deleted cell back where it was", async () => {
@@ -207,11 +238,26 @@ describe("notebookController", () => {
     await controller.flush();
   });
 
-  it("marks a cell expecting a run straight away", async () => {
-    const { fake, controller } = await opened([cell("a")]);
-    controller.expectRuns([{ cellId: "a", execution: "run-1" }]);
-    expect(controller.store.getState().cells.a?.pendingExecution).toBe("run-1");
+  it("marks a submitted batch with one store notification and one edit batch", async () => {
+    const { fake, controller } = await opened([cell("a"), cell("b"), cell("c")]);
+    const untouched = controller.store.getState().cells.c;
+    const observed: Array<string | null | undefined> = [];
+    const unsubscribe = controller.store.subscribe((state) => {
+      observed.push(state.cells.a?.pendingExecution, state.cells.b?.pendingExecution);
+    });
+    controller.expectRuns([
+      { cellId: "a", execution: "run-1" },
+      { cellId: "b", execution: "run-2" },
+    ]);
+    unsubscribe();
+    expect(observed).toEqual(["run-1", "run-2"]);
+    expect(controller.store.getState().cells.c).toBe(untouched);
     await controller.flush();
-    expect(fake.sent.flat()).toEqual([{ _tag: "expect-run", cellId: "a", execution: "run-1" }]);
+    expect(fake.sent).toEqual([
+      [
+        { _tag: "expect-run", cellId: "a", execution: "run-1" },
+        { _tag: "expect-run", cellId: "b", execution: "run-2" },
+      ],
+    ]);
   });
 });

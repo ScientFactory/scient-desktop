@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off -- formats decoded file values outside any Effect.
 import {
+  DATA_TABLE_MAX_COLUMNS,
   dataTableCellText,
   type DataTableColumn,
   type DataTableColumnType,
@@ -14,6 +15,7 @@ import {
 } from "hyparquet";
 import { compressors } from "hyparquet-compressors";
 
+import { parquetColumnStatistics } from "./ParquetColumnStatistics.ts";
 import { formatDate, formatValue } from "./cellText.ts";
 import type { TableSource } from "./TableView.ts";
 
@@ -175,7 +177,9 @@ export async function openParquetSource(path: string): Promise<TableSource> {
     columns,
     rowCount,
     truncated: false,
-    readRows: async (rows, columnLimit, signal) => {
+    profileStatistics: () =>
+      parquetColumnStatistics(metadata, nodes, columns.slice(0, DATA_TABLE_MAX_COLUMNS)),
+    readRows: async (rows, columnLimit, signal, profile) => {
       const width = Math.min(columnLimit, columns.length);
       const cells = rows.map(() => Array.from<string | null>({ length: width }));
       const byGroup = new Map<number, number[]>();
@@ -191,7 +195,7 @@ export async function openParquetSource(path: string): Promise<TableSource> {
           const chunk = await readChunk(group, column);
           for (const position of positions) {
             const text = display(column, chunk[rows[position]! - groupStarts[group]!]);
-            cells[position]![column] = text === null ? null : dataTableCellText(text);
+            cells[position]![column] = text === null || profile ? text : dataTableCellText(text);
           }
         }
       }

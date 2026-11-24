@@ -6,6 +6,8 @@ import {
   type DataTableQuery,
 } from "@scientfactory/compute";
 
+import type { WholeColumnStatistics } from "./TableProfile.ts";
+
 /** Comparable values for one column: numbers (NaN when missing) or text (null when missing). */
 export type SortKeys = Float64Array | ReadonlyArray<string | null>;
 
@@ -17,11 +19,20 @@ export interface TableSource {
   readonly columns: ReadonlyArray<DataTableColumn>;
   readonly rowCount: number;
   readonly truncated: boolean;
+  readonly delimiter?: string;
+  readonly profileStatistics?: () => ReadonlyArray<WholeColumnStatistics | undefined>;
+  readonly scanProfileRows?: (
+    columnLimit: number,
+    signal: AbortSignal,
+    addRow: (row: ReadonlyArray<string | null>) => void,
+    onBatch: () => void,
+  ) => Promise<void>;
   /** Cells of these rows, in the order given, for the first `columnLimit` columns. */
   readonly readRows: (
     rows: ReadonlyArray<number>,
     columnLimit: number,
     signal: AbortSignal,
+    profile?: boolean,
   ) => Promise<Array<Array<string | null>>>;
   readonly sortKeys: (column: number, signal: AbortSignal) => Promise<SortKeys>;
   /** Rows, ascending, with a cell whose text contains `needle` (already lowercase). */
@@ -112,6 +123,23 @@ export class TableViewCache {
     );
   }
 
+  atLeast(column: number, value: number, signal: AbortSignal): Promise<Uint32Array> {
+    return this.join(
+      `minimum:${column}:${value}`,
+      async (shared) => {
+        const keys = await this.source.sortKeys(column, shared);
+        if (!(keys instanceof Float64Array)) return new Uint32Array();
+        const matches = new Uint32Array(keys.length);
+        let size = 0;
+        for (let row = 0; row < keys.length; row++) {
+          if (keys[row]! >= value) matches[size++] = row;
+        }
+        return matches.subarray(0, size);
+      },
+      signal,
+    );
+  }
+
   matches(needle: string, signal: AbortSignal): Promise<Uint32Array> {
     return this.join(`search:${needle}`, (shared) => this.source.search(needle, shared), signal);
   }
@@ -169,6 +197,40 @@ function viewRows(
   };
 }
 
+function combineMatches(text: Uint32Array | null, minimum: Uint32Array | null) {
+  if (text === null) return minimum;
+  if (minimum === null) return text;
+  const matches = new Uint32Array(Math.min(text.length, minimum.length));
+  let size = 0;
+  for (let left = 0, right = 0; left < text.length && right < minimum.length;) {
+    const a = text[left]!;
+    const b = minimum[right]!;
+    if (a === b) matches[size++] = a;
+    if (a <= b) left++;
+    if (b <= a) right++;
+  }
+  return matches.subarray(0, size);
+}
+
+/** Source row positions selected by the same filters as the grid. */
+export async function filteredTableRows(
+  cache: TableViewCache,
+  query: Pick<DataTableQuery, "search" | "minimum">,
+  signal: AbortSignal,
+): Promise<Uint32Array | null> {
+  const needle = query.search.trim().toLowerCase();
+  const min = query.minimum;
+  const minColumn =
+    min && min.column < DATA_TABLE_MAX_COLUMNS ? cache.source.columns[min.column] : undefined;
+  const [matches, minimum] = await Promise.all([
+    needle ? cache.matches(needle, signal) : null,
+    min && (minColumn?.type === "integer" || minColumn?.type === "number")
+      ? cache.atLeast(min.column, min.value, signal)
+      : null,
+  ]);
+  return combineMatches(matches, minimum);
+}
+
 export async function readTablePage(
   cache: TableViewCache,
   query: DataTableQuery,
@@ -177,12 +239,11 @@ export async function readTablePage(
 ): Promise<DataTablePage> {
   const { source } = cache;
   const columns = source.columns.slice(0, DATA_TABLE_MAX_COLUMNS);
-  const needle = query.search.trim().toLowerCase();
   const sortColumn =
     query.sort !== null && query.sort.column < columns.length ? query.sort.column : null;
   const [sorted, matches] = await Promise.all([
     sortColumn === null ? null : cache.sorted(sortColumn, query.sort!.descending, signal),
-    needle ? cache.matches(needle, signal) : null,
+    filteredTableRows(cache, query, signal),
   ]);
   const { rows, matchCount } = viewRows(
     source.rowCount,

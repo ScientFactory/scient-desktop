@@ -1,6 +1,7 @@
 import {
   COMPUTE_LANGUAGE_CATALOG,
   COMPUTE_RUN_TABLE,
+  COMPUTE_SESSION_FILE_EXTENSIONS,
   ComputeLanguageId,
   computeRunRouteForPath,
   computeRunRoutesForPath,
@@ -21,35 +22,35 @@ const HASH_CELL_MARKER = /^\s*#\s*%%(?:\s|$)/;
 export const PYTHON_COMPUTE_SOURCE: ComputeSourceLanguage = {
   languageId: ComputeLanguageId.make("python"),
   displayName: "Python",
-  extensions: [".py"],
+  extensions: [COMPUTE_SESSION_FILE_EXTENSIONS.python],
   cellMarker: HASH_CELL_MARKER,
 };
 
 export const MATLAB_COMPUTE_SOURCE: ComputeSourceLanguage = {
   languageId: ComputeLanguageId.make("matlab"),
   displayName: "MATLAB",
-  extensions: [".m"],
+  extensions: [COMPUTE_SESSION_FILE_EXTENSIONS.matlab],
   cellMarker: /^\s*%%(?:\s|$)/,
 };
 
 const R_COMPUTE_SOURCE: ComputeSourceLanguage = {
   languageId: ComputeLanguageId.make("r"),
   displayName: "R",
-  extensions: [".r"],
+  extensions: [COMPUTE_SESSION_FILE_EXTENSIONS.r],
   cellMarker: HASH_CELL_MARKER,
 };
 
 const JULIA_COMPUTE_SOURCE: ComputeSourceLanguage = {
   languageId: ComputeLanguageId.make("julia"),
   displayName: "Julia",
-  extensions: [".jl"],
+  extensions: [COMPUTE_SESSION_FILE_EXTENSIONS.julia],
   cellMarker: HASH_CELL_MARKER,
 };
 
 export const SQL_COMPUTE_SOURCE: ComputeSourceLanguage = {
   languageId: ComputeLanguageId.make("sql"),
   displayName: "SQL",
-  extensions: [".sql"],
+  extensions: [COMPUTE_SESSION_FILE_EXTENSIONS.sql],
   cellMarker: /^\s*--\s*%%(?:\s|$)/,
 };
 

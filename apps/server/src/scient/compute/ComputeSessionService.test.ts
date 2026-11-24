@@ -67,6 +67,8 @@ import {
 import { workspaceScopeForTest } from "../projectScope/WorkspaceBindingTestUtils.ts";
 import { withoutComputeWorkspaceOwners } from "./ComputeWorkspaceLifetime.ts";
 import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
+import { PRIVATE_KERNEL_STARTER } from "./KernelSpecs.ts";
+import type { PythonLibraries } from "./PythonLibraries.ts";
 import {
   ComputeProjectOutputObserver,
   type ComputeProjectOutputObserverPort,
@@ -363,6 +365,7 @@ interface HarnessOptions {
   readonly service?: Partial<ComputeSessionServiceOptions>;
   readonly toolkitSupport?: ComputeRuntimeBinding["toolkitSupport"];
   readonly managedRuntime?: ComputeRuntimeBinding["managedRuntime"];
+  readonly libraries?: ComputeRuntimeBinding["libraries"];
   readonly connection?: "detected";
   readonly failConnection?: boolean;
 }
@@ -428,6 +431,7 @@ const harness = (options: HarnessOptions = {}) =>
           transport,
           toolkitSupport: options.toolkitSupport,
           managedRuntime: options.managedRuntime,
+          ...(options.libraries === undefined ? {} : { libraries: options.libraries }),
         },
         ...(options.additionalBindings ?? []),
       ]),
@@ -2134,6 +2138,67 @@ describe("compute run dispatch attribution", () => {
 
 describe("compute session startup", () => {
   it.effect(
+    "adds a package where the session's kernel reads, for that project's session only",
+    () =>
+      Effect.gen(function* () {
+        const installs: Array<Parameters<PythonLibraries["install"]>[0]> = [];
+        const test = yield* harness({
+          adapter: {
+            prepareLaunch: (request) =>
+              Effect.succeed({
+                executable: "/bridge/python",
+                args: [],
+                cwd: request.cwd,
+                environment: { ...request.environment, SCIENT_PYTHON_LIBRARIES: "/compute/added" },
+                kernel: {
+                  argv: [
+                    request.profile.executable,
+                    "-c",
+                    PRIVATE_KERNEL_STARTER,
+                    "/compute/kernel",
+                  ],
+                  language: "python",
+                  interruptMode: "signal",
+                  variablesExpression: null,
+                  pythonFeatures: true,
+                },
+              }),
+          },
+          libraries: {
+            folder: () => Effect.succeed("/compute/added"),
+            install: (target: Parameters<PythonLibraries["install"]>[0]) =>
+              Effect.sync(() => {
+                installs.push(target);
+                return { added: [] };
+              }),
+          } as unknown as PythonLibraries,
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* service.startSession(startInput());
+            yield* waitForSession("ready");
+            const add = (projectId: ComputeProjectId) =>
+              service.addPythonLibrary({
+                projectId,
+                sessionId: SESSION_ID,
+                distribution: "pandas",
+              });
+            expect((yield* Effect.flip(add(OTHER_PROJECT_ID))).reason).toBe("session-not-running");
+            yield* add(PROJECT_ID);
+            expect(installs).toEqual([
+              {
+                executable: PROFILE.executable,
+                folder: "/compute/added",
+                privateFolder: "/compute/kernel",
+                distribution: "pandas",
+              },
+            ]);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+  it.effect(
     "does not release host capacity or acknowledge shutdown after process cleanup fails",
     () =>
       Effect.gen(function* () {
@@ -3668,7 +3733,7 @@ describe("compute session execution", () => {
           yield* waitForExecution(ComputeExecutionId.make("execution-2"), "succeeded");
           expect((yield* outputsOf(first)).outputs).toEqual([streamOutput(0, "1\n")]);
 
-          yield* service.settledRunRecorded(first);
+          yield* service.settledRunRecorded(SESSION_ID, first);
           yield* submit("print(1)", "execution-3");
           yield* waitForExecution(ComputeExecutionId.make("execution-3"), "succeeded");
           expect((yield* outputsOf(first)).outputs[0]).toMatchObject({
@@ -3775,7 +3840,8 @@ describe("compute session execution", () => {
   it.effect("stops every later cell of a run submitted together", () =>
     Effect.gen(function* () {
       const test = yield* harness();
-      const cell = (id: string, code: string) => ({
+      const batchId = ComputeExecutionId.make("one");
+      const cell = (id: string, code: string, index: number) => ({
         projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         executionId: ComputeExecutionId.make(id),
@@ -3789,6 +3855,7 @@ describe("compute session execution", () => {
           revision: null,
           range: null,
           cell: id,
+          notebookBatch: { id: batchId, mode: "all" as const, index, count: 3 },
         },
       });
 
@@ -3799,12 +3866,44 @@ describe("compute session execution", () => {
           const records = yield* service.submitExecutions({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,
-            submissions: [cell("one", "boom"), cell("two", "print(1)"), cell("three", "print(1)")],
+            submissions: [
+              cell("one", "boom", 0),
+              cell("two", "print(1)", 1),
+              cell("three", "print(1)", 2),
+            ],
           });
           expect(records).toHaveLength(3);
+          const journal = yield* service.listJournal({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+          });
+          const submissions = journal.filter((entry) => entry.event === "execution-submitted");
+          expect(submissions.map((entry) => entry.executionId)).toEqual(["one", "two", "three"]);
+          expect(submissions.map((entry) => entry.sequence)).toEqual([
+            submissions[0]!.sequence,
+            submissions[0]!.sequence + 1,
+            submissions[0]!.sequence + 2,
+          ]);
           yield* waitForExecution(ComputeExecutionId.make("one"), "failed");
           yield* waitForExecution(ComputeExecutionId.make("two"), "cancelled");
           yield* waitForExecution(ComputeExecutionId.make("three"), "cancelled");
+          const session = yield* service.getSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+          });
+          expect(session?.lastNotebookBatch).toEqual({
+            id: batchId,
+            mode: "all",
+            status: "failed",
+            failedCell: 1,
+            firstFailure: {
+              path: "a.ipynb",
+              cell: "one",
+              generation: INITIAL_COMPUTE_SESSION_GENERATION,
+            },
+            count: 3,
+            notRun: 2,
+          });
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -3836,6 +3935,38 @@ describe("compute session execution", () => {
             service.submitExecutions({ projectId: PROJECT_ID, sessionId: SESSION_ID, submissions }),
           );
           expect(error.reason).toBe("queue-full");
+          expect((yield* waitForSession("ready")).pendingCount).toBe(0);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("admits none of a run whose later cell reuses an id for other code", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (id: string, code: string) => ({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        executionId: ComputeExecutionId.make(id),
+        expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        code,
+        source: { _tag: "console" as const },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("quiet-hold", "held");
+          yield* waitForExecution(ComputeExecutionId.make("held"), "running");
+          const error = yield* Effect.flip(
+            service.submitExecutions({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              submissions: [cell("fresh", "print(1)"), cell("held", "print(2)")],
+            }),
+          );
+          expect(error.reason).toBe("execution-conflict");
           expect((yield* waitForSession("ready")).pendingCount).toBe(0);
         }),
       );

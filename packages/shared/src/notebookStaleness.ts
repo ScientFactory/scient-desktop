@@ -77,7 +77,8 @@ export function definedNames(source: string): ReadonlySet<string> {
   );
 }
 
-function usedNames(source: string): ReadonlySet<string> {
+/** Names a cell reads. A token scan, so it over-reports; callers intersect it with defined names. */
+export function usedNames(source: string): ReadonlySet<string> {
   const names = source.replace(COMMENT, "$1").match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
   return new Set(names.flatMap((name) => [name, name.toLowerCase()]));
 }
@@ -119,4 +120,42 @@ export function staleNotebookCells(
     });
   }
   return stale;
+}
+
+/** Markdown heading positions for the notebook outline and portable section folds. */
+export function notebookHeadings(source: string): ReadonlyArray<{
+  readonly level: number;
+  readonly text: string;
+  readonly line: number;
+}> {
+  const headings = [];
+  let fence: string | undefined;
+  let paragraph: { text: string; line: number } | undefined;
+  for (const [line, text] of source.split(/\r?\n/u).entries()) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(text);
+    if (fence !== undefined) {
+      if (marker?.[1]?.startsWith(fence) && marker[2]?.trim() === "") fence = undefined;
+      continue;
+    }
+    if (marker?.[1] !== undefined) {
+      fence = marker[1];
+      paragraph = undefined;
+      continue;
+    }
+    const heading = /^ {0,3}(#{1,6})(?:[ \t]+(.*)|$)/u.exec(text);
+    if (heading?.[1] !== undefined) {
+      headings.push({
+        level: heading[1].length,
+        text: (heading[2] ?? "").replace(/(?:^|\s)#+\s*$/u, "").trim(),
+        line,
+      });
+      paragraph = undefined;
+    } else if (paragraph !== undefined && /^ {0,3}(=+|-+)[ \t]*$/u.test(text)) {
+      headings.push({ ...paragraph, level: text.trimStart().startsWith("=") ? 1 : 2 });
+      paragraph = undefined;
+    } else {
+      paragraph = /^ {0,3}[^\s>#*+-]/u.test(text) ? { text: text.trim(), line } : undefined;
+    }
+  }
+  return headings;
 }

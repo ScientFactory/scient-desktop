@@ -80,6 +80,7 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.computeReadTable]: () => use("compute.table.view"),
   [WS_METHODS.computeSaveOutput]: () => use("compute.output.save"),
   [WS_METHODS.computeSaveConsoleNotebook]: () => use("compute.console.save_notebook"),
+  [WS_METHODS.computeAddPythonLibrary]: () => use("compute.library.add"),
   [WS_METHODS.computeManageRuntime]: (payload) =>
     use("compute.runtime.manage", literal(payload, "action")),
   [WS_METHODS.dataReadFileTable]: () => use("data.table.open"),
@@ -242,6 +243,7 @@ export const SCIENT_ACTION_TOOLS: ReadonlySet<string> = new Set([
   "scient_compute_control",
   "scient_notebook_edit",
   "scient_notebook_run",
+  "scient_notebook_stop",
   "scient_results_run",
   "scient_results_markdown",
   "scient_latex_build",

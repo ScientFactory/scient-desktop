@@ -21,8 +21,11 @@ import { useProjectFilePickerQuery } from "./projectFilesQueryState";
 
 interface ProjectFilePickerProps {
   readonly setOpen: (open: boolean) => void;
+  // SCIENT-FORK:START — allow callers to select a file for their own action.
   readonly onSelectFile?: (relativePath: string) => void;
   readonly actionLabel?: string;
+  readonly compactPaths?: boolean;
+  // SCIENT-FORK:END
 }
 
 function HighlightedFuzzyText(props: {
@@ -82,9 +85,15 @@ function EmptyProjectFilePicker() {
   );
 }
 
+// SCIENT-FORK:START — support explicit file selection without a conversation.
 export function ProjectFilePickerForTarget(
-  props: ProjectFilePickerProps & { target: ActiveProjectTarget },
+  props: ProjectFilePickerProps &
+    (
+      | { target: ActiveProjectTarget }
+      | { target: Omit<ActiveProjectTarget, "threadRef">; onSelectFile: (path: string) => void }
+    ),
 ) {
+  // SCIENT-FORK:END
   const { target } = props;
   const gt = useGT();
   const messages = useMessages();
@@ -102,6 +111,16 @@ export function ProjectFilePickerForTarget(
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const matches = getProjectFilePickerMatches(result.entries, result.matchedQuery);
   const hasMatchedQuery = /\S/.test(result.matchedQuery);
+  // SCIENT-FORK:START — show parent folders only for file names that need disambiguation.
+  const duplicateNames = new Set<string>();
+  if (props.compactPaths) {
+    const seen = new Set<string>();
+    for (const { name } of matches) {
+      if (seen.has(name)) duplicateNames.add(name);
+      seen.add(name);
+    }
+  }
+  // SCIENT-FORK:END
   const items: CommandPaletteActionItem[] = matches.map((match) => ({
     kind: "action",
     value: `file:${match.path}`,
@@ -113,18 +132,26 @@ export function ProjectFilePickerForTarget(
         indices={match.nameMatchIndices}
       />
     ),
-    description: (
+    // SCIENT-FORK:START — compact pickers name a parent folder only to tell same-named files apart.
+    description: props.compactPaths ? (
+      duplicateNames.has(match.name) ? (
+        match.path.slice(0, match.path.lastIndexOf("/")) || gt("Project root")
+      ) : undefined
+    ) : (
       <HighlightedFuzzyText
         active={hasMatchedQuery}
         value={match.path}
         indices={match.pathMatchIndices}
       />
     ),
+    // SCIENT-FORK:END
     icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
     run: async () => {
-      // SCIENT-FORK: allow the owning surface to select the file.
+      // SCIENT-FORK:START — return an input to the caller or open the file in the conversation.
       if (props.onSelectFile) props.onSelectFile(match.path);
-      else useRightPanelStore.getState().openFile(target.threadRef, match.path);
+      else if ("threadRef" in target)
+        useRightPanelStore.getState().openFile(target.threadRef, match.path);
+      // SCIENT-FORK:END
     },
   }));
 
@@ -135,7 +162,9 @@ export function ProjectFilePickerForTarget(
       aria-label={gt("File picker")}
       autoHighlight="always"
       escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
+      // SCIENT-FORK:START — use the caller's action label when selecting a file.
       footerActionLabel={props.actionLabel ?? gt("Open file")}
+      // SCIENT-FORK:END
       inputProps={{ placeholder: gt("Search files…") }}
       mode="none"
       onItemHighlighted={(value) => {
@@ -174,5 +203,7 @@ export function ProjectFilePicker(props: ProjectFilePickerProps) {
     return <EmptyProjectFilePicker />;
   }
 
+  // SCIENT-FORK:START — forward the caller's file selection action.
   return <ProjectFilePickerForTarget {...props} target={target} />;
+  // SCIENT-FORK:END
 }

@@ -94,6 +94,15 @@ describe("file history", () => {
     expect(kept).toBe(false);
     const [version] = await listFileVersions(directory, target);
     expect(version?.revision).toBe(revisionOf("written since the check"));
+    expect(
+      await keepFileVersion({
+        directory,
+        target,
+        revision: revisionOf("as checked"),
+        ownSave: false,
+        now: 2,
+      }),
+    ).toBe(false);
   });
 
   it("leaves other history alone rather than keep a file too large to fit", async () => {

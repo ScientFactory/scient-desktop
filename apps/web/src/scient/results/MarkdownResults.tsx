@@ -1,3 +1,4 @@
+import { ResultComparison } from "./ResultComparison";
 import type {
   ComputeResultResolution,
   ComputeResultSummary,
@@ -10,12 +11,24 @@ import {
   parseResultTarget,
   resultCaption,
   resultHasNewer,
+  resultInputCoverageIncomplete,
+  resultEnvironmentMayDiffer,
+  resultSourceChanged,
   resultReferenceState as resultMarkState,
 } from "@t3tools/shared/computeResults";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Button } from "~/components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { ResultRunSetup, type ResultRunOptions } from "./ResultRunSetup";
+import { ExportResultPackageButton } from "./handoff/ExportResultPackageButton";
+import {
+  ResultAttemptStatus,
+  ResultRunFailureNotice,
+  type ResultRunFailure,
+} from "./ResultAttemptStatus";
+import { ResultRunEvidence } from "./ResultRunEvidence";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { computeEnvironment } from "~/state/compute";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -27,7 +40,8 @@ import {
   resultMarkKey,
 } from "../markdownEditor/prosemirror/results";
 import type { ScientMarkdownEditorView } from "../markdownEditor/prosemirror/view";
-import { ResultPicker, resultErrorMessage, type ResultChoice } from "./ResultPicker";
+import { ResultPicker, type ResultChoice } from "./ResultPicker";
+import { resultErrorMessage, resultParameters, resultTime } from "./resultState";
 import { RESULT_STATE_LABEL, resultCauseText } from "./resultState";
 
 export interface MarkdownResultsHandle {
@@ -35,14 +49,12 @@ export interface MarkdownResultsHandle {
   readonly openPicker: () => void;
 }
 
-const REFRESH_DELAY_MS = 400;
-
-const relativeTime = (iso: string) => {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+type ResolvedLink = {
+  readonly candidate: EditorResultReference;
+  readonly resolution: Extract<ComputeResultResolution, { _tag: "resolved" }>;
 };
+
+const REFRESH_DELAY_MS = 400;
 
 /** Linked results in a Markdown manuscript: their state marks, their card, and the picker. */
 export function MarkdownResults(props: {
@@ -53,10 +65,17 @@ export function MarkdownResults(props: {
   readonly register: (handle: MarkdownResultsHandle) => () => void;
 }) {
   const { controller, register } = props;
-  const references = useSyncExternalStore(
+  const { resultReferences: references, editable } = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
-  ).resultReferences;
+  );
+  const gt = useGT();
+  const placeFigure = useAtomCommand(computeEnvironment.resultsPlaceFigure, {
+    reportFailure: false,
+  });
+  const canPlace = useAtomValue(
+    computeEnvironment.resultsPlaceFigure.permissionAtom(props.environmentId),
+  );
   const hrefs = [...new Set(references.map((reference) => reference.href))].toSorted();
   const hrefKey = hrefs.join("\n");
   const [resolutions, setResolutions] = useState<ReadonlyMap<string, ComputeResultResolution>>(
@@ -67,6 +86,11 @@ export function MarkdownResults(props: {
     href: string;
     anchor: HTMLElement;
     position?: number | undefined;
+  } | null>(null);
+  const [comparison, setComparison] = useState<{
+    summary: ComputeResultSummary;
+    candidate?: ComputeResultSummary | undefined;
+    anchor: HTMLElement;
   } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -143,6 +167,7 @@ export function MarkdownResults(props: {
     () =>
       register({
         openCard: (href, anchor, position) => {
+          if (!anchor.hasAttribute("tabindex")) anchor.tabIndex = -1;
           setCard({ href, anchor, position });
           setRefreshTick((tick) => tick + 1);
         },
@@ -151,191 +176,49 @@ export function MarkdownResults(props: {
     [register],
   );
 
-  // Two results can cite the same output; the card is for the one clicked.
-  const cardReference =
-    card === null
-      ? undefined
-      : (references.find(
-          (reference) =>
-            reference.href === card.href &&
-            (reference.position === card.position ||
-              (reference.kind === "table" && reference.atomPosition === card.position)),
-        ) ?? references.find((reference) => reference.href === card.href));
-  return (
-    <>
-      <Popover
-        open={card !== null && cardReference !== undefined}
-        onOpenChange={(open) => {
-          if (!open) setCard(null);
-        }}
-      >
-        {card !== null && cardReference !== undefined ? (
-          <PopoverPopup
-            ref={cardRef}
-            anchor={card.anchor}
-            side="bottom"
-            align="start"
-            // A click in the editor counts as keyboard focus to Chromium; focusing the first button
-            // would draw its focus ring. Tab still reaches the buttons.
-            initialFocus={cardRef}
-            className="w-80"
-            padding="none"
-          >
-            {/* Solid, not glass: the card often sits over the paper's figures, which blur into smudges. */}
-            <div className="rounded-[calc(var(--radius-lg)-1px)] bg-popover p-4">
-              <ResultCard
-                environmentId={props.environmentId}
-                cwd={props.cwd}
-                documentPath={props.documentPath}
-                controller={controller}
-                reference={cardReference}
-                references={references}
-                resolutions={resolutions}
-                onChanged={() => setRefreshTick((tick) => tick + 1)}
-                onClose={() => setCard(null)}
-              />
-            </div>
-          </PopoverPopup>
-        ) : null}
-      </Popover>
-      {pickerOpen ? (
-        <MarkdownResultPicker
-          onClose={() => setPickerOpen(false)}
-          environmentId={props.environmentId}
-          cwd={props.cwd}
-          documentPath={props.documentPath}
-          controller={controller}
-        />
-      ) : null}
-    </>
-  );
-}
-
-function SummaryLines({ summary }: { readonly summary: ComputeResultSummary }) {
-  const gt = useGT();
-  const inputs = summary.inputs.join(", ");
-  return (
-    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-      <span>
-        {summary.threadId === undefined ? (
-          <T>
-            From{" "}
-            <span className="font-medium text-foreground">
-              <Var>{summary.scriptPath}</Var>
-            </span>
-            , run <Var>{relativeTime(summary.finishedAt)}</Var>
-          </T>
-        ) : (
-          <T>
-            From{" "}
-            <span className="font-medium text-foreground">
-              <Var>{summary.scriptPath}</Var>
-            </span>
-            , run <Var>{relativeTime(summary.finishedAt)}</Var> by an agent
-          </T>
-        )}
-      </span>
-      <span>
-        {summary.inputTracking === "not-tracked"
-          ? gt("Inputs are not tracked for this language.")
-          : summary.inputs.length === 0
-            ? gt("Scient saw it read no project files.")
-            : summary.inputsTruncated
-              ? gt("Inputs Scient saw it read: {inputs}, and more.", { inputs })
-              : gt("Inputs Scient saw it read: {inputs}.", { inputs })}
-      </span>
-      <span>
-        {summary.runtime.version === null
-          ? gt("Package changes are not checked.")
-          : gt("{language} {version}. Package changes are not checked.", {
-              language: summary.language,
-              version: summary.runtime.version,
-            })}
-      </span>
-    </div>
-  );
-}
-
-function ResultCard(props: {
-  readonly environmentId: EnvironmentId;
-  readonly cwd: string;
-  readonly documentPath: string;
-  readonly controller: ScientMarkdownEditorView;
-  readonly reference: EditorResultReference;
-  readonly references: ReadonlyArray<EditorResultReference>;
-  readonly resolutions: ReadonlyMap<string, ComputeResultResolution>;
-  readonly onChanged: () => void;
-  readonly onClose: () => void;
-}) {
-  const gt = useGT();
-  const messages = useMessages();
-  const { reference } = props;
-  const resolution = props.resolutions.get(reference.href);
-  const state = resultMarkState(reference, resolution);
-  const [busy, setBusy] = useState<"update" | "rerun" | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const rerun = useAtomCommand(computeEnvironment.resultsRerun, { reportFailure: false });
-  const placeFigure = useAtomCommand(computeEnvironment.resultsPlaceFigure, {
-    reportFailure: false,
+  const byScript = new Map<string, ResolvedLink[]>();
+  for (const candidate of references) {
+    const resolution = resolutions.get(candidate.href);
+    if (resolution?._tag !== "resolved") continue;
+    const { scriptPath } = resolution.summary;
+    const linked = byScript.get(scriptPath);
+    if (linked === undefined) byScript.set(scriptPath, [{ candidate, resolution }]);
+    else linked.push({ candidate, resolution });
+  }
+  const mixedRuns = [...byScript.entries()].flatMap(([scriptPath, linked]) => {
+    const runs = new Map<string, ResolvedLink[]>();
+    for (const link of linked) {
+      const id = link.candidate.revision;
+      const run = runs.get(id);
+      if (run === undefined) runs.set(id, [link]);
+      else run.push(link);
+    }
+    return runs.size > 1 ? [{ scriptPath, runs }] : [];
   });
-  const canPlace = useAtomValue(
-    computeEnvironment.resultsPlaceFigure.permissionAtom(props.environmentId),
-  );
-  const canRerun = useAtomValue(
-    computeEnvironment.resultsRerun.permissionAtom(props.environmentId),
-  );
-  const shown =
-    reference.kind === "value"
-      ? reference.text
-      : reference.kind === "table"
-        ? reference.caption || gt("Table")
-        : reference.alt || gt("Figure");
 
-  if (resolution === undefined || resolution._tag === "unrecorded")
-    return (
-      <div className="flex flex-col gap-1 p-1 text-xs">
-        <span className="font-medium text-foreground">{shown}</span>
-        <span className="text-muted-foreground">
-          <T>No run record on this computer. The document keeps the value it shows.</T>
-        </span>
-      </div>
+  const applyUpdate = async (linked: ReadonlyArray<ResolvedLink>): Promise<string | null> => {
+    const scriptPath = linked[0]?.resolution.summary.scriptPath ?? "";
+    const group = linked.flatMap(({ candidate, resolution }) =>
+      resolution.newer !== null && resultHasNewer(candidate, resolution)
+        ? [{ candidate, newer: resolution.newer }]
+        : [],
     );
-
-  const scriptPath = resolution.summary.scriptPath;
-  const editable = props.controller.getSnapshot().editable;
-
-  const applyUpdate = async () => {
-    const group = props.references.flatMap((candidate) => {
-      const found = props.resolutions.get(candidate.href);
-      return found?._tag === "resolved" &&
-        found.summary.scriptPath === scriptPath &&
-        found.newer !== null &&
-        resultHasNewer(candidate, found)
-        ? [{ candidate, newer: found.newer }]
-        : [];
-    });
-    // One script's results move to one revision together, or not at all: a mix would put
-    // numbers from two different runs side by side.
-    const dropped = props.references.filter((candidate) => {
-      const found = props.resolutions.get(candidate.href);
-      return (
-        found?._tag === "resolved" &&
-        found.summary.scriptPath === scriptPath &&
-        found.newer !== null &&
-        !resultHasNewer(candidate, found)
-      );
-    });
+    const dropped = linked.filter(
+      ({ candidate, resolution }) =>
+        resolution.newer !== null && !resultHasNewer(candidate, resolution),
+    );
     if (dropped.length > 0) {
       const names = [
-        ...new Set(dropped.map((item) => (item.pointer ?? item.output).replace(/^\//u, ""))),
-      ];
-      setMessage(
-        gt(
-          "{count, plural, =1 {The newest run of {scriptPath} has no {names}. Remove it from the document or have the script write it again, then update.} other {The newest run of {scriptPath} has no {names}. Remove them from the document or have the script write them again, then update.}}",
-          { count: names.length, scriptPath, names: names.join(", ") },
+        ...new Set(
+          dropped.map(({ candidate }) =>
+            (candidate.pointer ?? candidate.output).replace(/^\//u, ""),
+          ),
         ),
+      ];
+      return gt(
+        "{count, plural, =1 {The newest run of {scriptPath} has no {names}. Remove it from the document or have the script write it again, then update.} other {The newest run of {scriptPath} has no {names}. Remove them from the document or have the script write them again, then update.}}",
+        { count: names.length, scriptPath, names: names.join(", ") },
       );
-      return;
     }
     const placed = new Map<string, string>();
     for (const { candidate, newer } of group) {
@@ -350,24 +233,22 @@ function ResultCard(props: {
         },
       });
       if (result._tag !== "Success") {
-        setMessage(resultErrorMessage(result, gt("The new figure could not be copied.")));
-        return;
+        return resultErrorMessage(result, gt("The new figure could not be copied."));
       }
       placed.set(candidate.href, result.value.src);
     }
     // Results added or removed during the copies would be left on the old run, so start over.
     const live = props.controller.resultReferences();
     if (
-      live.map((reference) => reference.href).join("\n") !==
-      props.references.map((reference) => reference.href).join("\n")
+      live.map(({ kind, href }) => [kind, href].join(" ")).join("\n") !==
+      references.map(({ kind, href }) => [kind, href].join(" ")).join("\n")
     ) {
-      setMessage(gt("The document's results changed while updating. Update again."));
-      return;
+      return gt("The document's results changed while updating. Update again.");
     }
     // Positions are read after the copies, so edits made meanwhile are kept.
     const updates: ResultUpdate[] = [];
-    for (const current of live) {
-      const match = group.find(({ candidate }) => candidate.href === current.href);
+    for (const [index, current] of live.entries()) {
+      const match = group.find(({ candidate }) => candidate === references[index]);
       if (match === undefined) continue;
       const href = formatResultTarget({
         revision: match.newer.summary.revision,
@@ -398,56 +279,401 @@ function ResultCard(props: {
           src: placed.get(current.href)!,
         });
     }
-    if (!props.controller.updateResults(updates)) {
-      setMessage(gt("Nothing to update."));
-      return;
-    }
-    props.onChanged();
-    props.onClose();
+    if (!controller.updateResults(updates)) return gt("Nothing to update.");
+    setRefreshTick((tick) => tick + 1);
+    return null;
   };
 
-  const updateFromScript = () => {
+  // Two results can cite the same output; the card is for the one clicked.
+  const cardReference =
+    card === null
+      ? undefined
+      : (references.find(
+          (reference) =>
+            reference.href === card.href &&
+            (reference.position === card.position ||
+              (reference.kind === "table" && reference.atomPosition === card.position)),
+        ) ?? references.find((reference) => reference.href === card.href));
+  return (
+    <>
+      {mixedRuns.map(({ scriptPath, runs }) => {
+        const storageKey =
+          "scient-markdown-intentional-results:" +
+          JSON.stringify([
+            props.environmentId,
+            props.cwd,
+            props.documentPath,
+            scriptPath,
+            [...runs.keys()].sort(),
+          ]);
+        return (
+          <MixedRunNotice
+            key={storageKey}
+            storageKey={storageKey}
+            scriptPath={scriptPath}
+            runs={runs}
+            canEdit={editable}
+            canPlace={canPlace}
+            onUpdate={applyUpdate}
+          />
+        );
+      })}
+      <Popover
+        open={card !== null && cardReference !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setCard(null);
+        }}
+      >
+        {card !== null && cardReference !== undefined ? (
+          <PopoverPopup
+            ref={cardRef}
+            anchor={card.anchor}
+            side="bottom"
+            align="start"
+            // A click in the editor counts as keyboard focus to Chromium; focusing the first button
+            // would draw its focus ring. Tab still reaches the buttons.
+            initialFocus={cardRef}
+            className="max-h-[min(32rem,var(--available-height))] w-80 overflow-y-auto"
+            padding="none"
+          >
+            {/* Solid, not glass: the card often sits over the paper's figures, which blur into smudges. */}
+            <div className="rounded-[calc(var(--radius-lg)-1px)] bg-popover p-4">
+              <ResultCard
+                environmentId={props.environmentId}
+                cwd={props.cwd}
+                documentPath={props.documentPath}
+                controller={controller}
+                reference={cardReference}
+                resolutions={resolutions}
+                onUpdate={(link) => applyUpdate([link])}
+                onChanged={() => setRefreshTick((tick) => tick + 1)}
+                onClose={() => setCard(null)}
+                onCompare={(summary, candidate) => {
+                  setComparison({ summary, candidate, anchor: card.anchor });
+                  setCard(null);
+                }}
+              />
+            </div>
+          </PopoverPopup>
+        ) : null}
+      </Popover>
+      {comparison === null ? null : (
+        <ResultComparison
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          summary={comparison.summary}
+          candidate={comparison.candidate}
+          onClose={() => setComparison(null)}
+          finalFocus={() => comparison.anchor}
+        />
+      )}
+      {pickerOpen ? (
+        <MarkdownResultPicker
+          onClose={() => setPickerOpen(false)}
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          documentPath={props.documentPath}
+          controller={controller}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function hasDifferentSetups(runs: ReadonlyArray<ComputeResultSummary>): boolean {
+  const parameters = runs.map((run) =>
+    JSON.stringify(
+      (run.parameters ?? []).map(({ name, value }) => JSON.stringify([name, value])).sort(),
+    ),
+  );
+  if (new Set(parameters).size > 1) return true;
+
+  for (const tracking of ["observed", "not-tracked"] as const) {
+    const comparable = runs.filter(
+      (run) => run.inputTracking === tracking && !resultInputCoverageIncomplete(run),
+    );
+    const paths = comparable.map((run) =>
+      JSON.stringify([run.inputs.toSorted(), (run.observedDirectories ?? []).toSorted()]),
+    );
+    const fingerprints = comparable.flatMap((run) => run.inputFingerprint ?? []);
+    if (new Set(paths).size > 1 || new Set(fingerprints).size > 1) return true;
+  }
+  return false;
+}
+
+function MixedRunNotice(props: {
+  readonly storageKey: string;
+  readonly scriptPath: string;
+  readonly runs: ReadonlyMap<string, ReadonlyArray<ResolvedLink>>;
+  readonly canEdit: boolean;
+  readonly canPlace: boolean;
+  readonly onUpdate: (links: ReadonlyArray<ResolvedLink>) => Promise<string | null>;
+}) {
+  const gt = useGT();
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(props.storageKey) === "intentional";
+    } catch {
+      return false;
+    }
+  });
+  const [updating, setUpdating] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const canDismiss = hasDifferentSetups(
+    [...props.runs.values()].map((links) => links[0]!.resolution.summary),
+  );
+  if (canDismiss && dismissed) return null;
+  const update = async (revision: string, links: ReadonlyArray<ResolvedLink>) => {
+    setUpdating(revision);
+    setMessage(null);
+    try {
+      setMessage(await props.onUpdate(links));
+    } catch {
+      setMessage(gt("The result links could not be updated."));
+    }
+    setUpdating(null);
+  };
+  const describe = (run: ComputeResultSummary) =>
+    [
+      resultTime(run.finishedAt),
+      resultParameters(run.parameters) || gt("No recorded parameters"),
+    ].join(" · ");
+  return (
+    <div className="max-h-56 shrink-0 overflow-auto border-b border-border px-3 py-1 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2">
+        <span role="status">
+          {gt("This paper uses results from {count} runs of {scriptPath}", {
+            count: props.runs.size,
+            scriptPath: props.scriptPath,
+          })}
+        </span>
+        {canDismiss ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              try {
+                localStorage.setItem(props.storageKey, "intentional");
+              } catch {
+                // Local storage is unavailable in some embedded contexts.
+              }
+              setDismissed(true);
+            }}
+          >
+            <T>These differ on purpose</T>
+          </Button>
+        ) : null}
+      </div>
+      <ul className="space-y-1">
+        {[...props.runs].map(([revision, links]) => {
+          const first = links[0];
+          if (first === undefined) return null;
+          const target = links.find(({ resolution }) => resolution.newer !== null)?.resolution
+            .newer;
+          const canUpdate =
+            props.canEdit &&
+            target != null &&
+            links.every(
+              ({ candidate, resolution }) =>
+                resultHasNewer(candidate, resolution) &&
+                (candidate.kind !== "figure" || props.canPlace),
+            );
+          return (
+            <li key={revision}>
+              {describe(first.resolution.summary)}
+              {canUpdate && target != null ? (
+                <details className="ml-2 inline-block">
+                  <summary className="cursor-pointer">
+                    <T>Review changes for this run</T>
+                  </summary>
+                  <p>{gt("Update to {run}", { run: describe(target.summary) })}</p>
+                  <ul className="mb-1">
+                    {links.map(({ candidate, resolution }) => {
+                      const label = candidate.pointer ?? candidate.output;
+                      const next = resolution.newer;
+                      return (
+                        <li key={candidate.position}>
+                          {candidate.kind === "value"
+                            ? gt("{name} · {before} → {after}", {
+                                name: label,
+                                before: candidate.text,
+                                after: next?.value ?? "",
+                              })
+                            : candidate.kind === "table"
+                              ? gt("Replace table {name} with {rows} rows from the selected run", {
+                                  name: label,
+                                  rows: next?.table?.length ?? 0,
+                                })
+                              : gt("Replace figure {name} with the selected run’s file", {
+                                  name: label,
+                                })}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={updating !== null}
+                    onClick={() => void update(revision, links)}
+                  >
+                    {updating === revision ? gt("Updating…") : gt("Update links from this run")}
+                  </Button>
+                </details>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {message === null ? null : <p role="status">{message}</p>}
+    </div>
+  );
+}
+
+function SummaryLines({ summary }: { readonly summary: ComputeResultSummary }) {
+  return (
+    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+      <span>
+        {summary.threadId === undefined ? (
+          <T>
+            From{" "}
+            <span className="font-medium text-foreground">
+              <Var>{summary.scriptPath}</Var>
+            </span>
+            , run <Var>{resultTime(summary.finishedAt)}</Var>
+          </T>
+        ) : (
+          <T>
+            From{" "}
+            <span className="font-medium text-foreground">
+              <Var>{summary.scriptPath}</Var>
+            </span>
+            , run <Var>{resultTime(summary.finishedAt)}</Var> by an agent
+          </T>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function ResultCard(props: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly documentPath: string;
+  readonly controller: ScientMarkdownEditorView;
+  readonly reference: EditorResultReference;
+  readonly resolutions: ReadonlyMap<string, ComputeResultResolution>;
+  readonly onUpdate: (link: ResolvedLink) => Promise<string | null>;
+  readonly onCompare: (summary: ComputeResultSummary, candidate?: ComputeResultSummary) => void;
+  readonly onChanged: () => void;
+  readonly onClose: () => void;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const { reference } = props;
+  const resolution = props.resolutions.get(reference.href);
+  const state = resultMarkState(reference, resolution);
+  const [busy, setBusy] = useState<"update" | "rerun" | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [runFailure, setRunFailure] = useState<ResultRunFailure | null>(null);
+  const rerun = useAtomCommand(computeEnvironment.resultsRerun, { reportFailure: false });
+  const canPlace = useAtomValue(
+    computeEnvironment.resultsPlaceFigure.permissionAtom(props.environmentId),
+  );
+  const canRerun = useAtomValue(
+    computeEnvironment.resultsRerun.permissionAtom(props.environmentId),
+  );
+  const shown =
+    reference.kind === "value"
+      ? reference.text
+      : reference.kind === "table"
+        ? reference.caption || gt("Table")
+        : reference.alt || gt("Figure");
+
+  if (resolution === undefined || resolution._tag === "unrecorded")
+    return (
+      <div className="flex flex-col gap-1 p-1 text-xs">
+        <span className="font-medium text-foreground">{shown}</span>
+        <span className="text-muted-foreground">
+          <T>No run record on this computer. The document keeps the value it shows.</T>
+        </span>
+      </div>
+    );
+
+  const scriptPath = resolution.summary.scriptPath;
+  const editable = props.controller.getSnapshot().editable;
+
+  const updateFromScript = async () => {
     setBusy("update");
     setMessage(null);
-    return applyUpdate().finally(() => setBusy(null));
+    try {
+      const failure = await props.onUpdate({ candidate: reference, resolution });
+      if (failure === null) props.onClose();
+      else setMessage(failure);
+    } catch {
+      setMessage(gt("The result links could not be updated."));
+    }
+    setBusy(null);
   };
 
-  const runAgain = async () => {
+  const runAgain = async (options?: ResultRunOptions) => {
     const result = await rerun({
       environmentId: props.environmentId,
-      input: { cwd: props.cwd, scriptPath },
+      input: { cwd: props.cwd, scriptPath, ...options },
     });
     if (result._tag !== "Success") {
       setMessage(resultErrorMessage(result, gt("The script could not run.")));
       return;
     }
-    if (result.value._tag === "failed") setMessage(result.value.message);
+    if (result.value._tag === "failed") {
+      setRunFailure({
+        message: result.value.message,
+        previousAttempt: resolution.summary.lastAttempt?.finishedAt,
+      });
+    } else if (result.value._tag === "completed") {
+      setMessage(
+        result.value.message ?? result.value.notebookMessage ?? gt("No linked results published."),
+      );
+    }
     props.onChanged();
   };
 
-  const rerunScript = () => {
+  const rerunScript = (options?: ResultRunOptions) => {
+    setSetupOpen(false);
     setBusy("rerun");
     setMessage(null);
-    return runAgain().finally(() => setBusy(null));
+    setRunFailure(null);
+    return runAgain(options).finally(() => setBusy(null));
   };
 
   const newer = resolution.newer;
-  const updateCount = props.references.filter((candidate) => {
-    const found = props.resolutions.get(candidate.href);
-    return (
-      found?._tag === "resolved" &&
-      found.summary.scriptPath === scriptPath &&
-      resultHasNewer(candidate, found)
-    );
-  }).length;
+  const sameValue = reference.kind === "value" && newer?.value === reference.text;
+  const lastAttempt = resolution.summary.lastAttempt;
+  const canUpdate =
+    editable && (reference.kind !== "figure" || canPlace) && resultHasNewer(reference, resolution);
   return (
     <div className="flex flex-col gap-2 p-1 text-xs" data-testid="result-card">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate font-medium text-foreground">{shown}</span>
-        <span className="shrink-0 text-muted-foreground" data-result-card-state={state}>
+      <div className="flex min-w-0 flex-col gap-1">
+        <bdi className="w-fit max-w-full truncate text-sm font-medium tabular-nums">{shown}</bdi>
+        <SummaryLines summary={resolution.summary} />
+      </div>
+      {lastAttempt === undefined ? null : (
+        <ResultAttemptStatus
+          key={lastAttempt.finishedAt}
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          scriptPath={scriptPath}
+          attempt={lastAttempt}
+        />
+      )}
+      <ResultRunFailureNotice failure={runFailure} lastAttempt={lastAttempt} />
+      {state === "newer" || state === "current" ? null : (
+        <span className="text-muted-foreground" data-result-card-state={state}>
           {messages(RESULT_STATE_LABEL[state])}
         </span>
-      </div>
+      )}
       {reference.kind === "value" && state === "edited" ? (
         <span>
           <T>
@@ -460,25 +686,15 @@ function ResultCard(props: {
           <T>Cells differ from what the run wrote.</T>
         </span>
       ) : null}
-      {resolution.summary.causes.length > 0 ? (
-        <ul className="flex flex-col gap-0.5">
-          {resolution.summary.causes.map((cause) => (
-            <li key={`${cause.kind}:${cause.path}`}>{resultCauseText(cause, messages)}</li>
-          ))}
-        </ul>
-      ) : (
-        <span className="text-muted-foreground">
-          <T>No changes in the script or the files Scient saw it read.</T>
-        </span>
-      )}
-      <SummaryLines summary={resolution.summary} />
       {newer !== null && resultHasNewer(reference, resolution) ? (
         <div className="flex flex-col gap-1 border-t border-border pt-2">
           <span>
-            {reference.kind === "value" ? (
-              newer.summary.causes.length > 0 ? (
+            {sameValue ? (
+              <T>Newer run, same value</T>
+            ) : reference.kind === "value" ? (
+              resultSourceChanged(newer.summary) ? (
                 <T>
-                  A newer run (<Var>{relativeTime(newer.summary.finishedAt)}</Var>) gives{" "}
+                  A newer run (<Var>{resultTime(newer.summary.finishedAt)}</Var>) gives{" "}
                   <span className="font-medium text-foreground">
                     <Var>{newer.value}</Var>
                   </span>
@@ -486,7 +702,7 @@ function ResultCard(props: {
                 </T>
               ) : (
                 <T>
-                  A newer run (<Var>{relativeTime(newer.summary.finishedAt)}</Var>) gives{" "}
+                  A newer run (<Var>{resultTime(newer.summary.finishedAt)}</Var>) gives{" "}
                   <span className="font-medium text-foreground">
                     <Var>{newer.value}</Var>
                   </span>
@@ -494,27 +710,64 @@ function ResultCard(props: {
                 </T>
               )
             ) : reference.kind === "table" ? (
-              newer.summary.causes.length > 0 ? (
+              resultSourceChanged(newer.summary) ? (
                 gt("A newer run ({time}) has a new table, but it is out of date too.", {
-                  time: relativeTime(newer.summary.finishedAt),
+                  time: resultTime(newer.summary.finishedAt),
                 })
               ) : (
                 gt("A newer run ({time}) has a new table.", {
-                  time: relativeTime(newer.summary.finishedAt),
+                  time: resultTime(newer.summary.finishedAt),
                 })
               )
-            ) : newer.summary.causes.length > 0 ? (
+            ) : resultSourceChanged(newer.summary) ? (
               gt("A newer run ({time}) has a new figure, but it is out of date too.", {
-                time: relativeTime(newer.summary.finishedAt),
+                time: resultTime(newer.summary.finishedAt),
               })
             ) : (
               gt("A newer run ({time}) has a new figure.", {
-                time: relativeTime(newer.summary.finishedAt),
+                time: resultTime(newer.summary.finishedAt),
               })
             )}
           </span>
+          {resultEnvironmentMayDiffer(newer.summary) ? (
+            <span className="text-muted-foreground">
+              <T>The newer run's environment may differ.</T>
+            </span>
+          ) : null}
+          {canUpdate ? (
+            <div>
+              <Button size="xs" disabled={busy !== null} onClick={() => void updateFromScript()}>
+                {busy === "update"
+                  ? gt("Updating…")
+                  : reference.kind === "value"
+                    ? sameValue
+                      ? gt("Update link")
+                      : gt("Update value")
+                    : gt("Update this link")}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
+      <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <CollapsibleTrigger
+          render={<Button size="xs" variant={detailsOpen ? "selected" : "ghost-inset"} />}
+        >
+          <T>Run details</T>
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="flex flex-col gap-1 rounded-lg bg-muted/40 p-2 text-muted-foreground">
+            {resolution.summary.causes.length > 0 ? (
+              <ul className="flex flex-col gap-0.5">
+                {resolution.summary.causes.map((cause) => (
+                  <li key={`${cause.kind}:${cause.path}`}>{resultCauseText(cause, messages)}</li>
+                ))}
+              </ul>
+            ) : null}
+            <ResultRunEvidence summary={resolution.summary} />
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
       {message === null ? null : <span className="text-destructive-foreground">{message}</span>}
       <div className="flex flex-wrap gap-1.5">
         {editable &&
@@ -566,19 +819,25 @@ function ResultCard(props: {
             <T>Use the run's table</T>
           </Button>
         ) : null}
-        {editable && canPlace && updateCount > 0 ? (
-          <Button size="xs" disabled={busy !== null} onClick={() => void updateFromScript()}>
-            {busy === "update"
-              ? gt("Updating…")
-              : gt("{count, plural, =1 {Update} other {Update {count} results}}", {
-                  count: updateCount,
-                })}
-          </Button>
-        ) : null}
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={() => props.onCompare(resolution.summary, newer?.summary)}
+        >
+          <T>Compare with…</T>
+        </Button>
+        <ExportResultPackageButton
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          scriptPath={scriptPath}
+          revision={resolution.summary.revision}
+        />
+      </div>
+      <div className="flex flex-wrap gap-1.5 border-t border-border pt-2">
         {canRerun ? (
           <Button
             size="xs"
-            variant="outline"
+            variant="ghost-inset"
             disabled={busy !== null}
             onClick={() => void rerunScript()}
           >
@@ -587,7 +846,26 @@ function ResultCard(props: {
               : gt("Re-run {name}", { name: scriptPath.split("/").at(-1) ?? "" })}
           </Button>
         ) : null}
+        {canRerun && !setupOpen ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy !== null}
+            onClick={() => setSetupOpen(true)}
+          >
+            <T>Run setup…</T>
+          </Button>
+        ) : null}
       </div>
+      {canRerun && setupOpen ? (
+        <ResultRunSetup
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          scriptPath={scriptPath}
+          onCancel={() => setSetupOpen(false)}
+          onRun={(options) => void rerunScript(options)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -641,7 +919,7 @@ function MarkdownResultPicker(props: {
         {
           kind: "table",
           href: formatResultTarget(target),
-          caption: resultCaption(choice.output, choice.script.latest.scriptPath),
+          caption: resultCaption(choice.output),
           rows,
         },
         at,

@@ -48,6 +48,17 @@ describe("computeFeedEntries", () => {
       "restart:3",
     ]);
   });
+
+  it("shows a selected fresh session only once and keeps distinct executions", () => {
+    const fresh = session("selected-fresh", "2026-10-30T09:00:00Z");
+    const time = "2026-10-30T09:01:00Z";
+    const entries = computeFeedEntries({
+      session: fresh,
+      executions: [run("first", time, 1), run("second", time, 1)],
+      freshSessions: [fresh],
+    });
+    expect(entries.map(({ key }) => key)).toEqual(["first", "second"]);
+  });
 });
 
 describe("computeOutputBlocks", () => {

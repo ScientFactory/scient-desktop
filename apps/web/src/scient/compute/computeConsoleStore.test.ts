@@ -6,7 +6,12 @@ import {
   type ComputeSessionRecord,
 } from "@t3tools/contracts";
 
-import { computeConsoleIsEmpty, useComputeConsoleStore } from "./computeConsoleStore";
+import { scientComputeSurface } from "../rightPanel/surfaces";
+import {
+  computeConsoleIsEmpty,
+  findEmptyComputeConsole,
+  useComputeConsoleStore,
+} from "./computeConsoleStore";
 import { stopComputeContext } from "./computeContextCoordinator";
 import {
   computeConsoleSession,
@@ -52,6 +57,31 @@ describe("Console", () => {
     useComputeConsoleStore.getState().setDraft(consoleId, "");
     liveConsole();
     expect(computeConsoleIsEmpty(consoleId)).toBe(false);
+  });
+
+  it("reuses a blank Console in the current project and preserves drafts and sessions", () => {
+    const blank = scientComputeSurface({ cwd, contextId: "blank" as ComputeContextId });
+    const draftId = "draft" as ComputeContextId;
+    const draft = scientComputeSurface({ cwd, contextId: draftId });
+    const used = scientComputeSurface({ cwd, contextId: consoleId });
+    const history = scientComputeSurface({ cwd });
+    const otherProject = scientComputeSurface({ cwd: "/another", contextId: scriptId });
+    liveConsole();
+    useComputeConsoleStore.getState().setDraft(draftId, "value = 1");
+
+    const surfaces = [used, blank, draft, history, otherProject];
+    expect(findEmptyComputeConsole({ surfaces, activeSurfaceId: history.id }, cwd)).toBe(blank);
+    expect(
+      findEmptyComputeConsole(
+        { surfaces: [used, draft, history, otherProject], activeSurfaceId: used.id },
+        cwd,
+      ),
+    ).toBeUndefined();
+
+    const newer = scientComputeSurface({ cwd, contextId: "newer" as ComputeContextId });
+    expect(
+      findEmptyComputeConsole({ surfaces: [...surfaces, newer], activeSurfaceId: blank.id }, cwd),
+    ).toBe(blank);
   });
 
   it("remembers the picked runtime until the tab closes", () => {

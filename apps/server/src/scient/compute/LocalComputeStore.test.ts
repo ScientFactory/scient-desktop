@@ -14,7 +14,9 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -186,13 +188,22 @@ const SVG_FILE_NAME = `${SVG_HASH.slice("sha256:".length)}.svg`;
  * `use` opens and closes the store, so a test can prove a fact survives the
  * lifetime that wrote it rather than reading back its own in-memory state.
  */
-const harness = (prefix: string) =>
+const harness = (prefix: string, observeRead?: (path: string) => Effect.Effect<void>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix });
     const storeLayer = layer.pipe(
       Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+      observeRead === undefined
+        ? (layer) => layer
+        : Layer.provide(
+            Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              readFileString: (path, encoding) =>
+                observeRead(path).pipe(Effect.andThen(fs.readFileString(path, encoding))),
+            }),
+          ),
       Layer.provideMerge(NodeServices.layer),
     );
     const computeDir = path.join(baseDir, "userdata", "compute");
@@ -322,6 +333,107 @@ describe("LocalComputeStore durability", () => {
           expect(yield* store.loadExecutions(PROJECT_ID, SESSION_ID)).toEqual([
             { request, result: succeededResult },
           ]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("recovers a queued receipt from the request until a later result is written", () =>
+    Effect.gen(function* () {
+      const { use } = yield* harness("scient-compute-store-admission-");
+      const queued = decodeResult({ ...runningResult, status: "queued", startedAt: null });
+
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          yield* store.writeSession(session);
+          yield* store.writeExecutionRequest(PROJECT_ID, request, queued);
+        }),
+      );
+
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          expect(yield* store.loadExecution(PROJECT_ID, SESSION_ID, EXECUTION_ID)).toEqual({
+            request,
+            result: queued,
+          });
+          const history = yield* store.loadHistoryRefs(PROJECT_ID, SESSION_ID);
+          expect(history).toEqual([
+            {
+              executionId: EXECUTION_ID,
+              source: request.source,
+              submittedAt: request.submittedAt,
+            },
+          ]);
+          const newRequest = {
+            ...request,
+            executionId: ComputeExecutionId.make("exec-next"),
+            submittedAt: "2030-01-01T00:00:00.000Z",
+          };
+          yield* store.writeExecutionRequest(PROJECT_ID, newRequest, {
+            ...queued,
+            executionId: newRequest.executionId,
+          });
+          expect(yield* store.loadHistoryRefs(PROJECT_ID, SESSION_ID)).toEqual([
+            ...history,
+            {
+              ...history[0],
+              executionId: newRequest.executionId,
+              submittedAt: newRequest.submittedAt,
+            },
+          ]);
+          expect(yield* store.loadExecutions(PROJECT_ID, SESSION_ID)).toEqual([
+            { request, result: queued },
+            { request: newRequest, result: { ...queued, executionId: newRequest.executionId } },
+          ]);
+
+          yield* store.writeExecutionResult(PROJECT_ID, SESSION_ID, succeededResult);
+          expect(yield* store.loadExecution(PROJECT_ID, SESSION_ID, EXECUTION_ID)).toEqual({
+            request,
+            result: succeededResult,
+          });
+          expect(yield* store.loadExecutions(PROJECT_ID, SESSION_ID)).toEqual([
+            { request, result: succeededResult },
+            { request: newRequest, result: { ...queued, executionId: newRequest.executionId } },
+          ]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("shares a cold History scan after the first caller disconnects", () =>
+    Effect.gen(function* () {
+      const reading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const reads: string[] = [];
+      const { use } = yield* harness("scient-compute-history-index-", (path) =>
+        Effect.sync(() => reads.push(path)).pipe(
+          Effect.andThen(
+            path.endsWith("request.json")
+              ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+          ),
+        ),
+      );
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          yield* store.writeExecutionRequest(PROJECT_ID, request, runningResult);
+          const history = store.loadHistoryRefs(PROJECT_ID, SESSION_ID);
+          const first = yield* history.pipe(Effect.forkChild);
+          yield* Deferred.await(reading);
+          const second = yield* history.pipe(Effect.forkChild);
+          yield* Fiber.interrupt(first);
+          yield* Deferred.succeed(release, undefined);
+          const refs = yield* Fiber.join(second);
+          expect(refs.map(({ executionId }) => executionId)).toEqual([EXECUTION_ID]);
+          expect(yield* history).toEqual(refs);
+          const invalidCursorId = ComputeExecutionId.make("../unknown");
+          expect(
+            yield* store.loadExecution(PROJECT_ID, SESSION_ID, invalidCursorId, true),
+          ).toBeNull();
+          expect(reads.map((path) => path.split(/[\\/]/u).at(-1))).toEqual(["request.json"]);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

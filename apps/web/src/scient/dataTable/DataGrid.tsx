@@ -1,13 +1,14 @@
 import {
   dataTablePageRows,
   type DataTableColumn,
+  type DataTableMinimum,
   type DataTablePage,
   type DataTableQuery,
   type DataTableRow,
   type DataTableSort,
 } from "@t3tools/contracts";
 import { msg, useGT, useMessages } from "gt-react";
-import { ArrowDown, ArrowUp, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, Ellipsis, Search } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -15,14 +16,13 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 
-import {
-  FILE_SURFACE_SUBHEADER_CLASS,
-  FileSurfaceFailure,
-  FileSurfaceLoading,
-} from "~/components/files/fileSurfaceChrome";
+import { FileSurfaceFailure, FileSurfaceLoading } from "~/components/files/fileSurfaceChrome";
+import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
+import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { Spinner } from "~/components/ui/spinner";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -30,9 +30,14 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
+import { DataColumnTypeLabel } from "./DataColumnTypeLabel";
+import { GridActionMenuContext } from "./gridActionMenu";
+import { DataGridMinimumFilter } from "./DataGridMinimumFilter";
+
 import {
   clampColumnWidth,
   columnWindow,
+  dataColumnTypeName,
   HEADER_HEIGHT,
   initialColumnWidth,
   isNumericType,
@@ -45,12 +50,6 @@ import {
 const MAX_CACHED_PAGES = 64;
 const MAX_LOADING_PAGES = 2;
 const FIRST_PAGE_LIMIT = 200;
-/** The inline subheader is sized for bare icons; the search box and its border need 32px. */
-const TOOLBAR_CLASS = cn(
-  FILE_SURFACE_SUBHEADER_CLASS,
-  "in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8",
-);
-
 type TableShape = Omit<DataTablePage, "offset" | "rows">;
 
 interface Cell {
@@ -78,12 +77,26 @@ const viewState = (view: string, shape: TableShape | null): ViewState => ({
   error: null,
 });
 
+export interface DataGridView {
+  readonly columns: ReadonlyArray<DataTableColumn>;
+  readonly search: string;
+  readonly minimum: DataTableMinimum | null;
+  readonly sort: DataTableSort | null;
+  readonly selectedColumns: { readonly first: number; readonly last: number } | null;
+}
+
 export interface DataGridProps {
   readonly label: string;
+  readonly validateCopy?: () => Promise<void>;
   readonly loadPage: (query: DataTableQuery) => Promise<DataTablePage>;
   /** A new revision drops every loaded row, as when the source changes. */
   readonly revision: string;
+  readonly actionTriggerRef?: RefObject<HTMLButtonElement | null>;
   readonly toolbarStart?: ReactNode;
+  readonly isCellChanged?: (rowLabel: string, column: number) => boolean;
+  readonly toolbarEnd?: ReactNode;
+  readonly enableMinimumFilter?: boolean;
+  readonly renderMenuActions?: (view: DataGridView) => ReactNode;
 }
 
 /** A paged, virtualized table: only the rows on screen are ever fetched or drawn. */
@@ -91,10 +104,17 @@ export function DataGrid(props: DataGridProps) {
   const gt = useGT();
   const messages = useMessages();
   const [sort, setSort] = useState<DataTableSort | null>(null);
+  const localActionTrigger = useRef<HTMLButtonElement>(null);
+  const actionTrigger = props.actionTriggerRef ?? localActionTrigger;
+  const launching = useRef(false);
   const [searchText, setSearchText] = useState("");
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<{ revision: string; minimum: DataTableMinimum } | null>(
+    null,
+  );
+  const minimum = filter?.revision === props.revision ? filter.minimum : null;
   const [attempt, setAttempt] = useState(0);
-  const view = JSON.stringify([props.revision, sort, search, attempt]);
+  const view = JSON.stringify([props.revision, sort, search, minimum, attempt]);
 
   const [widths, setWidths] = useState<{ revision: string; values: number[] } | null>(null);
   const [table, setTable] = useState(() => viewState(view, null));
@@ -150,6 +170,7 @@ export function DataGrid(props: DataGridProps) {
         limit: first ? FIRST_PAGE_LIMIT : pageRows,
         sort,
         search,
+        ...(minimum === null ? {} : { minimum }),
       })
       .then(
         ({ rows, offset: _offset, ...nextShape }) => {
@@ -170,6 +191,7 @@ export function DataGrid(props: DataGridProps) {
                   values: nextShape.columns.map((column, index) =>
                     initialColumnWidth(
                       column,
+                      dataColumnTypeName(column.type, messages),
                       rows.slice(0, 50).map((row) => row.cells[index] ?? null),
                     ),
                   ),
@@ -273,13 +295,22 @@ export function DataGrid(props: DataGridProps) {
     for (let page = Math.floor(selection.top / pageRows); page * pageRows <= bottom; page++) {
       const rows =
         table.pages.get(page) ??
-        (await props.loadPage({ offset: page * pageRows, limit: pageRows, sort, search })).rows;
+        (
+          await props.loadPage({
+            offset: page * pageRows,
+            limit: pageRows,
+            sort,
+            search,
+            ...(minimum === null ? {} : { minimum }),
+          })
+        ).rows;
       for (let index = 0; index < rows.length; index++) {
         const row = page * pageRows + index;
         if (row < selection.top || row > bottom) continue;
         lines.push(rows[index]!.cells.slice(selection.left, selection.right + 1));
       }
     }
+    await props.validateCopy?.();
     copyToClipboard(tableText(lines), undefined);
   };
 
@@ -378,40 +409,138 @@ export function DataGrid(props: DataGridProps) {
     (_, index) => visibleRows.first + index,
   );
 
+  const menu = {
+    finalFocus: () => actionTrigger.current,
+    launch: (open: () => void) => {
+      launching.current = true;
+      open();
+    },
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className={TOOLBAR_CLASS}>
-        {props.toolbarStart}
-        <div className="w-56 min-w-24 shrink [--control-radius:9999px]">
-          <InputGroup>
-            <InputGroupAddon>
-              <Search aria-hidden="true" />
-            </InputGroupAddon>
-            <InputGroupInput
-              nativeInput
-              size="compact"
-              type="search"
-              placeholder={gt("Search", { $context: "search field placeholder" })}
-              aria-label={gt("Search {table}", { table: props.label })}
-              value={searchText}
-              onChange={(event) => {
-                setSearchText(event.currentTarget.value);
-                resetPosition();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && searchText !== "") {
-                  event.stopPropagation();
-                  setSearchText("");
-                  resetPosition();
-                }
-              }}
-            />
-          </InputGroup>
+      {shape.truncated || shape.columns.length < shape.columnCount ? (
+        <div
+          role="status"
+          className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 scient-reading-micro text-warning-foreground"
+        >
+          {shape.truncated ? (
+            <p>
+              {gt("Only the first {count} rows are available. Search and sort use these rows.", {
+                count: shape.rowCount.toLocaleString(),
+              })}
+            </p>
+          ) : null}
+          {shape.columns.length < shape.columnCount ? (
+            <p>
+              {gt("Showing the first {count} of {total} columns.", {
+                count: shape.columns.length.toLocaleString(),
+                total: shape.columnCount.toLocaleString(),
+              })}
+            </p>
+          ) : null}
         </div>
-        <span className="ms-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground tabular-nums">
-          {busy ? <Spinner size="xs" /> : null}
-          {tableCounts(shape, messages)}
-        </span>
+      ) : null}
+      <div className="shrink-0 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {props.toolbarStart}
+          <div className="min-w-0 flex-1">
+            <InputGroup>
+              <InputGroupAddon>
+                <Search aria-hidden="true" />
+              </InputGroupAddon>
+              <InputGroupInput
+                nativeInput
+                size="compact"
+                type="search"
+                placeholder={gt("Search", { $context: "search field placeholder" })}
+                aria-label={gt("Search {table}", { table: props.label })}
+                value={searchText}
+                onChange={(event) => {
+                  setSearchText(event.currentTarget.value);
+                  resetPosition();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && searchText !== "") {
+                    event.stopPropagation();
+                    setSearchText("");
+                    resetPosition();
+                  }
+                }}
+              />
+            </InputGroup>
+          </div>
+          {props.toolbarEnd}
+          {(props.enableMinimumFilter && columns.some(({ type }) => isNumericType(type))) ||
+          props.renderMenuActions ? (
+            <GridActionMenuContext value={menu}>
+              <Menu
+                modal={false}
+                onOpenChange={(open) => {
+                  if (open) launching.current = false;
+                }}
+              >
+                <MenuTrigger
+                  ref={actionTrigger}
+                  aria-label={gt("Grid actions")}
+                  render={(trigger, { open }) => (
+                    <Button
+                      {...trigger}
+                      focus="edge"
+                      type="button"
+                      size="xs"
+                      variant={open ? "selected" : "ghost"}
+                    />
+                  )}
+                >
+                  <Ellipsis aria-hidden="true" />
+                  {gt("Actions")}
+                </MenuTrigger>
+                <MenuPopup keepMounted align="end" finalFocus={() => !launching.current}>
+                  {props.enableMinimumFilter && columns.some(({ type }) => isNumericType(type)) ? (
+                    <DataGridMinimumFilter
+                      columns={columns}
+                      minimum={minimum}
+                      onChange={(value) => {
+                        setFilter(
+                          value === null ? null : { revision: props.revision, minimum: value },
+                        );
+                        resetPosition();
+                      }}
+                    />
+                  ) : null}
+                  {props.renderMenuActions?.({
+                    columns,
+                    search,
+                    minimum,
+                    sort,
+                    selectedColumns:
+                      anchor && focus
+                        ? {
+                            first: Math.min(anchor.column, focus.column),
+                            last: Math.max(anchor.column, focus.column),
+                          }
+                        : null,
+                  })}
+                </MenuPopup>
+              </Menu>
+            </GridActionMenuContext>
+          ) : null}
+        </div>
+        <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2 text-xs text-muted-foreground tabular-nums">
+          <span className="inline-flex items-center gap-2">
+            {busy ? <Spinner size="xs" /> : null}
+            {tableCounts(shape, messages)}
+          </span>
+          {minimum === null ? null : (
+            <span className="min-w-0 wrap-anywhere">
+              {gt("Filter applied · {column} ≥ {value}", {
+                column: columns[minimum.column]?.name ?? "",
+                value: minimum.value.toLocaleString(),
+              })}
+            </span>
+          )}
+        </div>
       </div>
       <div
         ref={measureScroller}
@@ -421,7 +550,7 @@ export function DataGrid(props: DataGridProps) {
         aria-rowcount={rowCount + 1}
         aria-colcount={columns.length + 1}
         aria-multiselectable="true"
-        className="relative min-h-0 flex-1 overflow-auto text-xs outline-none select-none"
+        className="relative min-h-0 flex-1 overflow-auto text-xs outline-none select-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-ring"
         onScroll={(event) =>
           setScroll({ top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft })
         }
@@ -497,16 +626,24 @@ export function DataGrid(props: DataGridProps) {
                       const selected =
                         rowSelected && column >= selection!.left && column <= selection!.right;
                       const active = focus?.row === position && focus.column === column;
+                      const changed =
+                        row !== undefined && props.isCellChanged?.(row.label, column) === true;
                       return (
                         <div
                           key={column}
                           role="gridcell"
                           aria-colindex={column + 2}
                           aria-selected={selected}
+                          aria-label={
+                            changed
+                              ? gt("{value} · changed", { value: value ?? gt("Missing") })
+                              : undefined
+                          }
                           className={cn(
                             "absolute top-0 h-full truncate border-r border-border/40 px-2 leading-7",
                             isNumericType(columns[column]!.type) && "text-right tabular-nums",
                             value === null && "text-muted-foreground/50",
+                            changed && "bg-amber-500/15 font-medium",
                             selected && "bg-primary/10",
                             active && "outline outline-1 -outline-offset-1 outline-primary",
                           )}
@@ -573,9 +710,10 @@ function ColumnHeader(props: {
             <ArrowUp className="size-3 shrink-0" aria-hidden="true" />
           )}
         </span>
-        <span className="max-w-full truncate text-[10px] text-muted-foreground">
-          {props.column.label}
-        </span>
+        <DataColumnTypeLabel
+          column={props.column}
+          className="max-w-full truncate text-[10px] text-muted-foreground"
+        />
       </button>
       <div
         aria-hidden="true"
@@ -590,7 +728,7 @@ const errorMessage = (cause: unknown) =>
   cause instanceof Error ? cause.message : m(msg("The table could not be read."));
 
 function tableCounts(shape: TableShape, resolve: MessageResolver): string {
-  const total = `${shape.rowCount.toLocaleString()}${shape.truncated ? "+" : ""}`;
+  const total = shape.rowCount.toLocaleString();
   const rows =
     shape.matchCount === shape.rowCount
       ? resolve(

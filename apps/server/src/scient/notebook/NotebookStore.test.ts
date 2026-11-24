@@ -1,15 +1,19 @@
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ComputeExecutionId, ComputeSessionId } from "@t3tools/contracts";
+import { ComputeExecutionId, ComputeSessionId, NotebookError } from "@t3tools/contracts";
 import { notebookCodeHash } from "@t3tools/shared/notebookStaleness";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as NotebookStore from "./NotebookStore.ts";
+import { indexNotebook, notebookBytes } from "./notebookIndex.ts";
 
 const notebook = {
   cells: [
@@ -38,16 +42,30 @@ const notebook = {
 
 const path = "study.ipynb";
 
+/** Set to make every write fail, as a full disk would. */
+let refuseWrites = false;
+/** Completed by the next write that succeeds. */
+let written: Deferred.Deferred<void> | undefined;
 const files = Layer.effect(
   WorkspaceFileSystem.WorkspaceFileSystem,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return {
       writeBinaryFile: (input: { cwd: string; relativePath: string; bytes: Uint8Array }) =>
-        fs.writeFile(`${input.cwd}/${input.relativePath}`, input.bytes).pipe(Effect.orDie),
+        refuseWrites
+          ? Effect.fail(new NotebookError({ message: "No space left on device" }))
+          : fs
+              .writeFile(`${input.cwd}/${input.relativePath}`, input.bytes)
+              .pipe(
+                Effect.orDie,
+                Effect.andThen(
+                  written === undefined ? Effect.void : Deferred.succeed(written, undefined),
+                ),
+              ),
     } as never;
   }),
 );
+
 const paths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
   resolveRelativePathWithinRoot: (input: { workspaceRoot: string; relativePath: string }) =>
     Effect.succeed({
@@ -89,6 +107,101 @@ describe("NotebookStore", () => {
   const scoped = <A, E>(
     effect: Effect.Effect<A, E, Layer.Success<typeof testLayer> | Scope.Scope>,
   ) => effect.pipe(Effect.provide(testLayer), Effect.scoped);
+
+  it.effect("preserves a notebook byte for byte and matches nbformat when a fold is edited", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store } = yield* fixture;
+        const fs = yield* FileSystem.FileSystem;
+        const load = (name: string) =>
+          fs.readFile(NodeURL.fileURLToPath(new URL(`./fixtures/${name}.ipynb`, import.meta.url)));
+        const attached = yield* load("attachments");
+        const older = yield* load("transfusion-excerpt");
+        const expected = yield* load("attachments-folded");
+        for (const notebook of [attached, older]) {
+          const index = indexNotebook(Buffer.from(notebook));
+          expect(notebookBytes(index).equals(notebook)).toBe(true);
+        }
+        const oldIndex = indexNotebook(Buffer.from(older));
+        expect(oldIndex.minor).toBe(4);
+        expect(oldIndex.cells.every((cell) => cell.fields.id === undefined && cell.id !== "")).toBe(
+          true,
+        );
+
+        yield* fs.writeFile(`${cwd}/${path}`, attached);
+        yield* store.read({ cwd, path });
+        yield* store.flush({ cwd, path });
+        expect(Buffer.from(yield* fs.readFile(`${cwd}/${path}`)).equals(attached)).toBe(true);
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-fold", cellId: "analysis", part: "outputs", folded: true }],
+        });
+        yield* store.flush({ cwd, path });
+        expect(Buffer.from(yield* fs.readFile(`${cwd}/${path}`)).equals(expected)).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect(
+    "saves a clean run with its overrides and refuses the old snapshot after publication",
+    () =>
+      scoped(
+        Effect.gen(function* () {
+          const { cwd, store, onDisk } = yield* fixture;
+          const address = { cwd, path };
+          yield* store.edit({
+            ...address,
+            edits: [{ _tag: "set-parameters", cellId: "first", enabled: true }],
+          });
+          const snapshot = yield* store.freshSnapshot(address);
+          const attempt = {
+            ...address,
+            snapshot: snapshot.executionBasis,
+            parameterCellId: "first",
+            injection: { id: "injected", source: "# Parameters\na = 2.0" },
+            parameters: { a: "2.0" },
+            overrides: { a: 2 },
+            codeSha256: "digest",
+            executionId: "fresh-execution",
+            results: [],
+          };
+          yield* store.reserveFreshRun(address);
+          const denied = yield* store
+            .edit({
+              ...address,
+              edits: [{ _tag: "set-source", cellId: "title", source: "new text" }],
+            })
+            .pipe(Effect.flip);
+          expect(denied.message).toBe("Editing resumes when the fresh run finishes.");
+          yield* store.edit({
+            ...address,
+            edits: [{ _tag: "set-fold", cellId: "title", part: "section", folded: true }],
+          });
+          yield* store.saveFreshRun(attempt);
+          const saved = yield* onDisk;
+          const fs = yield* FileSystem.FileSystem;
+          expect(yield* fs.readFileString(`${cwd}/${path}`)).toContain('"a": 2.0');
+          expect(saved.cells.map((cell) => cell.id)).toEqual([
+            "title",
+            "first",
+            "injected",
+            "second",
+          ]);
+          expect(saved.cells[0]?.metadata).toMatchObject({ "jp-MarkdownHeadingCollapsed": true });
+          expect(saved.cells[1]?.metadata.tags).toEqual(["keep", "parameters"]);
+          expect(saved.cells[2]?.metadata.tags).toEqual(["injected-parameters"]);
+          expect(saved.metadata).toMatchObject({
+            papermill: { parameters: { a: 2 } },
+            scient: { notebookRun: { executionId: "fresh-execution", parameters: { a: "2.0" } } },
+          });
+          const after = yield* store.read(address);
+          expect(after?.cells[1]?.savedParameters).toEqual({ a: "2.0" });
+          expect((yield* store.saveFreshRun(attempt).pipe(Effect.exit))._tag).toBe("Failure");
+          expect(yield* onDisk).toEqual(saved);
+        }),
+      ),
+  );
 
   it.effect("reads cells and reports when nothing changed", () =>
     scoped(
@@ -496,6 +609,99 @@ describe("NotebookStore", () => {
         });
         yield* store.flush({ cwd, path });
         expect((yield* onDisk).cells[1]).toEqual(notebook.cells[1]);
+      }),
+    ),
+  );
+
+  it.effect("applies a batch sent again after a lost reply only once", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        const batch = {
+          cwd,
+          path,
+          requestId: "batch-1",
+          edits: [
+            { _tag: "insert", cellId: "new", afterCellId: null, cellType: "code", source: "x" },
+            { _tag: "move", cellId: "second", offset: -1 },
+          ],
+        } as const;
+        yield* store.edit(batch);
+        yield* store.edit(batch);
+        yield* store.flush({ cwd, path });
+        expect((yield* onDisk).cells.map((cell) => cell.id)).toEqual([
+          "new",
+          "title",
+          "second",
+          "first",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("reports a save that failed and saves on its own once writing works again", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            refuseWrites = false;
+            written = undefined;
+          }),
+        );
+        const problem = store.read({ cwd, path }).pipe(Effect.map((view) => view?.saveProblem));
+        refuseWrites = true;
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-source", cellId: "second", source: "kept" }],
+        });
+        yield* Effect.flip(store.flush({ cwd, path }));
+        expect(yield* problem).toContain("No space left on device");
+
+        refuseWrites = false;
+        written = yield* Deferred.make<void>();
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(written);
+        expect((yield* onDisk).cells[2]?.source).toEqual(["kept"]);
+        // Waits for that save to finish, which clears the problem.
+        yield* store.flush({ cwd, path });
+        expect(yield* problem).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("keeps one owner for a notebook opened while others hold undo history", () =>
+    scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, store, onDisk } = yield* fixture;
+        for (const other of ["a", "b", "c", "d"]) {
+          yield* fs.writeFileString(`${cwd}/${other}.ipynb`, JSON.stringify(notebook));
+          yield* store.edit({
+            cwd,
+            path: `${other}.ipynb`,
+            edits: [{ _tag: "delete", cellId: "first" }],
+          });
+          yield* store.flush({ cwd, path: `${other}.ipynb` });
+        }
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-source", cellId: "first", source: "a = 2" }],
+        });
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-source", cellId: "second", source: "b = 3" }],
+        });
+        yield* store.flush({ cwd, path });
+        const saved = yield* onDisk;
+        expect(saved.cells.map((cell) => cell.source.join(""))).toEqual([
+          "# Title",
+          "a = 2",
+          "b = 3",
+        ]);
       }),
     ),
   );

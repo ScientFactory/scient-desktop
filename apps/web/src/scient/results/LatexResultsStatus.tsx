@@ -1,3 +1,4 @@
+import { ResultComparison } from "./ResultComparison";
 import type {
   ComputeResultFileDigest,
   ComputeResultPlacedFile,
@@ -5,18 +6,30 @@ import type {
   ComputeResultsPlacementsResult,
   EnvironmentId,
 } from "@t3tools/contracts";
+import {
+  resultEnvironmentMayDiffer,
+  resultFreshnessIncomplete,
+  resultSourceChanged,
+} from "@t3tools/shared/computeResults";
 import { useAtomValue } from "@effect/atom-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { CircleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { resultErrorMessage } from "./ResultPicker";
+import { resultErrorMessage } from "./resultState";
 import { resultCauseText } from "./resultState";
+import {
+  ResultAttemptStatus,
+  ResultRunFailureNotice,
+  type ResultRunFailure,
+} from "./ResultAttemptStatus";
+import { ResultRunEvidence } from "./ResultRunEvidence";
+import { ResultRunSetup, type ResultRunOptions } from "./ResultRunSetup";
 
 /** `msg()` strings: resolve them with `useMessages()` where they show. */
 const FILE_STATE_TEXT: Record<ComputeResultPlacedFile["state"], string> = {
@@ -41,10 +54,12 @@ function scriptAttention(script: ComputeResultPlacedScript): string | null {
   const used = usedFiles(script);
   if (used.length === 0) return null;
   if (used.some((file) => file.state === "missing")) return "missing";
-  if (script.summary.causes.length > 0) return "out of date";
+  if (resultSourceChanged(script.summary)) return "out of date";
   if (script.newer !== null) return "newer run";
   if (used.some((file) => file.state === "edited")) return "edited";
   if (used.some((file) => file.differsFromBuild)) return "rebuild";
+  if (resultFreshnessIncomplete(script.summary)) return "incomplete";
+  if (resultEnvironmentMayDiffer(script.summary)) return "environment";
   return null;
 }
 
@@ -52,11 +67,14 @@ function scriptAttention(script: ComputeResultPlacedScript): string | null {
 function chipLabel(result: ComputeResultsPlacementsResult): string | null {
   const needs = result.scripts.map(scriptAttention).filter((need) => need !== null);
   if (needs.includes("interrupted")) return msg("Results update unfinished");
+  if (result.scripts.some((script) => script.canUndo)) return msg("Undo available");
   if (needs.includes("missing")) return msg("Result files missing");
   if (needs.includes("out of date")) return msg("Results out of date");
   if (needs.includes("newer run")) return msg("Newer results");
   if (needs.includes("edited")) return msg("Results edited");
   if (needs.includes("rebuild")) return msg("Rebuild for new results");
+  if (needs.includes("incomplete")) return msg("Freshness partly unknown");
+  if (needs.includes("environment")) return msg("Environment may differ");
   return null;
 }
 
@@ -68,12 +86,14 @@ export function LatexResultsStatus(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly rootPath: string;
+  readonly onDigests?: (digests: Readonly<Record<string, string>>) => void;
   /** The shown PDF's build: when it finished, and its `.tex` dependencies' digests. */
   readonly build: {
     readonly finishedAtEpochMs: number;
     readonly digests: Readonly<Record<string, string>> | undefined;
   } | null;
 }) {
+  const { onDigests } = props;
   const placements = useStableCallback(
     useAtomCommand(computeEnvironment.resultsPlacements, { reportFailure: false }),
   );
@@ -82,6 +102,8 @@ export function LatexResultsStatus(props: {
   const [result, setResult] = useState<ComputeResultsPlacementsResult | null>(null);
   const [tick, setTick] = useState(0);
   const [open, setOpen] = useState(false);
+  const [comparison, setComparison] = useState<ComputeResultPlacedScript | null>(null);
+  const statusTrigger = useRef<HTMLButtonElement>(null);
   // Asking again (focus, an action) changes the key, so the same build is checked again.
   const requestKey = JSON.stringify([
     tick,
@@ -109,12 +131,21 @@ export function LatexResultsStatus(props: {
               : { finishedAt: new Date(finishedAt).toISOString(), digests },
         },
       });
-      if (!cancelled && response._tag === "Success") setResult(response.value);
+      if (!cancelled && response._tag === "Success") {
+        setResult(response.value);
+        onDigests?.(
+          Object.fromEntries(
+            response.value.scripts.flatMap(({ files }) =>
+              files.flatMap(({ path, sha256 }) => (sha256 === undefined ? [] : [[path, sha256]])),
+            ),
+          ),
+        );
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [placements, props.environmentId, props.cwd, props.rootPath, requestKey]);
+  }, [placements, props.environmentId, props.cwd, props.rootPath, onDigests, requestKey]);
 
   // Scripts and data change in other tabs and programs; look again when the reader comes back.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus and visibility listeners, held while mounted
@@ -135,48 +166,65 @@ export function LatexResultsStatus(props: {
   if (result === null || result.scripts.length === 0) return null;
   const label = chipLabel(result);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            className={
-              label === null ? "scient-latex-chip" : "scient-latex-chip scient-latex-chip-warning"
-            }
-            data-latex-results=""
-          />
-        }
-      >
-        {label === null ? null : (
-          <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
-        )}
-        <span className="scient-latex-chip-text">
-          {label === null ? gt("Results current") : messages(label)}
-        </span>
-      </PopoverTrigger>
-      <PopoverPopup side="bottom" align="end" className="w-96">
-        <div className="flex flex-col gap-3 text-xs" data-testid="latex-results">
-          {result.scripts.map((script) => (
-            <ScriptResults
-              key={script.summary.scriptPath}
-              environmentId={props.environmentId}
-              cwd={props.cwd}
-              rootPath={props.rootPath}
-              script={script}
-              onChanged={() => setTick((value) => value + 1)}
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          ref={statusTrigger}
+          render={
+            <button
+              type="button"
+              className={
+                label === null ? "scient-latex-chip" : "scient-latex-chip scient-latex-chip-warning"
+              }
+              data-latex-results=""
             />
-          ))}
-          {result.coverage === "placed" ? (
-            <span className="text-muted-foreground">
-              <T>
-                Checked against Scient's record of placed files; build the PDF to check what it
-                used.
-              </T>
-            </span>
-          ) : null}
-        </div>
-      </PopoverPopup>
-    </Popover>
+          }
+        >
+          {label === null ? null : (
+            <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
+          )}
+          <span className="scient-latex-chip-text">
+            {label === null ? gt("Results current") : messages(label)}
+          </span>
+        </PopoverTrigger>
+        <PopoverPopup side="bottom" align="end" className="w-96">
+          <div className="flex flex-col gap-3 text-xs" data-testid="latex-results">
+            {result.scripts.map((script) => (
+              <ScriptResults
+                key={script.summary.scriptPath}
+                environmentId={props.environmentId}
+                cwd={props.cwd}
+                rootPath={props.rootPath}
+                script={script}
+                onChanged={() => setTick((value) => value + 1)}
+                onCompare={() => {
+                  setOpen(false);
+                  setComparison(script);
+                }}
+              />
+            ))}
+            {result.coverage === "placed" ? (
+              <span className="text-muted-foreground">
+                <T>
+                  Checked against Scient's record of placed files; build the PDF to check what it
+                  used.
+                </T>
+              </span>
+            ) : null}
+          </div>
+        </PopoverPopup>
+      </Popover>
+      {comparison === null ? null : (
+        <ResultComparison
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          summary={comparison.summary}
+          candidate={comparison.newer ?? undefined}
+          finalFocus={() => statusTrigger.current ?? false}
+          onClose={() => setComparison(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -186,11 +234,12 @@ function ScriptResults(props: {
   readonly rootPath: string;
   readonly script: ComputeResultPlacedScript;
   readonly onChanged: () => void;
+  readonly onCompare: () => void;
 }) {
   const gt = useGT();
   const messages = useMessages();
   const { script } = props;
-  const scriptPath = script.summary.scriptPath;
+  const { scriptPath, lastAttempt } = script.summary;
   const rerun = useAtomCommand(computeEnvironment.resultsRerun, { reportFailure: false });
   const updateFiles = useAtomCommand(computeEnvironment.resultsUpdateFiles, {
     reportFailure: false,
@@ -206,6 +255,7 @@ function ScriptResults(props: {
   );
   const [busy, setBusy] = useState<"rerun" | "update" | "undo" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [runFailure, setRunFailure] = useState<ResultRunFailure | null>(null);
   // Edited files the user was warned about, as they were then, for the run the warning was about;
   // confirming replaces only those, and only for that run.
   const [warning, setWarning] = useState<{
@@ -218,20 +268,31 @@ function ScriptResults(props: {
   const act = (kind: "rerun" | "update" | "undo", run: () => Promise<void>) => {
     setBusy(kind);
     setMessage(null);
+    setRunFailure(null);
     void run().finally(() => {
       setBusy(null);
       props.onChanged();
     });
   };
 
-  const runAgain = async () => {
+  const [setupOpen, setSetupOpen] = useState(false);
+  const runAgain = async (options?: ResultRunOptions) => {
+    setSetupOpen(false);
     const response = await rerun({
       environmentId: props.environmentId,
-      input: { cwd: props.cwd, scriptPath },
+      input: { cwd: props.cwd, scriptPath, ...options },
     });
     if (response._tag !== "Success")
       setMessage(resultErrorMessage(response, gt("The script could not run.")));
-    else if (response.value._tag === "failed") setMessage(response.value.message);
+    else if (response.value._tag === "failed") {
+      setRunFailure({ message: response.value.message, previousAttempt: lastAttempt?.finishedAt });
+    } else if (response.value._tag === "completed") {
+      setMessage(
+        response.value.message ??
+          response.value.notebookMessage ??
+          gt("No linked results published."),
+      );
+    }
   };
 
   const applyUpdate = async (
@@ -262,6 +323,7 @@ function ScriptResults(props: {
       return;
     }
     setWarning(null);
+    window.dispatchEvent(new Event(RESULTS_PLACED_EVENT));
   };
 
   const undo = async () => {
@@ -272,6 +334,7 @@ function ScriptResults(props: {
     if (response._tag !== "Success")
       setMessage(resultErrorMessage(response, gt("The update could not be undone.")));
     else if (response.value._tag === "refused") setMessage(response.value.message);
+    else window.dispatchEvent(new Event(RESULTS_PLACED_EVENT));
   };
 
   const causes = script.summary.causes;
@@ -280,6 +343,17 @@ function ScriptResults(props: {
   return (
     <div className="flex flex-col gap-1.5" data-results-script={scriptPath}>
       <span className="font-medium text-foreground">{scriptPath}</span>
+      <ResultRunEvidence summary={script.summary} />
+      {lastAttempt === undefined ? null : (
+        <ResultAttemptStatus
+          key={lastAttempt.finishedAt}
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          scriptPath={scriptPath}
+          attempt={lastAttempt}
+        />
+      )}
+      <ResultRunFailureNotice failure={runFailure} lastAttempt={lastAttempt} />
       {causes.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
           {causes.map((cause) => (
@@ -315,9 +389,11 @@ function ScriptResults(props: {
       {script.newer === null ? null : (
         <span className="text-foreground">
           {script.updateBlocked ??
-            (script.newer.causes.length > 0
+            (resultSourceChanged(script.newer)
               ? gt("A newer run is ready, but it is out of date too.")
-              : gt("A newer run is ready."))}
+              : resultEnvironmentMayDiffer(script.newer)
+                ? gt("A newer run is ready. Its environment may differ.")
+                : gt("A newer run is ready."))}
         </span>
       )}
       {script.changes.length > 0 ? (
@@ -362,6 +438,9 @@ function ScriptResults(props: {
                 : gt("Update files")}
           </Button>
         ) : null}
+        <Button size="xs" variant="ghost" onClick={props.onCompare}>
+          <T>Compare with…</T>
+        </Button>
         {canRerun ? (
           <Button
             size="xs"
@@ -372,6 +451,16 @@ function ScriptResults(props: {
             {busy === "rerun"
               ? gt("Running…")
               : gt("Re-run {name}", { name: fileName(scriptPath) })}
+          </Button>
+        ) : null}
+        {canRerun && !setupOpen ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy !== null}
+            onClick={() => setSetupOpen(true)}
+          >
+            <T>Run setup…</T>
           </Button>
         ) : null}
         {canWrite && script.canUndo ? (
@@ -385,6 +474,15 @@ function ScriptResults(props: {
           </Button>
         ) : null}
       </div>
+      {canRerun && setupOpen ? (
+        <ResultRunSetup
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          scriptPath={scriptPath}
+          onCancel={() => setSetupOpen(false)}
+          onRun={(options) => act("rerun", () => runAgain(options))}
+        />
+      ) : null}
     </div>
   );
 }

@@ -25,12 +25,22 @@ import {
 } from "./ComputeProjectWriteWatch.ts";
 
 const MAXIMUM_IMAGES_PER_EXECUTION = 32;
+const MAXIMUM_WRITTEN_FILES = 128;
 const MAXIMUM_IMAGE_BYTES = 8 * 1024 * 1024;
 // File clocks lag the wall clock by up to a kernel tick, and FAT keeps times to two seconds.
 const FINE_TIME_SLACK_NS = 50_000_000n;
+/** Linux stamps files from a coarse clock that can trail the wall clock by one tick. */
+const CLOCK_TICK_SLACK_NS = 10_000_000n;
 const COARSE_TIME_SLACK_NS = 2_000_000_000n;
 const FALLBACK_SCAN_ENTRIES = 16_384;
 const FALLBACK_SCAN_TIME_MS = 750;
+// Without watch events, require a timestamp inside the cell's window.
+const QUICK_SCAN_LIMITS = { entries: 128, milliseconds: 8, timestampSlack: false };
+const FALLBACK_SCAN_LIMITS = {
+  entries: FALLBACK_SCAN_ENTRIES,
+  milliseconds: FALLBACK_SCAN_TIME_MS,
+  timestampSlack: true,
+};
 const CREATED_DIRECTORY_ENTRIES = 1_024;
 const MAXIMUM_REMEMBERED_OUTPUTS = 1_024;
 
@@ -56,6 +66,10 @@ export interface ComputeProjectOutputCollection {
   readonly images: ReadonlyArray<ObservedComputeProjectImage>;
   /** Tables written during the observation, to point at. They are not read. */
   readonly tables: ReadonlyArray<string>;
+  /** Files the runtime reported writing. */
+  readonly writtenFiles?: ReadonlyArray<string>;
+  /** Files only seen changing during the run; the writer is not known. */
+  readonly changedFiles?: ReadonlyArray<string>;
   readonly warnings: ReadonlyArray<string>;
   /** Structured facts only; analytics must never classify the warning text. */
   readonly capture?: ComputeProjectCaptureStatus;
@@ -63,6 +77,8 @@ export interface ComputeProjectOutputCollection {
 
 export interface ComputeProjectOutputLimits {
   readonly maximumBytes: number;
+  readonly preferFileScan?: boolean;
+  readonly includeWrittenFiles?: boolean;
 }
 
 /** Outputs of one session or file run in one project folder, held for its scope. */
@@ -138,6 +154,8 @@ function imageState(metadata: NodeFS.BigIntStats): ProjectImageState {
 }
 
 const skippedDirectory = (name: string) => name.startsWith(".") || IGNORED_DIRECTORIES.has(name);
+const reportsFile = (name: string, includeWrittenFiles: boolean) =>
+  OUTPUT_FILE.test(name) || (includeWrittenFiles && !name.startsWith("."));
 
 /**
  * Without a trustworthy watch, look for outputs changed since the run began, shallow folders
@@ -148,8 +166,10 @@ async function scanRecentOutputs(
   since: bigint,
   signal: AbortSignal,
   now: () => number,
+  includeWrittenFiles: boolean,
+  limits = FALLBACK_SCAN_LIMITS,
 ): Promise<{ readonly files: ReadonlyArray<string>; readonly limited: string | null }> {
-  const deadline = now() + FALLBACK_SCAN_TIME_MS;
+  const deadline = now() + limits.milliseconds;
   const files: string[] = [];
   const queue = [projectRoot];
   let scanned = 0;
@@ -164,7 +184,7 @@ async function scanRecentOutputs(
       continue;
     }
     scanned += entries.length;
-    if (scanned > FALLBACK_SCAN_ENTRIES) return { files, limited: "entry limit" };
+    if (scanned > limits.entries) return { files, limited: "entry limit" };
     const environment = entries.some((entry) =>
       (ENVIRONMENT_MARKERS as ReadonlyArray<string>).includes(entry.name),
     );
@@ -172,9 +192,17 @@ async function scanRecentOutputs(
       const path = NodePath.join(queue[index]!, entry.name);
       if (entry.isDirectory()) {
         if (!environment && !skippedDirectory(entry.name)) queue.push(path);
-      } else if (entry.isFile() && OUTPUT_FILE.test(entry.name)) {
+      } else if (entry.isFile() && reportsFile(entry.name, includeWrittenFiles)) {
+        if (signal.aborted || now() >= deadline) return { files, limited: "time limit" };
         const metadata = await NodeFSP.lstat(path, { bigint: true }).catch(() => null);
-        if (metadata !== null && changedSince(metadata, since)) files.push(path);
+        if (
+          metadata !== null &&
+          (metadata.mtimeNs >= since - CLOCK_TICK_SLACK_NS ||
+            metadata.ctimeNs >= since - CLOCK_TICK_SLACK_NS ||
+            (limits.timestampSlack && changedSince(metadata, since)))
+        ) {
+          files.push(path);
+        }
       }
     }
   }
@@ -190,6 +218,7 @@ const isGone = (error: unknown) =>
 async function filesInCreatedEntries(
   created: ReadonlyArray<string>,
   signal: AbortSignal,
+  includeWrittenFiles: boolean,
 ): Promise<{
   readonly files: ReadonlyArray<string>;
   readonly limited: "scan-entry-limit" | "scan-unreadable" | null;
@@ -220,7 +249,7 @@ async function filesInCreatedEntries(
     for (const entry of entries) {
       const path = NodePath.join(queue[index]!, entry.name);
       if (entry.isDirectory() && !skippedDirectory(entry.name)) queue.push(path);
-      else if (entry.isFile() && OUTPUT_FILE.test(entry.name)) files.push(path);
+      else if (entry.isFile() && reportsFile(entry.name, includeWrittenFiles)) files.push(path);
     }
   }
   return {
@@ -241,8 +270,10 @@ async function authorizeCandidate(
   projectRoot: string,
   path: string,
   since: bigint,
+  includeWrittenFiles: boolean,
 ): Promise<{ readonly relativePath: string; readonly state: ProjectImageState } | null> {
-  if (!NodePath.isAbsolute(path) || !OUTPUT_FILE.test(path)) return null;
+  if (!NodePath.isAbsolute(path) || !reportsFile(NodePath.basename(path), includeWrittenFiles))
+    return null;
   const parent = await NodeFSP.realpath(NodePath.dirname(path)).catch(() => null);
   if (parent === null) return null;
   const canonical = NodePath.join(parent, NodePath.basename(path));
@@ -382,41 +413,73 @@ async function collectProjectOutputs(input: {
   readonly writes: ComputeRuntimeWriteReport | undefined;
   /** Outputs this holder already showed, so a late watch event cannot show one twice. */
   readonly shown: Map<string, string>;
+  readonly onQuickScanLimit: () => void;
   readonly signal: AbortSignal;
   readonly now: () => number;
 }): Promise<ComputeProjectOutputCollection> {
   const { projectRoot, observation, writes, signal } = input;
   const since = BigInt(observation.startedAt) * 1_000_000n;
+  const includeWrittenFiles = input.limits.includeWrittenFiles === true;
   // A runtime's own record adds what the watch may have lost; only the watch can vouch for coverage.
-  const reported = new Set(writes?.paths ?? []);
+  const runtimeWrites = new Set(writes?.paths ?? []);
+  const reported = new Set(runtimeWrites);
   const warnings: string[] = [];
   let coverageReason: ComputeCaptureReason | undefined;
-  const window =
-    input.projectWatch === null || observation.mark === null
-      ? ({ healthy: false, reason: "watch-unavailable" } as const)
-      : await input.projectWatch.read(observation.mark, signal);
-  if (window.healthy) {
-    for (const path of window.files) reported.add(path);
-    const recovered = await filesInCreatedEntries(window.created, signal);
-    for (const path of recovered.files) reported.add(path);
-    if (recovered.limited !== null)
-      warnings.push(
-        `Some project files could not be checked (${recovered.limited === "scan-entry-limit" ? "entry limit" : "unreadable directory"}).`,
-      );
-    coverageReason =
-      recovered.limited ?? (window.lossDetectable ? undefined : "watch-unverifiable");
+  const quickScan = input.limits.preferFileScan
+    ? await scanRecentOutputs(
+        projectRoot,
+        since,
+        signal,
+        input.now,
+        includeWrittenFiles,
+        QUICK_SCAN_LIMITS,
+      )
+    : null;
+  if (quickScan?.limited === null) {
+    for (const path of quickScan.files) reported.add(path);
+    coverageReason = "watch-unverifiable";
   } else {
-    coverageReason = window.reason;
-    const scan = await scanRecentOutputs(projectRoot, since, signal, input.now);
-    for (const path of scan.files) reported.add(path);
-    if (scan.limited !== null)
-      warnings.push(`Some project files could not be checked (${scan.limited}).`);
+    if (quickScan !== null) input.onQuickScanLimit();
+    const window =
+      input.projectWatch === null || observation.mark === null
+        ? ({ healthy: false, reason: "watch-unavailable" } as const)
+        : await input.projectWatch.read(observation.mark, signal);
+    if (window.healthy) {
+      for (const path of window.files) reported.add(path);
+      const recovered = await filesInCreatedEntries(window.created, signal, includeWrittenFiles);
+      for (const path of recovered.files) reported.add(path);
+      if (recovered.limited !== null)
+        warnings.push(
+          `Some project files could not be checked (${recovered.limited === "scan-entry-limit" ? "entry limit" : "unreadable directory"}).`,
+        );
+      coverageReason =
+        recovered.limited ?? (window.lossDetectable ? undefined : "watch-unverifiable");
+    } else {
+      coverageReason = window.reason;
+      const scan = await scanRecentOutputs(
+        projectRoot,
+        since,
+        signal,
+        input.now,
+        includeWrittenFiles,
+      );
+      for (const path of scan.files) reported.add(path);
+      if (scan.limited !== null)
+        warnings.push(`Some project files could not be checked (${scan.limited}).`);
+    }
   }
   const written = new Map<string, ProjectImageState>();
+  const writtenFiles = new Set<string>();
+  const changedFiles = new Set<string>();
   for (const path of reported) {
     signal.throwIfAborted();
-    const candidate = await authorizeCandidate(projectRoot, path, since);
+    const allowWrittenFile = includeWrittenFiles || runtimeWrites.has(path);
+    const candidate = await authorizeCandidate(projectRoot, path, since, allowWrittenFile);
     if (candidate === null) continue;
+    if (allowWrittenFile && candidate.relativePath.length <= 4096) {
+      (runtimeWrites.has(path) ? writtenFiles : changedFiles).add(candidate.relativePath);
+    }
+    if (!OUTPUT_FILE.test(candidate.relativePath)) continue;
     if (input.shown.get(candidate.relativePath) === stateKey(candidate.state)) continue;
     written.set(candidate.relativePath, candidate.state);
   }
@@ -467,6 +530,12 @@ async function collectProjectOutputs(input: {
   return {
     images,
     tables,
+    ...(includeWrittenFiles || writtenFiles.size > 0
+      ? { writtenFiles: [...writtenFiles].toSorted().slice(0, MAXIMUM_WRITTEN_FILES) }
+      : {}),
+    ...(changedFiles.size > 0
+      ? { changedFiles: [...changedFiles].toSorted().slice(0, MAXIMUM_WRITTEN_FILES) }
+      : {}),
     capture: {
       coverage: coverageReason === undefined ? "complete" : "partial",
       ...(coverageReason === undefined ? {} : { coverageReason }),
@@ -509,6 +578,7 @@ export function makeComputeProjectOutputObserver(
       ).pipe(
         Effect.map(({ projectRoot, projectWatch }): ComputeProjectOutputWatch => {
           const shown = new Map<string, string>();
+          let quickScanAvailable = true;
           return {
             ready: Effect.promise(() => projectWatch?.ready() ?? Promise.resolve()),
             begin: Effect.clockWith((clock) =>
@@ -526,16 +596,23 @@ export function makeComputeProjectOutputObserver(
                       projectRoot,
                       projectWatch,
                       observation,
-                      limits,
+                      limits: {
+                        ...limits,
+                        preferFileScan: limits.preferFileScan === true && quickScanAvailable,
+                      },
                       writes,
                       shown,
+                      onQuickScanLimit: () => {
+                        quickScanAvailable = false;
+                      },
                       signal,
                       now: () => clock.currentTimeMillisUnsafe(),
                     }),
                   catch: () => "failed" as const,
                 }).pipe(
                   Effect.timeoutOrElse({
-                    duration: "3 seconds",
+                    // Leave time for the watch to flush and for a bounded file scan if it cannot.
+                    duration: "6 seconds",
                     orElse: () =>
                       Effect.succeed(
                         unavailableCollection(

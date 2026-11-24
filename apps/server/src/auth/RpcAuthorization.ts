@@ -348,6 +348,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computeManagedRuntimeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.computeManageRuntime]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeCancelManagedRuntime]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeAddPythonLibrary]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeStartSession]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeListSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.computeGetSession]: AuthOrchestrationReadScope,
@@ -357,25 +358,56 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computeCancelExecution]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeInterruptSession]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeListExecutions]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:START — authorize project Compute history reads on the destination.
+  [WS_METHODS.computeRunHistory]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:END
   [WS_METHODS.computeListOutputs]: AuthOrchestrationReadScope,
   [WS_METHODS.computeInspectVariables]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeReadTable]: AuthOrchestrationOperateScope,
   [WS_METHODS.dataReadFileTable]: AuthFilesystemReadScope,
+  // SCIENT-FORK:START — authorize data profiles and view reads on the destination.
+  [WS_METHODS.dataProfileFile]: AuthFilesystemReadScope,
+  [WS_METHODS.dataViewRevision]: AuthFilesystemReadScope,
+  [WS_METHODS.dataReadView]: AuthFilesystemReadScope,
+  [WS_METHODS.dataProfileView]: AuthFilesystemReadScope,
+  [WS_METHODS.dataProfileVariable]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
   [WS_METHODS.computeSaveOutput]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeSaveConsoleNotebook]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:START — linked results keep read, execution, and file-write permissions distinct.
   [WS_METHODS.computeResultsResolve]: AuthOrchestrationReadScope,
   [WS_METHODS.computeResultsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsSetup]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsHistory]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsCompare]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsPublication]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsAttemptOutput]: AuthOrchestrationReadScope,
   [WS_METHODS.computeResultsPlaceFigure]: AuthFilesystemWriteScope,
   [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeResultsPlaceLatex]: AuthFilesystemWriteScope,
   [WS_METHODS.computeResultsPlacements]: AuthOrchestrationReadScope,
   [WS_METHODS.computeResultsUpdateFiles]: AuthFilesystemWriteScope,
   [WS_METHODS.computeResultsUndoUpdate]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — register result package operations.
+  [WS_METHODS.computeResultsHandoffChoices]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeResultsExport]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsExportProgress]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsVerify]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsCancelVerification]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
   [WS_METHODS.computeSubmitCells]: AuthOrchestrationOperateScope,
   [WS_METHODS.notebookRead]: AuthFilesystemReadScope,
   [WS_METHODS.notebookReadOutput]: AuthFilesystemReadScope,
   [WS_METHODS.notebookEdit]: AuthFilesystemWriteScope,
   [WS_METHODS.notebookRecordRun]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:START — fresh notebooks submit work and read its status.
+  [WS_METHODS.notebookFreshStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notebookFreshStatus]: AuthFilesystemReadScope,
+  [WS_METHODS.subscribeNotebookFreshRun]: AuthFilesystemReadScope,
+  [WS_METHODS.notebookFreshStop]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
   [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,
   [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
   [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
@@ -409,7 +441,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushResolve]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
-  // SCIENT-FORK: who has a thread's room open; invites are guarded with the client scopes.
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — reading who has a thread room open.
   [WS_METHODS.threadRoomPresence]: AuthOrchestrationReadScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — a voice call drives the thread's agent like a sent message.

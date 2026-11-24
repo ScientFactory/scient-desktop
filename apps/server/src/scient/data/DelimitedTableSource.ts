@@ -217,6 +217,7 @@ async function forEachRow(
   index: RowIndex,
   signal: AbortSignal,
   visit: (row: number, text: string) => void,
+  onBatch?: () => void,
 ) {
   // Record 0 is the header.
   for (let first = 1; first < index.records;) {
@@ -225,7 +226,9 @@ async function forEachRow(
     while (end < index.records && index.offsets[end + 1]! - index.offsets[first]! <= CHUNK_BYTES)
       end++;
     const { texts } = await readRowTexts(handle, index, first, end);
+    signal.throwIfAborted();
     for (let offset = 0; offset < texts.length; offset++) visit(first + offset - 1, texts[offset]!);
+    onBatch?.();
     first = end;
   }
 }
@@ -268,6 +271,23 @@ export async function openDelimitedSource(
     columns,
     rowCount,
     truncated: index.truncated,
+    delimiter: separator,
+    scanProfileRows: (columnLimit, rowSignal, addRow, onBatch) =>
+      withFile(path, (handle) =>
+        forEachRow(
+          handle,
+          index,
+          rowSignal,
+          (_row, text) => {
+            addRow(
+              parseDelimitedRecord(text, separator, columnLimit).map((value) =>
+                value === "" ? null : value,
+              ),
+            );
+          },
+          onBatch,
+        ),
+      ),
     readRows: (rows, columnLimit, rowSignal) =>
       withFile(path, async (handle) => {
         const cells = Array.from<Array<string | null>>({ length: rows.length });

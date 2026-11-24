@@ -10,6 +10,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { Dialog, DialogHeader, DialogPopup, DialogTitle } from "~/components/ui/dialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { DataProfileButton } from "./DataProfileButton";
 import { DataGrid } from "./DataGrid";
 import { computeTablePage } from "./dataTableState";
 
@@ -61,6 +62,22 @@ export function ComputeVariableTableDialog(props: {
             label={name}
             revision={`${props.sessionId}:${props.generation}:${name}`}
             loadPage={loadPage}
+            toolbarEnd={
+              <DataProfileButton
+                key={`${props.sessionId}:${props.generation}:${name}`}
+                environmentId={props.environmentId}
+                sourceLabel={name}
+                target={{
+                  kind: "variable",
+                  input: {
+                    cwd: props.cwd,
+                    sessionId: props.sessionId,
+                    expectedGeneration: props.generation,
+                    name,
+                  },
+                }}
+              />
+            }
           />
         )}
       </DialogPopup>

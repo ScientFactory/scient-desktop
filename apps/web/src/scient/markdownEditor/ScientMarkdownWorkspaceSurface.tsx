@@ -528,15 +528,6 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
           }}
         />
       ) : null}
-      {props.citationSource ? (
-        <MarkdownResults
-          controller={controller}
-          environmentId={props.citationSource.environmentId}
-          cwd={props.citationSource.cwd}
-          documentPath={props.citationSource.path}
-          register={registerResults}
-        />
-      ) : null}
       <div className="scient-markdown-rich-pane">
         <ScientMarkdownControls
           controller={controller}
@@ -547,6 +538,15 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
           {...(props.onWikiLinkSelected ? { onWikiLinkSelected: props.onWikiLinkSelected } : {})}
           documentActions={props.documentActions}
         />
+        {props.citationSource ? (
+          <MarkdownResults
+            controller={controller}
+            environmentId={props.citationSource.environmentId}
+            cwd={props.citationSource.cwd}
+            documentPath={props.citationSource.path}
+            register={registerResults}
+          />
+        ) : null}
         <ScientMarkdownDocument
           mode={persistenceSnapshot.editingBlocked || !canEditPendingInput ? "read" : "write"}
           controller={controller}

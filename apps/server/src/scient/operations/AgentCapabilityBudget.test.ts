@@ -166,7 +166,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(93);
+      expect(scientTools).toHaveLength(101);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_network",
         "scient_account_add",
@@ -197,6 +197,10 @@ it.live(
         "scient_connector_list",
         "scient_connector_save",
         "scient_connector_setup",
+        "scient_data_materialize_view",
+        "scient_data_preview_view",
+        "scient_data_profile",
+        "scient_data_save_view",
         "scient_document_export",
         "scient_document_runtime",
         "scient_docx_tracked_replace",
@@ -205,6 +209,7 @@ it.live(
         "scient_notebook_edit",
         "scient_notebook_read",
         "scient_notebook_run",
+        "scient_notebook_stop",
         "scient_overleaf_connect",
         "scient_overleaf_kept_copies",
         "scient_overleaf_manage",
@@ -220,9 +225,12 @@ it.live(
         "scient_references_check",
         "scient_references_resolve",
         "scient_results_check",
+        "scient_results_compare",
+        "scient_results_export",
         "scient_results_list",
         "scient_results_markdown",
         "scient_results_run",
+        "scient_results_verify",
         "scient_skill_load",
         "scient_skill_read",
         "scient_skill_read_resource",

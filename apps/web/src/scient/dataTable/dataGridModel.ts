@@ -1,4 +1,7 @@
 import type { DataTableColumn, DataTableColumnType } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import type { MessageResolver } from "~/i18n/messages";
 
 export const ROW_HEIGHT = 28;
 export const HEADER_HEIGHT = 40;
@@ -13,16 +16,31 @@ export const MAX_COPY_ROWS = 10_000;
 
 export const isNumericType = (type: DataTableColumnType) => type === "integer" || type === "number";
 
+const COLUMN_TYPE_NAMES = {
+  integer: msg("integer", { $context: "data column type" }),
+  number: msg("decimal", { $context: "data column type" }),
+  boolean: msg("true/false", { $context: "data column type" }),
+  date: msg("date", { $context: "data column type" }),
+  datetime: msg("date and time", { $context: "data column type" }),
+  text: msg("text", { $context: "data column type" }),
+  other: msg("other", { $context: "data column type" }),
+} satisfies Record<DataTableColumnType, string>;
+
+export function dataColumnTypeName(type: DataTableColumnType, resolve: MessageResolver): string {
+  return resolve(COLUMN_TYPE_NAMES[type]);
+}
+
 /** A width that fits the name, the type and the longest of the sampled cells. */
 export function initialColumnWidth(
   column: DataTableColumn,
+  typeName: string,
   cells: ReadonlyArray<string | null>,
 ): number {
   const longest = cells.reduce(
     (max, cell) => Math.max(max, cell === null ? 0 : Math.min(cell.length, 60)),
     Math.max(
       column.name.length,
-      column.label.length + 2,
+      typeName.length + 2,
       isNumericType(column.type) ? MIN_NUMERIC_CHARS : 0,
     ),
   );

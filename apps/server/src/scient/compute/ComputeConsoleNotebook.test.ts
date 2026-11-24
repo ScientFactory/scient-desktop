@@ -97,4 +97,27 @@ describe("console notebook", () => {
     expect(document.cells[0].execution_count).toBe(1);
     expect(document.cells[1].execution_count).toBe(2);
   });
+
+  it("marks a restart and output that was not kept", () => {
+    const document = JSON.parse(
+      consoleNotebookDocument({
+        languageId: "python",
+        displayName: "Python",
+        cells: [
+          { code: "x = 1", outputs: { outputs: [], executionCount: 1, truncated: false } },
+          {
+            code: "plot()",
+            outputs: { outputs: [], executionCount: 1, truncated: true },
+            afterRestart: true,
+          },
+        ],
+      }),
+    );
+    expect(document.cells.map((cell: { cell_type: string }) => cell.cell_type)).toEqual([
+      "code",
+      "markdown",
+      "code",
+    ]);
+    expect(document.cells[2].outputs[0].text).toContain("not kept");
+  });
 });

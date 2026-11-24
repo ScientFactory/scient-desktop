@@ -11,13 +11,14 @@ import { useContentDirection } from "../bidi/ContentDirectionScope";
 export function ScientTooltip(props: {
   readonly children: ReactElement;
   readonly content: ReactNode;
+  readonly disabled?: boolean;
   readonly className?: string | undefined;
   readonly side?: "top" | "right" | "bottom" | "left" | undefined;
 }) {
   const contentDirection = useContentDirection();
 
   return (
-    <Tooltip>
+    <Tooltip disabled={props.disabled ?? false}>
       <TooltipTrigger render={props.children} />
       <TooltipPopup
         className={props.className}

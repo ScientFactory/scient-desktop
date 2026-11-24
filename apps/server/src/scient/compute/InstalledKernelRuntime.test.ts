@@ -11,6 +11,7 @@ import {
   kernelLanguages,
   kernelLaunch,
   makeInstalledKernelBinding,
+  kernelInProject,
 } from "./InstalledKernelRuntime.ts";
 import { jupyterKernelDirectories } from "./KernelSpecs.ts";
 import { RuntimeDiscoveryHostReference } from "./RuntimeDiscovery.ts";
@@ -186,6 +187,17 @@ describe("installed Jupyter kernels", () => {
     });
     const absolute = { ...spec, argv: ["/opt/evcxr", "{connection_file}"] };
     expect(kernelLaunch(inEnvironment, absolute)).toBe(absolute);
+  });
+
+  it("counts a kernel as the project's only when it lives inside it", () => {
+    expect(
+      kernelInProject("win32", "C:\\proj", "C:\\proj\\.venv\\share\\jupyter\\kernels\\py"),
+    ).toBe(true);
+    expect(kernelInProject("win32", "C:\\proj", "D:\\envs\\share\\jupyter\\kernels\\py")).toBe(
+      false,
+    );
+    expect(kernelInProject("linux", "/proj", "/proj/..venv/kernels/py")).toBe(true);
+    expect(kernelInProject("linux", "/proj", "/other/kernels/py")).toBe(false);
   });
 
   it.effect("launches an installed kernel exactly as its spec says, without variables", () =>

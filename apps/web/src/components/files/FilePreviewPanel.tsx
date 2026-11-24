@@ -43,6 +43,7 @@ import {
 } from "~/scient/fileSurfaces/scientLazyFileSurfaces";
 import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadRecovery";
 import { isScientDataFile } from "~/scient/dataTable/dataFiles";
+import { useSavedDataViewPreview } from "~/scient/dataTable/useSavedDataViewPreview";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
 import { editorCompositions } from "~/scient/editorFlush/editorComposition";
@@ -1960,26 +1961,34 @@ export default function FilePreviewPanel({
         : false;
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
+  // SCIENT-FORK:START — saved data views share the table presentation with delimited files.
+  const savedView = useSavedDataViewPreview(
+    isHostFile ? null : previewPath,
+    queriedFile.authoritativeData?.contents,
+    runAfterPendingSave,
+  );
+  const hasTablePreview = tableDelimiter !== null || savedView !== null;
   const renderTable =
-    tableDelimiter !== null &&
-    renderTablePreferred &&
+    (savedView?.rendered ?? (tableDelimiter !== null && renderTablePreferred)) &&
     revealHandled &&
     !(citationRevealActive && fileCitation?.sourceSelection);
   const renderedMode = isMermaid
     ? ("mermaid" as const)
     : isMarkdownDocument
       ? ("markdown" as const)
-      : tableDelimiter
+      : hasTablePreview
         ? ("table" as const)
         : isHtml
           ? ("html" as const)
           : null;
+  const surfaceRendered = hasTablePreview ? renderTable : rendered;
   const canToggleRenderedForSurface =
     previewPath !== null &&
     attachment === undefined &&
     renderedMode !== null &&
-    (!isMarkdownDocument || markdownRenderable);
-  const surfaceRendered = tableDelimiter ? renderTable : rendered;
+    (!isMarkdownDocument || markdownRenderable) &&
+    !(savedView !== null && surfaceRendered);
+  // SCIENT-FORK:END
   // A denied read is explained in terms of the computer that holds the file.
   const hostOs =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.platform.os ?? null;
@@ -2206,6 +2215,14 @@ export default function FilePreviewPanel({
       handleRenderMarkdownChange(pressed);
       return;
     }
+    // SCIENT-FORK:START — wait for the saved query before switching presentation.
+    if (savedView !== null) {
+      savedView.setRendered(pressed, () =>
+        setHandledReveal(pressed ? { path: savedView.path, requestId: revealRequestId } : null),
+      );
+      return;
+    }
+    // SCIENT-FORK:END
     if (tableDelimiter !== null) {
       setRenderTablePreferred(pressed);
       setHandledReveal(
@@ -2245,6 +2262,14 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? workspaceFileHostPath(relativePath, cwd)
         : null;
+  // SCIENT-FORK:START — the grid reports its own coverage, independent of the source text read.
+  const showDataGrid =
+    relativePath !== null &&
+    absolutePath !== null &&
+    attachment === undefined &&
+    (isScientDataFile(relativePath) || savedView !== null) &&
+    (!hasTablePreview || renderTable);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — missing-file choices, read failure and save a copy
   const { missingFile, canSaveCopy, handleSaveCopy, readFailure, blockingReadFailure } =
     useScientFileReadRecovery({
@@ -2879,13 +2904,15 @@ export default function FilePreviewPanel({
           {readOnlyNotice(file.data.outsideWorkspace === true, m)}
         </div>
       ) : null}
+      {/* SCIENT-FORK:START — only the source text preview uses the byte-limit notice. */}
       {previewPath &&
       attachment === undefined &&
       !markdownLease &&
       !isMedia &&
       !renderBrowserFile &&
       file.data?.truncated &&
-      !showsLargeText ? (
+      !showsLargeText &&
+      !showDataGrid ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 scient-reading-micro text-warning-foreground">
           {gt(
             "{count, plural, one {Read-only preview limited to the first 1 MB of a {formatted} byte file.} other {Read-only preview limited to the first 1 MB of a {formatted} byte file.}}",
@@ -2893,6 +2920,7 @@ export default function FilePreviewPanel({
           )}
         </div>
       ) : null}
+      {/* SCIENT-FORK:END */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* SCIENT-FORK: the shelf keeps the views of documents left recently. */}
         <ScientDocumentShelf
@@ -3006,11 +3034,7 @@ export default function FilePreviewPanel({
               )
             )
           ) : // SCIENT-FORK:START — data files open in the paged grid; CSV and TSV keep their text view
-          relativePath &&
-            absolutePath &&
-            attachment === undefined &&
-            isScientDataFile(relativePath) &&
-            (tableDelimiter === null || renderTable) ? (
+          showDataGrid ? (
             <ScientSurfaceSuspense>
               <ScientDataFileTable
                 key={`${environmentId}:${absolutePath}`}
@@ -3018,6 +3042,11 @@ export default function FilePreviewPanel({
                 absolutePath={absolutePath}
                 name={relativePath.split(/[\\/]/).at(-1) || relativePath}
                 threadId={threadRef.threadId}
+                workspace={
+                  isHostFile ? undefined : { cwd, path: relativePath, onOpenPath: onOpenFile }
+                }
+                viewSql={savedView !== null ? file.data?.contents : undefined}
+                onShowSql={savedView === null ? undefined : () => handleRenderedChange(false)}
                 refreshToken={`${workspaceMutationId}:${viewerRefreshKey}`}
                 reloadKey={`${manualReloadKey}:${fileRefreshRevision}`}
               />

@@ -68,6 +68,7 @@ describe("dependency recovery presentation", () => {
     const markup = renderDiagnostic("python", "No module named 'pandas'");
     expect(markup).toContain("ModuleNotFoundError");
     expect(markup).toContain("Original traceback retained");
+    expect(markup).toContain('<summary class="cursor-pointer">Details</summary>');
     expect(markup).toContain("Python settings");
     expect(markup).toContain('data-environment="remote-scient-host"');
     expect(markup).not.toContain("reports pandas installed");
@@ -81,6 +82,116 @@ describe("dependency recovery presentation", () => {
     expect(markup).not.toContain("Python settings");
     expect(markup).toContain("Original traceback retained");
   });
+});
+
+it("labels notebook cell lines without turning them into file links", () => {
+  const markup = renderToStaticMarkup(
+    <ComputeOutputView
+      cwd="/synthetic"
+      environmentId={EnvironmentId.make("synthetic")}
+      executionId={ComputeExecutionId.make("failed-execution")}
+      session={
+        { languageId: ComputeLanguageId.make("python"), runtime: null } as ComputeSessionRecord
+      }
+      outputs={[
+        {
+          _tag: "diagnostic",
+          sequence: 1,
+          observedAt: "2026-11-23T00:00:00Z",
+          diagnostic: {
+            errorName: "NameError",
+            message: "name 'run_date' is not defined",
+            traceback: [],
+            frames: [
+              { relativePath: "analysis.ipynb", line: 3, column: null, functionName: null },
+              { relativePath: "setup.py", line: 6, column: null, functionName: null },
+            ],
+          },
+        },
+      ]}
+      threadRef={{} as ScopedThreadRef}
+      notebook={{ path: "analysis.ipynb" }}
+    />,
+  );
+  expect(markup).toContain("Line 3 in a notebook cell");
+  expect(markup).not.toContain("analysis.ipynb:3");
+  expect(markup).toContain("setup.py:6</button>");
+});
+
+it("offers a jump to a failed defining cell when live notebook evidence identifies it", () => {
+  const markup = renderToStaticMarkup(
+    <ComputeOutputView
+      cwd="/synthetic"
+      environmentId={EnvironmentId.make("synthetic")}
+      executionId={ComputeExecutionId.make("failed-execution")}
+      session={
+        { languageId: ComputeLanguageId.make("python"), runtime: null } as ComputeSessionRecord
+      }
+      outputs={[
+        {
+          _tag: "diagnostic",
+          sequence: 1,
+          observedAt: "2026-11-23T00:00:00Z",
+          diagnostic: {
+            errorName: "NameError",
+            message: "name 'run_date' is not defined",
+            traceback: ["line 1 in cell"],
+            frames: [],
+          },
+        },
+      ]}
+      threadRef={{} as ScopedThreadRef}
+      notebook={{
+        path: "analysis.ipynb",
+        onReplay: () => undefined,
+        onJumpToCell: () => undefined,
+        definingCell: () => ({
+          name: "run_date",
+          cellId: "setup",
+          cellNumber: 1,
+          status: "failed",
+        }),
+      }}
+    />,
+  );
+  expect(markup).toContain("Cell 1 defines run_date and failed.");
+  expect(markup).toContain("Jump to cell 1");
+  expect(markup).toContain('<summary class="cursor-pointer">Details</summary>');
+});
+
+it("offers no setup replay when no earlier cell defines the missing name", () => {
+  const markup = renderToStaticMarkup(
+    <ComputeOutputView
+      cwd="/synthetic"
+      environmentId={EnvironmentId.make("synthetic")}
+      executionId={ComputeExecutionId.make("failed-execution")}
+      session={
+        { languageId: ComputeLanguageId.make("python"), runtime: null } as ComputeSessionRecord
+      }
+      outputs={[
+        {
+          _tag: "diagnostic",
+          sequence: 1,
+          observedAt: "2026-11-23T00:00:00Z",
+          diagnostic: {
+            errorName: "NameError",
+            message: "name 'divisor' is not defined",
+            traceback: ["line 1 in cell"],
+            frames: [],
+          },
+        },
+      ]}
+      threadRef={{} as ScopedThreadRef}
+      notebook={{
+        path: "analysis.ipynb",
+        onReplay: () => undefined,
+        onJumpToCell: () => undefined,
+        definingCell: () => null,
+      }}
+    />,
+  );
+  expect(markup).toContain("NameError: name &#x27;divisor&#x27; is not defined");
+  expect(markup).not.toContain("Run from top through this cell");
 });
 
 describe("figure result projection", () => {

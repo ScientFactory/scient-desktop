@@ -44,6 +44,9 @@ export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
   readonly environmentLabel: string;
   readonly method: string;
+  // SCIENT-FORK:START — Julia startup already has in-panel progress.
+  readonly suppressSlowWarning?: boolean;
+  // SCIENT-FORK:END
 }
 
 export class EnvironmentRpcRequestObserver extends Context.Reference<{
@@ -85,6 +88,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.subscribeAnalysisRuns
   | typeof WS_METHODS.subscribeComputeSessions
+  // SCIENT-FORK:START — keep fresh notebook run updates on the streaming client.
+  | typeof WS_METHODS.subscribeNotebookFreshRun
+  // SCIENT-FORK:END
   | typeof WS_METHODS.subscribeComputeActiveWork
   | typeof WS_METHODS.subscribeDocumentBindingChanges
   // SCIENT-FORK:START — Scient Extensions change stream.
@@ -113,6 +119,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalObserve;
 
 export type EnvironmentStreamCommandRpcTag =
+  // SCIENT-FORK:START — cancellable file profile progress.
+  | typeof WS_METHODS.dataProfileFile
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — a Scient Agent voice call streams until the window hangs up.
   | typeof WS_METHODS.liveVoiceCall
   // SCIENT-FORK:END
@@ -263,6 +272,16 @@ export const requestInSession = Effect.fn("EnvironmentRpc.request")(function* <
     environmentId: supervisor.target.environmentId,
     environmentLabel: supervisor.target.label,
     method: tag,
+    // SCIENT-FORK:START — Julia startup and result verification have their own status.
+    ...(tag === WS_METHODS.computeResultsVerify ||
+    (tag === WS_METHODS.computeStartSession &&
+      typeof input === "object" &&
+      input !== null &&
+      "languageId" in input &&
+      input.languageId === "julia")
+      ? { suppressSlowWarning: true }
+      : {}),
+    // SCIENT-FORK:END
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });

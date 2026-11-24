@@ -4,6 +4,10 @@ import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-pres
 import { CircleXIcon } from "lucide-react";
 import { TracePathLabel } from "~/scient/presentation/TracePathLabel";
 import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
+// SCIENT-FORK:START — Compute calls own a single work-log disclosure.
+import { ComputeToolWorkRow } from "~/scient/compute/ComputeToolActivity";
+import { isComputeRunTool } from "~/scient/compute/computeToolRunProjection";
+// SCIENT-FORK:END
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
@@ -354,6 +358,42 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;
+  // SCIENT-FORK:START — Use one outcome and the shared work-log disclosure for a Compute receipt.
+  if (
+    workEntry.projectedItem &&
+    failureItem?.type === "dynamic_tool" &&
+    isComputeRunTool(failureItem.toolName)
+  ) {
+    return (
+      <ComputeToolWorkRow
+        item={failureItem}
+        timestamp={workEntry.createdAt}
+        expanded={expanded}
+        failed={workEntryDisplayIndicatesToolFailure(workEntry)}
+        onToggle={toggleExpanded}
+        icon={
+          <ToolActivityIconView
+            icon={workEntry.toolIcon ?? workEntry.toolSource?.icon}
+            fallbackName={workEntryIconName(workEntry)}
+            className="size-4 text-muted-foreground"
+            muted
+          />
+        }
+      >
+        <V2ItemInspector
+          projectedItem={workEntry.projectedItem}
+          environmentId={ctx.activeThreadEnvironmentId}
+          cwd={ctx.markdownCwd}
+          workspaceRoot={workspaceRoot}
+          computeCreatedAt={workEntry.createdAt}
+          onInitialOutputReady={onInitialOutputReady}
+          source={ctx.turnItemSource}
+          onImageExpand={onImageExpand}
+        />
+      </ComputeToolWorkRow>
+    );
+  }
+  // SCIENT-FORK:END
   const pendingApproval =
     failureItem?.type === "approval_request"
       ? ctx.pendingApprovals.get(failureItem.requestId)

@@ -297,6 +297,67 @@ const execute = Effect.fn("PythonKernel.execute")(function* (
 
 describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
   it.layer(processObserversLayer, { excludeTestServices: true })((it) => {
+    it.effect("profiles a whole live DataFrame through the kernel bridge", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* integration();
+          yield* execute(
+            harness,
+            "define-profile-frame",
+            [
+              "import numpy as np, pandas as pd",
+              "df = pd.DataFrame(dict(score=np.arange(3000) / 3000, status=['open'] * 2999 + ['temporary']))",
+            ].join("\n"),
+          );
+          const request = {
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            name: "df",
+            query: { offset: 0, limit: 200, search: "", sort: null },
+          };
+          const page = yield* harness.channel.inspectTable({
+            ...request,
+            requestId: ComputeRequestId.make("peek-frame"),
+          });
+          expect(page.rows).toHaveLength(200);
+          expect(page.totals).toBeUndefined();
+          const result = yield* harness.channel.inspectTable({
+            ...request,
+            requestId: ComputeRequestId.make("profile-frame"),
+            profile: true,
+          });
+          expect(result.totals).toEqual({
+            rowCount: 3000,
+            columns: [
+              {
+                missing: 0,
+                distinct: 3000,
+                distinctLowerBound: false,
+                range: { min: "0.0", max: String(2999 / 3000) },
+                top: [],
+                topTracked: false,
+                valuesClipped: false,
+              },
+              {
+                missing: 0,
+                distinct: 2,
+                distinctLowerBound: false,
+                range: null,
+                top: [
+                  { value: "open", count: 2999 },
+                  { value: "temporary", count: 1 },
+                ],
+                topTracked: false,
+                valuesClipped: false,
+              },
+            ],
+          });
+          yield* harness.channel.shutdown({
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+        }),
+      ).pipe(Effect.provide(Live), Effect.timeout("30 seconds")),
+    );
+
     it.effect(
       "preserves retained source excerpts and navigation across different document submissions",
       () =>
@@ -402,6 +463,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
                 "import pandas as pd",
                 "from IPython.display import display",
                 "frame = pd.DataFrame({f'column_{i}': range(150) for i in range(30)})",
+                "frame['column_0'] = [pd.Timestamp('2026-07-14')] + [pd.NaT] * 149",
                 "display(frame)",
                 "display({'application/vnd.plotly.v1+json': {'data': [{'type': 'scatter', 'x': [1, 2], 'y': [3, 4]}]}}, raw=True)",
                 "assert 'table_preview' not in globals()",
@@ -425,6 +487,8 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
             if (table?.data._tag !== "json") throw new Error("Expected bounded dataframe JSON");
             const data = yield* decodeDataFramePreview(table.data.json);
             expect(data.data).toHaveLength(100);
+            expect(data.data[0]).toMatchObject({ column_0: "2026-07-14T00:00:00" });
+            expect(data.data[1]).toMatchObject({ column_0: null });
             expect(data.schema.fields).toHaveLength(21);
             expect(data.scientPreview.truncated).toBe(true);
             expect(
@@ -530,7 +594,12 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
               true,
             );
 
-            yield* execute(harness, "state-write", "answer = 41");
+            const stateWrite = yield* execute(harness, "state-write", "answer = 41");
+            expect(stateWrite.at(-1)).toMatchObject({
+              _tag: "completed",
+              outcome: "succeeded",
+              executionCount: 2,
+            });
             const stateRead = yield* execute(harness, "state-read", "answer + 1");
             yield* Effect.logInfo("real-kernel: state retention complete");
             expect(stateRead.some((event) => outputText(event)?.includes("42") === true)).toBe(

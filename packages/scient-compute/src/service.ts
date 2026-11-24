@@ -89,6 +89,10 @@ export const ComputeStartSessionInput = Schema.Struct({
   configuredExecutable: Schema.NullOr(ShortText),
   /** An explicit per-session choice, distinct from the environment's default preference. */
   requestedExecutable: Schema.optional(ShortText),
+  /** Internal setup for a clean notebook whose cells run as a batch. */
+  notebookRun: Schema.optional(
+    Schema.Struct({ executionId: ComputeExecutionId, parameters: Schema.String }),
+  ),
   /** One execution in a new runtime lifetime; the coordinator retains results and closes it. */
   runOnce: Schema.optional(
     Schema.Struct({
@@ -98,6 +102,8 @@ export const ComputeStartSessionInput = Schema.Struct({
       actor: Schema.optional(ComputeExecutionActor),
       /** Set by the gateway when the code is the whole saved file: the run may publish results. */
       publishResults: Schema.optional(Schema.Boolean),
+      parameters: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      inputs: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
 });

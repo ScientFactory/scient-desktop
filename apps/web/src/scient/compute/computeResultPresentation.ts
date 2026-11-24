@@ -5,6 +5,7 @@ import {
   type ComputeOutput,
   type ComputeProjectedOutput,
 } from "@t3tools/contracts";
+import { normalizeTerminalOutput } from "@t3tools/shared/terminalOutput";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -12,6 +13,21 @@ import { m, type MessageResolver } from "~/i18n/messages";
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 type ComputeExecutionStatus = NonNullable<ComputeExecutionRecord["result"]>["status"];
 type ComputeSystemEvent = Extract<ComputeOutput, { readonly _tag: "system" }>["event"];
+
+export function computeDiagnosticSummary(
+  diagnostic: Extract<ComputeOutput, { _tag: "diagnostic" }>["diagnostic"],
+) {
+  const name = diagnostic.errorName.trim();
+  const message = normalizeTerminalOutput(diagnostic.message).text.trim();
+  const summary = [name, message].filter(Boolean).join(": ");
+  const traceback = normalizeTerminalOutput(diagnostic.traceback.join("\n"))
+    .text.trimEnd()
+    .split("\n");
+  const last = traceback.at(-1)?.trim();
+  if (last === summary || last === message) traceback.pop();
+  return { summary, traceback: traceback.join("\n").trimEnd() };
+}
+
 export const COMPUTE_NATIVE_FIGURE_MEDIA_TYPE = "application/vnd.mathworks.matlab.figure";
 // Matches the retained representation-bundle limit; native files are never decoded here.
 export const MAX_COMPUTE_NATIVE_FIGURE_BYTES = 8 * 1024 * 1024;
@@ -226,8 +242,8 @@ const EXECUTION_STATUS_LABELS = {
   running: msg("Running"),
   succeeded: msg("Succeeded"),
   failed: msg("Failed", { $context: "run status" }),
-  interrupting: msg("Stopping"),
-  cancelled: msg("Cancelled"),
+  interrupting: msg("Stopping…"),
+  cancelled: msg("Stopped"),
   lost: msg("Session ended"),
 } as const satisfies Record<ComputeExecutionStatus, string>;
 

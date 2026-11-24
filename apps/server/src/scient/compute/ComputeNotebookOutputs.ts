@@ -45,7 +45,7 @@ export function makeComputeNotebookOutputs(input: {
     });
     if (session === null)
       return yield* notebookError("This compute session is no longer available.");
-    const { outputs } = yield* input.gateway.listOutputs({
+    const { outputs, corruptLineCount } = yield* input.gateway.listOutputs({
       cwd: request.cwd,
       sessionId: request.sessionId,
       executionId: request.executionId,
@@ -69,6 +69,8 @@ export function makeComputeNotebookOutputs(input: {
     const notebook: NotebookOutput[] = [];
     let executionCount: number | null = null;
     let truncated = false;
+    // A damaged transcript line or a figure the store no longer has is output lost, not silence.
+    let incomplete = corruptLineCount > 0;
     for (const output of projectComputeOutputs(outputs)) {
       switch (output._tag) {
         case "stream": {
@@ -92,7 +94,10 @@ export function makeComputeNotebookOutputs(input: {
           break;
         case "image": {
           const resolved = yield* input.compute.resolveOutputImage(ref(output.contentHash));
-          if (resolved === null) break;
+          if (resolved === null) {
+            incomplete = true;
+            break;
+          }
           notebook.push({
             output_type: "display_data",
             data: { [output.mediaType]: yield* stored(resolved.path, output.mediaType) },
@@ -108,7 +113,8 @@ export function makeComputeNotebookOutputs(input: {
             else if (value._tag === "json") data[representation.mediaType] = parseJson(value.json);
             else {
               const resolved = yield* input.compute.resolveOutputResource(ref(value.contentHash));
-              if (resolved !== null)
+              if (resolved === null) incomplete = true;
+              else
                 data[representation.mediaType] = yield* stored(
                   resolved.path,
                   representation.mediaType,
@@ -135,6 +141,11 @@ export function makeComputeNotebookOutputs(input: {
           break;
       }
     }
-    return { outputs: notebook, executionCount, truncated } satisfies ComputeNotebookOutputsResult;
+    return {
+      outputs: notebook,
+      executionCount,
+      truncated,
+      ...(incomplete ? { incomplete: true } : {}),
+    } satisfies ComputeNotebookOutputsResult;
   });
 }

@@ -1,0 +1,159 @@
+import "../../index.css";
+
+import { EnvironmentId, ThreadId, type ComputeResultsRerunInput } from "@t3tools/contracts";
+import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
+
+import { render } from "../../../test/render";
+
+const { run, project } = vi.hoisted(() => ({
+  run: vi.fn(async (_input: { input: ComputeResultsRerunInput }) => ({
+    _tag: "Success",
+    value: project.completed ? { _tag: "completed", notebookSaved: true } : { _tag: "published" },
+  })),
+  project: { analysis: "threshold.ipynb", completed: false },
+}));
+
+vi.mock("~/state/compute", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const permission = Atom.make(true);
+  return {
+    computeEnvironment: {
+      notebookRead: { label: "read" },
+      resultsSetup: { label: "setup" },
+      resultsRerun: { label: "rerun", permissionAtom: () => permission },
+    },
+  };
+});
+
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: (command: { readonly label: string }) =>
+    command.label === "rerun"
+      ? run
+      : command.label === "read"
+        ? async () => ({ _tag: "Success", value: { language: "R" } })
+        : async () => ({
+            _tag: "Success",
+            value: {
+              inputs: ["views/shortlist.sql"],
+              parameters: [{ name: "threshold", value: "0.5", source: "override" }],
+              suggestedInputs: [],
+            },
+          }),
+}));
+
+vi.mock("~/components/files/ProjectFilePicker", () => ({
+  ProjectFilePickerForTarget: (props: { readonly onSelectFile: (path: string) => void }) => (
+    <button type="button" onClick={() => props.onSelectFile(project.analysis)}>
+      {project.analysis}
+    </button>
+  ),
+}));
+
+import { ResultRunSetup } from "../results/ResultRunSetup";
+import { notebookRunDraftKey, useNotebookRunDrafts } from "../notebook/notebookRunDrafts";
+import { DataGrid } from "./DataGrid";
+import { UseDataInAnalysis } from "./UseDataInAnalysis";
+
+it.each([
+  ["data/predictions.csv", "threshold.py", undefined, undefined],
+  ["data/predictions.parquet", "threshold.ipynb", { threshold: "0.7" }, undefined],
+  ["views/high_risk.sql", "threshold.ipynb", { threshold: "0.7" }, [] as string[]],
+  ["data/predictions.csv", "threshold.ipynb", undefined, undefined],
+  ["data/inline.csv", "threshold.ipynb", undefined, undefined, true],
+] as const)(
+  "declares %s for the selected saved analysis and keeps its existing inputs",
+  async (path, analysis, pending, inputs, completed?: true) => {
+    run.mockClear();
+    useNotebookRunDrafts.setState({ drafts: {} });
+    project.analysis = analysis;
+    project.completed = completed === true;
+    const environmentId = EnvironmentId.make("environment");
+    if (pending !== undefined || inputs !== undefined) {
+      useNotebookRunDrafts
+        .getState()
+        .update(notebookRunDraftKey(environmentId, "/project", analysis), {
+          ...(pending === undefined ? {} : { parameters: pending }),
+          ...(inputs === undefined ? {} : { inputs }),
+        });
+    }
+    await using screen = await render(
+      <DataGrid
+        label="Input data"
+        revision="test"
+        loadPage={async () => ({
+          columns: [],
+          columnCount: 0,
+          offset: 0,
+          rowCount: 0,
+          matchCount: 0,
+          rows: [],
+          truncated: false,
+        })}
+        renderMenuActions={() => (
+          <UseDataInAnalysis
+            environmentId={environmentId}
+            threadId={ThreadId.make("thread")}
+            file={{ cwd: "/project", path, onOpenPath: () => undefined }}
+            sheet={0}
+          />
+        )}
+      />,
+      { router: false },
+    );
+    await screen.getByRole("button", { name: "Grid actions" }).click();
+    await page.getByRole("menuitem", { name: "Use in analysis…" }).click();
+    await page.getByRole("button", { name: analysis }).click();
+    await expect.element(page.getByRole("button", { name: "Copy code" })).toBeEnabled();
+    if (path === "views/high_risk.sql") {
+      const picker = page.getByRole("combobox", { name: "Example language" });
+      expect(picker.element().textContent).toBe("R");
+      await picker.click();
+      await page.getByRole("option", { name: "Julia" }).click();
+      await expect.element(picker).toHaveTextContent("Julia");
+    }
+    const button =
+      analysis.endsWith(".ipynb") && pending === undefined
+        ? "Run with input and saved values"
+        : "Run fresh with input";
+    await page.getByRole("button", { name: button }).click();
+    if (completed) {
+      const dialog = page.getByRole("dialog", { name: "Use in analysis" });
+      await expect.element(dialog.getByText("No linked results published.")).toBeVisible();
+      await expect.element(page.getByText("Analysis result saved")).not.toBeInTheDocument();
+    }
+    await vi.waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        environmentId,
+        input: {
+          cwd: "/project",
+          scriptPath: analysis,
+          inputs: [...(inputs ?? ["views/shortlist.sql"]), path],
+          ...(pending === undefined ? {} : { parameters: pending }),
+        },
+      }),
+    );
+  },
+);
+
+it("lets a run omit every previously declared input", async () => {
+  const onRun = vi.fn();
+  await using _screen = await render(
+    <ResultRunSetup
+      environmentId={EnvironmentId.make("environment")}
+      cwd="/project"
+      scriptPath="threshold.ipynb"
+      onRun={onRun}
+      onCancel={() => undefined}
+    />,
+    { router: false },
+  );
+  const setup = page.getByRole("dialog", { name: "Run setup" });
+  await setup.getByRole("button", { name: "Add file…" }).click();
+  const picker = page.getByRole("dialog", { name: "Add an input file" });
+  await picker.getByRole("button", { name: "threshold.ipynb", exact: true }).click();
+  await setup.getByRole("button", { name: "Remove input threshold.ipynb" }).click();
+  await setup.getByRole("button", { name: "Remove input views/shortlist.sql" }).click();
+  await setup.getByRole("button", { name: "Run fresh" }).click();
+  expect(onRun).toHaveBeenCalledWith({ parameters: { threshold: "0.5" }, inputs: [] });
+});

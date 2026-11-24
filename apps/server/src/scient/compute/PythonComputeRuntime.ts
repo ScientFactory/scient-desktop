@@ -44,6 +44,7 @@ import {
 } from "./ManagedPythonProvisioner.ts";
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
 import { ComputeRecipeNetwork, makeComputeRecipeSource } from "./ComputeRecipeSource.ts";
+import { makePythonLibraries } from "./PythonLibraries.ts";
 import { makePythonPrivateKernels } from "./PythonPrivateKernel.ts";
 import {
   PROBE_SCRIPT,
@@ -407,6 +408,15 @@ export const pythonRuntimeBinding: Effect.Effect<
           environment,
           uv: bridgeHost.uv,
         });
+  const libraries =
+    bridgeHost === null
+      ? null
+      : makePythonLibraries({
+          computeDir: config.computeDir,
+          processes,
+          environment,
+          uv: bridgeHost.uv,
+        });
   const retain = (executable: string) =>
     Effect.tryPromise({
       try: async () => {
@@ -440,6 +450,7 @@ export const pythonRuntimeBinding: Effect.Effect<
           host: {
             executable: Effect.suspend(() => hostExecutable(null)),
             privateKernel: privateKernels.ensure,
+            ...(libraries === null ? {} : { libraries: libraries.folder }),
           },
         };
   const makeAdapter = (preferManaged: boolean) =>
@@ -599,13 +610,19 @@ export const pythonRuntimeBinding: Effect.Effect<
       languageId: PYTHON_LANGUAGE_ID,
       displayName: "Python",
       sourceExtensions: [".py"],
-      capabilities: [...REQUIRED_COMPUTE_CAPABILITIES, "variables", "tables"],
+      capabilities: [
+        ...REQUIRED_COMPUTE_CAPABILITIES,
+        "variables",
+        "tables",
+        ...(libraries === null ? [] : (["packages"] as const)),
+      ],
     },
     toolkitSupport: {
       descriptors: PYTHON_TOOLKIT_CATALOG,
       assess: assessPythonToolkits,
     },
     ...(managedRuntime === undefined ? {} : { managedRuntime }),
+    ...(libraries === null ? {} : { libraries }),
   };
 });
 

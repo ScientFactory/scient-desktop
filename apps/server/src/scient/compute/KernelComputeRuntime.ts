@@ -34,7 +34,7 @@ import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
 import { kernelPrograms, privateKernelDirectory } from "./KernelSpecs.ts";
 import { runOwnedProcess } from "./ManagedPythonProvisioner.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
-import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
+import { normalizeDiagnosticText, normalizeKernelDiagnostic } from "./PythonDiagnostic.ts";
 import { JUPYTER_BRIDGE_TRANSPORT_KIND, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
 import {
   condaPrefixes,
@@ -797,7 +797,10 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       assess,
       verify,
       prepareLaunch,
-      normalizeDiagnostic: (report) => [{ ...normalizeDiagnosticText(report), frames: [] }],
+      normalizeDiagnostic: (report, context) =>
+        language.languageId === "r" || language.languageId === "julia"
+          ? normalizeKernelDiagnostic(report, context, language.languageId)
+          : [{ ...normalizeDiagnosticText(report), frames: [] }],
       fingerprintEnvironment,
     },
     transport: input.host.transport(language.startupTimeoutMs),

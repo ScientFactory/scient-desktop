@@ -4,7 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { AnalysisRunId, AnalysisSourceRevision } from "@t3tools/contracts";
+import { AnalysisRunId, AnalysisSourceRevision, ThreadId } from "@t3tools/contracts";
 import { useClientSettings } from "~/hooks/useSettings";
 import { formatTimestamp } from "~/timestampFormat";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
@@ -137,7 +137,7 @@ function outputSegments(chunks: AnalysisRunSnapshot["receipt"]["output"]) {
   return segments;
 }
 
-function statusLabel(
+function computeBatchStatusLabel(
   run: AnalysisRunSnapshot | AnalysisRunSummary | null,
   runtimeLabel: string,
   resolve: MessageResolver = m,
@@ -162,18 +162,18 @@ function statusLabel(
     case "failed":
       return resolve(msg("Failed", { $context: "run status" }));
     case "cancelled":
-      return resolve(msg("Cancelled"));
+      return resolve(msg("Stopped"));
     case "lost":
       return resolve(msg("Interrupted when Scient closed"));
   }
 }
 
-function RunOutputView(props: {
+export function RunOutputView(props: {
   readonly run: AnalysisRunSnapshot;
   readonly runtimeLabel: string;
   readonly threadRef: ScopedThreadRef;
   readonly onRevealCode?: (() => void) | undefined;
-  readonly onAskAboutDiagnostic: (
+  readonly onAskAboutDiagnostic?: (
     diagnostic: AnalysisDiagnostic,
     runId: AnalysisRunSnapshot["receipt"]["runId"],
   ) => void;
@@ -385,13 +385,17 @@ function RunOutputView(props: {
                     </details>
                   ) : null}
                 </div>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => props.onAskAboutDiagnostic(diagnostic, props.run.receipt.runId)}
-                >
-                  <T>Ask agent</T>
-                </Button>
+                {props.onAskAboutDiagnostic ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() =>
+                      props.onAskAboutDiagnostic?.(diagnostic, props.run.receipt.runId)
+                    }
+                  >
+                    <T>Ask agent</T>
+                  </Button>
+                ) : null}
               </div>
             </div>
           ))}
@@ -418,14 +422,14 @@ function RunOutputView(props: {
   );
 }
 
-function PersistedRunOutput(props: {
+export function PersistedRunOutput(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly runId: AnalysisRunSnapshot["receipt"]["runId"];
   readonly runtimeLabel: string;
   readonly threadRef: ScopedThreadRef;
   readonly onRevealCode?: (() => void) | undefined;
-  readonly onAskAboutDiagnostic: (
+  readonly onAskAboutDiagnostic?: (
     diagnostic: AnalysisDiagnostic,
     runId: AnalysisRunSnapshot["receipt"]["runId"],
   ) => void;
@@ -454,7 +458,9 @@ function PersistedRunOutput(props: {
         runtimeLabel={props.runtimeLabel}
         threadRef={props.threadRef}
         onRevealCode={props.onRevealCode}
-        onAskAboutDiagnostic={props.onAskAboutDiagnostic}
+        {...(props.onAskAboutDiagnostic === undefined
+          ? {}
+          : { onAskAboutDiagnostic: props.onAskAboutDiagnostic })}
       />
     );
   if (result._tag === "Failure") {
@@ -1154,6 +1160,18 @@ export function ComputeBatchResults({
     >
       <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3 py-1">
         {resultPicker}
+        {selectedRun?.agentThreadId ? (
+          <Link
+            className="text-xs text-muted-foreground hover:underline"
+            to="/$environmentId/$threadId"
+            params={{
+              environmentId: props.environmentId,
+              threadId: ThreadId.make(selectedRun.agentThreadId),
+            }}
+          >
+            <T>Agent</T>
+          </Link>
+        ) : null}
         {showHistory ? (
           <Menu>
             <MenuTrigger
@@ -1181,7 +1199,7 @@ export function ComputeBatchResults({
                 {runs.map((run) => (
                   <MenuRadioItem key={run.receipt.runId} value={run.receipt.runId} size="compact">
                     {gt("{status} · {time}", {
-                      status: statusLabel(run, props.runtimeLabel, messages),
+                      status: computeBatchStatusLabel(run, props.runtimeLabel, messages),
                       time: formatTimestamp(run.receipt.startedAt, timestampFormat),
                     })}
                   </MenuRadioItem>
@@ -1250,13 +1268,13 @@ export function ComputeBatchResults({
             )}
           >
             {activeRun
-              ? statusLabel(activeRun, props.runtimeLabel, messages)
+              ? computeBatchStatusLabel(activeRun, props.runtimeLabel, messages)
               : operationStatus
                 ? operationStatus
                 : projectNotInitialized
                   ? gt("Add this folder to Scient to run it")
                   : failed || stoppedEarly
-                    ? statusLabel(selectedRun, props.runtimeLabel, messages)
+                    ? computeBatchStatusLabel(selectedRun, props.runtimeLabel, messages)
                     : shownRuntimeText}
           </span>
         </ScientTooltip>

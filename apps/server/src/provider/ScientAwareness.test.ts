@@ -143,7 +143,9 @@ describe("Scient awareness", () => {
   it("recommends Compute runs", () => {
     const compute = blockFor(["compute"], "## Scient Compute");
     expect(wordCount(compute)).toBeLessThanOrEqual(50);
-    expect(compute).toContain("`scient_compute_run`");
+    expect(compute).toContain("saved project scripts with `scient_compute_run_file`");
+    expect(compute).toContain("analysis snippets with `scient_compute_run`");
+    expect(compute).toContain("never through the shell");
   });
 
   it("adds compact, truthful PDF build guidance", () => {

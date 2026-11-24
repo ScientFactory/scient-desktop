@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
+  add: vi.fn(),
   get: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
@@ -23,13 +24,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock("~/state/compute", () => ({
   computeEnvironment: {
     refreshRuntimes: "refresh",
+    addPythonLibrary: "add",
     startSession: "start",
     stopSession: "stop",
     session: "get",
   },
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: "refresh" | "start" | "stop") => mocks[command],
+  useAtomCommand: (command: "refresh" | "add" | "start" | "stop") => mocks[command],
 }));
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => mocks.get }));
 vi.mock("~/components/ui/toast", () => ({
@@ -43,7 +45,10 @@ vi.mock("@tanstack/react-router", async (_actualRouter) => ({
     <a href="/settings/scientific-computing">{children}</a>
   ),
 }));
-import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryAction";
+import {
+  ComputeAddPackageAction,
+  ComputeDependencyRecoveryAction,
+} from "./ComputeDependencyRecoveryAction";
 import { ComputeOutputView } from "./ComputeOutputView";
 import {
   ComputeContextId,
@@ -81,7 +86,7 @@ function inspection(): ComputeRuntimeInspection {
           languageId,
           displayName: "Python",
           sourceExtensions: [".py"],
-          capabilities: [],
+          capabilities: ["packages"],
         },
         configuredExecutable: "/system/python",
         toolkits: [
@@ -210,10 +215,39 @@ describe("confirmed managed-Python recovery action", () => {
           ),
       );
       expect(_fixture.container.textContent?.includes("Use managed Python")).toBe(owned);
+      expect(_fixture.container.textContent?.includes("Add pandas")).toBe(owned);
       expect(_fixture.container.textContent).toContain("ModuleNotFoundError");
       expect(mocks.start).not.toHaveBeenCalled();
     },
   );
+  it("adds the package beside the session's Python, then runs the failed code again", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    mocks.add.mockResolvedValue({ _tag: "Success", value: undefined });
+    const runAgain = vi.fn();
+
+    await act(
+      async () =>
+        await _fixture.root0.rerender(
+          <ComputeAddPackageAction
+            contextId={contextId}
+            sessionId={session.sessionId}
+            distribution="pandas"
+            runAgain={runAgain}
+          />,
+        ),
+    );
+    await click(_fixture, "Add pandas");
+    expect(mocks.add).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { cwd: "/remote/project", sessionId: session.sessionId, distribution: "pandas" },
+    });
+    expect(mocks.stop).not.toHaveBeenCalled();
+    await click(_fixture, "Run again");
+    expect(runAgain).toHaveBeenCalledOnce();
+    expect(_fixture.container.textContent).toBe("");
+  });
   it("refreshes the owning host and starts the explicit managed executable in one step", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

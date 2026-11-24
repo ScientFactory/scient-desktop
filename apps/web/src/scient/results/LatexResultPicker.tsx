@@ -6,7 +6,8 @@ import { useEffect, useRef } from "react";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RESULTS_PLACED_EVENT } from "./LatexResultsStatus";
-import { ResultPicker, resultErrorMessage, type ResultChoice } from "./ResultPicker";
+import { ResultPicker, type ResultChoice } from "./ResultPicker";
+import { resultErrorMessage } from "./resultState";
 
 /**
  * Insert ▸ Result for a LaTeX paper. Scient writes plain files under `results/<script>/` beside the

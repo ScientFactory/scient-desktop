@@ -9,7 +9,28 @@ licensed runtime and a compatible Engine host. See [Run a MATLAB file](matlab-ru
 
 ## Set up a runtime
 
-The quickest path is to open a `.py` file and choose **Set up Python** in the file header. That
+Open a file and choose **Run**. Scient runs it with a Python you already have.
+
+New sessions use the first of these that applies: a choice for this run, a choice remembered for
+this project, the project's own environment (`.venv`, then `.conda`, then pixi's `default`, or a
+single child folder with `pyvenv.cfg`), the path or Scient-managed Python you picked, Scient-managed
+Python if set up, then other Pythons in PATH order. A runtime you chose that goes missing stays
+chosen and says why it cannot run. Agents follow the same order.
+
+Any CPython runs, with nothing added to it. Scient needs `jupyter_client` and `ipykernel` to run a
+session, and a Python that lacks them keeps running your code with your packages: Scient adds what
+is missing in its own folder and never writes to your environment. The first time a computer has
+no Python that can carry a session, Scient adds a small private Python of its own, about 60 MB,
+once. It hosts sessions and SQL, and it never runs your code.
+
+To choose a particular installation:
+
+1. Open **Settings → Scientific Computing** for the server environment you want to use.
+2. Open **Python**.
+3. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
+   **Found on this computer**, fill in **Add a location** and choose **Use**.
+
+If you have no Python to use, choose **Set up Python** in the file header. That
 opens the correct server's Scientific Computing settings, where **Set up Python** starts the
 installation. Scient downloads a verified installer and creates one private, shared Python
 environment for that Scient server. The included **Scientific Python** Toolkit covers numerical
@@ -34,25 +55,6 @@ Selecting a system or project Python does not add these packages to that install
 
 Setting up managed Python from a file that has no usable runtime selects the new environment. So does setting it up from Settings on **Automatic**. If you chose another Python, that
 choice stays, and the managed environment becomes another runtime you can select.
-
-The managed environment is optional. To use Python you already maintain instead:
-
-1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Open **Python**.
-3. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
-   **Found on this computer**, fill in **Add a location** and choose **Use**.
-
-Any CPython runs, with nothing added to it. Scient needs `jupyter_client` and `ipykernel` to run a
-session, and a Python that lacks them keeps running your code with your packages: Scient adds what
-is missing in its own folder and never writes to your environment. The first time a computer has
-no Python that can carry a session, Scient adds a small private Python of its own, about 60 MB,
-once. It hosts sessions and SQL, and it never runs your code.
-
-New sessions use the first of these that applies: a choice for this run, a choice remembered for
-this project, the project's own environment (`.venv`, then `.conda`, then pixi's `default`, or a
-single child folder with `pyvenv.cfg`), the path or Scient-managed Python you picked, Scient-managed
-Python if set up, then other Pythons in PATH order. A runtime you chose that goes missing stays
-chosen and says why it cannot run. Agents follow the same order.
 
 Settings → Scientific Computing shows every language at once: **Most used** first, then one group
 per field. Each language sits in one place and says where it stands: what it runs on, or **Not
@@ -173,9 +175,9 @@ instead. Removing the managed installation intentionally returns new sessions to
 discovery; it does not remove your other Python installations.
 
 An existing Python can run ordinary code without every scientific library. If the reviewed
-Scientific Python packages are missing, the status tooltip notes that some scientific packages are missing.
-Run remains available for code that does not need those packages; Scient does not
-silently install them into a user-owned environment.
+Scientific Python Toolkit packages are missing, the status tooltip notes that some Scientific Python Toolkit packages are missing.
+Run remains available for code that does not need those packages; Scient never installs anything
+into a user-owned environment.
 An unrelated managed setup or removal failure does not disable or replace the status of a usable
 independent runtime. The file keeps its healthy live session status, or the independent runtime's
 status before startup. A cached probe alone does not clear a failure of the managed runtime itself.
@@ -184,13 +186,22 @@ remain visible on the file. Select the file's Python status to open
 the right server's Scientific Computing settings. After choosing or repairing an environment, rerun
 the code yourself; Scient never replays a failed run automatically.
 
-For a missing, recognized Python dependency, the error offers one action. When Scient-managed
-Python is installed and has the package, it is **Switch to Scient-managed Python**: one click
-rechecks the environment and package, stops this tab's idle session with confirmed cleanup, and
-starts an empty managed session. Variables reset, as the note beside the button says; nothing is
-installed, rerun, or changed in your default environment. Otherwise the error offers
-**Python settings**. Package presence is not a guarantee that the script will succeed. Unknown
-project imports and missing submodules get neither action.
+### Missing packages
+
+When code stops on a missing package that Scient recognizes, the error offers **Add** with the
+package's name, such as **Add scikit-learn** for `import sklearn`. One click adds that package, and
+only what it needs that your environment does not already have, to a folder Scient keeps beside
+that environment. Your environment is never changed. The session keeps its variables; run the code
+again and the import works. The package must work with the versions you already have, so Scient
+installs a release that does, or the error explains why none does. Your own packages always win
+over the ones Scient added.
+
+When Scient-managed Python already has the package, **Use managed Python** appears beside **Add**.
+It rechecks the environment, stops this tab's idle session, and starts an empty managed session, so
+variables reset. Scient recognizes about 120 common scientific packages. An unknown import is often
+one of your own modules, and the package index may have an unrelated package under that name, so
+Scient does not guess. Ask the agent instead: it can read your code and add any package the same
+way. Missing submodules get no action.
 
 ## R, Julia, and SQL
 
@@ -255,11 +266,24 @@ restarting Scient. These languages have no Variables pane, and Scient has no pri
 
 A notebook in a language Scient cannot find opens normally and shows **Not found**.
 
+## Find a run
+
+Choose **Compute history** in the Console toolbar to see the project's runs, newest first.
+Choose a run to see its code and output. Use **Filter by file** to find a script's runs.
+Use **Stop** on a running entry. Choose **Sessions** to open a session and see its variables.
+Switch back to **History** to return to your filter and opened runs.
+Notebook **Run All** appears as one entry and shows the current cell out of the total. Open it to see the cells and their output. If a cell fails, the entry shows where the run failed and how many cells did not run.
+The agent icon opens the chat that started the run. A script's **Results** also shows runs
+of that file started by agents in other chats. You can review history without starting a runtime.
+
 ## Console
 
-**+** → **Scientific computing** opens a Console: a box to type code in, with the answer appearing
-above it. There is nothing to start. The first run starts the language, and values you define stay
-available to later runs until you restart or stop.
+Open **+** → **Scientific computing** to start a Console. If a blank Console is already open in
+this thread, Scient selects it. For another tab, choose **New console** in the Console toolbar or
+in Compute history.
+
+Type code and run it to see the output above the input. The first run starts the language.
+Each Console has its own session. Values stay available until you restart or stop that session.
 
 **Shift+Enter** or **⌘Enter** runs, **Enter** adds a line, and **↑** and **↓** walk through what you
 ran. The picker in the box lists every language installed on this computer. One Console holds one
@@ -268,7 +292,8 @@ that, the Console and anything you have typed simply move to the new language. I
 Console ran on is no longer available, the Console says so and keeps your code. It never runs it in
 another language on its own.
 **Variables** appears once there are variables. **Save as notebook** turns what worked into an
-`.ipynb` in the project and opens it; runs that failed are left out. **Run file…**, **Restart session**
+`.ipynb` in the project and opens it. Runs that failed are left out, a restart is marked where it
+happened, and output Scient did not keep is noted in its cell. **Run file…**, **Restart session**
 and **Stop session** are in the **⋯** menu.
 
 Opening a file from an empty Console replaces it, as an address does in a new browser tab. A Console
@@ -449,21 +474,26 @@ session. The session actions menu contains **Restart session**, which clears Pyt
 keeping history, and **Stop session**, which closes the kernel while keeping history. Restart and stop
 ask for confirmation because their in-memory state cannot be recovered.
 
-Past sessions retain their exact submitted code, text output, errors, tracebacks, and static figures.
+Past sessions keep the exact code each run submitted. Their text output, errors, tracebacks and
+static figures are kept too, until newer runs fill the session's space: older or very large output
+is then replaced by a note that it was not kept. Publish a result or export it when you need it to
+last.
 Reopening a result never starts a kernel or replays code. Source links in the separate Compute
 surface return to the ordinary project editor. Python errors keep their full bounded traceback and
 show project-local frames as source links; dependency and standard-library frames stay readable but
 cannot become filesystem links. Files created by code are ordinary project files;
-Scient learns which SVG/PNG files an execution wrote and retains verified static figures, at any
-depth and through any library. It watches the project folder for the session or run; hidden folders,
-`node_modules`, and Python or conda environments are left out. Python also reports the files each
-cell saves. Scient reads only files inside the project that changed during the execution.
+Scient finds the SVG/PNG figures a run saved, at any depth and through any library, and keeps
+verified copies. Python reports the files each cell saves. Scient also watches the project folder
+for the session or run, leaving out hidden folders, `node_modules`, and Python or conda
+environments, and reads only files inside the project that changed during the execution. A file
+that changed during the run was not necessarily written by it: another program can save there too.
+Between queued cells of one notebook, a quicker search stands in for the watch, so those cells may
+show partial coverage.
 
 If the watch cannot start or loses events, for example while thousands of files change at once or on
 some network folders, Scient falls back to a bounded search for recently changed files. When that
 search cannot finish, verified figures are still retained alongside a compact coverage warning. The
-warning does not mean the code failed or establish that any figures were lost. A watched file also
-does not prove which process wrote it.
+warning does not mean the code failed or establish that any figures were lost.
 Changing the project file later does not rewrite what the earlier run displayed. Other generated
 file types remain ordinary project files and are not inferred from their names or printed paths.
 Retained compute history is operational data, not a second project filesystem or a portable result
@@ -472,8 +502,8 @@ package.
 Scientific code runs with the filesystem and network authority of the selected Scient server
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
-Nothing is installed until you or an agent runs something that needs it. Arbitrary package installation into Scient-managed Python, interactive widgets,
-and saving a session's state as a portable result remain future work.
+Nothing is installed until you or an agent runs something that needs it. Interactive widgets and
+saving a session's state as a portable result remain future work.
 
 ### Run fresh and MATLAB batch
 
@@ -504,34 +534,201 @@ where its variables were; its results stay. Running work is never stopped. If ev
 capacity menu offers **Stop this session and run fresh…**, with confirmation that its variables will
 be lost, and Cancel keeps the session.
 
+### Save and compare linked results
+
+Save the script, then make it write its outputs to the folder in `SCIENT_RESULTS_DIR`.
+Scient keeps JSON values, CSV tables and figures from a successful fresh run as a revision.
+Use **Insert ▸ Result** in a manuscript to link to that revision.
+
+- Choose **Run ▸ Run with setup…** in a file or **Run setup…** on a linked result.
+  The same dialog opens with the last saved setup. Parameters use JSON values. Enter `0.7` for a number and `"adults"` for text. The script receives one
+  JSON object in `SCIENT_PARAMETERS` when you supply overrides. A script's own defaults stay
+  in its code.
+- Select **Add file…** to declare an input. A saved SQL view also declares the files it names.
+  A missing declared file stops the run before it starts. The result shows how many files you
+  declared, how many Scient saw the runtime read, and when the check covered only some inputs.
+  In R, Julia, SQL and MATLAB, **Suggested from the code** shows existing project files named in the
+  saved script. Choose **Add** beside a suggestion to declare it for this run.
+- Open **Run details** to see which inputs Scient checked. A file the run read and then
+  changed stays an input and shows as changed during the run. Python can record directory
+  listings and name data files read outside the project. Freshness for those outside files is unknown.
+  Declare datasets read by native readers such as DuckDB, PyArrow or Polars.
+- **Run fresh** and **Re-run** reuse the latest saved setup. Remove all parameters or all
+  declared files in setup to clear that list for the next run.
+- Open **Compare with…** from a result or a manuscript link. Choose the **From** and **To**
+  revisions by time and parameters. **Swap sides** reverses the comparison. **Show unchanged**
+  includes matching values and files. Open either revision's actions menu to export it for rerun.
+  Older figures and tables may have aged out of local history.
+- When a run fails or stops, the paper keeps its saved value. Choose **View output** to see what
+  happened or open **Run details** to see what the saved run checked. If a later run succeeded,
+  check its value before choosing **Update value**.
+
+Each revision records the runtime and any recognized lockfiles at the project root. Python
+can also report its installed package versions. **Environment may differ** means a recorded
+lockfile changed or disappeared. Compare the saved evidence to review what differed between runs.
+
+Agents can use `scient_results_run` with parameters and input paths, `scient_results_list`
+with the analysis path to find revision IDs, and `scient_results_compare` to compare them.
+
+## Share a result for rerun
+
+Choose **Export for rerun…** from **Result packages** in Compute history, on a result card, or
+from either revision's actions menu in a comparison. Choose the saved revision by its date and
+parameters. Export from a card or comparison starts with that revision selected.
+
+Select the data files you want to share. Scient automatically includes local code files the run
+was recorded reading. Data already under `data/` keeps that package path. The README maps every
+included data file to its original project path. Scient shows file sizes and flags changes since
+the run. Review the environment files and clear any you want to leave out. Scient removes a
+machine-specific Conda prefix and excludes environment files that still contain a home-folder
+path. Choose where to save the package. Scient shows progress as it computes file digests and
+opens the package location when the Compute computer has a file manager.
+
+The folder contains a README, a manifest, the source that ran, the saved outputs, available
+environment evidence, and RO-Crate metadata. If the project has a LICENSE file, the package
+carries it with the crate. The manifest lists the size and SHA-256 digest of each input where
+available and identifies digests computed at export. Give your colleague access to any data they need to
+supply separately. Review the copied files before sharing them. If Scient cannot find source
+that matches the saved run, restore the matching source or save a new result and export it.
+
+### Verify a package
+
+1. In Compute or the command palette, choose **Verify a result package…** and select the package
+   folder on the Compute computer.
+2. If the author left inputs out, open **Separately supplied inputs** and choose a folder that
+   holds those files at their original project-relative paths. Open **Verification settings**
+   to select a runtime, change the tolerances or the 60-minute time limit, or put your name
+   on the report.
+3. Choose **Run and verify** only if you trust the package's code. Scient checks the files and
+   runs the source in a new working folder with the recorded settings. You can close the dialog
+   while it runs and return through **View verification** in the status notification. Choose
+   **Cancel verification** to stop the rerun and save a cancelled report.
+4. Read the verdict and each output's outcome. Expand the matched outputs or the rerun environment
+   details to see more. The full report is saved as
+   `verification.json` in a new folder beside the package.
+
+Verification supports Python scripts and notebooks and R and Julia scripts. Set up the matching
+runtime and dependencies before you run. Python notebooks need IPython. Copied lockfiles and
+package lists help you choose the environment.
+
+Scient compares tables, text and other files byte for byte. It compares JSON numbers with
+absolute tolerance `1e-12` and relative tolerance `1e-9` by default. You can change both.
+Strings, booleans, nulls and pairs of integer values must match exactly. Figures are compared by
+hash and shown alongside the verdict. **Verified** means the checked outputs matched and every
+input Scient recorded or you declared had the same content. Scient records files Python opens;
+data read by a separate program or a native reader is covered only when you declare it. If values
+and other files match but a recorded input changed or coverage is incomplete, Scient reports
+**Outputs matched · original inputs unconfirmed**. Recorded directory listings and saved-view glob
+membership also leave the original inputs unconfirmed.
+
+Agents can use `scient_results_export` and `scient_results_verify` with folders inside the
+current project. For export, pass a script or notebook path for the newest revision, or an exact
+revision ID from `scient_results_list`. Tell your agent which files to share and whether it may
+run the package's code.
+
 ## Notebooks
 
-Jupyter notebooks (`.ipynb`) open as editable notebooks, however large the file.
+Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
 
-- **Run:** point at a cell's number to run it, or use **Run all**. Cells queue in order and a run
-  stops at the first cell that fails. You can keep working, or leave the notebook, while it runs.
-- **Edit:** click code to edit it where you clicked. Click a Text cell to edit it in the same editor
-  as a Markdown document.
-- **Out of date:** a dot replaces a cell's number when the code changed since it ran, or a cell it
-  reads from changed. Its output dims. **Run out-of-date cells** in the Run menu runs just those.
-- **Keyboard:** Shift+Enter runs and moves on, Cmd/Ctrl+Enter runs. Esc leaves the editor; then
-  `A`/`B` add a cell above or below, `J`/`K` or the arrows move, `D D` deletes, `Z` undoes the delete,
-  `M`/`Y` switch to Text or Code, and `I I` stops the run.
-- **Variables** opens the session's variables below the notebook.
+- Open **Notebook outline** in the toolbar and choose a heading to jump to it. The outline marks the
+  selected section. Click a code cell's language label to fold its code to one line, and again to
+  show it. Use **Cell actions** to collapse a heading's section or hide a cell's outputs. The file
+  keeps those folds when you reopen it in Scient or JupyterLab.
+- Point at a cell's number to run it, or choose **Run all**. Cells run in order and stop at the
+  first failure. A card beside **Run all** names the failed cell and how many later cells were
+  skipped, with a button to jump to it. Close the card; the alert button beside **Run all** reopens
+  it until the cell runs cleanly. A run that succeeds shows nothing. Click code to edit it at the pointer, or click a
+  Text cell to edit its Markdown.
+- If a cell needs setup from earlier cells, select it and choose **Run from top through this cell**
+  from the Run menu. When the selected cell reads a name that only an earlier, unrun cell defines,
+  that action moves up to sit right after **Run all**. When a Python error names an undefined
+  name that an earlier cell defines, the error offers that replay if the cell has not run in this
+  session, or a jump to the cell if it failed. Full tracebacks stay collapsed under **Details**.
+- Text, figures, observed written file links and errors appear below the cell that produced them.
+  A cell that ran and printed nothing shows nothing. Once any cell has run in this session, outputs
+  from an earlier session show when they ran and that they have not run in the current session. Choose **Show outputs** if a cell's
+  output is folded.
+- A dot and dimmed output mark a cell whose code changed or whose output may be out of date.
+  Scient uses names in the code to guess which cells depend on earlier ones.
+- Press Shift+Enter to run and move on or Cmd/Ctrl+Enter to run and stay. Press Esc to leave the
+  editor. Then use `A` or `B` to add a cell, `J` or `K` to move, `D D` to delete, `Z` to restore
+  the deleted cell, and `M` or `Y` to switch it to Text or Code. Press `I I` to interrupt a cell run.
+- Open **Variables** to see the live session's variables.
+- **Expand section** under a collapsed heading reveals its hidden cells.
 
-Outputs and figures are saved into the file, so it opens with its results in Jupyter or anywhere
-else. Scient keeps each run's details in the cell's metadata.
+### Run with parameters
+
+1. Put simple assignments in a Python, R or Julia code cell. Open **Cell actions** and select
+   **Tag as parameters**.
+2. Change values in the parameters bar. These changes stay pending when you switch files and
+   apply when you choose **Run fresh with input** or **Run with input and saved values** from a
+   data file. The bar can show the values
+   the last clean run used. Expressions in the parameters cell run before the overrides apply,
+   so move calculations that depend on changed values to a later cell.
+3. To record data files with the run, choose **Input files…** from the Run menu. The list starts
+   with the last published run's files. Add or remove files for the next fresh run; the
+   confirmation names the files it records.
+4. Choose **Run with changes** and confirm. Scient starts a fresh kernel and runs the saved notebook
+   from top to bottom. It saves the overrides in an `injected-parameters` cell and updates the
+   notebook outputs after success. A failed or stopped run keeps the previous outputs.
+
+While the fresh run goes on, the Run button shows the current cell and **Stop** sits beside it;
+editing resumes when it finishes. Problems, such as a stopped run or outputs that could not be
+saved, open in the same card as a failed **Run all**. Before replacing the saved outputs,
+Scient keeps the current notebook in **Retained file versions**. Choose **Restore…** there to
+restore its source and outputs together.
+
+**Run fresh** saves the notebook outputs, including for notebooks without parameters.
+To publish a linked result revision as well, write figures, CSV tables or JSON values to
+`SCIENT_RESULTS_DIR`. If there are no outputs to retain there, the last linked revision stays
+published. The kernel receives the overrides as JSON in `SCIENT_PARAMETERS`.
+
+Notebook authors can set control hints in the parameters cell's `metadata.scient.parameters`.
+Use `{"threshold":{"min":0.3,"max":0.7,"step":0.1}}` for a slider or
+`{"group":{"options":["all","adults"]}}` for a dropdown.
+
+### Explore saved settings
+
+Choose **Run for each … value** in the Run menu to save alternatives for one parameter. Scient
+proposes values from the parameter's control hint. Edit them, up to 20, one per line, before
+starting. Scient reports which settings it saved and which failed.
+Open **Reader view** to choose among the saved settings and see their
+values, tables and figures. Inline result values linked from the notebook's Markdown follow the
+selected revision. If Reader cannot preview a file, choose **Open in file viewer** while the
+saved file is still available.
+
+**Reset** returns to the published run or, if none exists, the newest saved setting that matches
+the current notebook. If there is no matching setting, Reader can start with an older setting
+whose source is unconfirmed. View ordinary cell outputs in the notebook editor. Code starts
+folded. Click a cell's language label to see the source saved with that run when available. The
+line under the parameters shows the saved run's time or tells you when no saved run matches.
+When a setting was made with earlier
+code, **Run for this value** saves an alternative while keeping the published setting and notebook
+file in place. Browsing settings uses saved results.
+
+Agents can read headings, parameter defaults and saved alternatives with `scient_notebook_read`.
+They can tag or fold cells with `scient_notebook_edit` and start a fresh run with
+`scient_notebook_run` using `fresh: true` and JSON overrides such as `{"threshold": 0.7}`. A long
+run or sweep returns a run ID; ask the agent to stop it and it uses `scient_notebook_stop`.
 
 ## Working with agents
 
-Agents in a chat can run code in Scient Compute. By default an agent works in its own session for
-that chat, which uses Scient-managed Python when it is installed; asked to, it runs in your
-session, such as an open file or notebook, where its runs appear in Results marked **Agent**. For
-notebooks they read, edit and run cells directly, and you see the changes in the open notebook. Agents
-see the output and figures of their runs, can read your runs, list a session's variables,
-interrupt or restart a session, and set up Scient-managed Python or its Toolkits. In the other
-languages they run a project file the way **Run** does, and you see that run under the file. They run
-with the same authority as your own code.
+Ask an agent to run a saved script by name, for example “Run threshold.py at its default
+threshold and tell me the recall.” The file tool uses the project's Compute runtime and records
+the run under the file. Agents use their own session by default. Ask the agent to use your open
+session when you want it to see your current variables. Both kinds of run show **Agent** in Results.
+
+Ask for parameter values and name the input files when a script needs them. The script must read
+parameter values from `SCIENT_PARAMETERS`. Compute records the values and input paths. These runs
+use a fresh session for session-based languages. Ask to publish a result when the outputs need to
+be linked in a document.
+
+Agents use the code tool for snippets and notebook tools to run cells. A run from the shell leaves
+no Compute record. Parameters passed to a saved script appear in its history and chat rows.
+Use values such as `{"threshold": 0.7}` for scripts that read `SCIENT_PARAMETERS`.
+For a sweep, the agent runs the saved file once per setting. The tool reports project files
+observed changing during the run. Expand a Compute run in chat to see its output. Agents run
+code with the same authority as your own code.
 
 ### Files changed outside the editor
 

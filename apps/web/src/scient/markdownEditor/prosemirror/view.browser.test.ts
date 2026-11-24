@@ -1869,6 +1869,48 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange.mock.lastCall?.[0]).toContain("|  |  |  |");
   });
 
+  it("opens the result picker in a sentence and removes only the slash command", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const selectResult = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Recall was /result. Precision follows.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      selectResult,
+    });
+    const host = document.createElement("div");
+    document.body.append(_ownDOM(_fixture, host));
+    _fixture.mounted.push(controller);
+    const view = controller.mount(host);
+    const moveAfter = (text: string) => {
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, text.length + 1)),
+      );
+    };
+
+    moveAfter("Recall was /result");
+    expect(controller.getSnapshot().slashQuery).toBe("result");
+    expect(controller.executeSlashCommand("table")).toBe(false);
+    expect(controller.executeSlashCommand("result")).toBe(true);
+    expect(selectResult).toHaveBeenCalledOnce();
+    expect(controller.session.session.draftSource).toBe("Recall was . Precision follows.\n");
+    expect(view.state.selection.from).toBe("Recall was ".length + 1);
+
+    for (const [source, prefix] of [
+      ["Recall was /table.\n", "Recall was /table"],
+      ["Open /result.csv\n", "Open /result"],
+      ["Open /results\n", "Open /result"],
+      ["Open `/result`\n", "Open /result"],
+    ] as const) {
+      controller.replaceUserSource(source);
+      moveAfter(prefix);
+      expect(controller.getSnapshot().slashQuery).toBeNull();
+    }
+  });
+
   it("implements the inline-code and strikethrough shortcuts advertised by the dock", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
