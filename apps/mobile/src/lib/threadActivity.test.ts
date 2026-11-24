@@ -2212,7 +2212,7 @@ it("caps live thought previews while preserving reasoning detail", () => {
   expect(activity.getCopyText()).toContain(text);
 });
 
-it("leaves out MCP startup and sign-in notices older servers wrote", () => {
+it("leaves out MCP startup and sign-in notices older servers wrote when live status replaces them", () => {
   const item = {
     ...base("mcp-startup-notice", "2026-06-20T00:00:02.000Z", 1),
     type: "system_notice" as const,
@@ -2239,10 +2239,16 @@ it("leaves out MCP startup and sign-in notices older servers wrote", () => {
     message: "The guru MCP server needs a sign-in before Claude can use it.",
     mcpSignIn: { server: "guru" },
   };
-  const activities = buildThreadFeed([
-    projected(item, 0),
-    projected(generic, 1),
-    projected(signIn, 2),
-  ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
-  expect(activities.map((activity) => activity.summary)).toEqual([generic.message]);
+  const rows = [projected(item, 0), projected(generic, 1), projected(signIn, 2)];
+  const summaries = (hideMcpStartupNotices: boolean) =>
+    buildThreadFeed(rows, { hideMcpStartupNotices })
+      .flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))
+      .map((activity) => activity.summary);
+  expect(summaries(true)).toEqual([generic.message]);
+  // A host without live MCP status keeps them, labeled by their title.
+  expect(summaries(false)).toEqual([
+    "MCP server cloudflare failed to start",
+    generic.message,
+    "MCP server guru needs a sign-in",
+  ]);
 });

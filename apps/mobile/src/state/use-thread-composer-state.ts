@@ -226,6 +226,8 @@ export function useThreadComposerState(input: {
     message: SideChatMessage,
     settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
   ) => Promise<boolean>;
+  /** SCIENT-FORK: the host reports live MCP status, which replaces its older startup notices. */
+  readonly hideMcpStartupNotices?: boolean;
 }) {
   const {
     selectedThread: selectedThreadShell,
@@ -311,6 +313,7 @@ export function useThreadComposerState(input: {
       cache: feedCache,
       resolve,
       locale,
+      hideMcpStartupNotices: input.hideMcpStartupNotices === true,
     });
     const pendingAcknowledgments = selectPendingAcknowledgedMessages(acknowledgedMessages, {
       threadKey: selectedThreadKey,
