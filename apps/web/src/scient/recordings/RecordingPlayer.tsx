@@ -1,4 +1,5 @@
 import { useGT } from "gt-react";
+import * as Schema from "effect/Schema";
 import {
   MaximizeIcon,
   MinimizeIcon,
@@ -11,10 +12,18 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { Button } from "../../components/ui/button";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { observeResize } from "../../lib/observeResize";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { RecordingSelect } from "./RecordingSelect";
 import "./recording-player.css";
+
+const PLAYBACK_PREFERENCE_KEY = "scient:recording-playback:v1";
+const PlaybackPreference = Schema.Struct({
+  volume: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  muted: Schema.Boolean,
+});
+const DEFAULT_PLAYBACK_PREFERENCE = { volume: 1, muted: false };
 
 /** The filled part of a settings slider follows its value. */
 const sliderFill = (ratio: number) => {
@@ -59,8 +68,13 @@ export function RecordingPlayer({
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState(false);
   const [captions, setCaptions] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [volume, setVolume] = useState(1);
+  const [{ muted, volume }, setPlaybackPreference] = useLocalStorage(
+    PLAYBACK_PREFERENCE_KEY,
+    DEFAULT_PLAYBACK_PREFERENCE,
+    PlaybackPreference,
+  );
+  const toggleMute = () =>
+    setPlaybackPreference((current) => ({ ...current, muted: !current.muted }));
   const [ratio, setRatio] = useState(16 / 9);
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideControls = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -136,6 +150,7 @@ export function RecordingPlayer({
     preload: "metadata" as const,
     ref: (element: HTMLMediaElement | null) => {
       media.current = element;
+      if (element && element.volume !== volume) element.volume = volume;
       onMedia(element);
     },
     onLoadedMetadata: (event: React.SyntheticEvent<HTMLMediaElement>) => {
@@ -185,10 +200,7 @@ export function RecordingPlayer({
       className={`settings-slider ${className}`}
       style={sliderFill(muted ? 0 : volume)}
       onChange={(event) => {
-        const next = event.currentTarget.valueAsNumber;
-        if (media.current) media.current.volume = next;
-        setVolume(next);
-        setMuted(false);
+        setPlaybackPreference({ volume: event.currentTarget.valueAsNumber, muted: false });
       }}
     />
   );
@@ -218,7 +230,7 @@ export function RecordingPlayer({
         else if (key === "escape" && fullscreen && !event.defaultPrevented) void toggleFullscreen();
         else if (key === "escape" && theater && !fullscreen) onTheater();
         else if (key === "c" && video) setCaptions((value) => !value);
-        else if (key === "m") setMuted((value) => !value);
+        else if (key === "m") toggleMute();
         else return;
         event.preventDefault();
         event.stopPropagation();
@@ -319,7 +331,7 @@ export function RecordingPlayer({
           data-recording-wide-volume
           aria-label={gt("Mute (M)")}
           aria-pressed={muted}
-          onClick={() => setMuted(!muted)}
+          onClick={toggleMute}
         >
           {volumeIcon}
         </Button>
@@ -341,7 +353,7 @@ export function RecordingPlayer({
                     size="icon-sm"
                     aria-label={gt("Mute (M)")}
                     aria-pressed={muted}
-                    onClick={() => setMuted(!muted)}
+                    onClick={toggleMute}
                   >
                     {volumeIcon}
                   </Button>

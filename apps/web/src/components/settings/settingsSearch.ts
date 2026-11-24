@@ -146,7 +146,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/maintenance": msg("Maintenance"),
   "/settings/labs": msg("Labs"),
   "/settings/about": msg("About"),
-  "/settings/transcription": msg("Transcription"),
+  "/settings/transcription": msg("Voice & Transcription"),
   "/settings/archived": msg("Archive"),
 };
 

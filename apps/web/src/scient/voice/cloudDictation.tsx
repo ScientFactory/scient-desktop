@@ -148,7 +148,11 @@ function AddCloudEngine({
       <DialogPopup>
         <DialogHeader>
           <DialogTitle>{editing ? gt("Change saved key") : gt("Add a cloud engine")}</DialogTitle>
-          <DialogDescription>{gt("Choose an account from Accounts & secrets.")}</DialogDescription>
+          <DialogDescription>
+            {gt(
+              "Choose a key from Accounts & secrets or reuse one from a Custom models connection for this provider.",
+            )}
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <form

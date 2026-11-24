@@ -195,7 +195,7 @@ export function useChatGptDictation(
         ? null
         : makeChatGptDictationTranscriber(run, environmentId, instanceId),
     unavailableMessage: connection.ambiguous
-      ? m(msg("Choose a ChatGPT connection in Transcription settings."))
+      ? m(msg("Choose a ChatGPT connection in Voice & Transcription settings."))
       : chatGptDictationUnavailableMessage(providers),
   };
 }

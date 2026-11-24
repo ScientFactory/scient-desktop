@@ -130,10 +130,10 @@ it("moves Tab through every settings section", async () => {
     const section = focused.closest("[data-settings-section]");
     if (section && section === focused) tabbed.push(section.textContent ?? "");
   }
-  // Scient hides Transcription outside the desktop app and Accounts where the server lacks it.
+  // Scient hides Voice & Transcription outside the desktop app and Accounts where the server lacks it.
   const shown = buttons.map((button) => button.textContent ?? "");
   expect(sections.filter((label) => !shown.includes(label))).toEqual([
-    "Transcription",
+    "Voice & Transcription",
     "Accounts & secrets",
   ]);
   expect(tabbed).toEqual(shown);

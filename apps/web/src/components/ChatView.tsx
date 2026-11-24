@@ -265,6 +265,7 @@ import { useTheme } from "../hooks/useTheme";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { MIN_PREVIEW_SPLIT_WIDTH } from "../hooks/usePreviewPanelInlineSize";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
@@ -1387,10 +1388,24 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
-  const shouldUsePlanSidebarSheet = prefersPlanSidebarSheet && rightPanelState.maximized !== true;
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
+  const recordingPanelActive =
+    activeRightPanelSurface?.kind === "scient" && activeRightPanelSurface.module === "recording";
+  const [recordingSplitFits, setRecordingSplitFits] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the workspace can resize when the sidebar changes even if the viewport does not.
+  useLayoutEffect(() => {
+    if (!recordingPanelActive || !workspaceLayoutElement) return;
+    const measure = () => {
+      setRecordingSplitFits(workspaceLayoutElement.clientWidth >= MIN_PREVIEW_SPLIT_WIDTH);
+    };
+    measure();
+    return observeResize(workspaceLayoutElement, measure);
+  }, [recordingPanelActive, workspaceLayoutElement]);
+  const shouldUsePlanSidebarSheet =
+    rightPanelState.maximized !== true &&
+    (recordingPanelActive ? !recordingSplitFits : prefersPlanSidebarSheet);
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
@@ -4245,6 +4260,8 @@ function ChatViewContent(props: ChatViewProps) {
     const panel = useRightPanelStore.getState();
     panel.consumeMaximizeRequest(routeThreadRef);
     panel.setMaximized(activeThreadRef, false);
+    // Keep the tab available without a modal sheet covering the composer.
+    if (!recordingSplitFits) panel.close(activeThreadRef);
     scheduleComposerFocusStable();
   };
 

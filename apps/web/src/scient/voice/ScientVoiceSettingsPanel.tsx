@@ -140,7 +140,7 @@ function VoiceLanguagePicker({
   };
 
   return (
-    <div className="relative border-border/60 border-t pt-3 md:border-t-0 md:pl-8 md:pt-1 md:before:absolute md:before:top-1 md:before:left-0 md:before:h-10 md:before:w-px md:before:bg-border/60">
+    <div className="py-1 md:ps-8">
       <div className="flex items-center gap-1">
         <h3 className="font-medium text-sm">
           <T context="voice dictation language">Language</T>
@@ -331,8 +331,11 @@ export function ScientVoiceSettingsPanel(): ReactNode {
         variant="plain"
       >
         <div className="space-y-3 px-3 sm:px-4">
+          <p className="text-sm text-muted-foreground">
+            <T>Use the microphone in chat to turn what you say into text in your draft.</T>
+          </p>
           <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
-            <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
+            <div className="flex items-start justify-between gap-4 py-1 md:pe-8">
               <div className="min-w-0">
                 <h3 className="font-medium text-sm">
                   <T>Clean up dictation</T>
@@ -357,7 +360,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           {correctionEnabled && settingsScope ? <CleanupModelRow /> : null}
           {prepared && (engine === "local" || engine === "auto") ? (
             <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
-              <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
+              <div className="flex items-start justify-between gap-4 py-1 md:pe-8">
                 <div className="min-w-0">
                   <h3 className="font-medium text-sm">
                     <T>Silence filtering</T>
@@ -374,7 +377,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                   }
                 />
               </div>
-              <div className="flex items-start justify-between gap-4 py-1 md:pl-8">
+              <div className="flex items-start justify-between gap-4 py-1 md:ps-8">
                 <div className="min-w-0">
                   <h3 className="font-medium text-sm">
                     <T>Remove filler words</T>
@@ -428,6 +431,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
         <SettingsSection id="voice-cloud" title={gt("Cloud engines")}>
           <SettingsRow
             title="ChatGPT"
+            alignControl="start"
             description={
               !chatGpt.pinned && activeCodex && chatGpt.connection.selected
                 ? gt("Follows your active chat, currently {connection}", {
@@ -446,34 +450,35 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                     : gt("Use your ChatGPT sign-in.")
             }
             control={
-              <Button size="sm" variant="outline" render={<Link to="/settings/providers" />}>
-                {chatGpt.connection.ready
-                  ? gt("Manage sign-in…")
-                  : chatGpt.connection.selected
-                    ? gt("Sign in again")
-                    : gt("Sign in")}
-              </Button>
+              <div className="flex min-w-0 flex-wrap items-start gap-2 @min-[32rem]/settings-row:justify-end">
+                {chatGpt.connection.choices.length ? (
+                  <TranscriptionSelect
+                    label={gt("ChatGPT connection")}
+                    value={chatGpt.pinned ?? ""}
+                    options={[
+                      { value: "", label: gt("Follow the active chat connection") },
+                      ...chatGpt.connection.choices.map((provider) => ({
+                        value: provider.instanceId,
+                        label: provider.displayName ?? provider.instanceId,
+                      })),
+                    ]}
+                    onChange={(value) =>
+                      void updateClientSettings({
+                        voiceChatGptInstanceId: value ? ProviderInstanceId.make(value) : null,
+                      })
+                    }
+                  />
+                ) : null}
+                <Button size="sm" variant="outline" render={<Link to="/settings/providers" />}>
+                  {chatGpt.connection.ready
+                    ? gt("Manage sign-in…")
+                    : chatGpt.connection.selected
+                      ? gt("Sign in again")
+                      : gt("Sign in")}
+                </Button>
+              </div>
             }
-          >
-            {chatGpt.connection.choices.length ? (
-              <TranscriptionSelect
-                label={gt("Use a different connection…")}
-                value={chatGpt.pinned ?? ""}
-                options={[
-                  { value: "", label: gt("Follow the active chat connection") },
-                  ...chatGpt.connection.choices.map((provider) => ({
-                    value: provider.instanceId,
-                    label: provider.displayName ?? provider.instanceId,
-                  })),
-                ]}
-                onChange={(value) =>
-                  void updateClientSettings({
-                    voiceChatGptInstanceId: value ? ProviderInstanceId.make(value) : null,
-                  })
-                }
-              />
-            ) : null}
-          </SettingsRow>
+          />
           {environmentId ? (
             <CloudDictationSettings
               key={environmentId}
@@ -484,7 +489,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           ) : null}
           <SettingsRow
             title={gt("Speech accounts")}
-            description={gt("Keys for cloud engines live in Accounts & secrets.")}
+            description={gt("Manage saved API keys or reuse a compatible key from Custom models.")}
             control={
               <Button size="sm" variant="outline" render={<Link to="/settings/accounts" />}>
                 <T>Open</T>

@@ -26,6 +26,7 @@ const fixtures = vi.hoisted(() => {
     setPrompt: vi.fn(),
     newThread: vi.fn(async () => ({ draftId: "recording-draft", threadId: "recording-thread" })),
     linkThread: vi.fn(),
+    readThread: vi.fn(),
     openPanel: vi.fn(),
     maximize: vi.fn(),
     setMaximized: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock("../../composerDraftStore", async () => {
       getState: () => ({
         addFiles: fixtures.addFiles,
         getDraftIdByRef: () => "recording-draft",
+        getDraftThreadByRef: () => null,
         getComposerDraft: () => undefined,
         setPrompt: fixtures.setPrompt,
       }),
@@ -96,7 +98,7 @@ vi.mock("./CorrectionModelPicker", () => ({
 }));
 vi.mock("./copyRecording", () => ({ copyRecording: {} }));
 vi.mock("../../state/entities", () => ({
-  readThreadShell: () => null,
+  readThreadShell: fixtures.readThread,
   useProjects: () => [
     { id: "class", environmentId: "test", workspaceRoot: "/class", title: "Quantum course" },
   ],
@@ -119,7 +121,7 @@ vi.mock("../../state/use-atom-query-runner", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 
-function PanelHarness() {
+function PanelHarness({ fromThread }: { fromThread?: string } = {}) {
   const [tab, setTab] = useState<{
     thread: ScopedThreadRef;
     surface: ReturnType<typeof scientRecordingSurface>;
@@ -167,7 +169,7 @@ function PanelHarness() {
       />
     </div>
   ) : (
-    <RecordingsPage />
+    <RecordingsPage {...(fromThread ? { fromThread } : {})} />
   );
 }
 
@@ -347,7 +349,7 @@ it("shows interrupted work as paused and saves a decision from the transcript", 
   stage.dispatchEvent(new KeyboardEvent("keydown", { key: "f", bubbles: true }));
   await vi.waitFor(() => expect(document.fullscreenElement).toBeNull());
 
-  await screen.getByRole("button", { name: "Ask about this recording" }).click();
+  await screen.getByRole("button", { name: "Ask in chat" }).click();
   await vi.waitFor(() =>
     expect(fixtures.addFiles).toHaveBeenCalledWith("recording-draft", [
       expect.objectContaining({
@@ -404,6 +406,35 @@ it("shows interrupted work as paused and saves a decision from the transcript", 
     id: fixtures.job.id,
     item: 0,
   });
+});
+
+it("opens a recording in the chat that opened its project recordings", async () => {
+  fixtures.command.mockImplementation(async (action: string) => {
+    if (action === "media-list") return { media: [] };
+    if (action === "list") return [{ job: fixtures.job, state: { stage: "completed" } }];
+    return { segments: [] };
+  });
+  fixtures.readThread.mockReturnValue({ projectId: "class" });
+  fixtures.newThread.mockClear();
+  fixtures.openPanel.mockClear();
+  fixtures.linkThread.mockClear();
+  try {
+    await using screen = await render(
+      <div className="h-screen">
+        <PanelHarness fromThread="current-chat" />
+      </div>,
+    );
+    await screen.getByRole("button", { name: /Lecture 4\.mp4/ }).click();
+    await expect
+      .poll(() => fixtures.openPanel.mock.calls.at(-1)?.[0].threadId)
+      .toBe("current-chat");
+    await expect
+      .poll(() => fixtures.linkThread.mock.calls.at(-1))
+      .toEqual(["/class", fixtures.job.id, "current-chat"]);
+    expect(fixtures.newThread).not.toHaveBeenCalled();
+  } finally {
+    fixtures.readThread.mockReset();
+  }
 });
 
 it("starts with the recommended installed engine and preserves the server correction default", async () => {

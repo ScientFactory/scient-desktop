@@ -4,6 +4,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu
 import { recordingTime } from "./recordingPresentation";
 import { useRouter } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useRightPanelStore } from "../../rightPanelStore";
@@ -25,6 +26,7 @@ import {
   AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  ThreadId,
 } from "@t3tools/contracts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { useGT, useLocale } from "gt-react";
@@ -91,7 +93,8 @@ function RecordingProgress({ state }: { state: RecordingStatus["state"] }) {
 export function RecordingsPage({
   lockedProject,
   openSource,
-}: { lockedProject?: string; openSource?: string } = {}) {
+  fromThread,
+}: { lockedProject?: string; openSource?: string; fromThread?: string } = {}) {
   const gt = useGT();
   const locale = useLocale();
   const environmentId = usePrimaryEnvironmentId();
@@ -343,12 +346,7 @@ export function RecordingsPage({
           const recordingIds = new Set(
             recording.revisions.map(({ job }) => job.recording ?? job.id),
           );
-          const links = (
-            await Promise.all(
-              [...recordingIds].map((id) => listRecordingThreads(project.workspaceRoot, id)),
-            )
-          ).flat();
-          for (const threadId of links) {
+          const openInThread = async (threadId: ThreadId) => {
             const ref = scopeThreadRef(project.environmentId, threadId);
             const drafts = useComposerDraftStore.getState();
             const draft = drafts.getDraftThreadByRef(ref);
@@ -356,7 +354,7 @@ export function RecordingsPage({
             if (draftId && draft?.projectId === project.id && !draft.promotedTo) {
               open(ref);
               await router.navigate({ to: "/draft/$draftId", params: { draftId }, replace });
-              return;
+              return true;
             }
             if (readThreadShell(ref)?.projectId === project.id) {
               open(ref);
@@ -365,8 +363,24 @@ export function RecordingsPage({
                 params: buildThreadRouteParams(ref),
                 replace,
               });
-              return;
+              return true;
             }
+            return false;
+          };
+          const currentThreadId = fromThread ? ThreadId.make(fromThread) : null;
+          if (currentThreadId && (await openInThread(currentThreadId))) {
+            await settlePromise(() =>
+              linkRecordingThread(project.workspaceRoot, latest.job.id, currentThreadId),
+            );
+            return;
+          }
+          const links = (
+            await Promise.all(
+              [...recordingIds].map((id) => listRecordingThreads(project.workspaceRoot, id)),
+            )
+          ).flat();
+          for (const threadId of links) {
+            if (await openInThread(threadId)) return;
           }
           const target = await newThread(scopeProjectRef(project.environmentId, project.id), {
             replace,

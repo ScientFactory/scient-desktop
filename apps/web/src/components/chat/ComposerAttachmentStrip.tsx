@@ -8,7 +8,14 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { T, useGT, useMessages } from "gt-react";
-import { CircleAlertIcon, ImageIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
+import {
+  AudioLinesIcon,
+  CircleAlertIcon,
+  ImageIcon,
+  PaperclipIcon,
+  PlayIcon,
+  XIcon,
+} from "lucide-react";
 import { type ComponentProps, type Ref, useLayoutEffect, useRef } from "react";
 
 import {
@@ -477,9 +484,6 @@ export function ComposerAttachmentFileList({
     <div className="mb-3 flex flex-col gap-1">
       {files.map((file) => {
         const recording = file.source?._tag === "recording-transcript" ? file.source : undefined;
-        const label = recording
-          ? `${recording.name} · ${recordingTime(recording.start)}–${recordingTime(recording.end)}`
-          : file.name;
         const fileCanUpload =
           supportsAttachmentUploads &&
           maxFileAttachmentBytes !== null &&
@@ -490,20 +494,33 @@ export function ComposerAttachmentFileList({
         return (
           <div
             key={file.id}
-            className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            className={cn(
+              "flex min-w-0 items-center gap-2 py-1 text-sm text-foreground",
+              recording && "w-fit max-w-full rounded-lg border border-border bg-muted/40 px-2",
+            )}
           >
-            <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
+            {recording ? (
+              <AudioLinesIcon className="ms-1 size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
+            )}
             <button
               type="button"
               disabled={needsReattach}
-              className={
-                recording
-                  ? "min-w-0 max-w-full truncate rounded-full border border-border bg-muted px-2 py-1 text-start text-xs hover:underline focus-visible:outline-2"
-                  : "min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
-              }
+              className="min-w-0 flex-1 truncate text-start hover:underline focus-visible:outline-2"
               onClick={() => onPreviewFile(file.id)}
             >
-              {label}
+              {recording ? (
+                <>
+                  <span className="block truncate font-medium">{recording.name}</span>
+                  <span className="block truncate text-xs text-secondary-label">
+                    {gt("Transcript")} · {recordingTime(recording.start)}–
+                    {recordingTime(recording.end)}
+                  </span>
+                </>
+              ) : (
+                file.name
+              )}
             </button>
             <span className="shrink-0 text-xs text-secondary-label">
               {needsReattach ? (
@@ -518,7 +535,7 @@ export function ComposerAttachmentFileList({
                   upload={upload}
                   fallback={formatAttachmentSize(file.sizeBytes, messages)}
                 />
-              ) : (
+              ) : recording ? null : (
                 formatAttachmentSize(file.sizeBytes, messages)
               )}
             </span>

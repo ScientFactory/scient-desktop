@@ -124,7 +124,9 @@ export function RecordingDefaultsSettings({
     <SettingsSection id="recordings-defaults" title={gt("Recordings")}>
       <SettingsRow
         title={gt("Default engine")}
-        description={gt("Set an engine for each language. Download more under Speech models.")}
+        description={gt(
+          "Set a transcription engine for each language for lessons, meetings, and other recordings.",
+        )}
         control={
           <div className="flex flex-wrap justify-end gap-2">
             <TranscriptionSelect

@@ -11,7 +11,7 @@ import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
 
 /**
  * Citation comments consume an already configured voice setup. Model choice,
- * downloads and repair remain in the composer and Settings → Transcription.
+ * downloads and repair remain in the composer and Settings → Voice & Transcription.
  */
 export function ScientVoiceCommentControl({
   disabled = false,
