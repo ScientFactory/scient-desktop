@@ -316,6 +316,7 @@ import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.
 import * as ThreadMcpStatusRegistry from "./mcpApps/ThreadMcpStatusRegistry.ts";
 import * as ConnectorProxyRoute from "./scient/extensions/connectors/ConnectorProxyRoute.ts";
 import * as ConnectorCallbackRoute from "./scient/extensions/connectors/ConnectorCallbackRoute.ts";
+import * as DevConnectorLease from "./scient/extensions/connectors/DevConnectorLease.ts";
 // SCIENT-FORK:END
 
 // Escaped MCP handoff provenance can exceed find-my-way's 100-character segment default.
@@ -1056,6 +1057,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     // SCIENT-FORK:START — Scient Extensions: connector proxy (session-token authority) and sign-in callback (state authority).
     ConnectorProxyRoute.layer,
     ConnectorCallbackRoute.layer,
+    DevConnectorLease.layer,
     // SCIENT-FORK:END
     // SCIENT-FORK: update facts for a backend started without the telemetry pipes.
     DesktopUpdateFactsRoute.layer,

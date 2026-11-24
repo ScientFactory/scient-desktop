@@ -65,6 +65,8 @@ const OAuthSessionSchema = Schema.Struct({
 
 const OAuthMaterialSchema = Schema.Struct({
   format: Schema.Literal(1),
+  /** The app (its environment id) whose sign-in this is; dev identity copies keep only their own. */
+  ownerEnvironmentId: Schema.optional(Schema.String),
   ownClient: Schema.optional(
     Schema.Struct({ clientId: Schema.String, clientSecret: Schema.optional(Schema.String) }),
   ),
@@ -256,6 +258,7 @@ const hasProtectableSecret = (client: Readonly<Record<string, unknown>>) =>
 export const applySignIn = (
   material: ConnectorOAuthMaterial,
   result: ConnectorSignInResult,
+  ownerEnvironmentId?: string,
 ): ConnectorOAuthMaterial => {
   const registration = result.registration;
   const kept = material.registrations.filter(
@@ -265,8 +268,10 @@ export const applySignIn = (
         entry.issuer !== registration.issuer ||
         entry.redirectUri !== registration.redirectUri),
   );
+  const { ownerEnvironmentId: _previous, ...rest } = material;
   return {
-    ...material,
+    ...rest,
+    ...(ownerEnvironmentId === undefined ? {} : { ownerEnvironmentId }),
     registrations: registration === undefined ? kept : [...kept, registration],
     session: result.session,
   };

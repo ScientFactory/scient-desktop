@@ -151,7 +151,7 @@ function inferOs(userAgent: string | undefined): string | undefined {
   return undefined;
 }
 
-function readRemoteAddressFromSource(source: unknown): string | undefined {
+export function readRemoteAddressFromSource(source: unknown): string | undefined {
   if (!source || typeof source !== "object") {
     return undefined;
   }
@@ -166,7 +166,7 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
   return normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
 }
 
-const isLoopbackIpAddress = (address: string): boolean =>
+export const isLoopbackIpAddress = (address: string): boolean =>
   (NodeNet.isIPv4(address) && address.startsWith("127.")) || address === "::1";
 
 // A loopback peer is a local reverse proxy (Tailscale Serve); trust only the entry it appended.

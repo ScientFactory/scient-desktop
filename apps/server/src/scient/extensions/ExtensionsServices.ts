@@ -51,6 +51,10 @@ import type {
   CheckResult,
   LocalConnectorAuthoring,
 } from "./connectors/LocalConnectorAuthoring.ts";
+import type {
+  DevConnectorLease,
+  DevConnectorLeaseRequest,
+} from "./connectors/DevConnectorLease.ts";
 
 /** Where an agent's chat runs, for a connector that runs in the project folder. */
 export interface ConnectorLocation {
@@ -118,6 +122,8 @@ export interface ConnectorSignInCallbackOutcome {
 }
 
 export interface ConnectorRuntimeShape {
+  /** Dev identity home only: an access token of a connector it signed in, for a dev app. */
+  readonly leaseForDevApp?: (request: DevConnectorLeaseRequest) => Effect.Effect<DevConnectorLease>;
   readonly registerPluginKeyHttp?: (input: {
     readonly connectorId: ConnectorId;
     readonly serverName: string;

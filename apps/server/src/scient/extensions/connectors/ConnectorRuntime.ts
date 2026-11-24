@@ -30,6 +30,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
@@ -67,6 +68,8 @@ import {
   unavailableDiscoveryAnswer,
 } from "./ConnectorDiscovery.ts";
 import { sweepRemovedHistory } from "../../storage/FolderHistory.ts";
+import { loadDevConnectorBroker } from "./DevConnectorLease.ts";
+import { ServerEnvironmentIdentity } from "../../../environment/ServerEnvironment.ts";
 import { ConnectorCredentialStore } from "./ConnectorCredentialStore.ts";
 import {
   applySignIn,
@@ -179,6 +182,8 @@ export interface ConnectorRuntimeOptions {
   readonly bundleFetch?: ConnectorFetch;
   /** Told when a change reaches a connector's lock, before it waits there (tests). */
   readonly onConnectorLock?: (connectorId: string) => void;
+  /** This app's environment id, recorded in each sign-in it makes. */
+  readonly environmentId?: Effect.Effect<string | undefined>;
 }
 
 type Credential =
@@ -190,6 +195,8 @@ type Credential =
       readonly secrets: ReadonlyArray<string | undefined>;
       /** Borrowed from Source Control, which is told when the service refuses it. */
       readonly borrowed?: SourceControlCredential;
+      /** Lent by the dev identity home, which alone refreshes it: the sign-in it belongs to. */
+      readonly brokeredGrant?: string;
     }
   | { readonly type: "lost"; readonly message: string }
   | { readonly type: "failed"; readonly message: string }
@@ -312,6 +319,10 @@ const secretFingerprint = (secrets: ReadonlyArray<string | undefined>): string =
 
 const pluginKeyRefusalMessage = (record: Pick<ConnectorRecord, "displayName">) =>
   `${record.displayName} rejected the key bound in Scient Accounts. Ask the user to update that account, then retry.`;
+
+/** What a dev app says about a refused token, so the token itself never leaves it. */
+const tokenHash = (token: string) =>
+  NodeCrypto.createHash("sha256").update(token).digest("base64url");
 
 /** Unique `[a-z0-9][a-z0-9_-]{0,47}` name; reserved and taken names get `_2`, `_3`, … */
 const uniqueServerName = (displayName: string, taken: ReadonlySet<string>): string => {
@@ -687,6 +698,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const revision = yield* Ref.make(0);
   const changes = yield* PubSub.unbounded<ExtensionsChangedEvent>();
   const flows = new ConnectorOAuthFlows(now);
+  const devBroker = loadDevConnectorBroker(options.stateDir);
   const sessions = new ConnectorSessionBindings();
   /** Latest OAuth material of the current grant, including rotated tokens that could not be persisted. */
   const oauthCache = new Map<
@@ -1435,6 +1447,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       case "oauth": {
         const entry = yield* loadOAuth(record).pipe(Effect.orElseSucceed(() => undefined));
         let session = entry?.material.session;
+        // This app's own sign-in comes first; without one, the dev identity home may lend one.
+        if (session === undefined && devBroker?.binds(record.connectorId, record.url) === true) {
+          return yield* leasedCredential(record, undefined);
+        }
         if (session === undefined) {
           if (record.status === "connected") {
             yield* markStatus(
@@ -1471,6 +1487,38 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       case "source-control":
         return yield* borrow(record, auth);
     }
+  });
+
+  /**
+   * A token from the dev identity home, asked for on every use so a sign-out, new account or
+   * closed home there takes effect at once. The home refreshes; an unreachable home is a pause,
+   * never a reason to sign in here.
+   */
+  const leasedCredential = Effect.fn("ConnectorRuntime.leasedCredential")(function* (
+    record: ConnectorRecord,
+    stale: string | undefined,
+  ) {
+    const lease = yield* devBroker!.lease({
+      connectorId: record.connectorId,
+      url: record.url,
+      ...(stale === undefined ? {} : { staleTokenHash: tokenHash(stale) }),
+    });
+    if (lease.status !== "ok" || !isProtectableCredential(lease.accessToken)) {
+      return {
+        type: "failed",
+        message:
+          lease.status === "needs-sign-in"
+            ? `${record.displayName} needs a sign-in in Scient (Dev) · identity, which this dev app borrows it from.`
+            : `${record.displayName} is borrowed from Scient (Dev) · identity, which is not running. Start it, then retry.`,
+      } satisfies Credential;
+    }
+    return {
+      type: "ok",
+      headers: { authorization: `Bearer ${lease.accessToken}` },
+      accessToken: lease.accessToken,
+      secrets: [lease.accessToken],
+      brokeredGrant: lease.grantId,
+    } satisfies Credential;
   });
 
   /**
@@ -1680,6 +1728,39 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       return {
         type: "rejected",
         message: rejectedMessage,
+      } satisfies SendOutcome;
+    }
+    if (credential.brokeredGrant !== undefined) {
+      // The home refreshes the grant it owns; this app only asks for the new token once.
+      const leased: Credential = yield* leasedCredential(record, credential.accessToken);
+      if (leased.type !== "ok") return leased satisfies SendOutcome;
+      // Signed in again at the home meanwhile: never repeat the request as another account.
+      if (leased.brokeredGrant !== credential.brokeredGrant) {
+        return {
+          type: "failed",
+          message: `${record.displayName} was signed in again in Scient (Dev) · identity. Retry to use that account.`,
+        } satisfies SendOutcome;
+      }
+      const borrowedReplay = yield* send(leased.headers);
+      if (Exit.isFailure(borrowedReplay)) {
+        return {
+          type: "failed",
+          message: describeEgressFailure(
+            Option.getOrUndefined(Exit.findErrorOption(borrowedReplay))?.cause,
+          ),
+        } satisfies SendOutcome;
+      }
+      if (borrowedReplay.value.status === 401) {
+        yield* cancelBody(borrowedReplay.value);
+        return {
+          type: "failed",
+          message: `${record.displayName} refused the sign-in borrowed from Scient (Dev) · identity. Sign in to it there.`,
+        } satisfies SendOutcome;
+      }
+      return {
+        type: "response",
+        response: borrowedReplay.value,
+        secrets: [...credential.secrets, ...leased.secrets],
       } satisfies SendOutcome;
     }
     const refreshed = yield* refreshSession(record, credential.accessToken);
@@ -2387,7 +2468,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const stored = yield* readStoredOAuth(current).pipe(Effect.orElseSucceed(() => undefined));
         const base =
           oauthCache.get(record.connectorId)?.material ?? stored?.material ?? emptyOAuthMaterial;
-        const material = applySignIn(base, result);
+        const material = applySignIn(
+          base,
+          result,
+          options.environmentId === undefined ? undefined : yield* options.environmentId,
+        );
         const saved = yield* Effect.gen(function* () {
           if (previousRef !== undefined && stored !== undefined) {
             const version = yield* credentials.replace(
@@ -3096,6 +3181,65 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     },
   );
 
+  /**
+   * Lends the current access token of a connector this app signed in, refreshing it first when it
+   * nears expiry or when the dev app was refused the token it holds. The refresh runs here, under
+   * this runtime's own fences, so one grant has one refresher.
+   */
+  const leaseForDevApp = Effect.fn("ConnectorRuntime.leaseForDevApp")(function* (request: {
+    readonly connectorId: string;
+    readonly url: string;
+    readonly staleTokenHash?: string | undefined;
+  }) {
+    const lendable = (record: ConnectorRecord | undefined): record is ConnectorRecord =>
+      record !== undefined &&
+      record.auth.type === "oauth" &&
+      record.url === request.url &&
+      record.enabled &&
+      record.status === "connected" &&
+      isLive(record.connectorId);
+    const record = yield* findRecord(ConnectorId.make(request.connectorId));
+    if (!lendable(record)) return { status: "needs-sign-in" } as const;
+    // A refresh started here (expiry or a refused token) finishes and saves even if the dev app
+    // stops waiting: the provider may already have spent the old refresh token.
+    let credential: Credential = yield* Effect.uninterruptible(credentialFor(record));
+    if (
+      credential.type === "ok" &&
+      credential.accessToken !== undefined &&
+      request.staleTokenHash !== undefined &&
+      tokenHash(credential.accessToken) === request.staleTokenHash
+    ) {
+      // Finished and saved even if the dev app stops waiting: a rotated refresh token is spent.
+      const refreshed = yield* Effect.uninterruptible(
+        refreshSession(record, credential.accessToken),
+      );
+      credential =
+        refreshed.type === "ok"
+          ? { ...credential, accessToken: refreshed.session.accessToken }
+          : refreshed.type === "transient"
+            ? { type: "failed", message: "" }
+            : { type: "lost", message: refreshed.message };
+    }
+    if (credential.type !== "ok" || credential.accessToken === undefined) {
+      return { status: credential.type === "failed" ? "unavailable" : "needs-sign-in" } as const;
+    }
+    // Under the lock sign-in and sign-out hold: the token must still be this grant's current one.
+    const token = credential.accessToken;
+    return yield* lifecycle(record.connectorId).withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* findRecord(record.connectorId);
+        const session = (yield* loadOAuth(record).pipe(Effect.orElseSucceed(() => undefined)))
+          ?.material.session;
+        return lendable(current) &&
+          current.authRevision === record.authRevision &&
+          session !== undefined &&
+          session.accessToken === token
+          ? ({ status: "ok", accessToken: token, grantId: session.grantId } as const)
+          : ({ status: "needs-sign-in" } as const);
+      }),
+    );
+  });
+
   return ConnectorRuntime.of({
     pluginKeyRefusals: Effect.fn("ConnectorRuntime.pluginKeyRefusals")(() =>
       Effect.sync(() =>
@@ -3113,6 +3257,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         ),
       ),
     ),
+    leaseForDevApp,
     registerPluginKeyHttp: Effect.fn("ConnectorRuntime.registerPluginKeyHttp")(function* (input) {
       if (!pluginHttp.has(input.connectorId) && pluginHttp.size >= 1000)
         return yield* new ExtensionsError({
@@ -3390,9 +3535,20 @@ export const layer = Layer.effect(
   ConnectorRuntime,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const identity = yield* Effect.serviceOption(ServerEnvironmentIdentity);
+    const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+    const environmentId: Effect.Effect<string | undefined> | undefined = Option.isSome(identity)
+      ? identity.value.getEnvironmentId
+      : Option.isSome(fileSystem)
+        ? fileSystem.value.readFileString(config.environmentIdPath).pipe(
+            Effect.map((text) => text.trim() || undefined),
+            Effect.orElseSucceed(() => undefined),
+          )
+        : undefined;
     return yield* makeConnectorRuntime({
       stateDir: config.stateDir,
       secretsDir: config.secretsDir,
+      ...(environmentId === undefined ? {} : { environmentId }),
     });
   }),
 ).pipe(Layer.provide(LocalDuplexProcess.layer));

@@ -5223,3 +5223,183 @@ describe("Bearer challenge error", () => {
     expect(bearerChallengeError(header)).toBe(expected);
   });
 });
+
+describe("connector sign-ins a dev app borrows from the dev identity home", () => {
+  const hashOf = (token: string) =>
+    NodeCrypto.createHash("sha256").update(token).digest("base64url");
+  /** Serves the home runtime's leases on loopback, as the home's server route does. */
+  const serveLeases = (lease: NonNullable<ConnectorRuntime["Service"]["leaseForDevApp"]>) =>
+    Effect.gen(function* () {
+      const services = yield* Effect.context<never>();
+      // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- the home route is a Node HTTP handler; its requests reach the runtime here.
+      const run = Effect.runPromiseWith(services);
+      return yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<NodeHttp.Server>((resolve) => {
+              const server = NodeHttp.createServer((request, response) => {
+                const chunks: Buffer[] = [];
+                request.on("data", (chunk: Buffer) => chunks.push(chunk));
+                request.on("end", () => {
+                  void run(lease(JSON.parse(Buffer.concat(chunks).toString("utf8")))).then(
+                    (lent) => {
+                      // As the home's route answers: with proof it holds the endpoint's token.
+                      const body = JSON.stringify(lent);
+                      const nonce = String(request.headers["x-scient-lease-nonce"]);
+                      response.writeHead(200, {
+                        "content-type": "application/json",
+                        "x-scient-lease-proof": NodeCrypto.createHmac("sha256", "lease-token")
+                          .update(`scient-lease-response\n${nonce}\n${body}`)
+                          .digest("base64url"),
+                      });
+                      response.end(body);
+                    },
+                  );
+                });
+              });
+              server.listen(0, "127.0.0.1", () => resolve(server));
+            }),
+        ),
+        (server) => Effect.promise(() => new Promise<void>((done) => server.close(() => done()))),
+      );
+    });
+
+  it.live("refreshes once at the home however many times the borrowed token is refused", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      const lease = home.runtime.leaseForDevApp!;
+      const url = `${vendor.base}/secure/mcp`;
+      const first = yield* lease({ connectorId, url });
+      expect(first).toMatchObject({ status: "ok", accessToken: "vendor-access-token-1" });
+      vendor.validTokens.delete("vendor-access-token-1");
+      const [a, b] = yield* Effect.all(
+        [
+          lease({ connectorId, url, staleTokenHash: hashOf("vendor-access-token-1") }),
+          lease({ connectorId, url, staleTokenHash: hashOf("vendor-access-token-1") }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(a).toMatchObject({ status: "ok", accessToken: "vendor-access-token-2" });
+      expect(b).toEqual(a);
+      expect(vendor.refreshCount).toBe(1);
+      expect(yield* lease({ connectorId, url: `${vendor.base}/other` })).toEqual({
+        status: "needs-sign-in",
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never repeats a refused call as the account the home signed in since", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      // The home was signed in again between the first lease and the retry.
+      const server = yield* serveLeases((request) =>
+        home.runtime.leaseForDevApp!(request).pipe(
+          Effect.map((lease) =>
+            lease.status === "ok" && request.staleTokenHash !== undefined
+              ? { ...lease, grantId: "another-account" }
+              : lease,
+          ),
+        ),
+      );
+      const port = (server.address() as { port: number }).port;
+      // The dev app: the same connector without a grant, borrowed from a home on this machine.
+      const homeRoot = NodePath.join(home.config.stateDir, "..", "identity-home");
+      const homeStateDir = NodePath.join(homeRoot, "scient-next-dev");
+      const state = JSON.parse(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(home.config.stateDir, CONNECTOR_STATE_FILE), "utf8"),
+        ),
+      );
+      for (const connector of state.connectors) delete connector.auth.credentialRef;
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(homeStateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(homeRoot, "dev-identity-home.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(homeStateDir, "dev-connector-lease.json"),
+          JSON.stringify({ version: 1, host: "127.0.0.1", port, token: "lease-token" }),
+        );
+        await NodeFSP.writeFile(NodePath.join(home.config.stateDir, "dev-identity.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(home.config.stateDir, "dev-connector-broker.json"),
+          JSON.stringify({
+            version: 1,
+            homeStateDir,
+            connectors: { [connectorId]: { url: `${vendor.base}/secure/mcp` } },
+          }),
+        );
+      });
+      const devApp = yield* makeHarness({ seedStateFile: JSON.stringify(state) });
+      devApp.delivered.add(connectorId);
+      vendor.validTokens.delete("vendor-access-token-1");
+      const refused = yield* readJson(yield* devApp.proxy(connectorId, toolCall(1)));
+      expect(JSON.stringify(refused)).toContain("signed in again");
+      expect(
+        vendor.upstream.some((entry) => entry.authorization === "Bearer vendor-access-token-2"),
+      ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("uses the home's token in a dev app with no sign-in of its own", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      const server = yield* serveLeases(home.runtime.leaseForDevApp!);
+      const port = (server.address() as { port: number }).port;
+      // The dev app: the same connector without a grant, borrowed from a home on this machine.
+      const homeRoot = NodePath.join(home.config.stateDir, "..", "identity-home");
+      const homeStateDir = NodePath.join(homeRoot, "scient-next-dev");
+      const state = JSON.parse(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(home.config.stateDir, CONNECTOR_STATE_FILE), "utf8"),
+        ),
+      );
+      for (const connector of state.connectors) delete connector.auth.credentialRef;
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(homeStateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(homeRoot, "dev-identity-home.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(homeStateDir, "dev-connector-lease.json"),
+          JSON.stringify({ version: 1, host: "127.0.0.1", port, token: "lease-token" }),
+        );
+        await NodeFSP.writeFile(NodePath.join(home.config.stateDir, "dev-identity.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(home.config.stateDir, "dev-connector-broker.json"),
+          JSON.stringify({
+            version: 1,
+            homeStateDir,
+            connectors: { [connectorId]: { url: `${vendor.base}/secure/mcp` } },
+          }),
+        );
+      });
+      const devApp = yield* makeHarness({ seedStateFile: JSON.stringify(state) });
+      devApp.delivered.add(connectorId);
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(1)))).toMatchObject({
+        id: 1,
+        result: { content: [{ type: "text", text: "found" }] },
+      });
+      expect(vendor.upstream.at(-1)?.authorization).toBe("Bearer vendor-access-token-1");
+      // Refused: the dev app asks the home, which refreshes; nothing refreshes here.
+      vendor.validTokens.delete("vendor-access-token-1");
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(2)))).toMatchObject({
+        id: 2,
+        result: { content: [{ type: "text", text: "found" }] },
+      });
+      expect(vendor.upstream.at(-1)?.authorization).toBe("Bearer vendor-access-token-2");
+      expect(vendor.refreshCount).toBe(1);
+      // Signed out at the home: the dev app stops at once, though the vendor still takes it.
+      yield* home.runtime.remove({ connectorId });
+      vendor.validTokens.add("vendor-access-token-2");
+      const signedOut = yield* readJson(yield* devApp.proxy(connectorId, toolCall(3)));
+      expect(JSON.stringify(signedOut)).toContain("needs a sign-in in Scient (Dev)");
+      // With the home closed, the connector pauses instead of asking for a sign-in here.
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(homeStateDir, "dev-connector-lease.json")),
+      );
+      const paused = yield* readJson(yield* devApp.proxy(connectorId, toolCall(4)));
+      expect(JSON.stringify(paused)).toContain("not running");
+      expect((yield* devApp.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
