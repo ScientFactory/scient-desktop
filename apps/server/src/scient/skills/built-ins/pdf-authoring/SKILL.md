@@ -1,6 +1,6 @@
 ---
 name: pdf-authoring
-description: PDF output. Make, edit or export a PDF of my paper, report, poster, grant, handout or form, including Markdown and HTML-to-PDF. Use latex-authoring for writing or troubleshooting .tex. Use pdf-files, when available, to read or work directly on an existing PDF.
+description: PDF output. Make, edit or export a PDF of my paper, report, poster, grant, handout or form, including Markdown and HTML-to-PDF. Use latex-authoring for writing or troubleshooting .tex. Reading or extracting a PDF and building an ordinary webpage are other tasks.
 ---
 
 # PDF authoring
