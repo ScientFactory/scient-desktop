@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
@@ -73,5 +74,41 @@ it.effect("reports cleanup it could not verify when the process table stays unre
     assert.strictEqual(cleanup.reads(), 4);
     assert.strictEqual(cleanup.warnings.length, 1);
     assert.include(String(cleanup.warnings[0]), UNREADABLE);
+  });
+});
+
+// A process that took the exited CLI's pid, with a child of its own.
+const reusedCli = processRow(1000, 10, 5);
+const reusedChild = processRow(1500, 1000, 6);
+
+// The CLI exits while the first read of its tree waits, so no earlier read saw it as itself.
+it.effect("a refresh waiting behind the CLI's exit records nothing from a reused pid", () => {
+  const releaseRead = Deferred.makeUnsafe<Table>();
+  const readStarted = Deferred.makeUnsafe<void>();
+  let read: Effect.Effect<Table> = Deferred.succeed(readStarted, undefined).pipe(
+    Effect.andThen(Deferred.await(releaseRead)),
+  );
+  const tracker = makeClaudeDescendantPoll(Effect.suspend(() => read)).track(1000);
+  return Effect.gen(function* () {
+    const pending = yield* tracker.refresh.pipe(Effect.forkChild);
+    yield* Deferred.await(readStarted);
+    const exit = yield* tracker.leftovers.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.succeed(releaseRead, [reusedCli, reusedChild]);
+    yield* Fiber.join(pending);
+    read = Effect.succeed([reusedCli, reusedChild]);
+    assert.deepStrictEqual(yield* Fiber.join(exit), []);
+  });
+});
+
+it.effect("follows the CLI's pid only while it is the process first seen there", () => {
+  const tables: Array<Table> = [running, [reusedCli, reusedChild, processRow(1100, 1, 1)]];
+  const tracker = makeClaudeDescendantPoll(Effect.sync(() => tables.shift() ?? [])).track(1000);
+  return Effect.gen(function* () {
+    yield* tracker.refresh;
+    yield* tracker.refresh;
+    assert.deepStrictEqual(
+      [...tracker.tracked.values()].map((row) => row.pid),
+      [1100],
+    );
   });
 });

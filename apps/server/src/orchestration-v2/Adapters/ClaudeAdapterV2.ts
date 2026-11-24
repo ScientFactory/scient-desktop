@@ -617,12 +617,19 @@ const processIdentity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
 /** What one CLI started, by pid and start time, recorded from each process table read while it runs. */
 function makeClaudeDescendantTracker(cliPid: number) {
   const tracked = new Map<string, ClaudeProcessRow>();
+  // SCIENT-FORK:START — the CLI is a root only as the process first seen under its pid.
+  let cliIdentity: string | undefined;
+  // SCIENT-FORK:END
   // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
   const record = (rows: ReadonlyArray<ClaudeProcessRow>, cliRunning: boolean) => {
     const running = new Set(rows.map(processIdentity));
     // `ps -A` lists itself, so no rows is a failed read.
     if (rows.length === 0) return running;
-    const roots = cliRunning ? [cliPid] : [];
+    // SCIENT-FORK:START — a process that reused the CLI's pid is not followed.
+    const cli = cliRunning ? rows.find((row) => row.pid === cliPid) : undefined;
+    if (cli !== undefined) cliIdentity ??= processIdentity(cli);
+    const roots = cli !== undefined && processIdentity(cli) === cliIdentity ? [cliPid] : [];
+    // SCIENT-FORK:END
     for (const [key, row] of tracked) {
       if (running.has(key)) roots.push(row.pid);
       else tracked.delete(key);
@@ -670,7 +677,11 @@ export function makeClaudeDescendantPoll(
     track: (cliPid: number) => {
       const tracker = makeClaudeDescendantTracker(cliPid);
       let exited = false;
-      const refresh = read((rows) => void tracker.record(rows, true));
+      // SCIENT-FORK:START — a refresh queued behind the exit read records nothing once the CLI exited.
+      const refresh = read((rows) => {
+        if (!exited) tracker.record(rows, true);
+      });
+      // SCIENT-FORK:END
       return {
         tracked: tracker.tracked,
         refresh,
