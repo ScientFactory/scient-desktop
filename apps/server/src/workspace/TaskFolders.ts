@@ -768,10 +768,11 @@ const make = Effect.gen(function* () {
     });
     // The project's own teardown goes first; what it leaves is removed below as usual. Only when
     // every checkout may go: the command cannot be told which ones to keep.
-    const layout =
-      laidOut && input.projectCommands ? yield* worktreeLayout(taskFolder.projectRoot) : null;
-    // SCIENT-FORK:START guarded-task-folder-cleanup
-    if (layout?.remove !== undefined && input.removeCheckout !== undefined)
+    // SCIENT-FORK:START guarded-task-folder-cleanup — read even when this request may not run it:
+    // a folder its project tears down stays out of automatic cleanup either way.
+    const declaredLayout = laidOut ? yield* worktreeLayout(taskFolder.projectRoot) : null;
+    const layout = input.projectCommands ? declaredLayout : null;
+    if (declaredLayout?.remove !== undefined && input.removeCheckout !== undefined)
       return {
         removed: [],
         kept: [

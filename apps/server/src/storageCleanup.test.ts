@@ -1489,6 +1489,45 @@ it.live("leaves a task folder whose project has a teardown command to the user",
   ),
 );
 
+// A fenced link's request may not run the project's commands, but a folder laid out for one
+// before that rule is still the project's to tear down: it stays, and the command never runs.
+it.live("leaves a fenced link's task folder whose project has a teardown command", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, root, setThreads } = yield* taskFolderCleanupFixture;
+      setThreads([
+        shell({
+          branch: "task",
+          worktreePath: root,
+          linkOrigin: { sessionId: "laptop", label: "laptop", access: "auto" },
+        }),
+      ]);
+      yield* fs.writeFileString(
+        `${repo}/t3.json`,
+        JSON.stringify({
+          worktreeLayout: {
+            create: 'mkdir -p "$T3_WORKTREE_PROJECT_PATH"',
+            remove: 'touch "$T3_PROJECT_ROOT/torn-down" && rm -rf "$T3_WORKTREE_ROOT"',
+          },
+        }),
+      );
+
+      const report = yield* service.runNow;
+
+      expect(taskFolderEntries(report, root)).toEqual([
+        {
+          path: root,
+          outcome: "kept",
+          reason: "Its project has a teardown command, so it is removed only when you remove it",
+        },
+      ]);
+      expect(yield* fs.exists(`${repo}/torn-down`)).toBe(false);
+      expect(yield* fs.readFileString(`${root}/dist/api/tracked.txt`)).toBe("original\n");
+      expect(yield* fs.readFileString(`${root}/dist/web/tracked.txt`)).toBe("original\n");
+    }),
+  ),
+);
+
 it.live("keeps another repository's worktree found at a task checkout's path", () =>
   runCleanupTest(
     Effect.gen(function* () {
