@@ -20,6 +20,26 @@
       "owner": "Accounts",
       "quarantined": "2026-11-20",
       "expires": "2026-11-27"
+    },
+    {
+      "id": "pi-observed-effort-foreign-timeout",
+      "job": "Test Server 8",
+      "step": "Test",
+      "test": "src/orchestration-v2/PiObservedEffort.native.integration.test.ts > foreign native state refuses the new ro…",
+      "signature": "TimeoutError: Operation timed out after '10s'",
+      "owner": "Pi provider / orchestration",
+      "quarantined": "2026-11-24",
+      "expires": "2026-12-01"
+    },
+    {
+      "id": "pi-observed-effort-foreign-invalid-timeout",
+      "job": "Test Server 8",
+      "step": "Test",
+      "test": "src/orchestration-v2/PiObservedEffort.native.integration.test.ts > foreign-invalid native state refuses th…",
+      "signature": "TimeoutError: Operation timed out after '10s'",
+      "owner": "Pi provider / orchestration",
+      "quarantined": "2026-11-24",
+      "expires": "2026-12-01"
     }
   ]
 }
