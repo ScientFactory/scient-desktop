@@ -1,130 +1,45 @@
-name: Pi startup server shard diagnostic
-on: workflow_dispatch
+name: Pi startup Linux diagnostic
+
+on:
+  workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  server-shard-8:
+  native-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 14
     steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: ./.github/actions/setup-ci-deps
-
-      # No Electron setup here: `t3` (apps/server) has no Electron dependency
-      # and none of its tests touch the runtime. Only the non-server `test`
-      # job, which covers @t3tools/desktop, needs the download.
-      - name: Seal Compute candidate metadata
-        run: node apps/server/scripts/compute-recipes.ts seal
-
-      # Cache the pinned browser and skip apt unless shared libraries are missing.
-      - name: Resolve Playwright version
-        id: playwright_version
-        run: echo "version=$(node -p "require('./apps/server/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Chromium
-        id: chromium_cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
-
-      - name: Install Chromium for server browser integration tests
-        if: steps.chromium_cache.outputs.cache-hit != 'true'
-        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
-
-      - name: Install missing Chromium system dependencies
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: ./.github/actions/setup-ci-deps
+      - name: Repeat native Pi tests on four workers
+        working-directory: apps/server
+        shell: bash
         run: |
-          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
-          test -n "$browser"
-          if ldd "$browser" | grep '=> not found'; then
-            node apps/server/node_modules/playwright-core/cli.js install-deps chromium
-          fi
-
-      # Each server test file runs in its own Vitest process, and a fresh install starts
-      # Vitest's content-keyed module cache empty, so every file re-transformed its imports.
-      # Only pushes to main save it, so pull requests never evict each other's entries.
-      # Scient has no per-job changes step here; a reused queue run skips these shards.
-      - name: Restore Vitest module cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: node_modules/.vitest-cache
-          key: vitest-modules-server-8-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: vitest-modules-server-8-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
-
-      - name: Test
-        env:
-          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
-          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-          T3CODE_TRANSFER_BUDGET_SCENARIOS_PATH: ${{ runner.temp }}/thread-transfer-scenarios.json
-          TEST_REPORT: ${{ runner.temp }}/vitest-server-8.json
-        # One process per file spends ~2s starting before its tests run; one file per vCPU overlaps that.
-        run: >-
-          vp run --filter t3 test
-          --shard 8/16
-          --fileParallelism --maxWorkers=4
-          --reporter=default
-          --reporter=json
-          --outputFile.json="$TEST_REPORT"
-
-      - name: Upload test result
+          mkdir "$RUNNER_TEMP/pi-probe"
+          pids=()
+          for worker in 1 2 3 4; do
+            (
+              for attempt in {1..12}; do
+                log="$RUNNER_TEMP/pi-probe/$worker-$attempt.log"
+                if ! vp test run src/orchestration-v2/PiObservedEffort.native.integration.test.ts > "$log" 2>&1; then
+                  echo "worker $worker attempt $attempt failed"
+                  cat "$log"
+                  exit 1
+                fi
+                echo "worker $worker attempt $attempt passed"
+              done
+            ) &
+            pids+=("$!")
+          done
+          result=0
+          for pid in "${pids[@]}"; do wait "$pid" || result=1; done
+          exit "$result"
+      - name: Upload diagnostic logs
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: vitest-server-8-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/vitest-server-8.json
-          if-no-files-found: ignore
-          overwrite: true
-          retention-days: 14
-
-      - name: Save Vitest module cache
-        # Main pushes usually reuse the queue's result, so the nightly run saves too.
-        if: github.event_name == 'push' || github.event_name == 'schedule'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: node_modules/.vitest-cache
-          key: vitest-modules-server-8-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-
-      # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
-      # produces these files. Gating the upload on their presence keeps a
-      # single `thread-transfer-results` artifact per run, which is the name
-      # thread-transfer-report.yml resolves.
-      - name: Detect transfer budget report
-        id: transfer_budget
-        if: always()
-        run: |
-          if test -f "${{ runner.temp }}/thread-transfer-result.json"; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish transfer budget report
-        if: always() && steps.transfer_budget.outputs.present == 'true'
-        run: |
-          if test -f "${{ runner.temp }}/t3code-transfer-budget.md"; then
-            tee -a "$GITHUB_STEP_SUMMARY" < "${{ runner.temp }}/t3code-transfer-budget.md"
-          else
-            echo "Transfer budget report was not produced." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload thread transfer result
-        if: always() && steps.transfer_budget.outputs.present == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: thread-transfer-results
-          path: |
-            ${{ runner.temp }}/thread-transfer-result.json
-            ${{ runner.temp }}/thread-transfer-scenarios.json
-          if-no-files-found: ignore
-          overwrite: true
-          retention-days: 30
+          name: pi-start-diagnostic
+          path: ${{ runner.temp }}/pi-probe/*.log
+          retention-days: 3

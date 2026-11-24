@@ -266,15 +266,16 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
         );
       }
       if (name.startsWith("foreign")) {
+        // A completed run can still be capturing its checkpoint, which queues the next send.
+        // Exercise direct startup refusal after that capture, so the rejected run stays failed.
+        yield* waitFor((p) => p.runs[0]?.checkpointId != null);
         yield* writeControl({
           metadata: known,
           foreign: true,
           overrideLevel: name === "foreign-invalid" ? "invalid-native-level" : "high",
         });
         yield* send(2);
-        completed = yield* waitFor(
-          (p) => p.runs.length === 2 && p.runs.some((r) => r.status === "failed"),
-        );
+        completed = yield* waitFor((p) => p.runs[1]?.status === "failed");
       }
       if (name === "adopted") {
         yield* writeControl({ metadata: known, overrideLevel: "high", nativeWork: true });
@@ -412,7 +413,8 @@ it.live.each(
   nativeScenario(name, "off", known).pipe(
     Effect.map(({ completed, reopened, requests }) => {
       assert.lengthOf(completed.runs, 2);
-      assert.isTrue(completed.runs.some((r) => r.status === "failed"));
+      assert.equal(completed.runs[1]?.status, "failed");
+      assert.isNull(completed.runs[1]?.queuePosition);
       assert.lengthOf(
         requests.filter((r) => r.type === "prompt"),
         1,
