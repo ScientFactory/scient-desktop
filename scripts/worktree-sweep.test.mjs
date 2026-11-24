@@ -260,6 +260,39 @@ describe("sweep", () => {
     });
   });
 
+  it("keeps bare or differently cased nested repositories and marker-named folders", () => {
+    const fixture = makeFixture();
+    NodeFS.writeFileSync(NodePath.join(fixture.repo, ".git", "info", "exclude"), ".t3\nbuild\n");
+    const bare = fixture.add("bare-mirror");
+    NodeChildProcess.execFileSync("git", [
+      "init",
+      "-q",
+      "--bare",
+      NodePath.join(bare, "build", "mirror.git"),
+    ]);
+    const cased = fixture.add("cased");
+    NodeFS.mkdirSync(NodePath.join(cased, "build", "inner", ".GiT"), { recursive: true });
+    const markerDir = fixture.add("marker-dir");
+    NodeFS.mkdirSync(NodePath.join(markerDir, ".t3", "setup-done"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(markerDir, ".t3", "setup-done", "notes"), "keep me");
+    const unreadable = fixture.add("unreadable");
+    const locked = NodePath.join(unreadable, "build", "private");
+    NodeFS.mkdirSync(locked, { recursive: true });
+    NodeFS.chmodSync(locked, 0o000);
+    try {
+      fixture.add("plain");
+      assert.deepEqual(actions(sweep(options(fixture), { listProcesses: noProcesses })), {
+        "bare-mirror": "keep",
+        cased: "keep",
+        "marker-dir": "keep",
+        plain: "remove",
+        unreadable: "keep",
+      });
+    } finally {
+      NodeFS.chmodSync(locked, 0o700);
+    }
+  });
+
   it("sees processes and threads that name the checkout through a root alias", () => {
     const fixture = makeFixture();
     const alias = NodePath.join(fixture.root, "alias");

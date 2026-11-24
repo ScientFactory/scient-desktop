@@ -28,13 +28,16 @@ Checked in this order; the first match wins:
    has none. Archived threads count.
 6. Dev app state (`.scient-next/`), merged or not: it holds the candidate's own threads and
    projects, so the owner removes it by hand after reviewing them.
-7. A nested repository anywhere inside it (the folder is walked, since Git doesn't always list
-   one), or ignored files other than rebuildable outputs (`node_modules`, `dist*`, `build`, `out`,
-   `target`, caches, `.electron-runtime`, a `.t3` folder holding only setup markers) and symlinks,
-   for example `.env.local`, notes or an older dev app's `.t3/userdata`. Git would delete them
-   with the checkout.
+7. A nested repository anywhere inside it, bare or not and in any letter case (the folder is
+   walked, since Git doesn't always list one), a folder that can't be read, or ignored files other
+   than rebuildable outputs and symlinks, for example `.env.local`, notes or an older dev app's
+   `.t3/userdata`. Git would delete them with the checkout. The rebuildable list (`DISPOSABLE` in
+   the script) comes from the ignored entries actually found across the owner's checkouts:
+   `node_modules`, `dist*`, `build`, `out`, `target`, caches, generated files, logs, and a `.t3`
+   folder holding only setup marker files.
 
-If `ps`, `lsof` or the database can't be read, the sweep stops instead of guessing.
+If `ps`, `lsof` or the database can't be read, the sweep stops instead of guessing. A checkout
+that can't be inspected is kept and reported, and the others still run.
 
 ## What it removes
 

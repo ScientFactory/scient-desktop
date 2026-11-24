@@ -64,9 +64,7 @@ export function decide(facts, { now, idleDays }) {
   if (facts.devState) {
     return {
       action: "keep",
-      reason: facts.merged
-        ? `${facts.merged}, but has dev app state`
-        : "unmerged, has dev app state",
+      reason: facts.merged ? `${facts.merged}, but has dev app state` : "has dev app state",
     };
   }
   if (facts.ignoredKept.length > 0) {
@@ -85,7 +83,12 @@ export function decide(facts, { now, idleDays }) {
 }
 
 function run(command, args, options = {}) {
-  const result = NodeChildProcess.spawnSync(command, args, { encoding: "utf8", ...options });
+  // Large checkouts list megabytes of paths; the default 1 MiB buffer would fail them.
+  const result = NodeChildProcess.spawnSync(command, args, {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 1024,
+    ...options,
+  });
   return { ok: result.status === 0, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
@@ -225,7 +228,12 @@ function usedByProcess(spellings, processes) {
 // Ignored entries git would delete with the checkout. Only rebuildable outputs and
 // symlinks may go; anything else (notes, .env.local, a nested repo) keeps it.
 const DISPOSABLE = new Set([
+  "__pycache__",
+  ".astro",
   ".cache",
+  ".generated",
+  ".logs",
+  ".pytest_cache",
   ".DS_Store",
   ".electron-runtime",
   ".next",
@@ -234,27 +242,53 @@ const DISPOSABLE = new Set([
   ".vitest",
   "build",
   "coverage",
+  "dev-app.log",
   "dist",
   "dist-electron",
+  "export-assets",
+  "extension.generated.json",
   "node_modules",
   "out",
   "target",
+  "whisper-runtime",
 ]);
+const DISPOSABLE_PATTERNS = [/\.tsbuildinfo$/u, /\.bun-build$/u, /^pi_natives\..+\.node$/u];
+const DISPOSABLE_PATHS = new Set([".vite-hooks/_"]);
 
 // `.t3/` holds setup markers, but older dev apps kept their database there too.
 const SETUP_MARKERS = new Set(["setup-running", "setup-done", "setup-failed"]);
 
 // Git does not always list a nested repository (an ignored or broken one can be
-// silent), but `git worktree remove` deletes it. Walk the folder itself.
+// silent), but `git worktree remove` deletes it. Walk the folder itself and report
+// any `.git` (any case) or bare repository; an unreadable folder counts too.
+function looksLikeBareRepository(directory, names) {
+  return (
+    names.has("HEAD") &&
+    names.has("objects") &&
+    names.has("refs") &&
+    NodeFS.statSync(NodePath.join(directory, "objects")).isDirectory()
+  );
+}
+
 export function nestedRepository(checkout) {
   const pending = [checkout];
   while (pending.length > 0) {
     const current = pending.pop();
-    for (const entry of NodeFS.readdirSync(current, { withFileTypes: true })) {
-      const path = NodePath.join(current, entry.name);
-      if (entry.name === ".git" && current !== checkout)
+    let entries;
+    try {
+      entries = NodeFS.readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      return `unreadable ${NodePath.relative(checkout, current) || "."} (${String(error?.code)})`;
+    }
+    const names = new Set(entries.map((entry) => entry.name));
+    if (current !== checkout && looksLikeBareRepository(current, names)) {
+      return NodePath.relative(checkout, current);
+    }
+    for (const entry of entries) {
+      if (entry.name.toLowerCase() === ".git" && current !== checkout) {
         return NodePath.relative(checkout, current);
-      if (entry.isDirectory()) pending.push(path);
+      }
+      if (entry.isDirectory()) pending.push(NodePath.join(current, entry.name));
     }
   }
   return null;
@@ -263,11 +297,16 @@ export function nestedRepository(checkout) {
 function disposable(relative, absolute, stats) {
   const name = NodePath.basename(relative);
   if (name === ".t3") {
-    return (
-      stats.isDirectory() && NodeFS.readdirSync(absolute).every((file) => SETUP_MARKERS.has(file))
+    if (!stats.isDirectory()) return false;
+    return NodeFS.readdirSync(absolute, { withFileTypes: true }).every(
+      (file) => file.isFile() && SETUP_MARKERS.has(file.name),
     );
   }
-  return DISPOSABLE.has(name) || name.endsWith(".tsbuildinfo");
+  return (
+    DISPOSABLE.has(name) ||
+    DISPOSABLE_PATHS.has(relative) ||
+    DISPOSABLE_PATTERNS.some((pattern) => pattern.test(name))
+  );
 }
 
 export function keptIgnoredEntries(checkout, statusOutput) {
@@ -367,11 +406,14 @@ export function gatherFacts(checkout, { threads, processes, lockedPaths, rootAli
     facts.threads === 0 &&
     !facts.devState
   ) {
-    const nested = nestedRepository(checkout);
-    facts.ignoredKept = [
-      ...(nested ? [`nested repository ${nested}`] : []),
-      ...keptIgnoredEntries(checkout, statusText),
-    ];
+    try {
+      facts.ignoredKept = keptIgnoredEntries(checkout, statusText);
+    } catch (error) {
+      facts.ignoredKept = [`unreadable ignored files (${String(error?.code)})`];
+    }
+    // The walk is the slowest check, so it runs last.
+    const nested = facts.ignoredKept.length === 0 ? nestedRepository(checkout) : null;
+    if (nested) facts.ignoredKept.push(`nested repository ${nested}`);
     facts.merged = mergedReason(checkout, branch, head);
   }
   return facts;
@@ -421,6 +463,18 @@ function removeCheckout(facts, decision) {
   return removed.ok ? null : removed.stderr.trim();
 }
 
+function uninspectable(checkout, error) {
+  return {
+    name: NodePath.basename(checkout),
+    path: checkout,
+    action: "keep",
+    reason: `could not inspect it (${error instanceof Error ? error.message : String(error)})`,
+    lastActivityMs: Date.now(),
+    removed: false,
+    error: null,
+  };
+}
+
 export function sweep(options, { listProcesses = processPaths } = {}) {
   const now = Date.now();
   const checkouts = listCheckouts(options.root);
@@ -429,22 +483,37 @@ export function sweep(options, { listProcesses = processPaths } = {}) {
   const lockedPaths = lockedWorktrees(checkouts);
   const results = [];
   for (const checkout of checkouts) {
-    const facts = gatherFacts(checkout, {
-      threads,
-      processes,
-      lockedPaths,
-      rootAlias: options.rootAlias,
-    });
-    const decision = decide(facts, { now, idleDays: options.idleDays });
-    const result = { ...facts, ...decision, removed: false, error: null };
-    if (options.apply && decision.action === "remove") {
-      // Recheck right before removal: a thread or process may have started meanwhile.
-      const fresh = gatherFacts(checkout, {
+    // A checkout that can't be inspected is kept and reported; the others still run.
+    const inspect = () =>
+      gatherFacts(checkout, {
         threads: threadCounts(options.stateDb, [checkout]),
         processes: listProcesses(),
         lockedPaths: lockedWorktrees([checkout]),
         rootAlias: options.rootAlias,
       });
+    let facts;
+    try {
+      facts = gatherFacts(checkout, {
+        threads,
+        processes,
+        lockedPaths,
+        rootAlias: options.rootAlias,
+      });
+    } catch (error) {
+      results.push(uninspectable(checkout, error));
+      continue;
+    }
+    const decision = decide(facts, { now, idleDays: options.idleDays });
+    const result = { ...facts, ...decision, removed: false, error: null };
+    if (options.apply && decision.action === "remove") {
+      // Recheck right before removal: a thread or process may have started meanwhile.
+      let fresh;
+      try {
+        fresh = inspect();
+      } catch (error) {
+        results.push(uninspectable(checkout, error));
+        continue;
+      }
       const again = decide(fresh, { now: Date.now(), idleDays: options.idleDays });
       if (again.action !== "remove") Object.assign(result, again);
       else {
