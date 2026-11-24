@@ -29,7 +29,7 @@ const RECEIPT_KEYS = [
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_REPORT = 64 * 1024 * 1024;
 // The test_web and test_server matrix sizes in ci.yml.
-const SHARDS = { web: 12, server: 16 };
+const SHARDS = { web: 8, server: 12 };
 const TRANSFER_RESULT = "thread-transfer-result.json";
 const TRANSFER_SCENARIOS = "thread-transfer-scenarios.json";
 const assert = (condition, message) => {

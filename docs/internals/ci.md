@@ -37,7 +37,7 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   plugin; and `Test 6` runs desktop with its Electron runtime, browser secret helper libraries and
   export smokes. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.
-- **Test Web**: twelve shards of `vp run --filter @t3tools/web test --shard N/12`, each on its own
+- **Test Web**: eight shards of `vp run --filter @t3tools/web test --shard N/8`, each on its own
   runner, covering both unit tests and `*.browser.test.{ts,tsx}` in headless Chromium. This keeps
   the large web suite from competing with other workspace packages. The last shard first builds
   and boots the production web client and runs the editor timing budgets, on the runner's clean
@@ -51,7 +51,7 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   as `browser-lifecycle-<shard>-attempt-<n>` for 14 days; it is evidence for investigating a
   lost browser connection, not a qualification input, and does not change test results. Raw
   TCP close carries no WebSocket close code or reason.
-- **Test Server**: sixteen shards of `vp run --filter t3 test --shard N/16 --fileParallelism
+- **Test Server**: twelve shards of `vp run --filter t3 test --shard N/12 --fileParallelism
   --maxWorkers=4`. The server config keeps `fileParallelism: false` for local runs; CI runs four
   files at a time, each in its own process, and spends no Electron download on these shards.
   The last shard first runs the compute session Python bridge tests and the server timing
@@ -128,7 +128,9 @@ A matrix job skipped as a whole reports one unexpanded name, so a reusing queue 
 small `Test Web N` and `Test Server N` jobs that report the required shard names.
 
 Before confirming reuse, the run validates and republishes `thread-transfer-results` and every
-shard's Vitest JSON report under the normal artifact names, using its own run attempt. The reuse job and
+shard's Vitest JSON report under the normal artifact names, using its own run attempt. It reads
+reports only from a source that ran the same workflow content (the same tree, or for a push the
+same commit), so the source always has the shards this run's matrix names. The reuse job and
 `Test` summaries link to the source run. This preserves the successful main-push baseline
 consumed by the transfer reporter. Native packaging artifacts remain on the linked source run;
 releases still build their own artifacts.
@@ -194,8 +196,8 @@ node .github/scripts/verify-ci-shards.mjs
 ```
 
 A suite takes a main run only when that run has a successful report from every shard, using each
-shard's latest attempt; otherwise its file is not written and its `cp` fails, so the checked-in
-weights stay. The verifier loads the actual Vitest configurations, discovers every test
+shard's latest attempt, and from no other shard, so a run from before a shard-count change is not
+used; otherwise its file is not written and its `cp` fails, so the checked-in weights stay. The verifier loads the actual Vitest configurations, discovers every test
 specification, and checks that the configured partitions cover each exactly once. Vitest's
 `list --filesOnly --shard` does not apply the sequencer.
 

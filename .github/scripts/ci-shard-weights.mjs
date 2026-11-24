@@ -12,7 +12,7 @@ import { weightsFromReports } from "./shard-weights.mjs";
 
 const SUITES = ["web", "server"];
 // The shard matrices of test_web and test_server in ci.yml; a test keeps them equal.
-export const SHARDS = { web: 12, server: 16 };
+export const SHARDS = { web: 8, server: 12 };
 // Medians over a few runs keep one slow run from moving the split.
 export const RUNS_PER_SUITE = 3;
 const REPORT = /^vitest-(web|server)-(\d+)-attempt-(\d+)$/;

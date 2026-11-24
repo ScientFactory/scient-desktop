@@ -78,7 +78,7 @@ NodeTest.test(
         single("web", "src/a.test.ts", 30, true, 1, 2),
       ],
     };
-    // Twelve reports, but shard 13 instead of shard 1: not the matrix's shards.
+    // One report per shard, but shard 13 instead of shard 1: not the matrix's shards.
     const wrongShard = {
       runId: 10,
       reports: [
@@ -97,6 +97,30 @@ NodeTest.test(
     NodeAssert.equal(weights.web["src/a.test.ts"], 20);
   },
 );
+
+NodeTest.test("a run from a wider matrix, before the shard count fell, is not used", () => {
+  const wider = (suite, runId, seconds) => ({
+    runId,
+    reports: Array.from({ length: SHARDS[suite] + 4 }, (_, index) =>
+      single(
+        suite,
+        index === 0 ? "src/a.test.ts" : `src/shard-${index + 1}.test.ts`,
+        seconds,
+        true,
+        index + 1,
+      ),
+    ),
+  });
+  NodeAssert.deepEqual(recentWeights([wider("web", 2, 40), wider("server", 1, 40)]), {
+    web: null,
+    server: null,
+  });
+  const weights = recentWeights([
+    wider("web", 3, 40),
+    { runId: 2, reports: report("web", "src/a.test.ts", 5) },
+  ]);
+  NodeAssert.equal(weights.web["src/a.test.ts"], 5);
+});
 
 NodeTest.test("the shard counts match the CI matrices", () => {
   const workflow = NodeFS.readFileSync(
