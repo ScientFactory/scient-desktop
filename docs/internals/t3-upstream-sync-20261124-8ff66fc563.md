@@ -142,7 +142,8 @@ run that started has delivered its queued message (#41307).
   parent's task rows, also takes the parent's lock before the child's.
 - **Fork locks.** Scient's conversation fork took both threads' locks in name order, which could
   deadlock with a delegated child's run end (parent, then child). It now locks as T3 does: an
-  existing destination alone, otherwise the source before the new destination.
+  existing destination, or one forked from a missing source, alone; otherwise the source before
+  the new destination.
 - **Claude CLI descendants.** T3's shared process-table poll records and stops the CLI's detached
   Bash shells and helpers after it exits. Scient's own per-CLI sampling did the same work a second
   time on macOS and is removed; Scient's watcher for a server that dies stays. A failed read at
@@ -206,8 +207,9 @@ The marked blocks in T3 files are listed in `UPSTREAM.md` to offer upstream.
 ## Review
 
 Independent Codex reviews (GPT-6.2 Sol) are in `reviews/t3-sync-4ce9-20261123/`: the merge review
-(one P1, three P2s, two P3s), its re-check (one P1, four P2s, three P3s) and a final review of the
-whole branch (one P1, seven P2s, three P3s). All are fixed above.
+(one P1, three P2s, two P3s), its re-check (one P1, four P2s, three P3s), a review of the whole
+branch (one P1, seven P2s, three P3s), its re-check (one P1, four P2s) and a narrow check before
+merge (one P2, two P3s). All are fixed above, except the limits recorded as accepted.
 
 ## Analytics
 
