@@ -15261,6 +15261,11 @@
     },
     " hinzufügen für"
   ],
+  "343ed23b123919d6": "Anmeldung konnte nicht gestartet werden",
+  "1bfcefb0511c17c5": "Öffne Einstellungen → Erweiterungen, um die Anmeldung bei {name} abzuschließen",
+  "0595a3dddcfced3b": "Bei {name} anmelden",
+  "165b1e80e7911320": "Wird geöffnet…",
+  "9f90d63bcad3e2a7": "Verwalten",
   "5c6b2c0220202c13": "{first}, {second} und {count} weitere anzeigen",
   "8e531b8a23c825ed": "{first} und {second} anzeigen",
   "cfdd30a105672dea": "{name} anzeigen",
@@ -15461,9 +15466,26 @@
   "b95005276b251a4f": "Verbinde eine Ausführungsumgebung, um Erweiterungen zu verwalten.",
   "ecc76bbd8a7fa124": "Entdecken",
   "c136813370b18a00": "Alle MCP-Server durchsuchen",
+  "85f63fdc66c617bc": "Prüfung fehlgeschlagen",
+  "32e4206b582653e6": "{name} ist verbunden",
+  "a553be36e93303cd": "Bereit",
+  "1f8fa7d98ec3df40": "Zugangsdaten abgelehnt",
+  "efe132d82235637c": "Berechtigungen erforderlich",
+  "b2d917bb4b78f1fe": "Verbundene Dienste: {connected} bereit, {issues} brauchen Aufmerksamkeit",
   "7f83064be7319b99": "Verbundene Dienste: {delivered} übergeben, {skipped} übersprungen",
+  "479ca9411badb6b5": "Verbundene Dienste: {count} aktiv",
   "c7370daf10755896": "Übergeben",
+  "b10b1d18e63b6ca6": "MCP-Server des Agenten",
   "0dfc582858939130": "Übersprungen",
+  "1adf711055ecf6ae": "Sende eine Nachricht, um diese Sitzung zu wecken, und melde dich dann hier an.",
+  "0cd6a948710dc4f9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " brauchen Aufmerksamkeit"
+  ],
   "166fd2daa35c3b7b": [
     "· ",
     {
@@ -15474,8 +15496,19 @@
     " übersprungen"
   ],
   "34d5da835e278d6f": "Verbundene Dienste",
+  "57886ae9c159ba86": "Braucht Aufmerksamkeit",
   "60595a8acf9f6a18": "An diese Sitzung übergeben",
   "a87212dee280b4c9": "Keine",
+  "eefabf57c07b099f": "MCP-Server des Agenten",
+  "cbf2f207ca8b952b": [
+    "Optionale Plugin- oder Kontoserver ohne Anmeldung:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "bb4910d55ac221b8": "Verbundene Dienste verwalten",
   "04a25cc23244a916": "Scient konnte sich nicht bei GitHub anmelden. Versuche es erneut.",
   "3ccba1564083dc6e": "Anmeldecode kopieren",
@@ -21002,8 +21035,8 @@
   "d30766084a77c43d": "Hell",
   "9108c100510087ae": "Normal",
   "505335f730ff03bb": "Schriftstärke der Oberfläche",
-  "02e954957f67488d": "Diagrammwarnungen",
   "ca5372d2ce4632b8": "Diagrammwarnungen ({count})",
+  "02e954957f67488d": "Diagrammwarnungen",
   "bbfafcbe87c87a65": "Die Plotly-Quelle kann nicht geparst werden.",
   "69e585c0c8e31b4d": "Plotly-Abbildung",
   "25f2f2780bbe1756": "Die Plotly-Quelle kann nicht kopiert werden.",
