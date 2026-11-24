@@ -9,7 +9,28 @@ licensed runtime and a compatible Engine host. See [Run a MATLAB file](matlab-ru
 
 ## Set up a runtime
 
-The quickest path is to open a `.py` file and choose **Set up Python** in the file header. That
+Open a file and choose **Run**. Scient runs it with a Python you already have.
+
+New sessions use the first of these that applies: a choice for this run, a choice remembered for
+this project, the project's own environment (`.venv`, then `.conda`, then pixi's `default`, or a
+single child folder with `pyvenv.cfg`), the path or Scient-managed Python you picked, Scient-managed
+Python if set up, then other Pythons in PATH order. A runtime you chose that goes missing stays
+chosen and says why it cannot run. Agents follow the same order.
+
+Any CPython runs, with nothing added to it. Scient needs `jupyter_client` and `ipykernel` to run a
+session, and a Python that lacks them keeps running your code with your packages: Scient adds what
+is missing in its own folder and never writes to your environment. The first time a computer has
+no Python that can carry a session, Scient adds a small private Python of its own, about 60 MB,
+once. It hosts sessions and SQL, and it never runs your code.
+
+To choose a particular installation:
+
+1. Open **Settings → Scientific Computing** for the server environment you want to use.
+2. Open **Python**.
+3. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
+   **Found on this computer**, fill in **Add a location** and choose **Use**.
+
+If you have no Python to use, choose **Set up Python** in the file header. That
 opens the correct server's Scientific Computing settings, where **Set up Python** starts the
 installation. Scient downloads a verified installer and creates one private, shared Python
 environment for that Scient server. The included **Scientific Python** Toolkit covers numerical
@@ -34,25 +55,6 @@ Selecting a system or project Python does not add these packages to that install
 
 Setting up managed Python from a file that has no usable runtime selects the new environment. So does setting it up from Settings on **Automatic**. If you chose another Python, that
 choice stays, and the managed environment becomes another runtime you can select.
-
-The managed environment is optional. To use Python you already maintain instead:
-
-1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Open **Python**.
-3. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
-   **Found on this computer**, fill in **Add a location** and choose **Use**.
-
-Any CPython runs, with nothing added to it. Scient needs `jupyter_client` and `ipykernel` to run a
-session, and a Python that lacks them keeps running your code with your packages: Scient adds what
-is missing in its own folder and never writes to your environment. The first time a computer has
-no Python that can carry a session, Scient adds a small private Python of its own, about 60 MB,
-once. It hosts sessions and SQL, and it never runs your code.
-
-New sessions use the first of these that applies: a choice for this run, a choice remembered for
-this project, the project's own environment (`.venv`, then `.conda`, then pixi's `default`, or a
-single child folder with `pyvenv.cfg`), the path or Scient-managed Python you picked, Scient-managed
-Python if set up, then other Pythons in PATH order. A runtime you chose that goes missing stays
-chosen and says why it cannot run. Agents follow the same order.
 
 Settings → Scientific Computing shows every language at once: **Most used** first, then one group
 per field. Each language sits in one place and says where it stands: what it runs on, or **Not
@@ -463,21 +465,26 @@ session. The session actions menu contains **Restart session**, which clears Pyt
 keeping history, and **Stop session**, which closes the kernel while keeping history. Restart and stop
 ask for confirmation because their in-memory state cannot be recovered.
 
-Past sessions retain their exact submitted code, text output, errors, tracebacks, and static figures.
+Past sessions keep the exact code each run submitted. Their text output, errors, tracebacks and
+static figures are kept too, until newer runs fill the session's space: older or very large output
+is then replaced by a note that it was not kept. Publish a result or export it when you need it to
+last.
 Reopening a result never starts a kernel or replays code. Source links in the separate Compute
 surface return to the ordinary project editor. Python errors keep their full bounded traceback and
 show project-local frames as source links; dependency and standard-library frames stay readable but
 cannot become filesystem links. Files created by code are ordinary project files;
-Scient learns which SVG/PNG files an execution wrote and retains verified static figures, at any
-depth and through any library. It watches the project folder for the session or run; hidden folders,
-`node_modules`, and Python or conda environments are left out. Python also reports the files each
-cell saves. Scient reads only files inside the project that changed during the execution.
+Scient finds the SVG/PNG figures a run saved, at any depth and through any library, and keeps
+verified copies. Python reports the files each cell saves. Scient also watches the project folder
+for the session or run, leaving out hidden folders, `node_modules`, and Python or conda
+environments, and reads only files inside the project that changed during the execution. A file
+that changed during the run was not necessarily written by it: another program can save there too.
+Between queued cells of one notebook, a quicker search stands in for the watch, so those cells may
+show partial coverage.
 
 If the watch cannot start or loses events, for example while thousands of files change at once or on
 some network folders, Scient falls back to a bounded search for recently changed files. When that
 search cannot finish, verified figures are still retained alongside a compact coverage warning. The
-warning does not mean the code failed or establish that any figures were lost. A watched file also
-does not prove which process wrote it.
+warning does not mean the code failed or establish that any figures were lost.
 Changing the project file later does not rewrite what the earlier run displayed. Other generated
 file types remain ordinary project files and are not inferred from their names or printed paths.
 Retained compute history is operational data, not a second project filesystem or a portable result

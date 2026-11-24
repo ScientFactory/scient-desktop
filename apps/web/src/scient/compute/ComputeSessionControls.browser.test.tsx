@@ -16,7 +16,7 @@ import {
 } from "./computeContextStore";
 import { ComputeSessionControls } from "./ComputeSessionControls";
 
-const mocks = vi.hoisted(() => ({ stop: vi.fn() }));
+const mocks = vi.hoisted(() => ({ stop: vi.fn(), restart: vi.fn() }));
 vi.mock("~/state/compute", () => ({
   computeEnvironment: {
     interruptSession: "interrupt",
@@ -26,7 +26,8 @@ vi.mock("~/state/compute", () => ({
   },
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: string) => (command === "stop" ? mocks.stop : vi.fn()),
+  useAtomCommand: (command: string) =>
+    command === "stop" ? mocks.stop : command === "restart" ? mocks.restart : vi.fn(),
 }));
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 
@@ -85,5 +86,28 @@ describe("ComputeSessionControls", () => {
       input: { cwd: "/project", sessionId, expectedGeneration: generation },
     });
     expect(getComputeContext(scriptId)).toMatchObject({ lifecycle: "terminal", sessionId });
+  });
+
+  it("can still stop a session while its restart is under way", async () => {
+    scriptBorrowingConsole();
+    mocks.restart.mockReturnValue(new Promise(() => undefined));
+    await using _screen = await render(
+      <ComputeSessionControls
+        environmentId={environmentId}
+        cwd="/project"
+        session={session}
+        contextId={scriptId}
+        binding={getComputeContext(scriptId)}
+        onSettled={vi.fn()}
+      />,
+    );
+    await page.getByRole("button", { name: "Session actions" }).click();
+    await page.getByRole("menuitem", { name: "Restart session" }).click();
+    await page.getByRole("button", { name: "Restart session" }).click();
+    await vi.waitFor(() => expect(mocks.restart).toHaveBeenCalled());
+    await page.getByRole("button", { name: "Session actions" }).click();
+    await page.getByRole("menuitem", { name: "Stop session" }).click();
+    await page.getByRole("button", { name: "Stop session" }).click();
+    await vi.waitFor(() => expect(mocks.stop).toHaveBeenCalled());
   });
 });

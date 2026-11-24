@@ -89,7 +89,9 @@ project before and after it (`ComputeProjectOutputObserver`):
   (`ComputeProjectWriteWatch`), held for the session's runtime scope or one file run. `begin` only
   records a journal position, so admission never touches the disk. `collect` writes a sync file and
   waits for its event, which proves every earlier change was delivered. Coverage comes from this
-  watch alone.
+  watch, except between queued cells of one notebook: there a quick bounded scan of recent changes
+  stands in for the sync wait so the next cell starts sooner, and the cell's coverage reads as
+  partial even on a healthy watch.
 - Python kernels also carry an audit-hook recorder that notes figure and table files each cell opens
   for writing, renames or copies; the bridge sends it as `writes` on `execution-complete`. It adds
   candidates the watch may have lost and proves nothing about coverage: a write through a handle
