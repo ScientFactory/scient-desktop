@@ -140,16 +140,19 @@ run that started has delivered its queued message (#41307).
   lock first while the child's task is unrecorded, and its dispatch records the finished task and
   dismisses its open questions before the new run. Replaying unread steers, which can write the
   parent's task rows, also takes the parent's lock before the child's.
+- **Fork locks.** Scient's conversation fork took both threads' locks in name order, which could
+  deadlock with a delegated child's run end (parent, then child). It now locks as T3 does: an
+  existing destination alone, otherwise the source before the new destination.
 - **Claude CLI descendants.** T3's shared process-table poll records and stops the CLI's detached
   Bash shells and helpers after it exits. Scient's own per-CLI sampling did the same work a second
   time on macOS and is removed; Scient's watcher for a server that dies stays. A failed read at
   exit is retried twice and unverified cleanup is logged; the CLI counts as a root only while the
   same process (pid and start time) is listed, and a refresh that finishes after the exit records
   nothing.
-- **Dev database writes.** `migrate-dev-db` writes (rebuild and `--drop-resumable`) need a proven
-  scratch destination: inside a Git checkout, such as a worktree's dev home, or the system temp
-  folder, and no hard link to a T3 or Scient home's database. A stopped profile anywhere else is
-  refused.
+- **Dev database writes.** `migrate-dev-db` writes (rebuild and `--drop-resumable`) refuse a
+  database in the T3 or Scient home (every profile, the dev identity's included; Scient's managed
+  checkouts excepted), one outside a Git checkout or temp folder, and a hard link to a home's
+  database. A worktree's dev home, which the dev runner names as the home, stays writable.
 - **Install refusals.** Scient's install action waits through T3's failure listener (#41262), which
   also keeps a refusal that arrives before the install reply, so the failure shows in either order.
 - **Reading position.** T3's width-change correction also runs while a thread's open-at-end
@@ -160,15 +163,16 @@ run that started has delivered its queued message (#41307).
   sample count is refused before decoding. Scient's decoder does not follow Exif or GPS
   directories, so T3's pointer-rejection cases have no Scient counterpart.
 - **Storage cleanup (#41386).** A leftover worktree admin directory is recorded with its file
-  identity and back-pointer; it is moved aside, checked again and only then deleted, so metadata a
-  reused admin path now belongs to is kept. An unreadable back-pointer keeps the entry for the next
-  sweep.
+  identity and back-pointer and deleted only while it is still that directory, checked again just
+  before the delete, so metadata a reused admin path now belongs to is kept. An unreadable
+  back-pointer keeps the entry for the next sweep.
 - **MCP tool results (#41552).** Result generations are issued and written only for the thread's
   open session and dropped with it, so the cache no longer keeps one per thread a long-lived server
   has seen, and a call admitted just before teardown cannot recreate it.
 - **Workspace binding.** Binding evidence uses the configured remote URL with the resolver's rule
-  (#41364) and records the rewritten URL's key as transport, so adding or removing an `insteadOf`
-  mirror rewrite keeps a binding current; bindings stored under the rewritten key still match.
+  (#41364), so adding or removing an `insteadOf` mirror rewrite keeps a binding current. Current
+  records compare by that key only; a record saved before this alignment under the rewritten key
+  migrates to it without a new generation.
 - **Development runbook.** T3's forge-mirror section no longer tells contributors to repoint
   `origin`.
 - **Tests.** A duplicated workspace read test is removed (its revision check moved into T3's copy)
@@ -190,9 +194,14 @@ The marked blocks in T3 files are listed in `UPSTREAM.md` to offer upstream.
 
 - A binding whose old evidence picked a different remote, because a rewrite made the preferred
   remote's URL a local path, is re-verified once with a new generation.
+- A binding made from a mirror's own URL migrates without a new generation when a later rewrite
+  makes that mirror stand in for a forge URL; the checkout still fetches from the same mirror.
 - Guest sends, provider-initiated turns, pull request wakes and link answers share the delegated
   settlement path tested with messages and workspace continuations, without tests of their own.
-- The storage cleanup's move-aside step has not run on Windows.
+- `migrate-dev-db` treats any Git checkout or temp folder outside the homes as scratch; a profile
+  someone keeps there under `--base-dir` is theirs to protect.
+- Storage cleanup checks a leftover's identity just before deleting it; a Git worktree created
+  under the same name in that instant could still lose its metadata.
 
 ## Review
 
