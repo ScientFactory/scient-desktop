@@ -40,6 +40,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { ScientServerSettings } from "../scientServerSettings.ts"; // SCIENT-FORK
 import { deletedProjectOverridePatch } from "../provider/ProjectSettingsOverrideSweep.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -204,6 +205,7 @@ export const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const scientSettings = yield* ScientServerSettings; // SCIENT-FORK: project override removal
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
@@ -747,9 +749,7 @@ export const make = Effect.gen(function* () {
     serverSettings.getSettings.pipe(
       Effect.flatMap(({ projectSettingsOverrides }) => {
         const patch = deletedProjectOverridePatch(projectSettingsOverrides[projectId]);
-        const removal =
-          serverSettings.removeProjectSettingsOverrides?.([projectId]) ??
-          Effect.die(new Error("Settings service cannot remove project overrides."));
+        const removal = scientSettings.removeProjectSettingsOverrides([projectId]);
         return patch === null
           ? removal
           : removal.pipe(

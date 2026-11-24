@@ -28,7 +28,7 @@ import { encodeOmpModelSlug } from "../../provider/omp/OmpModel.ts";
 import { encodePiModelSlug } from "@t3tools/provider-pi/server/model";
 import type * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import type * as ServerSettings from "../../serverSettings.ts";
-import { customModelMethods } from "../../scientServerSettings.ts";
+import type { ScientServerSettings } from "../../scientServerSettings.ts";
 import { droidToolGuardTestRefusal } from "../../textGeneration/DroidTextGeneration.ts";
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 
@@ -73,12 +73,13 @@ const customModelTestFailure = (
 export const testCustomModel = (
   services: {
     readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+    readonly scientSettings: ScientServerSettings["Service"];
     readonly providerInstances: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
     readonly config: ServerConfig.ServerConfig["Service"];
   },
   input: typeof CustomModelTestInput.Type,
 ): Effect.Effect<{ readonly revision: number }, CustomModelError> => {
-  const { serverSettings, providerInstances, config } = services;
+  const { serverSettings, scientSettings, providerInstances, config } = services;
   return Effect.gen(function* () {
     const settings = yield* serverSettings.getSettings;
     if (settings.customModels.revision !== input.revision)
@@ -98,9 +99,7 @@ export const testCustomModel = (
       return yield* new CustomModelError({
         message: "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
       });
-    const resolved = yield* customModelMethods(serverSettings).resolveCustomModels(
-      input.instanceId,
-    );
+    const resolved = yield* scientSettings.resolveCustomModels(input.instanceId);
     const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
     if (credentialError !== undefined)
       return yield* new CustomModelError({ message: credentialError });
@@ -138,26 +137,24 @@ export const testCustomModel = (
 export const makeCustomModelRpcHandlers = ({
   observeRpcEffect,
   serverSettings,
+  scientSettings,
   providerInstances,
   config,
 }: Pick<ScientRpcObservers, "observeRpcEffect"> & {
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+  readonly scientSettings: ScientServerSettings["Service"];
   readonly providerInstances: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
   readonly config: ServerConfig.ServerConfig["Service"];
 }) =>
   ({
     [WS_METHODS.serverSaveCustomModel]: (input) =>
-      observeRpcEffect(
-        WS_METHODS.serverSaveCustomModel,
-        customModelMethods(serverSettings).saveCustomModel(input),
-        {
-          "rpc.aggregate": "server",
-        },
-      ),
+      observeRpcEffect(WS_METHODS.serverSaveCustomModel, scientSettings.saveCustomModel(input), {
+        "rpc.aggregate": "server",
+      }),
     [WS_METHODS.serverRemoveCustomModel]: (input) =>
       observeRpcEffect(
         WS_METHODS.serverRemoveCustomModel,
-        customModelMethods(serverSettings).removeCustomModel(input),
+        scientSettings.removeCustomModel(input),
         {
           "rpc.aggregate": "server",
         },
@@ -165,7 +162,7 @@ export const makeCustomModelRpcHandlers = ({
     [WS_METHODS.serverTestCustomModel]: (input) =>
       observeRpcEffect(
         WS_METHODS.serverTestCustomModel,
-        testCustomModel({ serverSettings, providerInstances, config }, input),
+        testCustomModel({ serverSettings, scientSettings, providerInstances, config }, input),
         { "rpc.aggregate": "server" },
       ),
   }) satisfies ScientRpcHandlerSubset<

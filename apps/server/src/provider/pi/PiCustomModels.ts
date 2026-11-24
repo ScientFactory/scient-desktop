@@ -22,8 +22,7 @@ import {
   customModelRuntimeChange,
   effectiveCustomModelReasoning,
 } from "../../customModelCapabilities.ts";
-import type { ServerSettingsService } from "../../serverSettings.ts";
-import { customModelMethods } from "../../scientServerSettings.ts";
+import type { CustomModelSettingsSource } from "../../scientServerSettings.ts";
 import {
   makePiRpcClient,
   PiRpcProtocolError,
@@ -187,17 +186,13 @@ export default async function(pi) {
 
 /** One integration path for discovery, chat, and background generation. */
 export const makePiCustomModelsClientFactory = Effect.fn("PiCustomModels.make")(function* (
-  settings: Pick<
-    ServerSettingsService["Service"],
-    "resolveCustomModels" | "getSettings" | "subscribeChanges"
-  >,
+  settings: CustomModelSettingsSource<"getSettings" | "subscribeChanges", "resolveCustomModels">,
   instanceId: ProviderInstanceId,
   stateDir: string,
   makeClient: typeof makePiRpcClient = makePiRpcClient,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { resolveCustomModels } = customModelMethods(settings);
   const directory = path.join(stateDir, "pi", "extensions");
   yield* fs.makeDirectory(directory, { recursive: true });
   const extensionPath = path.join(directory, "scient-custom-models.mjs");
@@ -279,7 +274,7 @@ export const makePiCustomModelsClientFactory = Effect.fn("PiCustomModels.make")(
         void Effect.runPromiseWith(context)(
           Effect.gen(function* () {
             yield* checkAuthority;
-            const connections = yield* resolveCustomModels(instanceId);
+            const connections = yield* settings.resolveCustomModels(instanceId);
             if (customModelRuntimeChange(loaded, connections, instanceId) === "revoke") {
               yield* retire;
             }

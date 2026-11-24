@@ -550,7 +550,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         let catalog: CustomModelsSettings = { revision: 0, connections: [] };
         yield* buildAppUnderTest({
           layers: {
-            serverSettings: {
+            scientServerSettings: {
               saveCustomModel: (input) =>
                 Effect.sync(() => {
                   assert.equal(Redacted.value(input.apiKey!), "synthetic-wire-key");
@@ -672,6 +672,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                 calls.reads += 1;
                 return { ...DEFAULT_SERVER_SETTINGS, customModels: catalog };
               }),
+            },
+            scientServerSettings: {
               saveCustomModel: () =>
                 Effect.sync(() => {
                   calls.saves += 1;
@@ -885,6 +887,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           layers: {
             serverSettings: {
               getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+            },
+            scientServerSettings: {
               resolveCustomModels: () =>
                 Effect.succeed([
                   missingCapacity
@@ -994,6 +998,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             layers: {
               serverSettings: {
                 getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+              },
+              scientServerSettings: {
                 resolveCustomModels: () =>
                   Effect.succeed([
                     { ...catalog.connections[0]!, apiKey: Redacted.make("synthetic-key") },
@@ -1129,6 +1135,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             layers: {
               serverSettings: {
                 getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+              },
+              scientServerSettings: {
                 resolveCustomModels: () =>
                   Effect.succeed([
                     { ...catalog.connections[0]!, apiKey: Redacted.make("synthetic-key") },
@@ -1230,6 +1238,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           layers: {
             serverSettings: {
               getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+            },
+            scientServerSettings: {
               resolveCustomModels: () =>
                 Effect.succeed([{ ...catalog.connections[0]!, apiKey: null }]),
             },

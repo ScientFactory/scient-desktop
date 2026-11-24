@@ -10,10 +10,12 @@ import * as Scope from "effect/Scope";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import type * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import type * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 
 export function makeScientProviderReload(deps: {
   readonly instanceRegistry: ProviderInstanceRegistry.ProviderInstanceRegistryShape;
+  readonly rebuild: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuild"];
   readonly layerScope: Scope.Scope;
   readonly syncLiveSources: Effect.Effect<unknown, never, Scope.Scope>;
   readonly getLiveInstances: Effect.Effect<ReadonlyMap<ProviderInstanceId, ProviderInstance>>;
@@ -31,6 +33,7 @@ export function makeScientProviderReload(deps: {
 }) {
   const {
     instanceRegistry,
+    rebuild,
     layerScope,
     syncLiveSources,
     getLiveInstances,
@@ -41,10 +44,22 @@ export function makeScientProviderReload(deps: {
     authenticationFailuresRef,
   } = deps;
 
+  // Every configured id is live or unavailable; the mutator would reconcile all for any other id.
+  const rebuildConfigured = Effect.fn("ProviderRegistry.rebuildConfigured")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const configured =
+      (yield* instanceRegistry.getInstance(instanceId)) !== undefined ||
+      (yield* instanceRegistry.listUnavailable).some(
+        (provider) => provider.instanceId === instanceId,
+      );
+    if (configured) yield* rebuild([instanceId]);
+  });
+
   const reloadInstance = Effect.fn("ProviderRegistry.reloadInstance")(function* (
     instanceId: ProviderInstanceId,
   ) {
-    yield* instanceRegistry.rebuildInstance?.(instanceId) ?? Effect.void;
+    yield* rebuildConfigured(instanceId);
     // Do not race the registry-change subscriber: attach the replacement
     // source synchronously before asking it to probe the newly active path.
     yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
@@ -137,7 +152,7 @@ export function makeScientProviderReload(deps: {
     instanceId: ProviderInstanceId,
   ) {
     return yield* Effect.gen(function* () {
-      yield* instanceRegistry.rebuildInstance?.(instanceId) ?? Effect.void;
+      yield* rebuildConfigured(instanceId);
       yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
       const instance = (yield* getLiveInstances).get(instanceId);
       if (!instance) {

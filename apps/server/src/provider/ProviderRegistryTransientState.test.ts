@@ -203,7 +203,6 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
       Ref.get(instancesRef).pipe(
         Effect.map((instances) => instances.find((instance) => instance.instanceId === instanceId)),
       ),
-    rebuildInstance: () => Effect.void,
     listInstances: Ref.get(instancesRef),
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.fromPubSub(registryChanges),

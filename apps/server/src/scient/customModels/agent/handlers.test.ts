@@ -29,6 +29,7 @@ import { ProviderInstanceRegistry } from "../../../provider/ProviderInstanceRegi
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
+import { ScientServerSettings } from "../../../scientServerSettings.ts";
 import * as CustomModelsHandlers from "./handlers.ts";
 import { CustomModelsToolkit } from "./tools.ts";
 
@@ -100,6 +101,8 @@ it.effect("adds, limits and removes a custom model through the agent tools", () 
       }),
       Layer.mock(ServerSettingsService)({
         getSettings: Effect.sync(() => ({ ...DEFAULT_SERVER_SETTINGS, customModels })),
+      }),
+      Layer.mock(ScientServerSettings)({
         committedCustomModels: () => customModels,
         saveCustomModel: (input) =>
           Effect.sync(() => {

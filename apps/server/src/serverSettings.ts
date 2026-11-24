@@ -93,7 +93,7 @@ import {
   customModelsTestMethods,
   fallbackTextGenerationProvider,
   makeCustomModelSettingsMethods,
-  type CustomModelSettingsMethods,
+  ScientServerSettings,
 } from "./scientServerSettings.ts";
 // SCIENT-FORK:END
 import {
@@ -334,20 +334,11 @@ export class ServerSettingsService extends Context.Service<
     readonly setRemovedAgentKeeper?: (keeper: RemovedAgentKeeper) => Effect.Effect<void>;
     // SCIENT-FORK:END
 
-    // SCIENT-FORK:START — authoritative project deletion. Server-only: no RPC exposes it.
-    // Optional so T3's hand-built doubles stay T3's; the live and test layers always provide it.
-    readonly removeProjectSettingsOverrides?: (
-      projectIds: ReadonlyArray<ProjectId>,
-    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
-    // SCIENT-FORK:END
-
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
     /** Subscribe before reading a snapshot to retain changes before lazy stream startup. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
-    // SCIENT-FORK:START — custom-model catalog methods; read them through `customModelMethods`.
-  } & Partial<CustomModelSettingsMethods>
-  // SCIENT-FORK:END
+  }
 >()("t3/serverSettings/ServerSettingsService") {
   static readonly layerTest = (
     overrides: DeepPartial<ServerSettings> = {},
@@ -392,11 +383,20 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       ),
     );
 
-  return {
-    // SCIENT-FORK:START — custom models share the committed settings snapshot.
+  // SCIENT-FORK:START — Scient's settings capabilities share the snapshot and writer.
+  const scient = ScientServerSettings.of({
     ...customModelsTestMethods,
     committedCustomModels: () => Ref.getUnsafe(currentSettingsRef).customModels,
-    // SCIENT-FORK:END
+    removeProjectSettingsOverrides: Effect.fn("serverSettings.removeProjectSettingsOverrides")(
+      (projectIds: ReadonlyArray<ProjectId>) =>
+        updateTestSettings((currentSettings) =>
+          Effect.succeed(withoutProjectSettingsOverrides(currentSettings, projectIds)),
+        ),
+    ),
+  });
+  // SCIENT-FORK:END
+
+  const service = {
     managedPolicy,
     start: Effect.void,
     ready: Effect.void,
@@ -422,28 +422,23 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
-    // SCIENT-FORK:START — authoritative project deletion
-    removeProjectSettingsOverrides: (projectIds) =>
-      updateTestSettings((currentSettings) =>
-        Effect.succeed(withoutProjectSettingsOverrides(currentSettings, projectIds)),
-      ),
-    // SCIENT-FORK:END
     withSettingsSnapshot: (use) =>
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.succeed(Stream.empty),
   } satisfies ServerSettingsService["Service"];
+  // SCIENT-FORK:START — Scient's settings capabilities come from the same build.
+  return Context.make(ServerSettingsService, service).pipe(
+    Context.add(ScientServerSettings, scient),
+  );
+  // SCIENT-FORK:END
 });
 
 /** Test settings; `managedPolicy` only tells consumers a policy applies, it does not lock values. */
 export const layerTest = (
   overrides: DeepPartial<ServerSettings> = {},
   managedPolicy?: ManagedPolicySummary,
-) => Layer.effect(ServerSettingsService, makeTest(overrides, managedPolicy));
-
-// SCIENT-FORK:START — custom-model test members
-export { customModelsTestMethods } from "./scientServerSettings.ts";
-// SCIENT-FORK:END
+) => Layer.effectContext(makeTest(overrides, managedPolicy)); // SCIENT-FORK: and ScientServerSettings
 
 // Accept retired token delivery only on load so one old value cannot reset all settings.
 const PersistedResponseStreamingMode = Schema.Union([
@@ -1848,11 +1843,8 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
-  return {
-    managedPolicy,
-    start,
-    ready: Deferred.await(startedDeferred),
-    // SCIENT-FORK:START — custom-model catalog methods
+  // SCIENT-FORK:START — Scient's settings capabilities share the cache, writer and committed catalog.
+  const scient = ScientServerSettings.of({
     ...makeCustomModelSettingsMethods({
       secretStore: customModelSecrets,
       modelReasoning,
@@ -1864,7 +1856,20 @@ const make = Effect.gen(function* () {
       emitChange,
       committedCustomModels,
     }),
-    // SCIENT-FORK:END
+    removeProjectSettingsOverrides: Effect.fn("serverSettings.removeProjectSettingsOverrides")(
+      function* (projectIds: ReadonlyArray<ProjectId>) {
+        return yield* updateAndPersistSettings({}, (current) =>
+          Effect.succeed(withoutProjectSettingsOverrides(current, projectIds)),
+        );
+      },
+    ),
+  });
+  // SCIENT-FORK:END
+
+  const service = {
+    managedPolicy,
+    start,
+    ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
@@ -1895,15 +1900,6 @@ const make = Effect.gen(function* () {
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
-    // SCIENT-FORK:START — authoritative project deletion shares the serialized settings writer.
-    removeProjectSettingsOverrides: Effect.fn("serverSettings.removeProjectSettingsOverrides")(
-      function* (projectIds: ReadonlyArray<ProjectId>) {
-        return yield* updateAndPersistSettings({}, (current) =>
-          Effect.succeed(withoutProjectSettingsOverrides(current, projectIds)),
-        );
-      },
-    ),
-    // SCIENT-FORK:END
     withSettingsSnapshot,
     // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
     setRemovedAgentKeeper: (keeper) =>
@@ -1920,10 +1916,14 @@ const make = Effect.gen(function* () {
       );
     },
   } satisfies ServerSettingsService["Service"];
+  // SCIENT-FORK:START — Scient's settings capabilities come from the same build.
+  return Context.make(ServerSettingsService, service).pipe(
+    Context.add(ScientServerSettings, scient),
+  );
+  // SCIENT-FORK:END
 });
 
 // SCIENT-FORK:START — Scient Accounts: share encrypted Custom models storage without changing other secret-store users.
-export const layer = Layer.effect(ServerSettingsService, make).pipe(
-  Layer.provide(accountsSecretStoreLayer),
-);
+// ScientServerSettings comes from the same build as the settings service.
+export const layer = Layer.effectContext(make).pipe(Layer.provide(accountsSecretStoreLayer));
 // SCIENT-FORK:END

@@ -1552,6 +1552,7 @@ export const layer = Layer.effect(
       reloadInstanceStrict,
     } = makeScientProviderReload({
       instanceRegistry,
+      rebuild: instanceRegistryMutator.rebuild,
       layerScope,
       syncLiveSources,
       getLiveInstances: Ref.get(liveSubsRef),

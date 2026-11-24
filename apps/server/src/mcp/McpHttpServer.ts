@@ -46,10 +46,7 @@ import {
   scientToolVariants,
 } from "./ScientOperationCatalog.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
-import {
-  noWorkspaceBindings,
-  WorkspaceBindingResolver,
-} from "../scient/projectScope/WorkspaceBindingResolver.ts";
+import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
   makeScientToolListLayer,
   ScientMcpProtocol,
@@ -1132,11 +1129,7 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
           }
         }
         const server = yield* McpServer.McpServer;
-        // A host without the binding store (T3's harnesses) resolves no workspace.
-        const resolver = Option.getOrElse(
-          yield* Effect.serviceOption(WorkspaceBindingResolver),
-          () => noWorkspaceBindings,
-        );
+        const resolver = yield* WorkspaceBindingResolver;
         const guarded = McpServer.McpServer.of({
           ...server,
           addTool: Effect.fn("McpServer.addTool")(function (registration) {

@@ -749,7 +749,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             {
               getInstance: (instanceId) =>
                 Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
-              rebuildInstance: () => Effect.void,
               listInstances: Effect.succeed([instance]),
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
@@ -877,7 +876,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               {
                 getInstance: (instanceId) =>
                   Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
-                rebuildInstance: () => Effect.void,
                 listInstances: Effect.succeed([instance]),
                 listUnavailable: Effect.succeed([]),
                 streamChanges: Stream.empty,
@@ -886,11 +884,16 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 ),
               },
             );
+            const rebuilt: Array<ProviderInstanceId> = [];
             const scope = yield* Scope.make();
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const runtimeServices = yield* Layer.build(
               ProviderRegistryLive.pipe(
-                Layer.provide(layerUnusedMutator),
+                Layer.provide(
+                  Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+                    rebuild: (instanceIds) => Effect.sync(() => void rebuilt.push(...instanceIds)),
+                  }),
+                ),
                 Layer.provideMerge(instanceRegistryLayer),
                 Layer.provideMerge(
                   ServerConfig.layerTest(process.cwd(), {
@@ -947,6 +950,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 .pipe(Effect.flip);
               assert.strictEqual(missingReloadError.operation, "reload");
               assert.strictEqual(missingReloadError.instanceId, missingInstanceId);
+              // Both reloads rebuilt the configured instance; the unknown one rebuilt nothing.
+              assert.deepStrictEqual(rebuilt, [codexInstanceId, codexInstanceId]);
             }).pipe(Effect.provide(runtimeServices));
           }),
       );

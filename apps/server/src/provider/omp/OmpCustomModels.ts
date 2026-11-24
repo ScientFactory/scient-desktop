@@ -30,8 +30,7 @@ import {
   effectiveCustomModelReasoning,
 } from "../../customModelCapabilities.ts";
 import type { ServerSettings } from "@t3tools/contracts";
-import type { ServerSettingsService } from "../../serverSettings.ts";
-import { customModelMethods } from "../../scientServerSettings.ts";
+import type { CustomModelSettingsSource } from "../../scientServerSettings.ts";
 import { OmpExecutableGate } from "./OmpExecutableGate.ts";
 import {
   ompExtensionBootstrapPrelude,
@@ -525,7 +524,7 @@ const settingsRevision = (settings: ServerSettings): number | undefined => {
 export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeClientFactory")(
   function* (
     target: OmpTarget,
-    settings: Pick<ServerSettingsService["Service"], "resolveCustomModels" | "subscribeChanges">,
+    settings: CustomModelSettingsSource<"subscribeChanges", "resolveCustomModels">,
     instanceId: ProviderInstanceId,
     stateDir: string,
     makeProcess: OmpProcessFactory = makeOmpRpcProcess,
@@ -537,7 +536,6 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
     // Every process this factory starts leases its executable from the
     // server's gate, whichever caller runs it.
     const gate = yield* OmpExecutableGate;
-    const { resolveCustomModels } = customModelMethods(settings);
     const refreshTimeoutMs = timing.refreshTimeoutMs ?? OMP_MODELS_REFRESH_TIMEOUT_MS;
     const waitHoldMs = timing.waitHoldMs ?? OMP_MODELS_WAIT_HOLD_MS;
     const requestTimeoutMs = timing.requestTimeoutMs ?? OMP_MODELS_REQUEST_TIMEOUT_MS;
@@ -553,7 +551,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
         // Subscribe before the initial read so a settings change cannot be
         // missed between startup resolution and the live bridge.
         const changes = yield* settings.subscribeChanges;
-        const initialConnections = yield* resolveCustomModels(instanceId).pipe(
+        const initialConnections = yield* settings.resolveCustomModels(instanceId).pipe(
           Effect.map(ompConnections(target)),
           Effect.mapError(
             (cause) =>
@@ -587,7 +585,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
         const resolveCurrent: Effect.Effect<
           ReadonlyArray<ResolvedModelConnection>,
           OmpRpcProtocolError
-        > = Effect.suspend(() => resolveCustomModels(instanceId)).pipe(
+        > = Effect.suspend(() => settings.resolveCustomModels(instanceId)).pipe(
           Effect.map(ompConnections(target)),
           Effect.mapError(
             (cause) =>

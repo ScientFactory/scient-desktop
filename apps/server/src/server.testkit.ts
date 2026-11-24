@@ -176,6 +176,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { ScientServerSettings } from "./scientServerSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -622,6 +623,7 @@ export const buildAppUnderTest = (options?: {
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     codexInstallation?: Partial<CodexInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+    scientServerSettings?: Partial<ScientServerSettings["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
@@ -801,17 +803,22 @@ export const buildAppUnderTest = (options?: {
         }),
       ...options?.layers?.vcsDriverRegistry,
     });
-    const serverSettingsLayer = Layer.mock(ServerSettings.ServerSettingsService)({
-      managedPolicy: undefined,
-      start: Effect.void,
-      ready: Effect.void,
-      getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-      updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
-      committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
-      ...options?.layers?.serverSettings,
-    });
+    const serverSettingsLayer = Layer.merge(
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        managedPolicy: undefined,
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+        ...options?.layers?.serverSettings,
+      }),
+      Layer.mock(ScientServerSettings)({
+        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
+        ...options?.layers?.scientServerSettings,
+      }),
+    );
     const gitVcsDriverLayer = Layer.mock(GitVcsDriver.GitVcsDriver)({
       // Worktree launches read the local branch names first; none block by default.
       listLocalBranchNames: () => Effect.succeed([]),

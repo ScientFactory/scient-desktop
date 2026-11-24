@@ -1,8 +1,6 @@
 /**
- * Scient extensions to the server settings service: the custom-model
- * catalog's service methods and the text-generation fallback that keeps the
- * default-on Scient Agent as the last resort.
- *
+ * Scient's settings service, built by the settings layers so it shares their state,
+ * and the text-generation fallback that keeps the default-on Scient Agent last.
  * @module scientServerSettings
  */
 import {
@@ -10,6 +8,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type CustomModelSaveInput,
   type CustomModelsSettings,
+  type ProjectId,
   type ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -17,11 +16,13 @@ import {
   type ServerSettingsError,
 } from "@t3tools/contracts";
 import { fallbackScientTextGenerationModelSelection } from "@t3tools/shared/scientTextGenerationSelection";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import type * as Semaphore from "effect/Semaphore";
 
 import type * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import type { ServerSettingsService } from "./serverSettings.ts";
 import type { makeCustomModelReasoning } from "./customModelReasoning.ts";
 import {
   customModelSecretName,
@@ -31,7 +32,7 @@ import {
   type ResolvedModelConnection,
 } from "./customModels.ts";
 
-/** Custom-model members of the server settings service. */
+/** Custom-model members of the Scient settings service. */
 export interface CustomModelSettingsMethods {
   readonly saveCustomModel: (
     input: CustomModelSaveInput,
@@ -69,24 +70,37 @@ export const customModelsTestMethods = {
   committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
 } satisfies CustomModelSettingsMethods;
 
-/**
- * The members are optional on T3's settings shape so T3's test doubles need none of them.
- * Both settings layers provide all of them; a double without them has no custom models.
- * Own properties only: `Layer.mock` answers a missing member with a stub that dies.
- */
-export const customModelMethods = (
-  service: Partial<CustomModelSettingsMethods>,
-): CustomModelSettingsMethods => {
-  const own = <K extends keyof CustomModelSettingsMethods>(key: K) =>
-    Object.hasOwn(service, key) ? service[key] : undefined;
-  return {
-    saveCustomModel: own("saveCustomModel") ?? customModelsTestMethods.saveCustomModel,
-    removeCustomModel: own("removeCustomModel") ?? customModelsTestMethods.removeCustomModel,
-    resolveCustomModels: own("resolveCustomModels") ?? customModelsTestMethods.resolveCustomModels,
-    committedCustomModels:
-      own("committedCustomModels") ?? customModelsTestMethods.committedCustomModels,
-  };
-};
+/** Scient's settings capabilities; the settings layers build it with the settings service. */
+interface ScientServerSettingsShape extends CustomModelSettingsMethods {
+  /** Authoritative project deletion. Server-only: no RPC exposes it. */
+  readonly removeProjectSettingsOverrides: (
+    projectIds: ReadonlyArray<ProjectId>,
+  ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+}
+
+export class ScientServerSettings extends Context.Service<
+  ScientServerSettings,
+  ScientServerSettingsShape
+>()("t3/scientServerSettings") {}
+
+/** What a custom-model runtime reads: settings members `T` and catalog members `C`. */
+export type CustomModelSettingsSource<
+  T extends keyof ServerSettingsService["Service"],
+  C extends keyof CustomModelSettingsMethods,
+> = Pick<ServerSettingsService["Service"], T> & Pick<CustomModelSettingsMethods, C>;
+
+/** The catalog from Scient's service with the settings reads and changes it follows. */
+export const customModelSettingsSource = (
+  settings: Pick<ServerSettingsService["Service"], "getSettings" | "subscribeChanges">,
+  scient: CustomModelSettingsMethods,
+): CustomModelSettingsSource<
+  "getSettings" | "subscribeChanges",
+  keyof CustomModelSettingsMethods
+> => ({
+  ...scient,
+  getSettings: settings.getSettings,
+  subscribeChanges: settings.subscribeChanges,
+});
 
 /** Settings-service state the custom-model methods read and commit through. */
 export interface CustomModelSettingsInput {

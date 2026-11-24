@@ -337,6 +337,7 @@ import {
   refreshManagedRuntimes,
 } from "./scient/providerLifecycle/ProviderConnectionRpcHandlers.ts";
 import { makeCustomModelRpcHandlers } from "./scient/providerLifecycle/CustomModelRpcHandlers.ts";
+import { ScientServerSettings } from "./scientServerSettings.ts";
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
 import {
   projectFileErrorReason,
@@ -2052,6 +2053,7 @@ export const layerWsRpc = (
       const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
       const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
       const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
+      const scientSettings = yield* ScientServerSettings;
       const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
         registry: providerRegistry,
         serverSettings,
@@ -3358,6 +3360,7 @@ export const layerWsRpc = (
         ...makeCustomModelRpcHandlers({
           observeRpcEffect,
           serverSettings,
+          scientSettings,
           providerInstances,
           config,
         }),

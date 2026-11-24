@@ -70,19 +70,6 @@ export class WorkspaceBindingResolver extends Context.Service<
   }
 >()("t3/scient/projectScope/WorkspaceBindingResolver") {}
 
-const unavailable = (operation: string) => () =>
-  Effect.fail(new WorkspaceBindingResolutionError({ operation, kind: "workspace-unavailable" }));
-
-/** Fail-closed stand-in where a host has no binding store: no workspace resolves. */
-export const noWorkspaceBindings = WorkspaceBindingResolver.of({
-  resolveWorkspaceRoot: unavailable("resolve-workspace-root"),
-  assertCurrentWorkspaceScope: unavailable("assert-workspace-scope"),
-  resolveThread: unavailable("resolve-thread"),
-  resolveTrustedChild: unavailable("resolve-trusted-child"),
-  assertCurrentThreadScope: unavailable("assert-thread-scope"),
-  diagnosticsForThread: unavailable("thread-diagnostics"),
-});
-
 const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const authorityProjection = yield* WorkspaceAuthorityProjection.WorkspaceAuthorityProjection;

@@ -57,6 +57,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import { layerNoWorkspaceBindings } from "../scient/projectScope/WorkspaceBindingTestUtils.ts"; // SCIENT-FORK
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 // SCIENT-FORK:START — discovery only lists declared host tools.
@@ -1263,6 +1264,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
         issuedAt: 1,
       };
       const layerServer = McpHttpServer.layerMcpTransport(Layer.empty).pipe(
+        Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1506,6 +1508,7 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
           }),
         ),
       ).pipe(
+        Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1673,6 +1676,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           }),
         ),
       ).pipe(
+        Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1841,6 +1845,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
       });
       yield* HttpRouter.serve(
         McpHttpServer.layerMcpTransport(Layer.empty).pipe(
+          Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
           Layer.provide(McpOAuth.layerMcpClientAuthenticator),
           Layer.provide(ServerSettings.layerTest()),
         ),
@@ -1923,6 +1928,7 @@ it.effect("gives outside clients an upload URL on the origin their request reach
       const serverLayer = McpHttpServer.layerMcpTransport(
         McpHttpServer.layerAttachmentToolkit,
       ).pipe(
+        Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
@@ -2057,6 +2063,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
           }),
         ),
       ).pipe(
+        Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
         Layer.provide(Layer.succeedContext(settingsContext)),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
@@ -2170,6 +2177,7 @@ it.effect("hides agent feedback tools from every client, even with the setting o
           McpHttpServer.layerToolSearch,
         ),
       ).pipe(
+        Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
         Layer.provide(Layer.succeedContext(settingsContext)),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(Layer.mock(Feedback.FeedbackService)({})),
@@ -2298,6 +2306,7 @@ it.effect(
         const serverLayer = McpHttpServer.layerMcpTransport(
           McpHttpServer.layerPullRequestsToolkit,
         ).pipe(
+          Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -2438,6 +2447,7 @@ it.effect(
             }),
           ),
         ).pipe(
+          Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(
@@ -2585,6 +2595,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
           McpHttpServer.layerToolSearch,
         ),
       ).pipe(
+        Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
