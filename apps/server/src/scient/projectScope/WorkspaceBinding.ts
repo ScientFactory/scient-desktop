@@ -39,27 +39,29 @@ export const WorkspaceRepositoryEvidence = Schema.Struct({
 });
 export type WorkspaceRepositoryEvidence = typeof WorkspaceRepositoryEvidence.Type;
 
-const repositoryEvidenceKeys = (evidence: WorkspaceRepositoryEvidence): ReadonlyArray<string> =>
-  evidence.transportCanonicalKey === undefined
-    ? [evidence.canonicalKey]
-    : [evidence.canonicalKey, evidence.transportCanonicalKey];
-
-// Bindings recorded before evidence preferred the configured URL hold the rewritten key.
-export const repositoryEvidenceOverlaps = (
+export const sameRepository = (
   left: WorkspaceRepositoryEvidence,
   right: WorkspaceRepositoryEvidence,
-): boolean => {
-  const rightKeys = repositoryEvidenceKeys(right);
-  return repositoryEvidenceKeys(left).some((key) => rightKeys.includes(key));
-};
+): boolean => left.source === right.source && left.canonicalKey === right.canonicalKey;
 
-export const sameRepositoryEvidence = (
-  left: WorkspaceRepositoryEvidence | null,
-  right: WorkspaceRepositoryEvidence | null,
+// A record written before evidence preferred the configured URL holds the rewritten
+// key and no transport key; only the same root's fresh observation may migrate it.
+const isLegacyTransportRecord = (
+  stored: WorkspaceRepositoryEvidence,
+  observed: WorkspaceRepositoryEvidence,
 ): boolean =>
-  left === null || right === null
-    ? left === right
-    : left.source === right.source && repositoryEvidenceOverlaps(left, right);
+  stored.transportCanonicalKey === undefined &&
+  observed.transportCanonicalKey !== undefined &&
+  stored.source === observed.source &&
+  stored.canonicalKey === observed.transportCanonicalKey;
+
+export const storedRepositoryMatchesObserved = (
+  stored: WorkspaceRepositoryEvidence | null,
+  observed: WorkspaceRepositoryEvidence | null,
+): boolean =>
+  stored === null || observed === null
+    ? stored === observed
+    : sameRepository(stored, observed) || isLegacyTransportRecord(stored, observed);
 
 /**
  * Exact checkout evidence retained from T3's VCS detection.

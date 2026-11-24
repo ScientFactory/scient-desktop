@@ -21,7 +21,7 @@ import {
   type WorkspaceBindingSafeDiagnostic,
   WorkspaceBindingResolutionError,
   WorkspaceBindingStoreError,
-  repositoryEvidenceOverlaps,
+  sameRepository,
   toSafeWorkspaceBindingDiagnostic,
 } from "./WorkspaceBinding.ts";
 import * as WorkspaceAuthorityProjection from "./WorkspaceAuthorityProjection.ts";
@@ -192,7 +192,7 @@ const make = Effect.gen(function* () {
     if (
       project.repositoryIdentity !== null &&
       selected.repositoryIdentity !== null &&
-      !repositoryEvidenceOverlaps(project.repositoryIdentity, selected.repositoryIdentity)
+      !sameRepository(project.repositoryIdentity, selected.repositoryIdentity)
     ) {
       return false;
     }

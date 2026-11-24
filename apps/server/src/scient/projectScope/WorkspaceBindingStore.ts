@@ -20,8 +20,8 @@ import {
   WorkspaceBindingStoreError,
   WorkspaceRepositoryEvidence,
   WorkspaceWorktreeEvidence,
-  repositoryEvidenceOverlaps,
-  sameRepositoryEvidence,
+  sameRepository,
+  storedRepositoryMatchesObserved,
 } from "./WorkspaceBinding.ts";
 
 const StoredWorkspaceBindingRow = Schema.Struct({
@@ -200,7 +200,7 @@ export const authorityEvidenceEqual = (
   binding.rootFileSystemIdentity?.inode === evidence.rootFileSystemIdentity?.inode &&
   binding.scientProjectId === evidence.scientProjectId &&
   binding.trustState === evidence.trustState &&
-  sameRepositoryEvidence(binding.repositoryIdentity, evidence.repositoryIdentity) &&
+  storedRepositoryMatchesObserved(binding.repositoryIdentity, evidence.repositoryIdentity) &&
   binding.worktreeIdentity?.kind === evidence.worktreeIdentity?.kind &&
   binding.worktreeIdentity?.rootPath === evidence.worktreeIdentity?.rootPath &&
   binding.worktreeIdentity?.metadataPath === evidence.worktreeIdentity?.metadataPath;
@@ -329,7 +329,7 @@ const make = Effect.gen(function* () {
       parentWorktree.metadataPath !== childWorktree.metadataPath ||
       (parent.repositoryIdentity !== null &&
         input.evidence.repositoryIdentity !== null &&
-        !repositoryEvidenceOverlaps(parent.repositoryIdentity, input.evidence.repositoryIdentity))
+        !sameRepository(parent.repositoryIdentity, input.evidence.repositoryIdentity))
     ) {
       return yield* new WorkspaceBindingStoreError({
         operation: "validate-lineage",
@@ -570,10 +570,7 @@ const make = Effect.gen(function* () {
           if (
             current.repositoryIdentity !== null &&
             input.evidence.repositoryIdentity !== null &&
-            !repositoryEvidenceOverlaps(
-              current.repositoryIdentity,
-              input.evidence.repositoryIdentity,
-            )
+            !sameRepository(current.repositoryIdentity, input.evidence.repositoryIdentity)
           ) {
             return yield* new WorkspaceBindingStoreError({
               operation: "confirm-replacement",
