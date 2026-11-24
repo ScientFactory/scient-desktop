@@ -9685,12 +9685,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           liveQuery: ClaudeLiveQueryContext,
           server: string,
         ) {
+          // The turn the request came in; Stop or a later turn ends its right to a row.
+          const turn = yield* Ref.get(activeTurn);
           const owns = Effect.map(
-            Effect.all([Ref.get(queryContext), Ref.get(activeTurn)]),
-            ([query, turn]) =>
-              query === liveQuery && !liveQuery.stopping && turn !== null ? turn : null,
+            Effect.all([Ref.get(queryContext), Ref.get(activeTurn), Ref.get(interruptedTurns)]),
+            ([query, current, interrupted]) =>
+              query === liveQuery &&
+              !liveQuery.stopping &&
+              turn !== null &&
+              current === turn &&
+              !interrupted.has(turn.providerTurnId),
           );
-          if ((yield* owns) === null) return "unavailable" as const;
+          if (turn === null || !(yield* owns)) return "unavailable" as const;
           const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
             Effect.timeout("2 seconds"),
             Effect.option,
@@ -9701,13 +9707,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (status === "connected") return "signed-in" as const;
           if (status === "pending") return "checking" as const;
           if (status !== "needs-auth") return "not-available" as const;
-          // Stop or a new query may have come while Claude answered.
-          const context = yield* owns;
-          if (context === null) return "unavailable" as const;
-          const key = `${context.providerTurnId}\u0000${server}`;
+          // Stop or a new turn may have come while Claude answered.
+          if (!(yield* owns)) return "unavailable" as const;
+          const key = `${turn.providerTurnId}\u0000${server}`;
           if (!requestedMcpSignIns.has(key)) {
             requestedMcpSignIns.add(key);
-            yield* emitMcpSignInNotice(context, server, "request");
+            yield* emitMcpSignInNotice(turn, server, "request");
           }
           return "shown" as const;
         });

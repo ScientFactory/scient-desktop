@@ -1055,6 +1055,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       : null;
   // Signed in, the notice is an ordinary row again.
   const opensMcpSignIn = mcpSignInTarget !== null && !mcpSignedIn;
+  // SCIENT-FORK:START — a sheet whose request closed does not reopen by itself later.
+  if (mcpSignInOpen && mcpSignInTarget === null) setMcpSignInOpen(false);
+  // SCIENT-FORK:END
   // A sign-in notice opens its sheet instead; a nested button would be out of VoiceOver's reach.
   const canExpand = row.canExpand && notifiedSubagentThreadId === undefined && !opensMcpSignIn;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;

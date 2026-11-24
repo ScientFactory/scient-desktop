@@ -415,12 +415,13 @@ const make = Effect.gen(function* () {
           );
     if (state === undefined || server === undefined) return { _tag: "none" } as const;
     const { displayName } = server;
+    // A report from a session that ended says nothing about the agent's servers now.
+    if (!state.sessionActive || !server.sessionActive)
+      return { _tag: "inactive", displayName } as const;
     if (server.status === "ready") return { _tag: "signed-in", displayName } as const;
     if (server.status !== "needs-sign-in" && server.status !== "checking")
       return { _tag: "not-available", displayName } as const;
     if (server.source === "claudeai") return { _tag: "claudeai", displayName } as const;
-    if (!state.sessionActive || !server.sessionActive)
-      return { _tag: "inactive", displayName } as const;
     if (state.showSignIn === undefined)
       return { _tag: server.status === "checking" ? "checking" : "card", displayName } as const;
     // The session reads its servers again first: a status that was still settling is not trusted.
@@ -428,6 +429,9 @@ const make = Effect.gen(function* () {
       .showSignIn(server.name)
       .pipe(Effect.orElseSucceed((): McpSignInShowResult => "unavailable"));
     if (shown !== "unavailable") return { _tag: shown, displayName } as const;
+    const after = (yield* Ref.get(threads)).get(input.threadId);
+    if (after?.generation !== state.generation || !after.sessionActive)
+      return { _tag: "inactive", displayName } as const;
     return { _tag: server.status === "checking" ? "checking" : "card", displayName } as const;
   });
 

@@ -113,7 +113,8 @@ export const requestedMcpSignInIsOpen = (
     (server) =>
       server.source !== "managed" &&
       server.name === request.server &&
-      server.status === "needs-sign-in" &&
+      // "checking" too: a sign-in in progress survives a brief recheck.
+      (server.status === "needs-sign-in" || server.status === "checking") &&
       server.sessionActive &&
       server.providerThreadId === request.providerThreadId,
   ) === true;

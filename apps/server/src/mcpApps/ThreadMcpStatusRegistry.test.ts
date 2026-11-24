@@ -341,4 +341,30 @@ describe("ThreadMcpStatusRegistry", () => {
       expect(yield* request("no-turn")).toEqual({ _tag: "card", displayName: "no-turn" });
     }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
   );
+
+  it.effect("calls a request inactive when its session ends while it answers", () =>
+    Effect.gen(function* () {
+      const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+      const ending: { attachment?: ThreadMcpStatusRegistry.ThreadMcpAttachment } = {};
+      const attachment = yield* registry.attach({
+        ...attachInput("session-1"),
+        showSignIn: () =>
+          registry.detach(ending.attachment!).pipe(Effect.as("unavailable" as const)),
+      });
+      ending.attachment = attachment;
+      yield* registry.replaceNative(attachment, [
+        { name: "guru", source: "native", status: "needs-sign-in" },
+        { name: "deepwiki", source: "native", status: "ready" },
+      ]);
+      expect(yield* registry.requestSignIn({ threadId, server: "guru" })).toEqual({
+        _tag: "inactive",
+        displayName: "guru",
+      });
+      // A last report from an ended session does not vouch for the server either.
+      expect(yield* registry.requestSignIn({ threadId, server: "deepwiki" })).toEqual({
+        _tag: "inactive",
+        displayName: "deepwiki",
+      });
+    }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
+  );
 });

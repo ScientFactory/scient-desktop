@@ -54,9 +54,11 @@ describe("thread MCP status", () => {
   it("offers a requested sign-in only while its live session still needs it", () => {
     const request = { server: "guru", providerThreadId: "pt-1" };
     expect(requestedMcpSignInIsOpen({ servers: [server()] }, request)).toBe(true);
+    expect(requestedMcpSignInIsOpen({ servers: [server({ status: "checking" })] }, request)).toBe(
+      true,
+    );
     for (const done of [
       server({ status: "ready" }),
-      server({ status: "checking" }),
       server({ sessionActive: false }),
       server({ providerThreadId: ProviderThreadId.make("pt-2") }),
       server({ source: "managed" }),

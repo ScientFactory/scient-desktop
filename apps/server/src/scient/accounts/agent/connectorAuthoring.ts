@@ -280,7 +280,7 @@ export const agentServerSignIn = Effect.fn("AccountsAgent.agentServerSignIn")(fu
     case "inactive":
       return reply(
         "needs-sign-in",
-        `${server} needs the user's sign-in, but the session that reported it has ended. Tell them in one short sentence that they can sign in from the plug button above this chat after their next message, and carry on with whatever does not need it.`,
+        `${server}'s last status came from an agent session that has ended, so no sign-in can be shown now. Tell the user in one short sentence that, if it still needs one, they can sign in from the plug button above this chat after their next message, and carry on with whatever does not need it.`,
       );
     case "card":
       return reply(
