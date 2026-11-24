@@ -68,11 +68,6 @@
       "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
     },
     {
-      "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts",
-      "anchor": "latexDir: path.join(stateDir, \"latex\")",
-      "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
-    },
-    {
       "path": ".gitignore",
       "anchor": "native/synctex-runtime/",
       "purpose": "Keep generated, reproducible native SyncTeX build output outside version control."
@@ -228,6 +223,11 @@
       "path": "apps/server/src/telemetry/FailureAttribution.ts",
       "anchor": "ScientLatexBuildFailureClass",
       "purpose": "Map each bounded LaTeX failure class to who owns the failure (document, environment or Scient) without reading compiler output."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.scient.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
     }
   ]
 }

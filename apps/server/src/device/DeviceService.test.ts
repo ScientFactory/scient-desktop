@@ -33,7 +33,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { ServerSettingsService, customModelsTestMethods } from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -384,11 +383,9 @@ const fixture = Effect.fn("fixture")(function* (
     Effect.provide(NodeCrypto.layer),
     Effect.provideService(DeviceHost.DeviceHost, host),
     Effect.provideService(
-      ServerSettingsService,
-      ServerSettingsService.of({
-        ...customModelsTestMethods,
+      ServerSettings.ServerSettingsService,
+      ServerSettings.ServerSettingsService.of({
         updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
-        removeProjectSettingsOverrides: () => Effect.die("Unexpected project settings removal"),
         withSettingsSnapshot: (use) => Effect.flatMap(Ref.get(settings), use),
         start: Effect.void,
         ready: Effect.void,

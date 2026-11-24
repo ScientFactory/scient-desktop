@@ -1949,7 +1949,7 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
-  it.effect("retains unproven package directories when removing app-owned binaries", () =>
+  it.effect("keeps managed package installs when removing the same agent's binaries", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({

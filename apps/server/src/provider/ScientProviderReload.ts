@@ -10,10 +10,12 @@ import * as Scope from "effect/Scope";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import type * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import type * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 
 export function makeScientProviderReload(deps: {
   readonly instanceRegistry: ProviderInstanceRegistry.ProviderInstanceRegistryShape;
+  readonly rebuild: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuild"];
   readonly layerScope: Scope.Scope;
   readonly syncLiveSources: Effect.Effect<unknown, never, Scope.Scope>;
   readonly getLiveInstances: Effect.Effect<ReadonlyMap<ProviderInstanceId, ProviderInstance>>;
@@ -31,6 +33,7 @@ export function makeScientProviderReload(deps: {
 }) {
   const {
     instanceRegistry,
+    rebuild,
     layerScope,
     syncLiveSources,
     getLiveInstances,
@@ -41,10 +44,14 @@ export function makeScientProviderReload(deps: {
     authenticationFailuresRef,
   } = deps;
 
+  // T3's mutator reads the configured instances under the registry's own lock, so an instance
+  // mid-replacement is still rebuilt; an id no longer configured gets an ordinary reconcile.
+  const rebuildOne = (instanceId: ProviderInstanceId) => rebuild([instanceId]);
+
   const reloadInstance = Effect.fn("ProviderRegistry.reloadInstance")(function* (
     instanceId: ProviderInstanceId,
   ) {
-    yield* instanceRegistry.rebuildInstance(instanceId);
+    yield* rebuildOne(instanceId);
     // Do not race the registry-change subscriber: attach the replacement
     // source synchronously before asking it to probe the newly active path.
     yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
@@ -137,7 +144,7 @@ export function makeScientProviderReload(deps: {
     instanceId: ProviderInstanceId,
   ) {
     return yield* Effect.gen(function* () {
-      yield* instanceRegistry.rebuildInstance(instanceId);
+      yield* rebuildOne(instanceId);
       yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
       const instance = (yield* getLiveInstances).get(instanceId);
       if (!instance) {

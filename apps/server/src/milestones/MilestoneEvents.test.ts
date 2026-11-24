@@ -34,8 +34,7 @@ import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpWebhookTransport from "../mcp/McpWebhookTransport.ts";
-import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
-import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
+import { layerNoWorkspaceBindings } from "../scient/projectScope/WorkspaceBindingTestUtils.ts"; // SCIENT-FORK
 import * as ServerSettings from "../serverSettings.ts";
 import * as MilestoneHub from "./MilestoneHub.ts";
 
@@ -167,8 +166,7 @@ const serveWith = Effect.fnUntraced(function* (settings: { readonly workflowsEna
         ),
       ),
       Layer.provide(ServerSettings.layerTest(settings)),
-      // SCIENT-FORK: Scient's MCP transport resolves each caller's workspace binding.
-      Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
+      Layer.provide(layerNoWorkspaceBindings), // SCIENT-FORK: the MCP transport resolves bindings.
       Layer.provide(
         Layer.mock(SessionStore.SessionStore)({
           cookieName: "t3-session",

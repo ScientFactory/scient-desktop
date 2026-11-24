@@ -2,17 +2,20 @@
 // session that answers the shell, thread and config subscriptions from fixtures. Other RPCs
 // stay pending so nothing retries on timers. Everything above the wire is the app's own.
 import {
+  type AssetCreateUrlResult,
   AuthStandardClientScopes,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
   MessageId,
+  NodeId,
   OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ServerConfig,
   ThreadId,
   TurnItemId,
@@ -272,6 +275,47 @@ export function threadWithHistory(
   return { id, title: `Thread ${name}`, modelSelection, runs, items };
 }
 
+/** A one-turn thread whose agent waits on an answer to one question. */
+export function threadWithQuestion(name: string, question: string): FakeThread {
+  const thread = threadWithHistory(name, 1);
+  const requestId = RuntimeRequestId.make(`${name}-request`);
+  return {
+    ...thread,
+    items: [
+      ...thread.items,
+      {
+        ...base(thread.id, RunId.make(`${name}-run-0`), `${name}-question`, 2),
+        type: "user_input_request",
+        requestId,
+        responseMode: "message",
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question,
+            required: true,
+            allowCustomAnswer: false,
+            options: [{ label: "Continue", value: "continue", description: "Resume work" }],
+          },
+        ],
+      },
+    ],
+    runtimeRequests: [
+      {
+        id: requestId,
+        nodeId: NodeId.make(`${name}-node`),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: AT,
+        resolvedAt: null,
+      },
+    ],
+  };
+}
+
 const parentOf = (thread: FakeThread) => thread.sideChatOf ?? thread.providerSubagentOf;
 
 function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
@@ -382,13 +426,16 @@ let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null 
 let shellSubscriber: Queue.Queue<OrchestrationV2ShellStreamItem> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
+// SCIENT-FORK: thread loads the app asked for, so tests can assert one was never requested.
 let requestedThreadIds: ThreadId[] = [];
 let acceptCommands = false;
+let projects: ReadonlyArray<OrchestrationProjectShell> = [project];
 let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
 let pendingDispatches: Array<{
   readonly command: OrchestrationV2Command;
   readonly reply: Deferred.Deferred<never, OrchestrationV2DispatchCommandError>;
 }> = [];
+let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -434,6 +481,13 @@ const handlers: Record<string, (input: never) => unknown> = {
       pendingDispatches.push({ command, reply });
       return Deferred.await(reply);
     }),
+  // Held like any other unanswered call, until `answerAssetUrls`.
+  [WS_METHODS.assetsCreateUrl]: () =>
+    Effect.suspend(() => {
+      const reply = Deferred.makeUnsafe<AssetCreateUrlResult>();
+      pendingAssetUrls.push(reply);
+      return Deferred.await(reply);
+    }),
   [WS_METHODS.subscribeTerminalMetadata]: () =>
     subscribe<TerminalMetadataStreamEvent>([{ type: "snapshot", terminals: [] }], (queue) => {
       terminalMetadataSubscriber = queue;
@@ -449,7 +503,7 @@ const handlers: Record<string, (input: never) => unknown> = {
           snapshot: {
             schemaVersion: 1,
             snapshotSequence: sequence,
-            projects: [project],
+            projects,
             threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
             archivedThreads: [],
           },
@@ -464,7 +518,7 @@ const handlers: Record<string, (input: never) => unknown> = {
       },
     ),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
-    requestedThreadIds.push(input.threadId);
+    requestedThreadIds.push(input.threadId); // SCIENT-FORK: record thread loads.
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
     return subscribe<OrchestrationV2ThreadStreamItem>(
@@ -557,6 +611,7 @@ export function installFakeEnvironment(
   options?: {
     readonly acceptCommands?: boolean;
     readonly keybindings?: ResolvedKeybindingsConfig;
+    readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
@@ -571,8 +626,16 @@ export function installFakeEnvironment(
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
   dispatched = [];
-  requestedThreadIds = [];
+  requestedThreadIds = []; // SCIENT-FORK: record thread loads.
   acceptCommands = options?.acceptCommands === true;
+  projects = [
+    project,
+    ...(options?.extraProjects ?? []).map((extra) => ({
+      ...project,
+      ...extra,
+      workspaceRoot: `/workspace/${extra.title}`,
+    })),
+  ];
   holdCommand = options?.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
@@ -597,10 +660,12 @@ export function installFakeEnvironment(
       threads = [];
       baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
       dispatched = [];
-      requestedThreadIds = [];
+      requestedThreadIds = []; // SCIENT-FORK: record thread loads.
       acceptCommands = false;
+      projects = [project];
       holdCommand = () => false;
       pendingDispatches = [];
+      pendingAssetUrls = [];
     },
   };
 }
@@ -621,17 +686,46 @@ export async function rejectPendingCommand(message: string): Promise<void> {
   );
 }
 
+export function hasPendingAssetUrl(): boolean {
+  return pendingAssetUrls.length > 0;
+}
+
+/** Answers every held asset URL request, as a server that still has the file. */
+export async function answerAssetUrls(): Promise<void> {
+  const replies = pendingAssetUrls;
+  pendingAssetUrls = [];
+  for (const reply of replies) {
+    await Effect.runPromise(
+      Deferred.succeed(reply, { relativeUrl: "/api/assets/fake", expiresAt: 4_102_444_800_000 }),
+    );
+  }
+}
+
 /** Commands the app dispatched to the environment, oldest first. */
 export function dispatchedCommands(): ReadonlyArray<OrchestrationV2Command> {
   return dispatched;
 }
 
+// SCIENT-FORK:START — thread loads the app asked for.
 /** Thread ids the app asked to load over the socket, oldest first, including unknown ones. */
 export function requestedThreadSubscriptions(): ReadonlyArray<ThreadId> {
   return requestedThreadIds;
 }
+// SCIENT-FORK:END
 
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];
+
+/** Answers one RPC method with `handler` until disposed. */
+export function answerRpc(method: string, handler: (input: never) => unknown): Disposable {
+  const previous = handlers[method];
+  handlers[method] = handler;
+  return {
+    [Symbol.dispose]: () => {
+      if (previous) handlers[method] = previous;
+      else delete handlers[method];
+    },
+  };
+}
 
 export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): Promise<void> {
   if (terminalMetadataSubscriber === null) throw new Error("No terminal metadata subscription");

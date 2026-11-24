@@ -21,12 +21,13 @@ import {
   useAnyEnvironmentHiding,
   useQuietThreadShell,
   // SCIENT-FORK:START — unavailable draft projects.
-  useAllEnvironmentShellsBootstrapped,
   useProject,
   // SCIENT-FORK:END
 } from "../state/entities";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentShellStatus } from "../state/shell";
+// SCIENT-FORK: a draft's project counts as gone only once its environments have settled.
+import { draftEnvironmentsSettledAtom } from "~/scient/drafts/draftEnvironmentsSettled";
 import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
@@ -77,7 +78,8 @@ export function ThreadRouteView({
       ? null
       : scopeProjectRef(draftSession.environmentId, draftSession.projectId);
   const draftProject = useProject(draftProjectRef);
-  const environmentShellsBootstrapped = useAllEnvironmentShellsBootstrapped();
+  // Not the bootstrapped flag: it is true before the environment list is complete.
+  const environmentsSettled = useAtomValue(draftEnvironmentsSettledAtom);
   const draftProjectUnavailable = draftProjectRef !== null && draftProject === null;
   // SCIENT-FORK:END
   const draftRedirect = useComposerDraftStore((store) =>
@@ -222,7 +224,7 @@ export function ThreadRouteView({
           replace
         />
       );
-    } else if (!draftProjectUnavailable || environmentShellsBootstrapped) {
+    } else if (!draftProjectUnavailable || environmentsSettled) {
       redirect = <Navigate to="/" replace />;
     }
   } else if (hiddenByTagFilter) {

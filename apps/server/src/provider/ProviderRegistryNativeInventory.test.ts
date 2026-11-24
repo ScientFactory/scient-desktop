@@ -240,7 +240,6 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
       Ref.get(instancesRef).pipe(
         Effect.map((instances) => instances.find((instance) => instance.instanceId === instanceId)),
       ),
-    rebuildInstance: () => Effect.void,
     listInstances: Ref.get(instancesRef),
     listUnavailable: Ref.get(unavailableRef),
     streamChanges: Stream.fromPubSub(registryChanges),

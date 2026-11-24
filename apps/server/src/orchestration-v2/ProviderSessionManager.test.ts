@@ -729,7 +729,11 @@ function layerTest(input: {
   readonly scopeCloseFinished?: Queue.Queue<void, Cause.Done>;
   readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
   readonly releaseRecorded?: Deferred.Deferred<void>;
-  readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
+  // SCIENT-FORK: a settings-only layer; layerTest also provides ScientServerSettings.
+  readonly serverSettingsLayer?: Layer.Layer<
+    ServerSettings.ServerSettingsService,
+    Layer.Error<ReturnType<typeof ServerSettings.layerTest>>
+  >;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
 }) {

@@ -909,7 +909,7 @@ process.exit(0);
       }),
   );
 
-  it.effect("repoints a unit that names this Scient home through a symlink", () =>
+  it.effect("repoints a unit that names this T3 home through a symlink", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

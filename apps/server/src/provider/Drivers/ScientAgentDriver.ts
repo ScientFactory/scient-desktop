@@ -20,6 +20,7 @@ import type { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { customModelSettingsSource, ScientServerSettings } from "../../scientServerSettings.ts";
 import { ProviderConnectionActionError } from "../../scient/providerLifecycle/ProviderConnectionActions.ts";
 import {
   makeScientAgentConnectionActions,
@@ -94,7 +95,8 @@ export type ScientAgentDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | ScientServerSettings;
 
 /**
  * Scient Agent must use its own config/session/extension roots and cannot resume OMP conversations.
@@ -122,6 +124,7 @@ export const ScientAgentDriver: ScientProviderDriver<
     const serverConfig = yield* ServerConfig;
     const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
     const serverSettings = yield* ServerSettingsService;
+    const scientSettings = yield* ScientServerSettings;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -184,7 +187,7 @@ export const ScientAgentDriver: ScientProviderDriver<
     );
     const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
       scientAgentTarget,
-      serverSettings,
+      customModelSettingsSource(serverSettings, scientSettings),
       instanceId,
       serverConfig.stateDir,
     ).pipe(Effect.mapError(failure("Could not prepare Scient Agent custom models.")));

@@ -136,7 +136,6 @@ it.effect("parks automatic pull until activation without delaying command readin
       Layer.mock(ServerSettings.ServerSettingsService)({
         start: Effect.void,
         getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true }),
-        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getDescriptor: Effect.succeed({

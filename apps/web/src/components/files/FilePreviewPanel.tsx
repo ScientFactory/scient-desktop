@@ -179,6 +179,7 @@ import { TabHistoryButtons } from "~/scient/rightPanel/tabHistory";
 import { scientificSourceLanguageOverride } from "~/scient/presentation/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
+import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
 import { FileRenameButton } from "./FileRenameButton";
 import { useNewDocument } from "~/scient/documents/useNewDocument";
 import { normalizeMarkdownCreatePath } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
@@ -2133,10 +2134,10 @@ export default function FilePreviewPanel({
     focusEditorFromContent();
   };
   const handleEditorChangeStable = useStableCallback(handleEditorChange);
-  // SCIENT-FORK:START — rendered only beside the source editor, which Scient's surface chain picks.
-  // Panel focus lands here and passes to the editor once it attaches. sr-only keeps the
-  // 1px box workspace focus needs, and clips it so clicks in the file never reach it.
-  // The hand-off waits a microtask: workspace focus checks that focus stayed here.
+  // SCIENT-FORK:START — rendered beside a source editor, or a loading view that may become one,
+  // which Scient's surface chain picks. Panel focus lands here and passes to the editor once it
+  // attaches. sr-only keeps the 1px box workspace focus needs, and clips it so clicks in the file
+  // never reach it. The hand-off waits a microtask: workspace focus checks that focus stayed here.
   const contentFocus = (
     <div
       ref={contentFocusRef}
@@ -2148,6 +2149,24 @@ export default function FilePreviewPanel({
       onFocus={() => queueMicrotask(focusEditorFromContent)}
     />
   );
+  // Each branch is this fragment, so the target stays mounted from loading to editor; its slot
+  // stays when it is left out, so the surface beside it is not remounted.
+  const withContentFocus = (surface: ReactNode, mayOpenEditor = true) => (
+    <>
+      {mayOpenEditor ? contentFocus : null}
+      {surface}
+    </>
+  );
+  const computeShowsEditor = useComputeFilePresentationStore(
+    (state) =>
+      computeContextId === null || state.presentations[computeContextId]?.view !== "results",
+  );
+  const loadingMayOpenEditor =
+    !isHostFile &&
+    canWriteFiles &&
+    !rendered &&
+    !(tableDelimiter && renderTable) &&
+    computeShowsEditor;
   // SCIENT-FORK:END
   const focusEditorOnTreeRowClickOrEnter = (event: {
     nativeEvent: Event;
@@ -2977,10 +2996,13 @@ export default function FilePreviewPanel({
             relativePath && isLatexPreviewFile(relativePath) ? (
               <LatexDocumentPreparation />
             ) : (
-              <div
-                className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
-                aria-label={gt("Opening editor")}
-              />
+              withContentFocus(
+                <div
+                  className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
+                  aria-label={gt("Opening editor")}
+                />,
+                loadingMayOpenEditor,
+              )
             )
           ) : // SCIENT-FORK:START — data files open in the paged grid; CSV and TSV keep their text view
           relativePath &&
@@ -3068,9 +3090,12 @@ export default function FilePreviewPanel({
             isLatexPreviewFile(relativePath) ? (
               <LatexDocumentPreparation />
             ) : (
-              <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                <Spinner size="lg" />
-              </div>
+              withContentFocus(
+                <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+                  <Spinner size="lg" />
+                </div>,
+                loadingMayOpenEditor,
+              )
             )
           ) : relativePath && file.data ? (
             renderMermaid ? (
@@ -3156,38 +3181,42 @@ export default function FilePreviewPanel({
                 />
               </ScientSurfaceSuspense>
             ) : computeSourceLanguage !== null && !file.data.truncated ? (
-              <ScientSurfaceSuspense>
-                <ScientComputeFileSurface
-                  onCite={onCiteFile}
-                  citationReveal={citationRevealActive ? fileCitation : undefined}
-                  citationBaseline={file.authoritativeData?.contents}
-                  key={`${computeContextId}:${resolvedTheme}`}
-                  language={computeSourceLanguage}
-                  environmentId={environmentId}
-                  threadRef={threadRef}
-                  contextId={computeContextId!}
-                  cwd={cwd}
-                  relativePath={relativePath}
-                  composerDraftTarget={composerDraftTarget}
-                  contents={file.data.contents}
-                  initialSource={queriedFile.authoritativeData?.contents ?? ""}
-                  revision={queriedFile.authoritativeData?.revision ?? ""}
-                  resolvedTheme={resolvedTheme}
-                  revealRequestId={revealRequestId}
-                  wordWrap={wordWrap}
-                  sourcePending={
-                    effectiveSourcePending ||
-                    (file.authoritativeData !== null &&
-                      file.data.contents !== file.authoritativeData.contents)
-                  }
-                  onPostRender={onFilePostRender}
-                  onPendingChange={handlePendingChange}
-                  onSaveFailure={handleSaveFailure}
-                  onSaveConfirmed={handleSaveConfirmed}
-                  onSaveResolutionApplied={handleSaveResolutionApplied}
-                  saveResolution={saveResolution}
-                />
-              </ScientSurfaceSuspense>
+              withContentFocus(
+                <ScientSurfaceSuspense>
+                  <ScientComputeFileSurface
+                    onEditorChange={handleEditorChangeStable}
+                    onCite={onCiteFile}
+                    citationReveal={citationRevealActive ? fileCitation : undefined}
+                    citationBaseline={file.authoritativeData?.contents}
+                    key={`${computeContextId}:${resolvedTheme}`}
+                    language={computeSourceLanguage}
+                    environmentId={environmentId}
+                    threadRef={threadRef}
+                    contextId={computeContextId!}
+                    cwd={cwd}
+                    relativePath={relativePath}
+                    composerDraftTarget={composerDraftTarget}
+                    contents={file.data.contents}
+                    initialSource={queriedFile.authoritativeData?.contents ?? ""}
+                    revision={queriedFile.authoritativeData?.revision ?? ""}
+                    resolvedTheme={resolvedTheme}
+                    revealRequestId={revealRequestId}
+                    wordWrap={wordWrap}
+                    sourcePending={
+                      effectiveSourcePending ||
+                      (file.authoritativeData !== null &&
+                        file.data.contents !== file.authoritativeData.contents)
+                    }
+                    onPostRender={onFilePostRender}
+                    onPendingChange={handlePendingChange}
+                    onSaveFailure={handleSaveFailure}
+                    onSaveConfirmed={handleSaveConfirmed}
+                    onSaveResolutionApplied={handleSaveResolutionApplied}
+                    saveResolution={saveResolution}
+                  />
+                </ScientSurfaceSuspense>,
+                computeShowsEditor,
+              )
             ) : usesScientMarkdownEditor && markdownLease ? (
               <ScientSurfaceSuspense>
                 {/* A new document's file name, drawn on its page. */}
@@ -3210,8 +3239,7 @@ export default function FilePreviewPanel({
                 />
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
-              <>
-                {contentFocus}
+              withContentFocus(
                 <MarkdownSourceSurface
                   threadRef={threadRef}
                   onCite={onCiteFile}
@@ -3227,8 +3255,8 @@ export default function FilePreviewPanel({
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
                   onEditorChange={handleEditorChangeStable}
-                />
-              </>
+                />,
+              )
             ) : isMarkdownDocument && renderMarkdown ? (
               <RenderedMarkdownSurface
                 key={relativePath}
@@ -3285,8 +3313,7 @@ export default function FilePreviewPanel({
                 onPostRender={onFilePostRender}
               />
             ) : (
-              <>
-                {contentFocus}
+              withContentFocus(
                 <EditableFileSurface
                   threadRef={threadRef}
                   onCite={onCiteFile}
@@ -3314,8 +3341,8 @@ export default function FilePreviewPanel({
                   onSaveResolutionApplied={handleSaveResolutionApplied}
                   saveResolution={saveResolution}
                   onEditorChange={handleEditorChangeStable}
-                />
-              </>
+                />,
+              )
             )
           ) : null}
         </ScientDocumentShelf>

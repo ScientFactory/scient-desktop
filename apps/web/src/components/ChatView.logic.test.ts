@@ -328,6 +328,7 @@ describe("deriveComposerSendState", () => {
         },
       ],
     });
+
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
@@ -674,6 +675,7 @@ describe("deriveCommittedServerUserMessageIds", () => {
         },
       },
     ];
+
     expect(deriveCommittedServerUserMessageIds(visibleTurnItems)).toEqual(
       new Set([turnStartId, steerId]),
     );
@@ -1116,6 +1118,7 @@ describe("resolveComposerProviderSelection", () => {
       threadProvider: thread.modelSelection.instanceId,
       providers: entries.map((entry) => entry.snapshot),
     });
+
     expect(thread.runtime).toBeNull();
     expect(lockedProvider).toBe(driver);
     expect(
@@ -1131,6 +1134,7 @@ describe("resolveComposerProviderSelection", () => {
     const selected = entry("claudeAgent", "claude_work");
     const sessionEntry = entry("ollama", "local_models");
     const thread = importedThread(selected.instanceId);
+
     expect(
       deriveLockedProvider({
         thread: {
@@ -1197,6 +1201,7 @@ describe("resolveComposerProviderSelection", () => {
       status: "ready",
       models: catalogModels,
     }).snapshot;
+
     expect(getAntigravitySendBlockReason(provider, "saved-model-not-in-current-catalog")).toBe(
       "That Antigravity model is no longer available. Choose another model.",
     );
@@ -1207,6 +1212,7 @@ describe("resolveComposerProviderSelection", () => {
       status: "error",
       models: catalogModels,
     }).snapshot;
+
     expect(
       getAntigravitySendBlockReason(provider, "saved-model-not-in-current-catalog"),
     ).toBeNull();
@@ -1219,6 +1225,7 @@ describe("resolveComposerProviderSelection", () => {
       lockedProvider: ProviderDriverKind.make("antigravity"),
       lockedInstanceId: missingInstanceId,
     });
+
     expect(selection.selectedProviderEntry).toBeUndefined();
     expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
   });
@@ -1841,6 +1848,7 @@ describe("snapshotComposerSend", () => {
       environmentContexts: [],
       replyTo: null,
     });
+
     expect(snapshot.terminalContexts).toEqual([live]);
     expect(snapshot.messageText).toBe(
       ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
