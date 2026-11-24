@@ -274,6 +274,7 @@ describe("ThreadMcpStatusRegistry", () => {
         { name: "guru", source: "native", status: "needs-sign-in", action: "sign-in" },
         { name: "claude.ai Gmail", source: "claudeai", status: "needs-sign-in" },
         { name: "deepwiki", source: "native", status: "ready" },
+        { name: "sentry", source: "native", status: "unreachable" },
       ]);
       const request = (server: string) => registry.requestSignIn({ threadId, server });
 
@@ -283,7 +284,8 @@ describe("ThreadMcpStatusRegistry", () => {
         _tag: "claudeai",
         displayName: "claude.ai Gmail",
       });
-      expect(yield* request("deepwiki")).toEqual({ _tag: "none" });
+      expect(yield* request("deepwiki")).toEqual({ _tag: "signed-in", displayName: "deepwiki" });
+      expect(yield* request("sentry")).toEqual({ _tag: "not-available", displayName: "sentry" });
       expect(yield* request("notion")).toEqual({ _tag: "none" });
       expect(
         yield* registry.requestSignIn({ threadId: ThreadId.make("other"), server: "guru" }),
@@ -304,6 +306,39 @@ describe("ThreadMcpStatusRegistry", () => {
       expect(yield* request("guru")).toEqual({ _tag: "card", displayName: "guru" });
       expect(yield* request("zotero")).toEqual({ _tag: "checking", displayName: "zotero" });
       expect(asked).toEqual(["guru"]);
+    }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
+  );
+
+  it.effect("answers from the session's fresh read of its servers", () =>
+    Effect.gen(function* () {
+      const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+      const reads = new Map<string, ThreadMcpStatusRegistry.McpSignInShowResult>([
+        ["turned-off", "not-available"],
+        ["now-connected", "signed-in"],
+        ["no-turn", "unavailable"],
+      ]);
+      const attachment = yield* registry.attach({
+        ...attachInput("session-1"),
+        showSignIn: (server) => Effect.succeed(reads.get(server) ?? "unavailable"),
+      });
+      yield* registry.replaceNative(
+        attachment,
+        [...reads.keys()].map((name) => ({
+          name,
+          source: "native" as const,
+          status: "needs-sign-in" as const,
+        })),
+      );
+      const request = (server: string) => registry.requestSignIn({ threadId, server });
+      expect(yield* request("turned-off")).toEqual({
+        _tag: "not-available",
+        displayName: "turned-off",
+      });
+      expect(yield* request("now-connected")).toEqual({
+        _tag: "signed-in",
+        displayName: "now-connected",
+      });
+      expect(yield* request("no-turn")).toEqual({ _tag: "card", displayName: "no-turn" });
     }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
   );
 });

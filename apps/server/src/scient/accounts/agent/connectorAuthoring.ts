@@ -249,7 +249,7 @@ export const agentServerSignIn = Effect.fn("AccountsAgent.agentServerSignIn")(fu
   });
   if (outcome._tag === "none") return undefined;
   const server = outcome.displayName;
-  const reply = (status: "ready" | "needs-sign-in", message: string) => ({
+  const reply = (status: "ready" | "needs-sign-in" | "error", message: string) => ({
     connector: server,
     status,
     message,
@@ -267,12 +267,21 @@ export const agentServerSignIn = Effect.fn("AccountsAgent.agentServerSignIn")(fu
         "needs-sign-in",
         `${server} is still connecting. Carry on with whatever does not need it and ask again later in this turn if you still need it.`,
       );
+    case "not-available":
+      return reply(
+        "error",
+        `${server} is turned off or failed to start, so a sign-in would not help. Tell the user in one short sentence that it is unavailable, and carry on with whatever does not need it.`,
+      );
     case "claudeai":
       return reply(
         "needs-sign-in",
         `${server} is a claude.ai connector: the user signs in to it in their claude.ai connector settings. Tell them in one short sentence and carry on with whatever does not need it.`,
       );
     case "inactive":
+      return reply(
+        "needs-sign-in",
+        `${server} needs the user's sign-in, but the session that reported it has ended. Tell them in one short sentence that they can sign in from the plug button above this chat after their next message, and carry on with whatever does not need it.`,
+      );
     case "card":
       return reply(
         "needs-sign-in",

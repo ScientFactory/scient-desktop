@@ -114,12 +114,39 @@ describe("a sign-in the agent asks for on one of its own MCP servers", () => {
     ),
   );
 
-  it.effect("leaves servers that need nothing, and unknown names, to the connector tools", () =>
+  it.effect("tells the agent a connected server is ready, and leaves unknown names alone", () =>
     inThisChat(
       Effect.gen(function* () {
         yield* reportNeedsSignIn("shown");
-        expect(yield* agentServerSignIn("deepwiki")).toBeUndefined();
+        expect(yield* agentServerSignIn("deepwiki")).toMatchObject({
+          connector: "deepwiki",
+          status: "ready",
+        });
         expect(yield* agentServerSignIn("notion")).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("says a turned-off server can't be signed in to", () =>
+    inThisChat(
+      Effect.gen(function* () {
+        const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+        const attachment = yield* registry.attach({
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("claude"),
+          providerThreadId: ProviderThreadId.make("pt-1"),
+          providerSessionId: ProviderSessionId.make("provider-session"),
+          showSignIn: () => Effect.succeed("not-available" as const),
+        });
+        yield* registry.replaceNative(attachment, [
+          { name: "guru", source: "native", status: "needs-sign-in" },
+        ]);
+        expect(yield* agentServerSignIn("guru")).toMatchObject({
+          status: "error",
+          message: expect.stringContaining("turned off or failed"),
+        });
+        yield* registry.detach(attachment);
+        expect((yield* agentServerSignIn("guru"))?.message).toContain("has ended");
       }),
     ),
   );

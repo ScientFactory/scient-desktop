@@ -93,6 +93,31 @@ const LEGACY_MCP_STARTUP_NATIVE_PREFIXES = ["mcp-startup-failed:", "mcp-sign-in:
 /** A Sign in row the agent asked for when it needed the server; it stays in the chat. */
 export const MCP_SIGN_IN_REQUEST_NATIVE_PREFIX = "mcp-sign-in-request:";
 
+/** A Sign in row the agent asked for, as opposed to a startup notice. */
+export const isMcpSignInRequestNotice = (item: {
+  readonly mcpSignIn?: unknown;
+  readonly nativeItemRef?: { readonly nativeId: string | null } | null | undefined;
+}): boolean =>
+  item.mcpSignIn !== undefined &&
+  item.nativeItemRef?.nativeId?.startsWith(MCP_SIGN_IN_REQUEST_NATIVE_PREFIX) === true;
+
+/**
+ * Whether a requested sign-in still has something to do: its live session still reports the
+ * server needs one. Completion is otherwise only known to the client that signed in.
+ */
+export const requestedMcpSignInIsOpen = (
+  snapshot: Pick<ThreadMcpStatusSnapshot, "servers"> | null | undefined,
+  request: { readonly server: string; readonly providerThreadId: string | null },
+): boolean =>
+  snapshot?.servers.some(
+    (server) =>
+      server.source !== "managed" &&
+      server.name === request.server &&
+      server.status === "needs-sign-in" &&
+      server.sessionActive &&
+      server.providerThreadId === request.providerThreadId,
+  ) === true;
+
 /** Startup and sign-in notices older adapters wrote into the transcript; clients no longer show them. */
 export const isLegacyMcpStartupNotice = (item: {
   readonly mcpSignIn?: unknown;

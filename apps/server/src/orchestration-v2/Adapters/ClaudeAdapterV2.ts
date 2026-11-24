@@ -9675,17 +9675,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        // Keyed by provider turn and server: a repeated request in a turn keeps its first row.
+        const requestedMcpSignIns = new Set<string>();
         /**
-         * The agent asked for a server's sign-in: once Claude confirms it still needs one, a Sign
-         * in row in the running turn.
+         * The agent asked for a server's sign-in, through the query that reported it: once Claude
+         * confirms it still needs one, a Sign in row in that query's running turn.
          */
         const showMcpSignIn = Effect.fn("ClaudeAdapterV2.showMcpSignIn")(function* (
+          liveQuery: ClaudeLiveQueryContext,
           server: string,
         ) {
-          const context = yield* Ref.get(activeTurn);
-          const liveQuery = yield* Ref.get(queryContext);
-          if (context === null || liveQuery === null || liveQuery.stopping)
-            return "unavailable" as const;
+          const owns = Effect.map(
+            Effect.all([Ref.get(queryContext), Ref.get(activeTurn)]),
+            ([query, turn]) =>
+              query === liveQuery && !liveQuery.stopping && turn !== null ? turn : null,
+          );
+          if ((yield* owns) === null) return "unavailable" as const;
           const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
             Effect.timeout("2 seconds"),
             Effect.option,
@@ -9694,8 +9699,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* publishClaudeNativeMcpStatus(liveQuery, statuses.value);
           const status = statuses.value.find((candidate) => candidate.name === server)?.status;
           if (status === "connected") return "signed-in" as const;
-          if (status !== "needs-auth") return "unavailable" as const;
-          yield* emitMcpSignInNotice(context, server, "request");
+          if (status === "pending") return "checking" as const;
+          if (status !== "needs-auth") return "not-available" as const;
+          // Stop or a new query may have come while Claude answered.
+          const context = yield* owns;
+          if (context === null) return "unavailable" as const;
+          const key = `${context.providerTurnId}\u0000${server}`;
+          if (!requestedMcpSignIns.has(key)) {
+            requestedMcpSignIns.add(key);
+            yield* emitMcpSignInNotice(context, server, "request");
+          }
           return "shown" as const;
         });
 
@@ -14748,7 +14761,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     providerInstanceId: adapterOptions.instanceId,
                     providerThreadId: turnInput.providerThread.id,
                     providerSessionId: input.providerSessionId,
-                    showSignIn: showMcpSignIn,
+                    showSignIn: (server) => showMcpSignIn(context, server),
                   })
                   .pipe(
                     Effect.tap((attachment) => {

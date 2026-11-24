@@ -48,6 +48,7 @@ vi.mock("./extensionsState", () => ({
 }));
 
 import { ExtensionsReceiptIndicator } from "./ExtensionsReceiptIndicator";
+import { RequestedMcpSignInAction } from "./RequestedMcpSignIn";
 
 const environmentId = EnvironmentId.make("local");
 const threadId = ThreadId.make("thread-1");
@@ -215,5 +216,57 @@ describe("ExtensionsReceiptIndicator", () => {
     await userEvent.click(ambient!.querySelector("button")!);
     expect(document.querySelector('[data-native-sign-in="linear"]')).not.toBeNull();
     expect(document.querySelector('[data-native-sign-in="plugin:design:figma"]')).not.toBeNull();
+  });
+});
+
+describe("RequestedMcpSignInAction", () => {
+  const snapshot = (
+    server: Partial<ThreadMcpStatusSnapshot["servers"][number]> = {},
+  ): ThreadMcpStatusSnapshot => ({
+    threadId,
+    revision: NonNegativeInt.make(1),
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    providerThreadId: ProviderThreadId.make("pt-1"),
+    sessionActive: true,
+    servers: [
+      {
+        id: "native:guru",
+        name: "guru",
+        displayName: "guru",
+        source: "native",
+        status: "needs-sign-in",
+        observedAt: IsoDateTime.make("2026-11-24T00:00:00.000Z"),
+        providerThreadId: ProviderThreadId.make("pt-1"),
+        sessionActive: true,
+        ...server,
+      },
+    ],
+  });
+  const action = () => (
+    <RequestedMcpSignInAction
+      environmentId={environmentId}
+      threadId={threadId}
+      providerThreadId={ProviderThreadId.make("pt-1")}
+      server="guru"
+      noticeAt={0}
+    />
+  );
+
+  it("offers the sign-in only while the chat's live session still needs it", async () => {
+    setup();
+    state.mcpStatus = snapshot();
+    await using screen = await render(action());
+    expect(screen.container.querySelector('[data-native-sign-in="guru"]')).not.toBeNull();
+    expect(state.mcpStatusAtom).toHaveBeenCalledWith({ environmentId, input: { threadId } });
+
+    // Signed in anywhere, on this device or another, the request row keeps no button.
+    state.mcpStatus = snapshot({ status: "ready" });
+    await screen.rerender(action());
+    expect(screen.container.querySelector("[data-native-sign-in]")).toBeNull();
+
+    // A later session owns the server now: this older request no longer targets it.
+    state.mcpStatus = snapshot({ providerThreadId: ProviderThreadId.make("pt-2") });
+    await screen.rerender(action());
+    expect(screen.container.querySelector("[data-native-sign-in]")).toBeNull();
   });
 });

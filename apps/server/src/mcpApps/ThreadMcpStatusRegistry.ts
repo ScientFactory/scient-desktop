@@ -83,20 +83,31 @@ export interface ManagedThreadMcpSource {
 }
 
 /**
- * What came of the agent asking for one of its own MCP servers' sign-in. `shown`: the session
- * that reported it put a Sign in row in the chat. `signed-in`: it no longer needs one. `card`:
- * that session can't show one, so the thread's MCP status is the only place. `none`: the thread
- * reports no such server.
+ * The agent asked for one of its own servers' sign-in. `shown`: a Sign in row is in the chat.
+ * `not-available`: off or failed. `card`: no row possible, only the thread's MCP status.
+ * `inactive`: its session ended. `none`: no such server.
  */
 export type McpSignInRequestOutcome =
   | {
-      readonly _tag: "shown" | "signed-in" | "card" | "checking" | "claudeai" | "inactive";
+      readonly _tag:
+        | "shown"
+        | "signed-in"
+        | "not-available"
+        | "card"
+        | "checking"
+        | "claudeai"
+        | "inactive";
       readonly displayName: string;
     }
   | { readonly _tag: "none" };
 
-/** A live session's answer to a sign-in request for one of its servers. */
-export type McpSignInShowResult = "shown" | "signed-in" | "unavailable";
+/** A live session's answer to a sign-in request for one of its servers, from a fresh read. */
+export type McpSignInShowResult =
+  | "shown"
+  | "signed-in"
+  | "checking"
+  | "not-available"
+  | "unavailable";
 
 /** One provider attachment's right to report a thread's native servers. */
 export interface ThreadMcpAttachment {
@@ -348,6 +359,8 @@ const make = Effect.gen(function* () {
         ? {
             ...state,
             sessionActive: false,
+            // The ended session's adapter is not kept reachable through its last report.
+            showSignIn: undefined,
             servers: new Map(
               [...state.servers].map(([id, server]) => [id, { ...server, sessionActive: false }]),
             ),
@@ -402,20 +415,19 @@ const make = Effect.gen(function* () {
           );
     if (state === undefined || server === undefined) return { _tag: "none" } as const;
     const { displayName } = server;
+    if (server.status === "ready") return { _tag: "signed-in", displayName } as const;
     if (server.status !== "needs-sign-in" && server.status !== "checking")
-      return { _tag: "none" } as const;
+      return { _tag: "not-available", displayName } as const;
     if (server.source === "claudeai") return { _tag: "claudeai", displayName } as const;
     if (!state.sessionActive || !server.sessionActive)
       return { _tag: "inactive", displayName } as const;
+    if (state.showSignIn === undefined)
+      return { _tag: server.status === "checking" ? "checking" : "card", displayName } as const;
     // The session reads its servers again first: a status that was still settling is not trusted.
-    const shown: McpSignInShowResult =
-      state.showSignIn === undefined
-        ? "unavailable"
-        : yield* state
-            .showSignIn(server.name)
-            .pipe(Effect.orElseSucceed(() => "unavailable" as const));
-    if (shown === "shown") return { _tag: "shown", displayName } as const;
-    if (shown === "signed-in") return { _tag: "signed-in", displayName } as const;
+    const shown = yield* state
+      .showSignIn(server.name)
+      .pipe(Effect.orElseSucceed((): McpSignInShowResult => "unavailable"));
+    if (shown !== "unavailable") return { _tag: shown, displayName } as const;
     return { _tag: server.status === "checking" ? "checking" : "card", displayName } as const;
   });
 

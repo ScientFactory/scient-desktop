@@ -1095,7 +1095,12 @@ describe("ClaudeAdapterV2 thread MCP status", () => {
         );
         assert.deepStrictEqual(
           yield* registry.requestSignIn({ threadId: harness.threadId, server: "notion" }),
-          { _tag: "none" },
+          { _tag: "signed-in", displayName: "notion" },
+        );
+        // Asked again in the same turn: the first row stays the only one.
+        assert.deepStrictEqual(
+          yield* registry.requestSignIn({ threadId: harness.threadId, server: "guru" }),
+          { _tag: "shown", displayName: "guru" },
         );
         const row = (yield* Queue.take(harness.systemNoticeReceipts)).turnItem;
         assert.deepStrictEqual(row.type === "system_notice" ? row.mcpSignIn : undefined, {
