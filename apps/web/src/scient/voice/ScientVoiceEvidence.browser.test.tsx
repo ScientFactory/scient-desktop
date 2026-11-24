@@ -518,9 +518,30 @@ it("switches engines and cleanup without moving the settings below Dictation", a
     await expect.element(silence).toBeDisabled();
     expect(recordingsTop()).toBe(top);
 
+    const name = "Parakeet TDT 0.6B v3";
+    const useModel = screen.getByRole("button", { name: `Use ${name} for dictation` });
+    const cardRow = screen
+      .getByRole("button", { name: `Open details for ${name}` })
+      .element().parentElement!;
+    await useModel.click();
+    await expect.element(engine).toHaveTextContent(name);
+    await expect.poll(() => cardRow.textContent).toContain("In use");
+    expect(getClientSettings().voiceCatalogModelId).toBe(
+      "handy-computer/parakeet-tdt-0.6b-v3-gguf",
+    );
+    expect(recordingsTop()).toBe(top);
+    if (screenshots) {
+      await page.screenshot({
+        path: `${screenshots}/dictation-model-in-use.png`,
+        element: cardRow,
+      });
+    }
+
     await engine.click();
     await page.getByRole("option", { name: /gpt-transcribe/ }).click();
     await expect.element(engine).toHaveTextContent("gpt-transcribe · api.openai.com");
+    await expect.element(useModel).toBeEnabled();
+    expect(cardRow.textContent).not.toContain("In use");
     expect(getClientSettings().voiceCloudSelection).toEqual({
       environmentId: fixture.environmentId,
       engineId: "engine-1",
@@ -535,6 +556,7 @@ it("switches engines and cleanup without moving the settings below Dictation", a
     await act(async () => {
       await updateClientSettings({
         voiceDictationEngine: previous.voiceDictationEngine,
+        voiceCatalogModelId: previous.voiceCatalogModelId,
         voiceCloudSelection: previous.voiceCloudSelection,
         voiceTranscriptCorrectionEnabled: previous.voiceTranscriptCorrectionEnabled,
       });

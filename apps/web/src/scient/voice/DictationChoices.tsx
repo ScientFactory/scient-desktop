@@ -1,6 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useGT } from "gt-react";
-import { useState } from "react";
 
 import type { useVoiceModels } from "../../components/settings/VoiceSettingsPanel";
 import { SettingsRow } from "../../components/settings/settingsLayout";
@@ -14,17 +13,20 @@ export function DictationChoices({
   catalog,
   chatGptSignedIn,
   environmentId,
+  pending,
+  onPendingChange,
 }: {
   readonly catalog: ReturnType<typeof useVoiceModels>;
   readonly chatGptSignedIn: boolean;
   readonly environmentId: EnvironmentId;
+  readonly pending: boolean;
+  readonly onPendingChange: (pending: boolean) => void;
 }) {
   const gt = useGT();
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
   const localModel = useClientSettings((settings) => settings.voiceCatalogModelId);
   const cloud = useClientSettings((settings) => settings.voiceCloudSelection);
   const { choices, choose } = useCloudRecordingChoices(environmentId);
-  const [pending, setPending] = useState(false);
   const localModels = catalog.models.filter((model) => model.state === "installed");
   const cloudEngines = choices.filter((choice) => !choice.reconnect && !choice.needsModel);
   const value =
@@ -73,7 +75,7 @@ export function DictationChoices({
     }
     const choice = cloudEngines.find((engine) => `cloud:${engine.id}` === next);
     if (!choice || pending) return;
-    setPending(true);
+    onPendingChange(true);
     void andFinally(
       async () => {
         const result = await choose({
@@ -93,7 +95,7 @@ export function DictationChoices({
           voiceCloudSelection: { environmentId, engineId: choice.id },
         });
       },
-      () => setPending(false),
+      () => onPendingChange(false),
     );
   };
 

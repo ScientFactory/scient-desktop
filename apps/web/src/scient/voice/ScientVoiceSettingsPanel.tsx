@@ -101,6 +101,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   const silenceFiltering = useClientSettings((settings) => settings.speechSilenceFiltering);
   const removeFillerWords = useClientSettings((settings) => settings.speechRemoveFillerWords);
   const [cloudRevision, setCloudRevision] = useState(0);
+  const [engineSelectionPending, setEngineSelectionPending] = useState(false);
   const [client] = useState(() => getVoiceBridge());
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
@@ -172,6 +173,8 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             catalog={catalog}
             chatGptSignedIn={chatGptSignedIn}
             environmentId={environmentId}
+            pending={engineSelectionPending}
+            onPendingChange={setEngineSelectionPending}
           />
         ) : null}
         <SettingsRow
@@ -251,6 +254,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             catalog={catalog}
             prepared={prepared}
             language={languagePreference}
+            selectionPending={engineSelectionPending}
           />
         </SettingsSection>
       ) : null}

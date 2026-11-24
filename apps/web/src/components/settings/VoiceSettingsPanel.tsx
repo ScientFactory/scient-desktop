@@ -173,8 +173,7 @@ const UNLOAD_LABELS: Record<SpeechModelUnloadTimeout, string> = {
   hour_1: msg("After 1 hour"),
 };
 type ModelCardProps = {
-  /** SCIENT-FORK: download and remove only; the engine is chosen elsewhere. */
-  readonly manageOnly?: boolean;
+  readonly compact?: boolean;
   readonly model: EnvironmentSpeechModel;
   readonly comparisonLanguages: readonly string[];
   readonly recommendation: SpeechRecommendationRole | undefined;
@@ -186,6 +185,7 @@ type ModelCardProps = {
   readonly canCancel: boolean;
   readonly onDownload: () => void;
   readonly onSelect: () => void;
+  readonly selectionPending?: boolean;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
   readonly testControls?: ReactNode;
@@ -230,7 +230,7 @@ function EngineCard(props: ModelCardProps) {
           : !model.benchmark && model.languages[0]
             ? [languageLabel(model.languages[0], locale)]
             : []),
-        ...(props.manageOnly ? [] : [size]),
+        ...(props.compact ? [] : [size]),
       ]}
     />
   );
@@ -245,7 +245,7 @@ function EngineCard(props: ModelCardProps) {
     >
       <XIcon className="size-3.5" />
     </Button>
-  ) : model.state === "downloadable" && props.manageOnly ? (
+  ) : model.state === "downloadable" && props.compact ? (
     <Tooltip>
       <TooltipTrigger
         render={
@@ -290,7 +290,7 @@ function EngineCard(props: ModelCardProps) {
       </p>
     </div>
   ) : null;
-  if (props.manageOnly) {
+  if (props.compact) {
     return (
       <Popover>
         <div className="relative rounded-xl border border-border/70 bg-card/50 px-3 py-2.5 transition-colors has-[[data-speech-model-body]:hover]:bg-muted/50 has-[[data-speech-model-body]:focus-visible]:outline has-[[data-speech-model-body]:focus-visible]:outline-ring">
@@ -340,14 +340,31 @@ function EngineCard(props: ModelCardProps) {
               </PopoverTrigger>
               {downloadAction}
               {model.state === "installed" ? (
-                <Button
-                  size="sm"
-                  variant="ghost-muted"
-                  disabled={props.busy}
-                  onClick={props.onDelete}
-                >
-                  {model.linkedFrom ? <T>Stop using file</T> : <T>Remove</T>}
-                </Button>
+                <>
+                  {model.active ? (
+                    <Badge size="sm" variant="success">
+                      <T>In use</T>
+                    </Badge>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label={gt("Use {model} for dictation", { model: model.name })}
+                      disabled={props.busy || props.selectionPending}
+                      onClick={props.onSelect}
+                    >
+                      <T>Use</T>
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost-muted"
+                    disabled={props.busy}
+                    onClick={props.onDelete}
+                  >
+                    {model.linkedFrom ? <T>Stop using file</T> : <T>Remove</T>}
+                  </Button>
+                </>
               ) : null}
             </div>
           </div>
@@ -854,14 +871,19 @@ export function DictationEngineCatalog({
   prepared,
   language,
   catalog,
+  selectionPending,
 }: {
   prepared: PreparedConnection | null;
   language: string;
   catalog: VoiceModels;
+  selectionPending: boolean;
 }) {
   const gt = useGT();
   const locale = useLocale();
   const { status, models, run, controlsDisabled, canCancel, requestedDownload } = catalog;
+  const selectedModelId = useClientSettings((settings) =>
+    settings.voiceDictationEngine === "local" ? settings.voiceCatalogModelId : null,
+  );
   const [preferred] = useState(preferredSpeechLanguages);
   const [compareLanguage, setCompareLanguage] = useState("");
   const [showAllModels, setShowAllModels] = useState(false);
@@ -936,11 +958,11 @@ export function DictationEngineCatalog({
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {visibleModels.map((model) => (
             <EngineCard
-              manageOnly
+              compact
               key={model.id}
               model={{
                 ...model,
-                active: false,
+                active: model.id === selectedModelId,
                 state:
                   model.id === requestedDownload && model.state === "downloadable"
                     ? "downloading"
@@ -960,6 +982,7 @@ export function DictationEngineCatalog({
               }
               benchmarkTier={status.benchmarkTier}
               busy={controlsDisabled}
+              selectionPending={selectionPending}
               canCancel={canCancel}
               dictation
               onDownload={() =>
