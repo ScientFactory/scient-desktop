@@ -234,6 +234,47 @@ describe("sweep", () => {
     assert.deepEqual(actions(results), { busy: "remove", "busy-2": "keep", "cwd-busy": "keep" });
   });
 
+  it("keeps old dev app data, nested repositories and edits hidden by index flags", () => {
+    const fixture = makeFixture();
+    NodeFS.writeFileSync(NodePath.join(fixture.repo, ".git", "info", "exclude"), ".t3\nbuild\n");
+    const markersOnly = fixture.add("markers-only");
+    NodeFS.mkdirSync(NodePath.join(markersOnly, ".t3"));
+    NodeFS.writeFileSync(NodePath.join(markersOnly, ".t3", "setup-done"), "");
+    const oldDevApp = fixture.add("old-dev-app");
+    NodeFS.mkdirSync(NodePath.join(oldDevApp, ".t3", "userdata"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(oldDevApp, ".t3", "userdata", "statev2.sqlite"), "db");
+    const nested = fixture.add("nested-repo");
+    NodeFS.mkdirSync(NodePath.join(nested, "build", "upstream", ".git"), { recursive: true });
+    for (const flag of ["--assume-unchanged", "--skip-worktree"]) {
+      const flagged = fixture.add(`flag${flag}`);
+      sh(flagged, "update-index", flag, ".gitignore");
+      NodeFS.appendFileSync(NodePath.join(flagged, ".gitignore"), "edit\n");
+      ageCheckout(flagged);
+    }
+    assert.deepEqual(actions(sweep(options(fixture), { listProcesses: noProcesses })), {
+      "flag--assume-unchanged": "keep",
+      "flag--skip-worktree": "keep",
+      "markers-only": "remove",
+      "nested-repo": "keep",
+      "old-dev-app": "keep",
+    });
+  });
+
+  it("sees processes and threads that name the checkout through a root alias", () => {
+    const fixture = makeFixture();
+    const alias = NodePath.join(fixture.root, "alias");
+    NodeFS.symlinkSync(fixture.worktrees, alias);
+    fixture.add("named");
+    fixture.add("candidate");
+    fixture.add("idle");
+    writeThreadDb(fixture.stateDb, [{ projectRoot: NodePath.join(alias, "candidate", "gone") }]);
+    const results = sweep(
+      { ...options(fixture), root: fixture.worktrees, rootAlias: alias },
+      { listProcesses: () => ({ commands: `codex -C ${alias}/named resume\n`, cwds: [] }) },
+    );
+    assert.deepEqual(actions(results), { candidate: "keep", idle: "remove", named: "keep" });
+  });
+
   it("stops when it cannot read the Scient database", () => {
     assert.throws(() => threadCounts("/missing/statev2.sqlite", []), /--state-db/u);
   });

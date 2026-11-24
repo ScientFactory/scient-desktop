@@ -20,15 +20,19 @@ Checked in this order; the first match wins:
 
 1. `scient-desktop-identity`, a checkout holding a `.keep-worktree` file, or a locked worktree.
 2. A standalone clone (only linked worktrees are removed).
-3. Uncommitted or untracked changes.
-4. A process naming the checkout in its command line, or working inside it.
+3. Uncommitted or untracked changes, including tracked files hidden by `assume-unchanged` or
+   `skip-worktree`, and file names Git reports that aren't valid UTF-8.
+4. A process naming the checkout in its command line (by the `--root` spelling or the real
+   path), or working inside it.
 5. A thread in the Scient database that runs there: its worktree, or its project's folder when it
    has none. Archived threads count.
 6. Dev app state (`.scient-next/`), merged or not: it holds the candidate's own threads and
    projects, so the owner removes it by hand after reviewing them.
-7. Ignored files other than rebuildable outputs (`node_modules`, `dist*`, `build`, `out`,
-   `target`, caches, `.electron-runtime`, `.t3`) and symlinks, for example `.env.local`, notes or
-   a nested repository. Git would delete them with the checkout.
+7. A nested repository anywhere inside it (the folder is walked, since Git doesn't always list
+   one), or ignored files other than rebuildable outputs (`node_modules`, `dist*`, `build`, `out`,
+   `target`, caches, `.electron-runtime`, a `.t3` folder holding only setup markers) and symlinks,
+   for example `.env.local`, notes or an older dev app's `.t3/userdata`. Git would delete them
+   with the checkout.
 
 If `ps`, `lsof` or the database can't be read, the sweep stops instead of guessing.
 

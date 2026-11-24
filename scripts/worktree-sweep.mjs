@@ -46,8 +46,9 @@ export function parseArgs(argv, env = process.env, platform = process.platform) 
   if (options.apply && platform === "win32") {
     throw new Error("--apply needs ps and lsof to see running processes; use macOS or Linux.");
   }
-  options.root = NodePath.resolve(options.root);
-  if (NodeFS.existsSync(options.root)) options.root = NodeFS.realpathSync(options.root);
+  // Processes may name the checkout through the spelling given here or the real path.
+  options.rootAlias = NodePath.resolve(options.root);
+  options.root = canonical(options.rootAlias);
   return options;
 }
 
@@ -149,11 +150,19 @@ function mergedReason(checkout, branch, head) {
   return merged ? `PR #${merged.number} merged at this head` : null;
 }
 
-function canonical(path) {
-  try {
-    return NodeFS.realpathSync(path);
-  } catch {
-    return NodePath.resolve(path);
+// The real path, resolving the nearest existing ancestor when the path itself is gone.
+export function canonical(path) {
+  const missing = [];
+  let current = NodePath.resolve(path);
+  for (;;) {
+    try {
+      return NodePath.join(NodeFS.realpathSync(current), ...missing.toReversed());
+    } catch {
+      const parent = NodePath.dirname(current);
+      if (parent === current) return NodePath.resolve(path);
+      missing.push(NodePath.basename(current));
+      current = parent;
+    }
   }
 }
 
@@ -200,15 +209,17 @@ function processPaths() {
   return { commands: listed.stdout, cwds };
 }
 
-function usedByProcess(checkout, processes) {
-  const escaped = checkout.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  // The path as a whole argument or a prefix of one, not a sibling like `<path>-2`.
-  const mention = new RegExp(`${escaped}(?:[/\\\\\\s"'=:]|$)`, "mu");
-  const prefix = `${checkout}${NodePath.sep}`;
-  return (
-    mention.test(processes.commands) ||
-    processes.cwds.some((cwd) => cwd === checkout || cwd.startsWith(prefix))
-  );
+function usedByProcess(spellings, processes) {
+  return spellings.some((checkout) => {
+    const escaped = checkout.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    // The path as a whole argument or a prefix of one, not a sibling like `<path>-2`.
+    const mention = new RegExp(`${escaped}(?:[/\\\\\\s"'=:]|$)`, "mu");
+    const prefix = `${checkout}${NodePath.sep}`;
+    return (
+      mention.test(processes.commands) ||
+      processes.cwds.some((cwd) => cwd === checkout || cwd.startsWith(prefix))
+    );
+  });
 }
 
 // Ignored entries git would delete with the checkout. Only rebuildable outputs and
@@ -218,7 +229,6 @@ const DISPOSABLE = new Set([
   ".DS_Store",
   ".electron-runtime",
   ".next",
-  ".t3",
   ".turbo",
   ".vite",
   ".vitest",
@@ -231,6 +241,35 @@ const DISPOSABLE = new Set([
   "target",
 ]);
 
+// `.t3/` holds setup markers, but older dev apps kept their database there too.
+const SETUP_MARKERS = new Set(["setup-running", "setup-done", "setup-failed"]);
+
+// Git does not always list a nested repository (an ignored or broken one can be
+// silent), but `git worktree remove` deletes it. Walk the folder itself.
+export function nestedRepository(checkout) {
+  const pending = [checkout];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of NodeFS.readdirSync(current, { withFileTypes: true })) {
+      const path = NodePath.join(current, entry.name);
+      if (entry.name === ".git" && current !== checkout)
+        return NodePath.relative(checkout, current);
+      if (entry.isDirectory()) pending.push(path);
+    }
+  }
+  return null;
+}
+
+function disposable(relative, absolute, stats) {
+  const name = NodePath.basename(relative);
+  if (name === ".t3") {
+    return (
+      stats.isDirectory() && NodeFS.readdirSync(absolute).every((file) => SETUP_MARKERS.has(file))
+    );
+  }
+  return DISPOSABLE.has(name) || name.endsWith(".tsbuildinfo");
+}
+
 export function keptIgnoredEntries(checkout, statusOutput) {
   const kept = [];
   for (const entry of statusOutput.split("\0")) {
@@ -238,30 +277,51 @@ export function keptIgnoredEntries(checkout, statusOutput) {
     const relative = entry.slice(3).replace(/\/$/u, "");
     const absolute = NodePath.join(checkout, relative);
     const stats = NodeFS.lstatSync(absolute, { throwIfNoEntry: false });
-    if (!stats || stats.isSymbolicLink()) continue;
-    const name = NodePath.basename(relative);
-    const nestedRepo = stats.isDirectory() && NodeFS.existsSync(NodePath.join(absolute, ".git"));
-    if (nestedRepo || !(DISPOSABLE.has(name) || name.endsWith(".tsbuildinfo"))) kept.push(relative);
+    // An entry that can't be found under its reported name can't be judged.
+    if (!stats) kept.push(relative);
+    else if (!stats.isSymbolicLink() && !disposable(relative, absolute, stats)) kept.push(relative);
   }
   return kept;
 }
 
-export function gatherFacts(checkout, { threads, processes, lockedPaths }) {
+// assume-unchanged and skip-worktree make status skip a tracked file, so its edits
+// would be invisible and lost.
+function hasHiddenIndexEntries(checkout) {
+  const listed = git(checkout, ["ls-files", "-v"]);
+  return !listed.ok || listed.stdout.split("\n").some((line) => /^(?:[a-z]|S) /u.test(line));
+}
+
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+
+export function gatherFacts(checkout, { threads, processes, lockedPaths, rootAlias = null }) {
   const name = NodePath.basename(checkout);
   const dotGit = NodeFS.lstatSync(NodePath.join(checkout, ".git"));
   const branch =
     git(checkout, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
   const head = git(checkout, ["rev-parse", "HEAD"]).stdout.trim();
   // --no-optional-locks: a status must not refresh the index, whose mtime marks activity.
-  const status = git(checkout, [
-    "--no-optional-locks",
-    "status",
-    "--porcelain",
-    "-z",
-    "--ignored=traditional",
-    "--untracked-files=normal",
-  ]);
-  const entries = status.stdout.split("\0");
+  const status = run(
+    "git",
+    [
+      "-C",
+      checkout,
+      "--no-optional-locks",
+      "status",
+      "--porcelain",
+      "-z",
+      "--ignored=traditional",
+      "--untracked-files=normal",
+    ],
+    { encoding: "buffer" },
+  );
+  // A name that isn't valid UTF-8 can't be looked up reliably; treat it as unknown.
+  let statusText = null;
+  try {
+    statusText = status.ok ? strictUtf8.decode(status.stdout) : null;
+  } catch {
+    statusText = null;
+  }
+  const entries = (statusText ?? "").split("\0");
   const gitPath = (file) =>
     NodePath.resolve(checkout, git(checkout, ["rev-parse", "--git-path", file]).stdout.trim());
   const devState = NodeFS.existsSync(NodePath.join(checkout, ".scient-next"));
@@ -279,9 +339,15 @@ export function gatherFacts(checkout, { threads, processes, lockedPaths }) {
     head,
     linked: dotGit.isFile(),
     protected: protectedReason,
-    dirty: !status.ok || entries.some((entry) => entry !== "" && !entry.startsWith("!! ")),
-    ignoredKept: status.ok ? keptIgnoredEntries(checkout, status.stdout) : [],
-    running: usedByProcess(checkout, processes),
+    dirty:
+      statusText === null ||
+      entries.some((entry) => entry !== "" && !entry.startsWith("!! ")) ||
+      hasHiddenIndexEntries(checkout),
+    ignoredKept: [],
+    running: usedByProcess(
+      [...new Set([checkout, rootAlias ? NodePath.join(rootAlias, name) : checkout])],
+      processes,
+    ),
     threads: threads.get(checkout) ?? 0,
     devState,
     lastActivityMs: Math.max(
@@ -292,8 +358,20 @@ export function gatherFacts(checkout, { threads, processes, lockedPaths }) {
     ),
     merged: null,
   };
-  // The merge lookup can call GitHub, so only ask when nothing else keeps it.
-  if (!facts.protected && facts.linked && !facts.dirty && !facts.running && facts.threads === 0) {
+  // The ignored-file scan and merge lookup are slow, so run them only when nothing else keeps it.
+  if (
+    !facts.protected &&
+    facts.linked &&
+    !facts.dirty &&
+    !facts.running &&
+    facts.threads === 0 &&
+    !facts.devState
+  ) {
+    const nested = nestedRepository(checkout);
+    facts.ignoredKept = [
+      ...(nested ? [`nested repository ${nested}`] : []),
+      ...keptIgnoredEntries(checkout, statusText),
+    ];
     facts.merged = mergedReason(checkout, branch, head);
   }
   return facts;
@@ -351,7 +429,12 @@ export function sweep(options, { listProcesses = processPaths } = {}) {
   const lockedPaths = lockedWorktrees(checkouts);
   const results = [];
   for (const checkout of checkouts) {
-    const facts = gatherFacts(checkout, { threads, processes, lockedPaths });
+    const facts = gatherFacts(checkout, {
+      threads,
+      processes,
+      lockedPaths,
+      rootAlias: options.rootAlias,
+    });
     const decision = decide(facts, { now, idleDays: options.idleDays });
     const result = { ...facts, ...decision, removed: false, error: null };
     if (options.apply && decision.action === "remove") {
@@ -360,6 +443,7 @@ export function sweep(options, { listProcesses = processPaths } = {}) {
         threads: threadCounts(options.stateDb, [checkout]),
         processes: listProcesses(),
         lockedPaths: lockedWorktrees([checkout]),
+        rootAlias: options.rootAlias,
       });
       const again = decide(fresh, { now: Date.now(), idleDays: options.idleDays });
       if (again.action !== "remove") Object.assign(result, again);
