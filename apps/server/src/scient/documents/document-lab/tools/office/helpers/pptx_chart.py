@@ -164,7 +164,7 @@ _DECIMAL_RE = re.compile(
 def _check_decimal_settings(part: str, xml: str) -> list[str]:
     problems = []
     for name, raw in sorted(set(_DECIMAL_SETTING_RE.findall(_strip_ext_lst(xml)))):
-        value = html.unescape(raw)  
+        value = html.unescape(raw)
         if _DECIMAL_RE.fullmatch(value.strip()):
             continue
         fix = "Fix: write a plain number, or remove the element"
@@ -185,7 +185,7 @@ def _local(tag: str) -> str:
 
 def _drawn_series(root) -> list:
     found, to_visit = [], [root]
-    while to_visit:  
+    while to_visit:
         for child in to_visit.pop():
             name = _local(child.tag)
             if name == "ser":
@@ -212,7 +212,7 @@ def _check_series_order(part: str, xml: str) -> list[str]:
     for series in _drawn_series(root):
         own = [c.get("val", "") for c in series if _local(c.tag) == "order"]
         if own and own[0].isascii() and own[0].isdigit():
-            orders[own[0]] += 1  
+            orders[own[0]] += 1
     repeated = sorted((o for o, n in orders.items() if n > 1), key=lambda o: (len(o), o))
     if not repeated:
         return []
@@ -251,7 +251,7 @@ def _outermost_spans(text: str, name: str) -> list[tuple[int, int]]:
         if self_closing:
             continue
         if closing:
-            if depth:  
+            if depth:
                 depth -= 1
                 if depth == 0:
                     spans.append((start, match.end()))

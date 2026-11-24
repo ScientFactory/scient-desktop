@@ -141,7 +141,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
         ns = {"p": self.PRESENTATIONML_NAMESPACE, "mc": self.MC_NAMESPACE}
         r_id = f"{{{self.OFFICE_RELATIONSHIPS_NAMESPACE}}}id"
         errors = []
-        owners: dict[str, list[str]] = {}  
+        owners: dict[str, list[str]] = {}
         listed = self._listed_slides()
 
         for slide in sorted(self.unpacked_dir.glob("ppt/slides/*.xml")):
@@ -160,7 +160,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
                     if rel.get("Type", "").endswith("/relationships/tags")
                 } if rels_file.is_file() else {}
             except (lxml.etree.XMLSyntaxError, ValueError):
-                continue  
+                continue
             for rid, count in sorted(Counter(r for r in named if r).items()):
                 if count > 1:
                     errors.append(
@@ -221,7 +221,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
                 with zipfile.ZipFile(self.original_file, "r") as zf:
                     safe_extract(zf, temp_path)
             except (zipfile.BadZipFile, ValueError, OSError):
-                return set()  
+                return set()
 
             for part in sorted(temp_path.rglob("*.xml")):
                 relative = part.relative_to(temp_path).as_posix()
@@ -260,7 +260,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
                 root = lxml.etree.parse(str(xml_file)).getroot()
                 stranded = [] if unlisted else stranded_animation_targets(root)
             except lxml.etree.XMLSyntaxError:
-                stranded = []  
+                stranded = []
             problems.extend(f"{relative}: {m}" for m in stranded)
 
             ok, errors = self._validate_single_file_xsd(
@@ -278,7 +278,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
 
             for message in fatal_slide_errors(set(errors)):
                 if message in inherited:
-                    continue  
+                    continue
                 problems.append(f"{relative}: {message}")
 
         if broken:
@@ -307,7 +307,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
             try:
                 root = lxml.etree.parse(str(xml_file)).getroot()
             except (lxml.etree.XMLSyntaxError, OSError):
-                root = None  
+                root = None
             if root is not None and (lxml.etree.QName(root).namespace or "").startswith(
                 "http://schemas.microsoft.com/office/"
             ):
@@ -327,7 +327,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
 
         children = list(root)
         if children.index(notes) < children.index(slides):
-            return xml_doc  
+            return xml_doc
 
         root.remove(notes)
         root.insert(list(root).index(slides), notes)
@@ -485,7 +485,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
         import lxml.etree
 
         errors = []
-        notes_slide_references = {}  
+        notes_slide_references = {}
 
         slide_rels_files = list(self.unpacked_dir.glob("ppt/slides/_rels/*.xml.rels"))
 
@@ -511,7 +511,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
                         if part:
                             slide_name = rels_file.stem.replace(
                                 ".xml", ""
-                            )  
+                            )
 
                             notes_slide_references.setdefault(part, []).append(
                                 (slide_name, rels_file)

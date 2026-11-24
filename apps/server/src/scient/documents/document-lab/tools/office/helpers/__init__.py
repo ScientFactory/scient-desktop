@@ -60,7 +60,7 @@ def opc_target(target: str, source_part: str, target_mode: str = "") -> str | No
 
     if not parts:
         raise ValueError(f"relationship target resolves to nothing: {target!r}")
-    if names_another_root("/".join(parts)):  
+    if names_another_root("/".join(parts)):
         raise ValueError(f"relationship target is not a part name: {target!r}")
     return "/".join(parts)
 
