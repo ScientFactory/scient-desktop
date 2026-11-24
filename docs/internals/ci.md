@@ -236,10 +236,16 @@ and the Intel Mac's R and Julia keep their own job. Each role runs the same step
 (`scripts/compute-ci-workflows.test.ts` compares them) and runs even after an earlier role
 failed. R and Julia run the same way on every computer: one job each on Linux, Windows and the
 Intel Mac, whose three proofs (plain Python, real files, R and Julia kernels) are roles too. [`compute-roles.mjs`](../../.github/scripts/compute-roles.mjs) starts each one clean: its
-own temporary directory, and after it ends its leftover processes stopped, what it added to
-per-user directories (`~/.julia`, caches, Jupyter data) and the checkout (the sealed recipe
-metadata) removed, and the Python it installed into returned to its packages. R and Julia go
-first, so their plain-Python proof sees a Python nothing was installed into. Tools a setup step
+own temporary directory, its own R user library (a copy of the one setup made, which no role
+writes), per-user package and kernel state (`~/.julia`, Jupyter and IPython folders, `pip --user`
+sites, R's default user libraries) as setup left it, and a variable that marks the processes its
+steps start. When it ends, the processes it owns are stopped and checked gone: those carrying its
+mark, their children, and those orphaned while it ran that launchd did not start. What it added to
+per-user directories and the checkout (the sealed recipe metadata) is removed. The real-kernel
+role installs the bridge's packages into a disposable environment of its own; after each R and
+Julia role the plain Python, and R's shared libraries, are compared with what setup left, package
+by package and version by version, and an end that finds a change fails. R and Julia go first, so
+their plain-Python proof sees a Python nothing was installed into. Tools a setup step
 put on `PATH` stay there for later roles: GitHub cannot take a path back off. The job's last
 step names each role that failed, and fails when an expected role did not run.
 

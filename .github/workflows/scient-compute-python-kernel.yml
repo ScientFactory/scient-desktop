@@ -426,7 +426,7 @@ jobs:
       - name: End what people have
         id: end-people
         if: ${{ !cancelled() && steps.people.outcome != 'skipped' }}
-        run: node .github/scripts/compute-roles.mjs end people
+        run: node .github/scripts/compute-roles.mjs end people --check-python bare
       - name: Begin real files
         id: files
         if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
@@ -443,30 +443,29 @@ jobs:
       - name: End real files
         id: end-files
         if: ${{ !cancelled() && steps.files.outcome != 'skipped' }}
-        run: node .github/scripts/compute-roles.mjs end files
+        run: node .github/scripts/compute-roles.mjs end files --check-python bare
       - name: Begin real R and Julia kernels
         id: kernels
         if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
         run: node .github/scripts/compute-roles.mjs begin kernels
+      # Into an environment of the role's own, which its end removes: the Python the other roles
+      # use never gets them.
       - name: Install the bridge host's packages
         id: kernels-install
         if: ${{ !cancelled() && steps.kernels.outcome == 'success' }}
-        run: python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29"
+        run: node .github/scripts/compute-roles.mjs venv kernels "jupyter_client>=8.6" "ipykernel>=6.29"
       - name: Run real R and Julia kernels
         id: kernels-run
         if: ${{ !cancelled() && steps.kernels.outcome == 'success' }}
         working-directory: apps/server
         env:
           SCIENT_TEST_KERNEL_DIR: ${{ runner.temp }}/scient-kernels
-        run: |
-          set -euo pipefail
-          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
-          export SCIENT_TEST_PYTHON
-          vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
+          SCIENT_TEST_PYTHON: ${{ steps.kernels-install.outputs.python }}
+        run: vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
       - name: End real R and Julia kernels
         id: end-kernels
         if: ${{ !cancelled() && steps.kernels.outcome != 'skipped' }}
-        run: node .github/scripts/compute-roles.mjs end kernels --restore-python bare
+        run: node .github/scripts/compute-roles.mjs end kernels --check-python bare
 
       - name: Name every role that failed or did not run
         if: ${{ !cancelled() }}
@@ -565,7 +564,7 @@ jobs:
       - name: End what people have
         id: end-people
         if: ${{ !cancelled() && steps.people.outcome != 'skipped' }}
-        run: node .github/scripts/compute-roles.mjs end people
+        run: node .github/scripts/compute-roles.mjs end people --check-python bare
       - name: Begin real files
         id: files
         if: ${{ !cancelled() && steps.vp.outcome == 'success' && matrix.languages && inputs.real_kernel }}
@@ -582,31 +581,30 @@ jobs:
       - name: End real files
         id: end-files
         if: ${{ !cancelled() && steps.files.outcome != 'skipped' }}
-        run: node .github/scripts/compute-roles.mjs end files
+        run: node .github/scripts/compute-roles.mjs end files --check-python bare
       - name: Begin real R and Julia kernels
         id: kernels
         if: ${{ !cancelled() && steps.vp.outcome == 'success' && matrix.languages && inputs.real_kernel }}
         run: node .github/scripts/compute-roles.mjs begin kernels
+      # Into an environment of the role's own, which its end removes: the Python the other roles
+      # use never gets them.
       - name: Install the bridge host's packages
         id: kernels-install
         if: ${{ !cancelled() && steps.kernels.outcome == 'success' }}
-        run: python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29"
+        run: node .github/scripts/compute-roles.mjs venv kernels "jupyter_client>=8.6" "ipykernel>=6.29"
       - name: Run real R and Julia kernels
         id: kernels-run
         if: ${{ !cancelled() && steps.kernels.outcome == 'success' }}
         working-directory: apps/server
         env:
           SCIENT_TEST_KERNEL_DIR: ${{ runner.temp }}/scient-kernels
-        run: |
-          set -euo pipefail
-          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
-          export SCIENT_TEST_PYTHON
-          vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
-      # Real Python below installs into the same 3.12: return it to the plain Python it was.
+          SCIENT_TEST_PYTHON: ${{ steps.kernels-install.outputs.python }}
+        run: vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
+      # Real Python below installs into the same 3.12, which must still be the plain Python.
       - name: End real R and Julia kernels
         id: end-kernels
         if: ${{ !cancelled() && steps.kernels.outcome != 'skipped' }}
-        run: node .github/scripts/compute-roles.mjs end kernels --restore-python bare
+        run: node .github/scripts/compute-roles.mjs end kernels --check-python bare
 
       # Managed Python, as in managed_python. The production provisioner downloads pinned private
       # uv/CPython and uses the checked-in lock. No ambient pip environment can satisfy this test.

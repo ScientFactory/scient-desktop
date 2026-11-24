@@ -199,14 +199,34 @@ describe("Compute CI suite selection", () => {
     return summary;
   };
 
+  // The plain Python the people role saved is checked after each R and Julia role; the bridge's
+  // packages go into the kernel role's own environment.
+  const expectPlainPython = (steps: Array<Step>) => {
+    const step = (id: string) => steps.find((candidate) => candidate.id === id)!;
+    expect(step("people").run).toBe(
+      "node .github/scripts/compute-roles.mjs begin people --save-python bare",
+    );
+    for (const role of ["people", "files", "kernels"])
+      expect(step(`end-${role}`).run).toBe(
+        `node .github/scripts/compute-roles.mjs end ${role} --check-python bare`,
+      );
+    expect(step("kernels-install").run).toMatch(
+      /^node \.github\/scripts\/compute-roles\.mjs venv kernels /,
+    );
+    expect(step("kernels-run").env!.SCIENT_TEST_PYTHON).toBe(
+      "${{ steps.kernels-install.outputs.python }}",
+    );
+    for (const candidate of steps)
+      expect(candidate.run ?? "", candidate.name).not.toMatch(/restore-python/);
+  };
+
   it("runs each computer's R and Julia proofs in one job, each from a clean start", () => {
     const steps = jobs.real_languages!.steps;
     expect(expectRoles(steps, ["people", "files", "kernels"]).env!.EXPECTED).toBe(
       "people files kernels",
     );
+    expectPlainPython(steps);
     const index = (id: string) => steps.findIndex((step) => step.id === id);
-    expect(steps[index("people")]!.run).toContain("--save-python bare");
-    expect(steps[index("end-kernels")]!.run).toContain("--restore-python bare");
     const llvm = steps.findIndex((step) => step.run?.includes("match-windows-llvm.sh"));
     expect(llvm).toBeGreaterThan(-1);
     expect(llvm).toBeLessThan(index("people"));
@@ -242,13 +262,12 @@ describe("Compute CI suite selection", () => {
       else expect(same(step), step.name).toEqual(same(original!));
     }
     expectRoles(steps, roles);
-    // The plain-Python proof runs before anything is installed into a Python, and the Python
-    // it saved returns to its packages before real Python reuses that interpreter.
+    // The plain-Python proof runs before anything is installed into a Python, and the Python it
+    // saved is checked unchanged before real Python reuses that interpreter.
     const index = (id: string) => steps.findIndex((step) => step.id === id);
     expect(index("people")).toBeLessThan(index("kernels-install"));
     expect(index("kernels-install")).toBeLessThan(index("python-install-312"));
-    expect(steps[index("people")]!.run).toContain("--save-python bare");
-    expect(steps[index("end-kernels")]!.run).toContain("--restore-python bare");
+    expectPlainPython(steps);
     const summary = steps.at(-1)!;
     const expected = (inputs: object, leg: object) =>
       (
