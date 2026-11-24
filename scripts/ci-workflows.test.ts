@@ -483,21 +483,21 @@ describe("CI workflow decisions", () => {
     ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 48],
     ["docs PR", "docs/operations/00_development.md", "pull_request", false, 42],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 58],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 57],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 56],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 55],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      63,
+      59,
     ],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 51],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 43],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/00_development.md", "push", false, 68],
-    ["nightly", "docs/operations/00_development.md", "schedule", false, 67],
+    ["main push", "docs/operations/00_development.md", "push", false, 64],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 63],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(

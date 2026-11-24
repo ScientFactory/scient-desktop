@@ -335,16 +335,15 @@ jobs:
 
   real_languages:
     if: ${{ inputs.real_kernel }}
-    name: Real R and Julia / ${{ matrix.runner }}${{ matrix.part != 'all' && format(' / {0}', matrix.part) || '' }}
+    name: Real R and Julia / ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      # The three proofs share nothing but setup. The Intel Mac runs them in one job, since its
-      # runner slots are the scarcest (Apple Silicon runs them in `macos`); Windows and Linux run
-      # each on its own runner, set up the same way.
+      # One job per computer (Apple Silicon runs these in `macos`). The three proofs share only
+      # setup: each runs from a clean start (compute-roles.mjs) whatever an earlier one did.
       matrix:
-        include: ${{ fromJSON(inputs.platforms == 'linux' && '[{"runner":"ubuntu-24.04","part":"people"},{"runner":"ubuntu-24.04","part":"files"},{"runner":"ubuntu-24.04","part":"kernels"}]' || '[{"runner":"ubuntu-24.04","part":"people"},{"runner":"ubuntu-24.04","part":"files"},{"runner":"ubuntu-24.04","part":"kernels"},{"runner":"windows-2025","part":"people"},{"runner":"windows-2025","part":"files"},{"runner":"windows-2025","part":"kernels"},{"runner":"macos-15-intel","part":"all"}]') }}
+        include: ${{ fromJSON(inputs.platforms == 'linux' && '[{"runner":"ubuntu-24.04"}]' || '[{"runner":"ubuntu-24.04"},{"runner":"windows-2025"},{"runner":"macos-15-intel"}]') }}
     defaults:
       run:
         shell: bash
@@ -372,6 +371,7 @@ jobs:
           path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
           key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
       - name: Setup Vite+
+        id: vp
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
@@ -388,48 +388,73 @@ jobs:
 
       # A system install on purpose: nothing here is Scient-managed.
       - name: Setup Python
+        id: languages-python
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-
       - name: Setup R
+        id: languages-r
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
         uses: r-lib/actions/setup-r@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
         with:
           use-public-rspm: true
-
       - name: Setup Julia
+        id: languages-julia
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
         uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9 # v2
+      # For the real files below. Before every proof, so no proof's step is skipped after another.
+      - name: Match LLVM to the Visual Studio C++ library
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' && runner.os == 'Windows' }}
+        run: bash .github/scripts/match-windows-llvm.sh
 
       # Before anything is installed into this Python: it stands for a person's plain Python, on a
       # computer with nothing that can host the bridge.
+      - name: Begin what people have
+        id: people
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
+        run: node .github/scripts/compute-roles.mjs begin people --save-python bare
       - name: Run on what people have
-        if: ${{ matrix.part == 'all' || matrix.part == 'people' }}
+        id: people-run
+        if: ${{ !cancelled() && steps.people.outcome == 'success' }}
         working-directory: apps/server
         run: |
           set -euo pipefail
           SCIENT_TEST_BARE_PYTHON="$(python -c 'import sys; print(sys.executable)')"
           export SCIENT_TEST_BARE_PYTHON
           vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
-
-      - name: Match LLVM to the Visual Studio C++ library
-        if: ${{ runner.os == 'Windows' && (matrix.part == 'all' || matrix.part == 'files') }}
-        run: bash .github/scripts/match-windows-llvm.sh
-
+      - name: End what people have
+        id: end-people
+        if: ${{ !cancelled() && steps.people.outcome != 'skipped' }}
+        run: node .github/scripts/compute-roles.mjs end people
+      - name: Begin real files
+        id: files
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
+        run: node .github/scripts/compute-roles.mjs begin files
       - name: Run real files and scan this computer
-        if: ${{ matrix.part == 'all' || matrix.part == 'files' }}
+        id: files-run
+        if: ${{ !cancelled() && steps.files.outcome == 'success' }}
         working-directory: apps/server
         env:
           SCIENT_TEST_RUN_TABLE: "1"
         # A compiler's first run on a fresh computer, such as runghc or `dotnet run` on Windows, takes up
         # to two minutes, the project's ceiling, so real programs get five.
         run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
-
+      - name: End real files
+        id: end-files
+        if: ${{ !cancelled() && steps.files.outcome != 'skipped' }}
+        run: node .github/scripts/compute-roles.mjs end files
+      - name: Begin real R and Julia kernels
+        id: kernels
+        if: ${{ !cancelled() && steps.vp.outcome == 'success' }}
+        run: node .github/scripts/compute-roles.mjs begin kernels
       - name: Install the bridge host's packages
-        if: ${{ matrix.part == 'all' || matrix.part == 'kernels' }}
+        id: kernels-install
+        if: ${{ !cancelled() && steps.kernels.outcome == 'success' }}
         run: python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29"
-
       - name: Run real R and Julia kernels
-        if: ${{ matrix.part == 'all' || matrix.part == 'kernels' }}
+        id: kernels-run
+        if: ${{ !cancelled() && steps.kernels.outcome == 'success' }}
         working-directory: apps/server
         env:
           SCIENT_TEST_KERNEL_DIR: ${{ runner.temp }}/scient-kernels
@@ -438,6 +463,17 @@ jobs:
           SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
           export SCIENT_TEST_PYTHON
           vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
+      - name: End real R and Julia kernels
+        id: end-kernels
+        if: ${{ !cancelled() && steps.kernels.outcome != 'skipped' }}
+        run: node .github/scripts/compute-roles.mjs end kernels --restore-python bare
+
+      - name: Name every role that failed or did not run
+        if: ${{ !cancelled() }}
+        env:
+          EXPECTED: people files kernels
+          STEPS: ${{ toJSON(steps) }}
+        run: node .github/scripts/compute-roles.mjs summary
 
   # One job per Mac, whose runner slots are the scarcest: Apple Silicon runs all three roles, the
   # Intel Mac managed and real Python (its R and Julia run in real_languages). Each role runs its
@@ -496,7 +532,7 @@ jobs:
           path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
           key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
 
-      # R and Julia, as in real_languages.
+      # R and Julia, as in real_languages (without its Windows-only LLVM step).
       - name: Setup Python
         id: languages-python
         if: ${{ !cancelled() && steps.vp.outcome == 'success' && matrix.languages && inputs.real_kernel }}

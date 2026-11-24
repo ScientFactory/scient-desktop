@@ -110,7 +110,7 @@ describe("Compute CI suite selection", () => {
     for (const leg of legsOf("real_kernel", inputs))
       add("kernel", leg.runner as string, leg.python as string);
     for (const leg of legsOf("real_languages", inputs))
-      add("languages", leg.runner as string, leg.part as string);
+      add("languages", leg.runner as string, "all");
     for (const leg of legsOf("macos", inputs)) {
       if (inputs.managed_python) add("managed", leg.runner as string, "all");
       if (inputs.real_kernel) add("kernel", leg.runner as string, "both");
@@ -125,7 +125,7 @@ describe("Compute CI suite selection", () => {
     const whole: Record<string, Array<Array<string>>> = {
       managed: [["all"]],
       kernel: [["both"], ["3.10", "3.12"]],
-      languages: [["all"], ["files", "kernels", "people"]],
+      languages: [["all"]],
     };
     const runnersOf = (inputs: Record<string, unknown>) =>
       Object.fromEntries(
@@ -169,6 +169,49 @@ describe("Compute CI suite selection", () => {
       expect(leg.target, String(leg.runner)).toBe(evaluate(target, { matrix: leg }));
   });
 
+  // Each role is its begin step, its own steps and its end step; every own step runs once the role
+  // began, whatever an earlier role did.
+  const expectRoles = (steps: Array<Step>, roles: Array<string>) => {
+    for (const role of roles) {
+      const begin = steps.findIndex((step) => step.id === role);
+      const finish = steps.findIndex((step) => step.id === `end-${role}`);
+      expect(steps[begin]!.run).toMatch(new RegExp(`compute-roles\\.mjs begin ${role}\\b`));
+      expect(steps[begin]!.if).toMatch(/^\$\{\{ !cancelled\(\) && steps\.vp\.outcome == 'success'/);
+      expect(steps[finish]!.run).toMatch(new RegExp(`compute-roles\\.mjs end ${role}\\b`));
+      expect(steps[finish]!.if).toBe(`\${{ !cancelled() && steps.${role}.outcome != 'skipped' }}`);
+      const own = steps.slice(begin + 1, finish);
+      expect(own.length, role).toBeGreaterThan(0);
+      for (const step of own) {
+        expect(step.id?.split("-")[0], step.name).toBe(role);
+        expect(step.if, step.name).toBe(
+          `\${{ !cancelled() && steps.${role}.outcome == 'success' }}`,
+        );
+      }
+    }
+    // Every step after setup runs whatever an earlier one did, so no proof is skipped after a
+    // failure (ci-quarantine.cjs then reads a skipped step as one whose own condition was false).
+    const setup = steps.findIndex((step) => step.id === "vp");
+    for (const step of steps.slice(setup + 2))
+      expect(step.if, step.name).toMatch(/^\$\{\{ !cancelled\(\)/);
+    const summary = steps.at(-1)!;
+    expect(summary.run).toBe("node .github/scripts/compute-roles.mjs summary");
+    expect(summary.env!.STEPS).toBe("${{ toJSON(steps) }}");
+    return summary;
+  };
+
+  it("runs each computer's R and Julia proofs in one job, each from a clean start", () => {
+    const steps = jobs.real_languages!.steps;
+    expect(expectRoles(steps, ["people", "files", "kernels"]).env!.EXPECTED).toBe(
+      "people files kernels",
+    );
+    const index = (id: string) => steps.findIndex((step) => step.id === id);
+    expect(steps[index("people")]!.run).toContain("--save-python bare");
+    expect(steps[index("end-kernels")]!.run).toContain("--restore-python bare");
+    const llvm = steps.findIndex((step) => step.run?.includes("match-windows-llvm.sh"));
+    expect(llvm).toBeGreaterThan(-1);
+    expect(llvm).toBeLessThan(index("people"));
+  });
+
   it("runs on a Mac the same steps as each role's own job, one role after another", () => {
     const steps = jobs.macos!.steps;
     const source: Record<string, string> = {
@@ -197,23 +240,8 @@ describe("Compute CI suite selection", () => {
       if (step.env?.EXPECTED_TARGET)
         expect({ ...same(step), env: undefined }).toEqual({ ...same(original!), env: undefined });
       else expect(same(step), step.name).toEqual(same(original!));
-      // Every proof of a role runs once the role began, whatever an earlier one did.
-      if (role !== "languages")
-        expect(step.if, step.name).toBe(
-          `\${{ !cancelled() && steps.${role}.outcome == 'success' }}`,
-        );
     }
-    for (const role of roles) {
-      const begin = steps.findIndex((step) => step.id === role);
-      const finish = steps.findIndex((step) => step.id === `end-${role}`);
-      expect(steps[begin]!.run).toMatch(new RegExp(`compute-roles\\.mjs begin ${role}\\b`));
-      expect(steps[begin]!.if).toMatch(/^\$\{\{ !cancelled\(\) && steps\.vp\.outcome == 'success'/);
-      expect(steps[finish]!.run).toMatch(new RegExp(`compute-roles\\.mjs end ${role}\\b`));
-      expect(steps[finish]!.if).toBe(`\${{ !cancelled() && steps.${role}.outcome != 'skipped' }}`);
-      const own = steps.slice(begin + 1, finish).map((step) => step.id!.split("-")[0]);
-      expect(own.length, role).toBeGreaterThan(0);
-      expect(new Set(own), role).toEqual(new Set([role]));
-    }
+    expectRoles(steps, roles);
     // The plain-Python proof runs before anything is installed into a Python, and the Python
     // it saved returns to its packages before real Python reuses that interpreter.
     const index = (id: string) => steps.findIndex((step) => step.id === id);
@@ -222,8 +250,6 @@ describe("Compute CI suite selection", () => {
     expect(steps[index("people")]!.run).toContain("--save-python bare");
     expect(steps[index("end-kernels")]!.run).toContain("--restore-python bare");
     const summary = steps.at(-1)!;
-    expect(summary.run).toBe("node .github/scripts/compute-roles.mjs summary");
-    expect(summary.env!.STEPS).toBe("${{ toJSON(steps) }}");
     const expected = (inputs: object, leg: object) =>
       (
         evaluate(summary.env!.EXPECTED!, {

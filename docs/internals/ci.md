@@ -224,7 +224,8 @@ run uses three of them. `Compute on Mac / macos-15` runs real R and Julia, manag
 real Python one after another; `Compute on Mac / macos-15-intel` runs managed and real Python,
 and the Intel Mac's R and Julia keep their own job. Each role runs the same steps as its own job
 (`scripts/compute-ci-workflows.test.ts` compares them) and runs even after an earlier role
-failed. [`compute-roles.mjs`](../../.github/scripts/compute-roles.mjs) starts each one clean: its
+failed. R and Julia run the same way on every computer: one job each on Linux, Windows and the
+Intel Mac, whose three proofs (plain Python, real files, R and Julia kernels) are roles too. [`compute-roles.mjs`](../../.github/scripts/compute-roles.mjs) starts each one clean: its
 own temporary directory, and after it ends its leftover processes stopped, what it added to
 per-user directories (`~/.julia`, caches, Jupyter data) and the checkout (the sealed recipe
 metadata) removed, and the Python it installed into returned to its packages. R and Julia go
