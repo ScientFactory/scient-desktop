@@ -16,13 +16,13 @@ import { useEffect, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
 import { useSearchableSetting } from "~/components/settings/settingsSearch";
-import { NativeSelect } from "~/components/ui/select";
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useProjects } from "~/state/entities";
 import { localEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { TranscriptionSelect } from "../voice/TranscriptionSelect";
 import { WordsEditor, WordsScopes } from "./WordsEditor";
 
 const manageWords = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -179,24 +179,20 @@ function RecordingPicker({
   if (failed) return <p role="status">{gt("Could not open recordings.")}</p>;
   if (!data?.recordings?.length) return null;
   return (
-    <NativeSelect
-      size="sm"
-      aria-label={gt("Recording")}
+    <TranscriptionSelect
+      label={gt("Recording")}
       value={revisionId}
-      onChange={(event) => onSelect(event.target.value)}
-    >
-      <option value="">{gt("Whole project")}</option>
-      {data.recordings.map(({ id, title }) => (
-        <option key={id} value={id}>
-          {title}
-        </option>
-      ))}
-    </NativeSelect>
+      options={[
+        { value: "", label: gt("Whole project") },
+        ...data.recordings.map(({ id, title }) => ({ value: id, label: title })),
+      ]}
+      onChange={onSelect}
+    />
   );
 }
 
 /** Whose Words to edit: yours, a project's, or one recording's, then that list. */
-export function WordsSettings() {
+function WordsSettings() {
   const gt = useGT();
   const projects = useProjects().filter((project) => !project.isScratch);
   const local = useAtomValue(localEnvironmentIdAtom);
@@ -214,22 +210,18 @@ export function WordsSettings() {
   const pickers =
     projects.length > 0 ? (
       <div className="flex shrink-0 flex-wrap items-center gap-2 *:w-auto">
-        <NativeSelect
-          size="sm"
-          aria-label={gt("Project for Words")}
+        <TranscriptionSelect
+          label={gt("Project for Words")}
           value={selection}
-          onChange={(event) => {
-            setSelection(event.target.value);
+          options={[
+            { value: "", label: gt("Personal") },
+            ...projects.map((item) => ({ value: keyOf(item), label: item.title })),
+          ]}
+          onChange={(next) => {
+            setSelection(next);
             setRevisionId("");
           }}
-        >
-          <option value="">{gt("Personal")}</option>
-          {projects.map((item) => (
-            <option key={keyOf(item)} value={keyOf(item)}>
-              {item.title}
-            </option>
-          ))}
-        </NativeSelect>
+        />
         {project && canEditProject && (
           <RecordingPicker
             key={`recordings:${selection}`}

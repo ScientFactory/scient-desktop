@@ -1,9 +1,10 @@
 import { EnvironmentId, ProjectId, type WordsCommand } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { WordsScopes } from "./WordsEditor";
-import { WordsSettings } from "./WordsPanel";
+import { WordsSettingsSection } from "./WordsPanel";
+import "../../index.css";
 
 const remote = EnvironmentId.make("remote");
 const projectId = ProjectId.make("project");
@@ -33,11 +34,11 @@ it("opens Words for the selected environment and accepts a recording suggestion 
                 : [],
           },
   }));
-  await using screen = await render(<WordsSettings />);
-  await userEvent.selectOptions(
-    screen.getByRole("combobox", { name: "Project for Words" }),
-    JSON.stringify([remote, projectId]),
-  );
+  await using screen = await render(<WordsSettingsSection />);
+  const project = screen.getByRole("combobox", { name: "Project for Words" });
+  await expect.element(project).toHaveTextContent("Personal");
+  await project.click();
+  await page.getByRole("option", { name: "Remote Project" }).click();
   await expect
     .poll(() =>
       run.mock.calls.some(
@@ -49,8 +50,9 @@ it("opens Words for the selected environment and accepts a recording suggestion 
     )
     .toBe(true);
   const recording = screen.getByRole("combobox", { name: "Recording" });
-  await expect.poll(() => (recording.element() as HTMLSelectElement).options.length).toBe(2);
-  await userEvent.selectOptions(recording, revisionId);
+  await expect.element(recording).toHaveTextContent("Whole project");
+  await recording.click();
+  await page.getByRole("option", { name: "Lecture" }).click();
   for (const [button, level] of [
     ["Recording", "recording"],
     ["Project", "project"],
@@ -73,6 +75,11 @@ it("opens Words for the selected environment and accepts a recording suggestion 
       { signal: undefined },
     );
   }
+
+  await project.click();
+  await page.getByRole("option", { name: "Personal" }).click();
+  await expect.element(project).toHaveTextContent("Personal");
+  await expect.element(recording).not.toBeInTheDocument();
 });
 
 it("offers Recording Words only in a recording context", async () => {
