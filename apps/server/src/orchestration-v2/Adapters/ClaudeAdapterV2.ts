@@ -170,6 +170,7 @@ import {
   type ThreadId,
   resolveIdleCompaction,
   isDelegatedAppThread,
+  // SCIENT-FORK: a requested sign-in row is told apart from T3's startup notice.
   MCP_SIGN_IN_REQUEST_NATIVE_PREFIX,
 } from "@t3tools/contracts";
 
@@ -9622,19 +9623,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ? Effect.void
             : threadMcpStatus.value.detach(liveQuery.mcpStatusAttachment);
 
-        /**
-         * A Sign in row for one MCP server in the turn. At startup it says the server needs one;
-         * on request it answers the agent asking for that server, with its own time.
-         */
-        const emitMcpSignInNotice = Effect.fn("ClaudeAdapterV2.emitMcpSignInNotice")(function* (
+        // SCIENT-FORK:START — the agent asks for a server's sign-in when it needs it.
+        /** A Sign in row the agent asked for, with its own time; startup notices are T3's below. */
+        const emitMcpSignInRequest = Effect.fn("ClaudeAdapterV2.emitMcpSignInRequest")(function* (
           context: ActiveClaudeTurnContext,
           server: string,
-          kind: "startup" | "request",
         ) {
-          const nativeItemId =
-            kind === "startup"
-              ? `mcp-sign-in:${context.providerTurnId}:${server}`
-              : `${MCP_SIGN_IN_REQUEST_NATIVE_PREFIX}${context.providerTurnId}:${server}`;
+          const nativeItemId = `${MCP_SIGN_IN_REQUEST_NATIVE_PREFIX}${context.providerTurnId}:${server}`;
           const now = yield* DateTime.now;
           yield* emitProviderEvent({
             type: "turn_item.updated",
@@ -9658,15 +9653,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ordinal: yield* resolveItemOrdinal(context, nativeItemId),
               type: "system_notice",
               status: "completed",
-              ...(kind === "startup"
-                ? {
-                    title: `MCP server ${server} needs a sign-in`,
-                    message: `The ${server} MCP server needs a sign-in before Claude can use it.`,
-                  }
-                : {
-                    title: `Sign in to ${server}`,
-                    message: `Claude needs ${server} for this request. Sign in, then ask again.`,
-                  }),
+              title: `Sign in to ${server}`,
+              message: `Claude needs ${server} for this request. Sign in, then ask again.`,
               mcpSignIn: { server },
               startedAt: now,
               completedAt: now,
@@ -9712,10 +9700,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const key = `${turn.providerTurnId}\u0000${server}`;
           if (!requestedMcpSignIns.has(key)) {
             requestedMcpSignIns.add(key);
-            yield* emitMcpSignInNotice(turn, server, "request");
+            yield* emitMcpSignInRequest(turn, server);
           }
           return "shown" as const;
         });
+        // SCIENT-FORK:END
 
         // Keyed by native thread and server: one notice per server for as long as the session runs.
         const announcedMcpSignIns = new Set<string>();
@@ -9751,7 +9740,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const key = `${liveQuery.nativeThreadId}\u0000${status.name}`;
             if (announcedMcpSignIns.has(key)) continue;
             announcedMcpSignIns.add(key);
-            yield* emitMcpSignInNotice(context, status.name, "startup");
+            const nativeItemId = `mcp-sign-in:${context.providerTurnId}:${status.name}`;
+            const now = yield* DateTime.now;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: "weak",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "system_notice",
+                status: "completed",
+                title: `MCP server ${status.name} needs a sign-in`,
+                message: `The ${status.name} MCP server needs a sign-in before Claude can use it.`,
+                mcpSignIn: { server: status.name },
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
           }
         });
 
@@ -14766,6 +14786,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     providerInstanceId: adapterOptions.instanceId,
                     providerThreadId: turnInput.providerThread.id,
                     providerSessionId: input.providerSessionId,
+                    // SCIENT-FORK: the agent's sign-in requests go to the query that reported.
                     showSignIn: (server) => showMcpSignIn(context, server),
                   })
                   .pipe(
