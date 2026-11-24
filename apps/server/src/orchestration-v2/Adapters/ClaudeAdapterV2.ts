@@ -467,6 +467,10 @@ const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
 // How often a working CLI's process tree is recorded when no agent scope will stop what it leaves.
 const CLAUDE_DESCENDANT_POLL = "1 second";
+// SCIENT-FORK:START — a failed process table read at CLI exit is retried before cleanup gives up.
+const CLAUDE_EXIT_READ_RETRIES = 2;
+const CLAUDE_EXIT_READ_RETRY_SPACING = "1 second";
+// SCIENT-FORK:END
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
@@ -685,12 +689,28 @@ export function makeClaudeDescendantPoll(
         }).pipe(
           Effect.andThen(
             read((rows) => {
+              // SCIENT-FORK:START — a failed read leaves recorded jobs unchecked, so it is retried.
+              if (rows.length === 0 && tracker.tracked.size > 0) return undefined;
+              // SCIENT-FORK:END
               const running = tracker.record(rows, false);
               return [...tracker.tracked.values()].filter((row) =>
                 running.has(processIdentity(row)),
               );
             }),
           ),
+          // SCIENT-FORK:START — a failed read at exit is retried, and cleanup it could not verify is reported.
+          Effect.filterOrFail(Predicate.isNotUndefined, () => "unreadable" as const),
+          Effect.retry({
+            times: CLAUDE_EXIT_READ_RETRIES,
+            schedule: Schedule.spaced(CLAUDE_EXIT_READ_RETRY_SPACING),
+          }),
+          Effect.catch(() =>
+            Effect.logWarning(
+              "Claude processes may still be running: the process table was unreadable",
+              { unverified: tracker.tracked.size },
+            ).pipe(Effect.as([] as ReadonlyArray<ClaudeProcessRow>)),
+          ),
+          // SCIENT-FORK:END
         ),
       };
     },
