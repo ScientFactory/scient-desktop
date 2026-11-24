@@ -197,21 +197,26 @@ The test gate is `pnpm run test` in two parts:
   run). The server's config keeps `fileParallelism: false`, so ordinary and targeted local runs
   are unchanged.
 
-**What a red test gate means.** Failures are compared by test ID (`<file> > <full name>`, and
-`package <name>` for other packages) with a baseline of the same machine on main:
+**What a red test gate means.** Server failures are compared by test ID (`<file> > <full name>`)
+with a baseline of the same machine on main:
 
-- **New failures** block. Their files run once more, alone. One that fails again is listed under
-  "new failures"; one that passes alone is listed as "new but passed alone (load)" and does not
-  block. Hosted CI still qualifies the pushed revision.
+- **New failures** block. Their files run once more, alone, as evidence: "failed again alone",
+  or "passed when rerun alone (load, or a race with other files)". Either way the gate fails, as
+  a race this branch added also passes alone.
 - **Failures main also has here** are listed with the main commit and do not block.
-- **Baseline failures that pass here** are listed, so a fix shows.
+- **Baseline failures absent from this run's failures** are listed, so a fix shows (they may also
+  have been skipped, renamed or deleted).
+- **Never waived:** a package failure (a package name is too coarse to match), a server file that
+  failed to load, an error outside any test, an interrupted run and files that never finished.
+  `scripts/vitest-run-outcome-reporter.mjs` reports the last three, which Vitest's JSON report
+  leaves out.
 
-Record the baseline from a clean checkout of main with
-`pnpm alignment:gates --only test --record-baseline`. It reruns every failed file alone and keeps
-only failures that repeat, in `<git common dir>/scient-test-baseline/<platform>-<arch>-node<N>.json`,
-shared by every worktree. Without a baseline every failure blocks, as before, and up to 20 failed
-server files rerun alone as a diagnostic. Record a new baseline after main changes the failing
-set; a stale one only labels, it never hides a new test ID.
+Record the baseline from a clean checkout of `origin/main` (fetch it first) with
+`pnpm alignment:gates --only test --record-baseline`. It keeps every server failure of that run,
+in `<git common dir>/scient-test-baseline/<platform>-<arch>-node<N>.json`, shared by every
+worktree. A baseline is used only while it is at most seven days old and its main commit is in
+the candidate's history; otherwise, or without one, every failure blocks, and up to 20 failed
+server files rerun alone as evidence.
 
 The table's first line records the load average and, on macOS, `fseventsd` CPU at the start, and
 names a busy machine (load above three quarters of the CPUs, or `fseventsd` at 80% or more). A

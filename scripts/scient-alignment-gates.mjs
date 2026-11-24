@@ -89,6 +89,36 @@ export const baselinePath = (
     `${platform}-${arch}-node${node.split(".")[0]}.json`,
   );
 
+/** A baseline older than this, or from a commit outside the candidate's history, is not used. */
+const BASELINE_MAX_AGE_DAYS = 7;
+
+const gitRef = (args, cwd) => {
+  const result = runTool(["git", ...args], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+};
+
+/** The baseline, or `{ unusable }` saying why it cannot judge `head`; null when there is none. */
+export function usableBaseline(path, head, root, now = Date.now()) {
+  const baseline = readGatesBaseline(path);
+  if (!baseline) return null;
+  const ageDays = (now - Date.parse(baseline.recordedAt)) / 86_400_000;
+  if (!(ageDays <= BASELINE_MAX_AGE_DAYS))
+    return { unusable: `recorded more than ${BASELINE_MAX_AGE_DAYS} days ago, record it again` };
+  const ancestor = runTool(["git", "merge-base", "--is-ancestor", baseline.head, head], {
+    cwd: root,
+    stdio: "ignore",
+  });
+  if (ancestor.status !== 0)
+    return {
+      unusable: `its main commit ${String(baseline.head).slice(0, 10)} is not in this candidate's history`,
+    };
+  return baseline;
+}
+
 export function readGatesBaseline(path) {
   try {
     const baseline = JSON.parse(NodeFS.readFileSync(path, "utf8"));
@@ -145,6 +175,10 @@ const timedOut = (reportPath, cwd) => {
 };
 
 const fileOf = (id) => id.slice(0, id.indexOf(" > "));
+const FILE_ERROR = " > (file error)";
+const RUN_OUTCOME_REPORTER = NodeURL.fileURLToPath(
+  new URL("./vitest-run-outcome-reporter.mjs", import.meta.url),
+);
 
 const runLogged = (argv, { root, home, log, env }) => {
   const fd = NodeFS.openSync(log, "a");
@@ -248,7 +282,7 @@ function runTests({ root, home, out, log, workers, baseline, recording }) {
   const serverLog = log;
   NodeFS.appendFileSync(serverLog, `\n### ${SERVER.name}, ${workers} file(s) at a time\n`);
   const serverCwd = NodePath.join(root, SERVER.dir);
-  const serverRun = (files, reportPath, parallel) =>
+  const serverRun = (files, reportPath, parallel, outcomePath) =>
     runLogged(
       [
         "pnpm",
@@ -264,81 +298,96 @@ function runTests({ root, home, out, log, workers, baseline, recording }) {
         "--reporter=default",
         "--reporter=json",
         `--outputFile.json=${reportPath}`,
+        ...(outcomePath ? [`--reporter=${RUN_OUTCOME_REPORTER}`] : []),
         ...files,
       ],
-      { root, home, log: serverLog },
+      {
+        root,
+        home,
+        log: serverLog,
+        ...(outcomePath ? { env: { SCIENT_VITEST_RUN_OUTCOME: outcomePath } } : {}),
+      },
     );
   const report = NodePath.join(out, "test-server.json");
-  const parallelRun = serverRun([], report, workers > 1);
+  const outcome = NodePath.join(out, "test-server-outcome.json");
+  const parallelRun = serverRun([], report, workers > 1, outcome);
   const server = { workers, report };
   const serverPassed = parallelRun.status === 0 && !parallelRun.error;
   // Test IDs, `<file> > <full test name>`, relative to the server package.
-  const failures = serverPassed ? [] : (readVitestReport(report, serverCwd)?.failures ?? null);
+  const failures = readVitestReport(report, serverCwd)?.failures ?? null;
+  // Errors outside any test, an interrupted run and unfinished files: never known on main.
+  server.runErrors = runErrors(parallelRun, outcome, serverCwd);
+  if (failures === null) server.reason = "no readable report from the server suite";
+  else if (!serverPassed) server.timedOut = timedOut(report, serverCwd);
+  // A file that failed to load is never waived either.
   const labels =
     baseline && failures !== null
       ? compareFailures(
-          [...packagesFailed.map((name) => `package ${name}`), ...failures],
-          baseline.failures,
+          failures,
+          baseline.failures.filter((id) => !id.endsWith(FILE_ERROR)),
         )
       : null;
-  if (!serverPassed) {
-    server.timedOut = timedOut(report, serverCwd);
-    const failed = failedFiles(report, serverCwd);
-    // With a baseline only files holding a new failure rerun; a known one fails on main too.
-    // Recording a baseline reruns every failed file, so only failures that repeat are kept.
-    const toRerun = labels
-      ? [...new Set(labels.new.filter((id) => !id.startsWith("package ")).map(fileOf))].toSorted()
-      : failed;
-    if (!failed?.length || failures === null) {
-      server.reason = "the server suite failed without a failed file in its report";
-    } else if (toRerun.length === 0) {
-      // Every failure is known on main.
-    } else if (workers === 1 || toRerun.length > RERUN_LIMIT) {
-      server.failed = toRerun;
+  const blocking = labels ? labels.new : (failures ?? []);
+  const blockingFiles = [...new Set(blocking.map(fileOf))].toSorted();
+  // Evidence only: a file that passes alone still failed in the suite, from load or from a
+  // race with other files, so it blocks either way.
+  if (!recording && blockingFiles.length > 0) {
+    if (workers === 1 || blockingFiles.length > RERUN_LIMIT) {
+      server.failed = blockingFiles;
     } else {
       NodeFS.appendFileSync(serverLog, `\n### Failed files again, one at a time\n`);
       const recheck = NodePath.join(out, "test-server-alone.json");
-      const alone = serverRun(toRerun, recheck, false);
+      const alone = serverRun(blockingFiles, recheck, false);
       const stillFailing = alone.status === 0 ? [] : failedFiles(recheck, serverCwd);
       if (stillFailing === null || (alone.status !== 0 && stillFailing.length === 0)) {
-        server.reason = "the one-at-a-time rerun of the failed files did not finish";
-        server.failed = toRerun;
+        server.failed = blockingFiles;
+        server.rerunUnfinished = true;
       } else {
         server.failedAgainAlone = stillFailing;
-        server.passedWhenRerunAlone = toRerun.filter((file) => !stillFailing.includes(file));
-        server.aloneFailures = readVitestReport(recheck, serverCwd)?.failures ?? [];
+        server.passedWhenRerunAlone = blockingFiles.filter((file) => !stillFailing.includes(file));
       }
     }
   }
   server.seconds = Math.round((performance.now() - serverStarted) / 1000);
   const details = { packagesSeconds, packagesFailed, packagesRerun, server };
   if (failures !== null) details.failures = failures;
+  const complete = failures !== null && server.runErrors.length === 0;
   if (recording) {
-    if (failures === null || server.reason) return { status: 1, details };
-    const repeated = server.aloneFailures ?? failures;
-    details.recorded = {
-      failures: [...packagesFailed.map((name) => `package ${name}`), ...repeated].toSorted(),
+    if (complete) details.recorded = { failures };
+    return { status: complete && packagesFailed.length === 0 ? 0 : 1, details };
+  }
+  if (labels) {
+    details.baseline = {
+      path: baseline.path,
+      head: baseline.head,
+      recordedAt: baseline.recordedAt,
+      new: labels.new,
+      knownOnMain: labels.preexisting,
+      notFailingHere: labels.noLongerFailing,
     };
-    return { status: 0, details };
   }
-  if (!labels) {
-    return { status: packagesFailed.length === 0 && serverPassed ? 0 : 1, details };
-  }
-  // Blocking: new package failures, and new server failures that also fail alone (or could not
-  // be rerun). A new failure whose file passed alone is listed as flaky under load.
-  const flakyFiles = new Set(server.passedWhenRerunAlone ?? []);
-  const flaky = labels.new.filter((id) => !id.startsWith("package ") && flakyFiles.has(fileOf(id)));
-  const blocking = labels.new.filter((id) => !flaky.includes(id));
-  details.baseline = {
-    path: baseline.path,
-    head: baseline.head,
-    recordedAt: baseline.recordedAt,
-    new: blocking,
-    flakyAlone: flaky,
-    knownOnMain: labels.preexisting,
-    noLongerFailing: labels.noLongerFailing,
+  const serverClean = labels ? labels.new.length === 0 : serverPassed;
+  return {
+    status: complete && serverClean && packagesFailed.length === 0 ? 0 : 1,
+    details,
   };
-  return { status: blocking.length === 0 && !server.reason ? 0 : 1, details };
+}
+
+/** Why the server run cannot be judged by its failed tests alone; empty when it can. */
+function runErrors(run, outcomePath, cwd) {
+  if (run.error || run.signal) return [`the run ended abnormally (${run.signal ?? run.error})`];
+  let outcome;
+  try {
+    outcome = JSON.parse(NodeFS.readFileSync(outcomePath, "utf8"));
+  } catch {
+    return ["Vitest wrote no run outcome"];
+  }
+  const relative = (file) => NodePath.relative(cwd, file).replaceAll("\\", "/");
+  return [
+    ...(outcome.reason === "interrupted" ? ["the run was interrupted"] : []),
+    ...(outcome.unfinished ?? []).map((file) => `unfinished: ${relative(file)}`),
+    ...(outcome.unhandledErrors ?? []).map((message) => `error outside any test: ${message}`),
+  ];
 }
 
 const describeTests = ({ packagesFailed, packagesRerun = [], server, baseline, recorded }) => {
@@ -349,24 +398,27 @@ const describeTests = ({ packagesFailed, packagesRerun = [], server, baseline, r
   if (packagesRerun.length)
     parts.push(`rerun after the aggregate stopped: ${packagesRerun.join(", ")}`);
   if (server.reason) parts.push(`server: ${server.reason}`);
-  if (server.failed?.length) parts.push(`failed: ${server.failed.join(", ")}`);
-  if (server.failedAgainAlone?.length)
-    parts.push(`failed again alone: ${server.failedAgainAlone.join(", ")}`);
-  if (server.passedWhenRerunAlone?.length)
-    parts.push(`passed when rerun alone: ${server.passedWhenRerunAlone.join(", ")}`);
-  if (server.timedOut?.length) parts.push(`timed out: ${server.timedOut.join(", ")}`);
+  if (server.runErrors?.length) parts.push(`server run: ${server.runErrors.join(", ")}`);
   if (baseline) {
     const since = `main \`${baseline.head?.slice(0, 10)}\``;
     parts.push(
       baseline.new.length ? `new failures: ${baseline.new.join(", ")}` : "no new failures",
     );
-    if (baseline.flakyAlone.length)
-      parts.push(`new but passed alone (load): ${baseline.flakyAlone.join(", ")}`);
     if (baseline.knownOnMain.length)
       parts.push(`also failing on ${since}: ${baseline.knownOnMain.join(", ")}`);
-    if (baseline.noLongerFailing.length)
-      parts.push(`failing on ${since}, passing here: ${baseline.noLongerFailing.join(", ")}`);
+    if (baseline.notFailingHere.length)
+      parts.push(
+        `failing on ${since}, absent from this run's failures: ${baseline.notFailingHere.join(", ")}`,
+      );
   }
+  if (server.failed?.length) parts.push(`failed files: ${server.failed.join(", ")}`);
+  if (server.failedAgainAlone?.length)
+    parts.push(`failed again alone: ${server.failedAgainAlone.join(", ")}`);
+  if (server.passedWhenRerunAlone?.length)
+    parts.push(
+      `passed when rerun alone (load, or a race with other files): ${server.passedWhenRerunAlone.join(", ")}`,
+    );
+  if (server.timedOut?.length) parts.push(`timed out: ${server.timedOut.join(", ")}`);
   if (recorded)
     parts.push(`baseline recorded: ${recorded.failures.length} failure(s) on this machine`);
   return parts.join("; ");
@@ -534,7 +586,6 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   const root = capture(["git", "rev-parse", "--show-toplevel"], cwd);
   const commonDir = NodePath.resolve(root, capture(["git", "rev-parse", "--git-common-dir"], root));
   const cores = NodeOS.availableParallelism();
-  const machine = machineLoad(platform, cores);
   const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-alignment-gates-"));
   const record = {
     head: capture(["git", "rev-parse", "HEAD"], root),
@@ -544,9 +595,9 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
     node: process.version,
     pnpm: capture(["pnpm", "--version"], root),
     cores,
-    load: machine.load,
-    fseventsd: machine.fseventsd,
-    busy: machine.busy,
+    load: null,
+    fseventsd: null,
+    busy: [],
     partial: args.only,
     gates: [],
   };
@@ -558,15 +609,30 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   const selected = GATES.filter((gate) => !args.only || args.only.includes(gate.id));
   const baselineFile = baselinePath(commonDir, { platform });
   if (args.recordBaseline) {
-    if (!selected.some((gate) => gate.id === "test"))
-      throw new Error("--record-baseline needs the test gate");
-    if (record.dirty) throw new Error("--record-baseline needs a clean checkout of main");
+    const testGate = selected.find((gate) => gate.id === "test");
+    if (!testGate) throw new Error("--record-baseline needs the test gate");
+    if (testGate.windows && platform === "win32" && !args.tests)
+      throw new Error("--record-baseline needs --tests on Windows, where the test gate is skipped");
+    const originMain = gitRef(
+      ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"],
+      root,
+    );
+    if (record.dirty || originMain !== record.head)
+      throw new Error(
+        "--record-baseline needs a clean checkout of origin/main (fetch it, then check out that commit)",
+      );
   }
-  const baseline = args.recordBaseline ? null : readGatesBaseline(baselineFile);
-  const workers = args.serverWorkers ?? serverWorkers(cores, NodeOS.totalmem(), machine.load ?? 0);
+  const baseline = args.recordBaseline ? null : usableBaseline(baselineFile, record.head, root);
+  if (baseline?.unusable) {
+    console.log(`\nTest baseline ${baselineFile} not used: ${baseline.unusable}.`);
+  }
   const release = selected.some((gate) => HEAVY_GATES.has(gate.id))
     ? acquireGatesLock(commonDir, { root })
     : () => {};
+  // Sampled once this run holds the lock, so a wait for another run does not make it stale.
+  const machine = machineLoad(platform, cores);
+  Object.assign(record, { load: machine.load, fseventsd: machine.fseventsd, busy: machine.busy });
+  const workers = args.serverWorkers ?? serverWorkers(cores, NodeOS.totalmem(), machine.load ?? 0);
   const onSignal = (signal) => {
     release();
     process.exit(signal === "SIGINT" ? 130 : 143);
@@ -574,7 +640,16 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    runGates(selected, { args, platform, root, out, record, save, baseline, workers });
+    runGates(selected, {
+      args,
+      platform,
+      root,
+      out,
+      record,
+      save,
+      baseline: baseline?.unusable ? null : baseline,
+      workers,
+    });
   } finally {
     release();
     process.off("SIGINT", onSignal);
@@ -599,10 +674,14 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
       )}\n`,
     );
     console.log(`\nBaseline: ${baselineFile}`);
-  } else if (!args.recordBaseline && !baseline && selected.some((gate) => gate.id === "test")) {
+  } else if (
+    !args.recordBaseline &&
+    (!baseline || baseline.unusable) &&
+    selected.some((gate) => gate.id === "test")
+  ) {
     console.log(
       `\nNo test baseline for this machine (${baselineFile}): every failure counts. ` +
-        "Record one from a clean main checkout with `pnpm alignment:gates --only test --record-baseline`.",
+        "Record one from a clean checkout of origin/main with `pnpm alignment:gates --only test --record-baseline`.",
     );
   }
   console.log(`\nResults: ${NodePath.join(out, "results.json")}\n\n${formatTable(record)}`);
