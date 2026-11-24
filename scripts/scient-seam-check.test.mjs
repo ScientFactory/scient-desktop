@@ -2,7 +2,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { inspectScientSeams } from "./scient-seam-check.mjs";
 
@@ -88,16 +88,20 @@ describe("Scient seam snapshot verification", () => {
     const indexPath = f.git("rev-parse", "--path-format=absolute", "--git-path", "index");
     const indexBefore = NodeFS.readFileSync(indexPath);
     const objectsBefore = f.git("count-objects", "-v");
-    const temporaryDirectories = () =>
-      NodeFS.readdirSync(NodeOS.tmpdir())
-        .filter((name) => name.startsWith("scient-seam-snapshot-"))
-        .sort();
-    const before = temporaryDirectories();
-    const result = f.inspect(
-      fail ? ["--base", f.base, "--upstream-ref", "missing-upstream"] : undefined,
-    );
+    // A private temp folder, so another seam check running at the same time cannot show up.
+    const temporaryRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-seam-tmp-"));
+    directories.push(temporaryRoot);
+    for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, temporaryRoot);
+    let result;
+    try {
+      result = f.inspect(
+        fail ? ["--base", f.base, "--upstream-ref", "missing-upstream"] : undefined,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(result.checks[0].status).toBe(fail ? "unavailable" : "passed");
-    expect(temporaryDirectories()).toEqual(before);
+    expect(NodeFS.readdirSync(temporaryRoot)).toEqual([]);
     expect(NodeFS.readFileSync(indexPath)).toEqual(indexBefore);
     expect(f.git("count-objects", "-v")).toBe(objectsBefore);
     expect(() => f.git("cat-file", "-e", blob)).toThrow();
