@@ -490,14 +490,14 @@ describe("CI workflow decisions", () => {
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      66,
+      63,
     ],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 51],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 43],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/00_development.md", "push", false, 71],
-    ["nightly", "docs/operations/00_development.md", "schedule", false, 70],
+    ["main push", "docs/operations/00_development.md", "push", false, 68],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 67],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(

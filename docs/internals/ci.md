@@ -219,6 +219,19 @@ Both suites stay enabled on every platform by default for reusable callers and m
 which can also select either suite. The nightly run, and any main push that cannot reuse queue
 qualification, runs both on all four computers.
 
+Mac runner slots are the scarcest (the organization runs five macOS jobs at a time), so a full
+run uses three of them. `Compute on Mac / macos-15` runs real R and Julia, managed Python and
+real Python one after another; `Compute on Mac / macos-15-intel` runs managed and real Python,
+and the Intel Mac's R and Julia keep their own job. Each role runs the same steps as its own job
+(`scripts/compute-ci-workflows.test.ts` compares them) and runs even after an earlier role
+failed. [`compute-roles.mjs`](../../.github/scripts/compute-roles.mjs) starts each one clean: its
+own temporary directory, and after it ends its leftover processes stopped, what it added to
+per-user directories (`~/.julia`, caches, Jupyter data) and the checkout (the sealed recipe
+metadata) removed, and the Python it installed into returned to its packages. R and Julia go
+first, so their plain-Python proof sees a Python nothing was installed into. Tools a setup step
+put on `PATH` stay there for later roles: GitHub cannot take a path back off. The job's last
+step names each role that failed, and fails when an expected role did not run.
+
 The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. For a pull request, the seam check reads GitHub's merge of the pull request into its base, so commits that reached main after the branch left it are not counted as its changes. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.
 
 Merge-queue candidates and their pushes to `main` may contain several PRs. The provenance

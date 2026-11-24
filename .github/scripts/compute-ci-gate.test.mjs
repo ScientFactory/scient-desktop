@@ -88,6 +88,7 @@ NodeTest.test("Compute's own code and how it runs select both suites on every pl
     "apps/server/scripts/compute-recipes.ts",
     ".github/workflows/scient-compute-python-kernel.yml",
     ".github/scripts/match-windows-llvm.sh",
+    ".github/scripts/compute-roles.mjs",
   ])
     NodeAssert.deepEqual(computeQualificationSuites([path]), both, path);
 });

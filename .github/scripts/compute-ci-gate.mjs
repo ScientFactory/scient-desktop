@@ -34,6 +34,7 @@ export function computeQualificationSuites(paths) {
     ".github/scripts/match-windows-llvm.sh",
     ".github/scripts/compute-ci-gate.mjs",
     ".github/scripts/compute-ci-gate.test.mjs",
+    ".github/scripts/compute-roles.mjs",
     "apps/server/src/atomicWrite.ts",
     "apps/server/scripts/compute-recipes.ts",
     // It can turn tests off on one platform.
