@@ -242,6 +242,23 @@ function EngineCard(props: ModelCardProps) {
     >
       <XIcon className="size-3.5" />
     </Button>
+  ) : model.state === "downloadable" && props.manageOnly ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={gt("Download {name}", { name: model.name })}
+            disabled={props.busy}
+            onClick={props.onDownload}
+          />
+        }
+      >
+        <DownloadIcon />
+      </TooltipTrigger>
+      <TooltipPopup>{gt("Download")}</TooltipPopup>
+    </Tooltip>
   ) : model.state === "downloadable" ? (
     <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
       <DownloadIcon />
@@ -466,7 +483,15 @@ function EngineCard(props: ModelCardProps) {
 }
 
 /** Cleanup runs on the draft's environment, so its model is an environment setting there. */
-export function CleanupModelRow({ recordings = false }: { recordings?: boolean }) {
+export function CleanupModelRow({
+  recordings = false,
+  disabled = false,
+  keepControlsVisible = false,
+}: {
+  recordings?: boolean;
+  disabled?: boolean;
+  keepControlsVisible?: boolean;
+}) {
   const setting = useSearchableSetting();
   const gt = useGT();
   const { environment, connectedEnvironments } = useSettingsScope();
@@ -541,13 +566,14 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
                 <T>No text generation providers available.</T>
               </span>
             ) : null}
-            {dedicated && hasProvider && instanceEntry ? (
+            {(dedicated || keepControlsVisible) && hasProvider && instanceEntry ? (
               <>
                 <ProviderModelPicker
                   environmentId={environment?.environmentId ?? null}
                   activeInstanceId={selection.instanceId}
                   model={selection.model}
                   lockedProvider={null}
+                  disabled={disabled || !dedicated}
                   instanceEntries={instanceEntries}
                   modelOptionsByInstance={modelOptionsByInstance}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
@@ -562,6 +588,7 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
                   model={selection.model}
                   modelOptions={selection.options ?? []}
                   allowPromptInjectedEffort={false}
+                  disabled={disabled || !dedicated}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
                     setModel(createModelSelection(selection.instanceId, selection.model, options))
@@ -571,7 +598,7 @@ export function CleanupModelRow({ recordings = false }: { recordings?: boolean }
             ) : null}
             <Switch
               checked={dedicated}
-              disabled={!dedicated && !hasProvider}
+              disabled={disabled || (!dedicated && !hasProvider)}
               onCheckedChange={(checked) =>
                 updateSettings({
                   [modelKey]: checked

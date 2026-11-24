@@ -137,101 +137,85 @@ function VoiceLanguagePicker({
   };
 
   return (
-    <div className="py-1 md:ps-8">
-      <div className="flex items-center gap-1">
-        <h3 className="font-medium text-sm">
-          <T context="voice dictation language">Language</T>
-        </h3>
-        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-          <PopoverTrigger
-            render={
+    <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+      <PopoverTrigger
+        render={<Button aria-label={gt("Choose voice language")} size="sm" variant="outline" />}
+      >
+        {VOICE_LANGUAGE_NAMES[value]}
+        <ChevronDownIcon className="size-3.5 stroke-[2.5] opacity-70" />
+      </PopoverTrigger>
+      <PopoverPopup
+        align="start"
+        className="w-56 max-w-[calc(100vw-1rem)]"
+        padding="none"
+        side="bottom"
+        sideOffset={4}
+      >
+        <div className="p-1">
+          <div className="space-y-0.5">
+            {PRIMARY_VOICE_LANGUAGES.map((language) => {
+              const selected = value === language;
+              return (
+                <Button
+                  key={language}
+                  aria-pressed={selected}
+                  className="w-full justify-start"
+                  onClick={() => selectLanguage(language)}
+                  size="sm-multiline"
+                  variant={selected ? "selected" : "ghost-muted"}
+                >
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <span>{VOICE_LANGUAGE_NAMES[language]}</span>
+                    {language === "auto" ? (
+                      <Badge size="sm" variant="info">
+                        <T>Recommended</T>
+                      </Badge>
+                    ) : null}
+                  </span>
+                  {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
+                </Button>
+              );
+            })}
+            <div className="mt-1 border-border/60 border-t pt-1">
               <Button
-                aria-label={gt("Choose voice language")}
-                className="relative top-0.5"
+                aria-expanded={moreLanguagesOpen}
+                className="w-full justify-start"
+                onClick={() => setMoreLanguagesOpen((open) => !open)}
                 size="xs"
                 variant="ghost-muted"
-              />
-            }
-          >
-            {VOICE_LANGUAGE_NAMES[value]}
-            <ChevronDownIcon className="size-3.5 stroke-[2.5] opacity-70" />
-          </PopoverTrigger>
-          <PopoverPopup
-            align="start"
-            className="w-56 max-w-[calc(100vw-1rem)]"
-            padding="none"
-            side="bottom"
-            sideOffset={4}
-          >
-            <div className="p-1">
-              <div className="space-y-0.5">
-                {PRIMARY_VOICE_LANGUAGES.map((language) => {
-                  const selected = value === language;
-                  return (
-                    <Button
-                      key={language}
-                      aria-pressed={selected}
-                      className="w-full justify-start"
-                      onClick={() => selectLanguage(language)}
-                      size="sm-multiline"
-                      variant={selected ? "selected" : "ghost-muted"}
-                    >
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span>{VOICE_LANGUAGE_NAMES[language]}</span>
-                        {language === "auto" ? (
-                          <Badge size="sm" variant="info">
-                            <T>Recommended</T>
-                          </Badge>
-                        ) : null}
-                      </span>
-                      {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
-                    </Button>
-                  );
-                })}
-                <div className="mt-1 border-border/60 border-t pt-1">
-                  <Button
-                    aria-expanded={moreLanguagesOpen}
-                    className="w-full justify-start"
-                    onClick={() => setMoreLanguagesOpen((open) => !open)}
-                    size="xs"
-                    variant="ghost-muted"
-                  >
-                    <span className="flex-1 text-left">
-                      <T>More languages</T>
-                    </span>
-                    <ChevronRightIcon
-                      className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
-                    />
-                  </Button>
-                  {moreLanguagesOpen ? (
-                    <div className="mt-0.5 space-y-0.5">
-                      {MORE_VOICE_LANGUAGES.map((language) => {
-                        const selected = value === language;
-                        return (
-                          <Button
-                            key={language}
-                            aria-pressed={selected}
-                            className="w-full justify-start"
-                            onClick={() => selectLanguage(language)}
-                            size="xs"
-                            variant={selected ? "selected" : "ghost-muted"}
-                          >
-                            <span className="flex-1 text-left">
-                              {VOICE_LANGUAGE_NAMES[language]}
-                            </span>
-                            {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
+              >
+                <span className="flex-1 text-left">
+                  <T>More languages</T>
+                </span>
+                <ChevronRightIcon
+                  className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
+                />
+              </Button>
+              {moreLanguagesOpen ? (
+                <div className="mt-0.5 space-y-0.5">
+                  {MORE_VOICE_LANGUAGES.map((language) => {
+                    const selected = value === language;
+                    return (
+                      <Button
+                        key={language}
+                        aria-pressed={selected}
+                        className="w-full justify-start"
+                        onClick={() => selectLanguage(language)}
+                        size="xs"
+                        variant={selected ? "selected" : "ghost-muted"}
+                      >
+                        <span className="flex-1 text-left">{VOICE_LANGUAGE_NAMES[language]}</span>
+                        {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
+                      </Button>
+                    );
+                  })}
                 </div>
-              </div>
+              ) : null}
             </div>
-          </PopoverPopup>
-        </Popover>
-      </div>
-    </div>
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -247,6 +231,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
+  const localDictation = engine === "local" || engine === "auto";
   const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
   const prepared = Option.getOrNull(usePreparedConnection(localEnvironmentId));
   const catalog = useVoiceModels(prepared);
@@ -303,94 +288,80 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        id="voice-transcription-destination"
         title={gt("Dictation")}
         icon={<Mic2Icon className="size-4 text-muted-foreground" />}
-        variant="plain"
       >
-        <div className="space-y-3 px-3 sm:px-4">
-          <p className="text-sm text-muted-foreground">
-            <T>Use the microphone in chat to turn what you say into text in your draft.</T>
-          </p>
-          <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
-            <div className="flex items-start justify-between gap-4 py-1 md:pe-8">
-              <div className="min-w-0">
-                <h3 className="font-medium text-sm">
-                  <T>Clean up dictation</T>
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  <T>Fix spelling and punctuation after dictation.</T>
-                </p>
-              </div>
-              <Switch
-                aria-label={gt("Clean up dictation")}
-                checked={correctionEnabled}
-                onCheckedChange={(checked) =>
-                  updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
-                }
-              />
-            </div>
+        {environmentId ? (
+          <DictationChoices
+            catalog={catalog}
+            chatGptSignedIn={chatGptSignedIn}
+            environmentId={environmentId}
+          />
+        ) : null}
+        <SettingsRow
+          id="speech-language"
+          title={gt("Language", { $context: "voice dictation language" })}
+          control={
             <VoiceLanguagePicker
               value={languagePreference}
               onChange={(language) => updateClientSettings({ voiceLanguagePreference: language })}
             />
-          </div>
-          {correctionEnabled && settingsScope ? <CleanupModelRow /> : null}
-          {prepared && (engine === "local" || engine === "auto") ? (
-            <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
-              <div className="flex items-start justify-between gap-4 py-1 md:pe-8">
-                <div className="min-w-0">
-                  <h3 className="font-medium text-sm">
-                    <T>Silence filtering</T>
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    <T>Skip pauses before transcribing.</T>
-                  </p>
-                </div>
+          }
+        />
+        <SettingsRow
+          id="speech-post-processing"
+          title={gt("Clean up dictation")}
+          description={gt("Fix spelling and punctuation after dictation.")}
+          descriptionSize="compact"
+          control={
+            <Switch
+              aria-label={gt("Clean up dictation")}
+              checked={correctionEnabled}
+              onCheckedChange={(checked) =>
+                void updateClientSettings({ voiceTranscriptCorrectionEnabled: checked })
+              }
+            />
+          }
+        />
+        {settingsScope ? (
+          <CleanupModelRow disabled={!correctionEnabled} keepControlsVisible />
+        ) : null}
+        {prepared ? (
+          <>
+            <SettingsRow
+              id="speech-silence-filtering"
+              title={gt("Silence filtering")}
+              description={gt("Skip pauses in local dictation.")}
+              descriptionSize="compact"
+              control={
                 <Switch
                   aria-label={gt("Silence filtering")}
                   checked={silenceFiltering}
+                  disabled={!localDictation}
                   onCheckedChange={(speechSilenceFiltering) =>
                     void updateClientSettings({ speechSilenceFiltering })
                   }
                 />
-              </div>
-              <div className="flex items-start justify-between gap-4 py-1 md:ps-8">
-                <div className="min-w-0">
-                  <h3 className="font-medium text-sm">
-                    <T>Remove filler words</T>
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    <T>Drop “um” and “uh” from the text.</T>
-                  </p>
-                </div>
+              }
+            />
+            <SettingsRow
+              id="remove-filler-words"
+              title={gt("Remove filler words")}
+              description={gt("Drop “um” and “uh” from local dictation.")}
+              descriptionSize="compact"
+              control={
                 <Switch
                   aria-label={gt("Remove filler words")}
                   checked={removeFillerWords}
+                  disabled={!localDictation}
                   onCheckedChange={(speechRemoveFillerWords) =>
                     void updateClientSettings({ speechRemoveFillerWords })
                   }
                 />
-              </div>
-            </div>
-          ) : null}
-          <div className="border-border/60 border-t pt-3">
-            <h3 className="font-medium text-sm">
-              <T>Dictate with</T>
-            </h3>
-            <p className="text-muted-foreground text-xs">
-              <T>ChatGPT, a model on this computer, or a cloud engine you added.</T>
-            </p>
-          </div>
-          {environmentId ? (
-            <DictationChoices
-              catalog={catalog}
-              chatGptSignedIn={chatGptSignedIn}
-              environmentId={environmentId}
-              language={languagePreference}
+              }
             />
-          ) : null}
-        </div>
+          </>
+        ) : null}
       </SettingsSection>
       {prepared ? (
         <RecordingDefaultsSettings prepared={prepared} catalog={catalog} key={cloudRevision} />

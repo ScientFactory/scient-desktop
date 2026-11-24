@@ -5,6 +5,7 @@ vi.mock("./catalogDictation", () => ({
 import { page, userEvent } from "vite-plus/test/browser";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
+import { SettingsScopeProvider } from "../../components/settings/SettingsScopeContext";
 import "../../index.css";
 
 const fixture = vi.hoisted(() => {
@@ -273,7 +274,11 @@ vi.mock("./useScientVoiceController", async (original) => ({
 
 import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl";
 import { ScientVoiceSettingsPanel } from "./ScientVoiceSettingsPanel";
-import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import {
+  __setClientSettingsForTests,
+  getClientSettings,
+  updateClientSettings,
+} from "../../hooks/useSettings";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
 const screenshots = import.meta.env.VITE_SCIENT_VOICE_SCREENSHOTS as string | undefined;
@@ -300,7 +305,7 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
       .element(screen.getByRole("switch", { name: "Agents may send audio to cloud engines" }))
       .toBeChecked();
     await expect.element(screen.getByText("Parakeet TDT 0.6B v3").last()).toBeVisible();
-    await expect.element(screen.getByRole("heading", { name: "gpt-transcribe" })).toBeVisible();
+    await expect.element(screen.getByRole("combobox", { name: "Dictate with" })).toBeVisible();
     await expect
       .element(screen.getByRole("heading", { name: "Recordings", level: 2 }))
       .toBeVisible();
@@ -317,6 +322,9 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
     await expect.element(screen.getByRole("button", { name: "Choose a saved key…" })).toBeVisible();
     await expect.element(screen.getByText("25 languages")).not.toBeInTheDocument();
     await expect.element(screen.getByText("for recordings", { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Download Whisper Large v3" }))
+      .toBeVisible();
     expect(screen.container.querySelector(".bg-warning")).toBeNull();
     if (screenshots) {
       await page.screenshot({ path: `${screenshots}/settings-${theme}.png` });
@@ -419,39 +427,61 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
   }
 });
 
-it.each(["off", "cloud"] as const)(
-  "shows the active engine in one place when dictation is %s",
-  async (engine) => {
-    const previous = getClientSettings();
-    __setClientSettingsForTests({
-      ...previous,
-      voiceDictationEngine: engine,
-      voiceCatalogModelId: "handy-computer/parakeet-tdt-0.6b-v3-gguf",
-      voiceCloudSelection: { environmentId: EnvironmentId.make("local"), engineId: "engine-1" },
+it("switches engines and cleanup without moving the settings below Dictation", async () => {
+  const previous = getClientSettings();
+  __setClientSettingsForTests({
+    ...previous,
+    voiceDictationEngine: "auto",
+    voiceTranscriptCorrectionEnabled: false,
+  });
+  try {
+    await page.viewport(1000, 1000);
+    await using screen = await render(
+      <SettingsScopeProvider search={{}} onChange={() => {}}>
+        <ScientVoiceSettingsPanel />
+      </SettingsScopeProvider>,
+    );
+    const engine = screen.getByRole("combobox", { name: "Dictate with" });
+    const silence = screen.getByRole("switch", { name: "Silence filtering" });
+    const cleanup = screen.getByRole("switch", { name: "Clean up dictation" });
+    const model = screen.getByRole("heading", { name: "Cleanup model" });
+    const recordings = screen.getByRole("heading", { name: "Recordings", exact: true });
+    const recordingsTop = () => recordings.element().getBoundingClientRect().top + window.scrollY;
+    await expect.element(engine).toHaveTextContent("Automatic");
+    await expect.element(model).toBeVisible();
+    await expect.element(silence).toBeEnabled();
+    const top = recordingsTop();
+
+    await engine.click();
+    await page.getByRole("option", { name: "Off", exact: true }).click();
+    await expect.element(engine).toHaveTextContent("Off");
+    await expect.element(silence).toBeDisabled();
+    expect(recordingsTop()).toBe(top);
+
+    await engine.click();
+    await page.getByRole("option", { name: /gpt-transcribe/ }).click();
+    await expect.element(engine).toHaveTextContent("gpt-transcribe · api.openai.com");
+    expect(getClientSettings().voiceCloudSelection).toEqual({
+      environmentId: fixture.environmentId,
+      engineId: "engine-1",
     });
-    try {
-      await using screen = await render(<ScientVoiceSettingsPanel />);
-      const section = screen
-        .getByRole("heading", { name: "Dictation", exact: true })
-        .element()
-        .closest("section")!;
-      const inUse = () =>
-        [...section.querySelectorAll("[data-slot='badge']")].filter((badge) =>
-          badge.textContent?.includes("In use"),
-        );
-      if (engine === "off") {
-        await expect.element(screen.getByText("Dictation is off.")).toBeVisible();
-        expect(inUse()).toHaveLength(0);
-      } else {
-        await expect.element(screen.getByRole("heading", { name: "gpt-transcribe" })).toBeVisible();
-        await expect.poll(() => inUse().length).toBe(1);
-        expect(inUse()[0]?.closest("div.rounded-xl")?.textContent).toContain("gpt-transcribe");
-      }
-    } finally {
-      await act(() => __setClientSettingsForTests(previous));
-    }
-  },
-);
+    expect(recordingsTop()).toBe(top);
+
+    await cleanup.click();
+    await expect.element(cleanup).toBeChecked();
+    await expect.element(model).toBeVisible();
+    expect(recordingsTop()).toBe(top);
+  } finally {
+    await act(async () => {
+      await updateClientSettings({
+        voiceDictationEngine: previous.voiceDictationEngine,
+        voiceCloudSelection: previous.voiceCloudSelection,
+        voiceTranscriptCorrectionEnabled: previous.voiceTranscriptCorrectionEnabled,
+      });
+      __setClientSettingsForTests(previous);
+    });
+  }
+});
 
 it.each(["chatgpt", "cloud", "local"] as const)(
   "shows the %s composer mic without a ready local catalog",
