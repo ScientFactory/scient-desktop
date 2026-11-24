@@ -417,7 +417,7 @@ is waiting on prevent automatic settlement. An open pull request does not preven
 settlement unless you turn on **Keep threads with a PR** in **Settings → Threads**,
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Your own messages count as resuming, and so does a
-message an agent sends with `t3_thread_send` or `t3 thread send`. A turn that finished
+message an agent sends with `scient_thread_send` or `scient thread send`. A turn that finished
 background work or a pull request watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
