@@ -34,7 +34,7 @@ import {
   WithdrawMainInput,
   withdrawFromMain,
 } from "./mainFill.ts";
-import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
+import { loginFillScript, loginFormReportScript, PRELOAD_WORLD_ID } from "./loginFields.ts";
 import {
   ChromeSignInInput,
   chromeSignIn,
@@ -125,7 +125,9 @@ export const fill = Effect.fn("DesktopAccounts.fill")(function* (
     return yield* Effect.tryPromise({
       try: () =>
         contents
-          .executeJavaScript(loginFillScript(input.value, origin, input.value))
+          .executeJavaScriptInIsolatedWorld(PRELOAD_WORLD_ID, [
+            { code: loginFillScript(input.value, origin, input.value) },
+          ])
           .then((result: unknown) =>
             result === true || result === "submitted" ? (result as true | "submitted") : false,
           ),
@@ -593,7 +595,10 @@ const readLoginForm = Effect.fn("DesktopAccounts.readLoginForm")(function* (tabI
   if (contents.isDestroyed() || contents.getType() !== "webview" || identity?.persistent !== true)
     return null;
   const result = yield* Effect.tryPromise({
-    try: () => contents.executeJavaScript(loginFormReportScript),
+    try: () =>
+      contents.executeJavaScriptInIsolatedWorld(PRELOAD_WORLD_ID, [
+        { code: loginFormReportScript },
+      ]),
     catch: unavailable,
   });
   const report = decodeFormReport(result);

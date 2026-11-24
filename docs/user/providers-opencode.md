@@ -33,9 +33,10 @@ Send `/compact` to compact a thread yourself.
 
 ## Server authentication
 
-Without a server URL, Scient starts a local OpenCode server. The process inherits
-`OPENCODE_SERVER_PASSWORD` from the environment. A password in the provider settings overrides
-that environment value for both the local process and Scient.
+Leave **Server URL** empty to let Scient start OpenCode locally. A password in
+provider settings applies to both that server and Scient's connection. With no
+password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
+environment, and with neither Scient generates a password for it.
 
 With a server URL, Scient connects to that external server and uses only the password in the
 provider settings. It does not send a local `OPENCODE_SERVER_PASSWORD` to an external server.

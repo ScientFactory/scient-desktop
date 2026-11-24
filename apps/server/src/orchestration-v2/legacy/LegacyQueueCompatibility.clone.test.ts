@@ -85,7 +85,12 @@ it.effect.each(
   );
   const layer = ThreadManagement.layerWithLegacyImporter.pipe(
     Layer.provideMerge(services),
-    Layer.provide(Layer.succeed(ThreadWorktreeRestore, { restore: () => Effect.void })),
+    Layer.provide(
+      Layer.succeed(ThreadWorktreeRestore, {
+        restore: () => Effect.void,
+        takeRecreated: () => Effect.undefined,
+      }),
+    ),
   );
   return Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;

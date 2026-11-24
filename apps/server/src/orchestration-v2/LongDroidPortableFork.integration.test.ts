@@ -295,7 +295,7 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             yield* waitFor(
               sourceId,
               (p) =>
-                p.runs[0]?.status === "waiting" &&
+                p.runs[0]?.status === "completed" &&
                 p.providerTurns.some((turn) => turn.status === "completed"),
             );
             yield* worker.drain(24);
@@ -462,7 +462,8 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             yield* fs.writeFileString(releasePath, "release the exact pending native response");
             yield* waitFor(
               targetId,
-              (p) => p.runs[0]?.status === "waiting" && p.providerTurns[0]?.status === "completed",
+              (p) =>
+                p.runs[0]?.status === "completed" && p.providerTurns[0]?.status === "completed",
             );
             yield* worker.drain(24);
             const done = yield* waitFor(

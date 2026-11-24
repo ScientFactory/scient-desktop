@@ -292,7 +292,6 @@ interface MessagesTimelineProps {
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
   onOpenToolDiff?: (target: ToolCallDiffTarget) => void;
-  onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
@@ -445,7 +444,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   displayThreadKey,
   announceTurnStatus = true,
   onOpenToolDiff,
-  onOpenTurnDiff,
   onOpenThread,
   renderHtmlRender,
   turnItemSource,
@@ -1561,7 +1559,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onFileDownload,
     openPullRequest,
     onOpenToolDiff,
-    onOpenTurnDiff,
     onOpenThread,
     renderHtmlRender,
     turnItemSource,

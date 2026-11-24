@@ -15,10 +15,12 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
-import { wordDiagramRequestBodyLayer } from "./wordDiagramBodyLimit.ts";
+import { layerApiBodyLimit } from "../http.ts";
+import { largeRequestBodyLayer } from "./largeRequestBodies.ts";
 
 const conversation = "/api/scient/conversation-export/v1/export";
 const file = "/api/scient/word-export/v1/file";
+const page = "/api/scient/sources/pages/save";
 const other = "/api/scient/word-export/v1/tool";
 class TestApi extends HttpApi.make("test").add(
   HttpApiGroup.make("word").add(
@@ -37,18 +39,19 @@ const readLength = Effect.gen(function* () {
   return HttpServerResponse.text(String(body.length));
 });
 
-describe("Word diagram HTTP body limit", () => {
-  it("accepts 8 MiB of PNG base64 on both Word routes and rejects oversized bodies before the handler", async () => {
+describe("Scient large request bodies", () => {
+  it("accepts 8 MiB of PNG base64 on each large route and rejects oversized bodies before the handler", async () => {
     const routes = Layer.mergeAll(
       HttpRouter.add("POST", conversation, readLength),
       HttpRouter.add("POST", file, readLength),
+      HttpRouter.add("POST", page, readLength),
       HttpRouter.add("POST", other, readLength),
-      wordDiagramRequestBodyLayer,
+      largeRequestBodyLayer,
     );
     const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
     try {
       const valid = "A".repeat(11_184_812);
-      for (const path of [conversation, file]) {
+      for (const path of [conversation, file, page]) {
         const response = await handler(
           new Request(`http://localhost${path}`, { method: "POST", body: valid }),
         );
@@ -76,7 +79,7 @@ describe("Word diagram HTTP body limit", () => {
     }
   });
 
-  it.effect("bounds a chunked body before HttpApiBuilder JSON decoding", () =>
+  it.effect("bounds a chunked body before HttpApiBuilder JSON decoding under the API default", () =>
     Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
       const port = (server.address as NetAddress.InetAddress).port;
@@ -146,8 +149,11 @@ describe("Word diagram HTTP body limit", () => {
       Effect.provide(
         HttpRouter.serve(
           Layer.mergeAll(
-            HttpApiBuilder.layer(TestApi).pipe(Layer.provide(testApiGroupLayer)),
-            wordDiagramRequestBodyLayer,
+            HttpApiBuilder.layer(TestApi).pipe(
+              Layer.provide(testApiGroupLayer),
+              Layer.provide(layerApiBodyLimit),
+            ),
+            largeRequestBodyLayer,
           ).pipe(
             Layer.provideMerge(
               HttpPlatform.layer.pipe(

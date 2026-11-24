@@ -11,7 +11,7 @@ import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { type ScopedThreadRef, type RunId, type PreviewSessionSnapshot } from "@t3tools/contracts";
+import { type ScopedThreadRef, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
 import { readThreadShell } from "../../state/entities";
@@ -317,16 +317,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     });
   };
   const addPullRequestSurfaceStable = useStableCallback(addPullRequestSurface);
-  const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
-    if (!diffAvailable || !activeThreadRef) return;
-    runAfterPendingFileSave("diff", () => {
-      useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
-      useRightPanelStore.getState().open(activeThreadRef, "diff");
-      onDiffPanelOpen?.();
-    });
-  };
-  // A tool call's recorded patch needs no Git checkout, so this skips the diffAvailable gate;
-  // tool calls only exist on server threads.
   const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave("diff", () => {
@@ -335,7 +325,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       onDiffPanelOpen?.();
     });
   });
-  const onOpenTurnDiffStable = useStableCallback(onOpenTurnDiff);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the preview action bus to toggle the preview panel
   useEffect(
     () =>
@@ -375,7 +364,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     duplicateBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
     onOpenToolDiffStable,
-    onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
     toggleRightPanelMaximizedStable,

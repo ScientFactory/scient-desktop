@@ -7,7 +7,7 @@ const { test } = require("node:test");
 
 const preview = readFileSync(join(__dirname, "../workflows/web-preview.yml"), "utf8");
 const stepPattern =
-  /        name: (?:Build staged deployment|Deploy preview)\n        shell: bash\n        run: \|\n((?:          .*\n|\n)+)/g;
+  /        name: (?:Build staged deployment|Deploy preview)\n        shell: bash\n(?:        env:\n(?:          .*\n)+)?        run: \|\n((?:          .*\n|\n)+)/g;
 // SCIENT-FORK:START — hosted production deployment is not a Scient release authority.
 const steps = Array.from(preview.matchAll(stepPattern), (match) => ["web preview", match[1]]);
 assert.equal(steps.length, 1, "Expected the web preview deployment step");

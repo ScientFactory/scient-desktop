@@ -61,6 +61,7 @@ type SendHeadersListener = (
 function makeFakeSession() {
   let listener: SendHeadersListener | null = null;
   const session = {
+    setPermissionRequestHandler: vi.fn(),
     webRequest: {
       onBeforeSendHeaders: vi.fn((...args: readonly unknown[]) => {
         listener = (args.at(-1) as SendHeadersListener | null) ?? null;

@@ -731,6 +731,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`364ca478682e25c6373c041dc5774d6b726b2c08` is recorded in
+[the 2026-11-24 4ce9f8c1b8 receipt](docs/internals/t3-upstream-sync-20261124-4ce9f8c1b8.md).
+Literal merge `910f988e85bd23633c7878551223be41512fde50` has owned base
+`84e6a3ecb5a6f2c7840a50eb94eee9181a898408` and the frozen official target as parents, retaining
+the 73 official commits after `4ce9f8c1b8`. T3's changed-files card is removed while replies keep
+their file links; runs settle before their checkpoint capture, with Scient's last-attempt
+settlement releasing the queue; preview pages run in their own JavaScript world, so Scient's
+sign-in scripts run in the preload's world 999; Scient's large request bodies keep their own cap
+under T3's 1 MiB API default. Release remains separate.
+
+The previous committed alignment through
 `4ce9f8c1b87e3b70682a9e1a5737679340ebdfae` is recorded in
 [the 2026-11-24 8ff66fc563 receipt](docs/internals/t3-upstream-sync-20261124-8ff66fc563.md).
 Literal merge `90e38a8031645ba1fe37b86c280be23ec4d33709` has owned base
@@ -739,7 +750,7 @@ the 192 official commits after `8ff66fc563`. T3's Workflows page is taken behind
 off by default; agent feedback stays off. T3's numbered docs are adopted, with Scient's own content
 in `scient-*` docs. T3's migration 111 is Scient's 115. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `8ff66fc563357110fdb79a0f7e3a64530b70fe29` is recorded in
 [the 2026-11-23 25440f5bd5 receipt](docs/internals/t3-upstream-sync-20261123-25440f5bd5.md).
 Literal merge `f1092cfee955108534019e0bf1a5c6ac42a301d7` has owned base

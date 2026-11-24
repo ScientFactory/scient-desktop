@@ -435,7 +435,10 @@ describe("native OMP persisted background work", () => {
             ]);
             yield* waitFor((p) => p.subagents.length === 1);
             yield* f.finish(false);
-            let latest = yield* waitFor((p) => p.runs.some((r) => r.status === "completed"));
+            // A Stop before the turn-end capture commits would settle this run interrupted.
+            let latest = yield* waitFor((p) =>
+              p.runs.some((r) => r.status === "completed" && r.checkpointId !== null),
+            );
             const parent = latest.runs[0]!;
             if (wake) {
               yield* f.emit([{ type: "agent_start" }]);

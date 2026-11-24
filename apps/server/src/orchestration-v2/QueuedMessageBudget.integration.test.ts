@@ -107,7 +107,12 @@ const withBusyNative = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
       );
       const layer = ThreadManagement.layerWithLegacyImporter.pipe(
         Layer.provideMerge(services),
-        Layer.provide(Layer.succeed(ThreadWorktreeRestore, { restore: () => Effect.void })),
+        Layer.provide(
+          Layer.succeed(ThreadWorktreeRestore, {
+            restore: () => Effect.void,
+            takeRecreated: () => Effect.undefined,
+          }),
+        ),
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;

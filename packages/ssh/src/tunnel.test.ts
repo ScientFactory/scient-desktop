@@ -331,7 +331,12 @@ describe("ssh tunnel scripts", () => {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-log-" });
       const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
-      const stateDir = NodePath.join(home, ".t3", "ssh-launch", yield* remoteStateKey(target));
+      const stateDir = NodePath.join(
+        home,
+        ".scient-next",
+        "ssh-launch",
+        yield* remoteStateKey(target),
+      );
       const bin = NodePath.join(home, "bin");
       yield* fs.makeDirectory(stateDir, { recursive: true });
       yield* fs.makeDirectory(bin);
@@ -377,6 +382,12 @@ describe("ssh tunnel scripts", () => {
       assert.include(result.failure.stderr, "It wrote nothing to");
       assert.notInclude(result.failure.stderr, "EARLIER_LAUNCH");
       assert.notInclude(result.failure.stderr, "EARLIER_PROCESS");
+      for (const [path, mode] of [
+        [stateDir, 0o700],
+        [NodePath.join(stateDir, "server.log"), 0o600],
+      ] as const) {
+        assert.equal((yield* fs.stat(path)).mode & 0o777, mode, path);
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

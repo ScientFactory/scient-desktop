@@ -414,11 +414,12 @@ const continueImport = Effect.fn("test.nativeImport.continue")(function* (
       Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
     ),
   ).pipe(
-    Stream.filter((projection) =>
-      ["completed", "failed", "cancelled", "interrupted"].includes(
-        projection.runs.at(-1)?.status ?? "",
-      ),
-    ),
+    Stream.filter((projection) => {
+      const run = projection.runs.at(-1);
+      // A run completes before its turn-end checkpoint capture commits.
+      if (run?.status === "completed") return run.checkpointId !== null;
+      return ["failed", "cancelled", "interrupted"].includes(run?.status ?? "");
+    }),
     Stream.runHead,
     Effect.timeout("15 seconds"),
   );

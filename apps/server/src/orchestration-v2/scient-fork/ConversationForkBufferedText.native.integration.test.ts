@@ -1596,7 +1596,8 @@ it.live.each(
             assert.lengthOf(delegatedStops, 1);
             assert.equal(delegatedStops[0]!.threadId, threadId);
             assert.equal(delegatedStops[0]!.commandId, CommandId.make(`${mode}-stop`));
-            const ended = yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
+            // The accepted Stop ends the run as interrupted though its provider turn completed.
+            const ended = yield* waitFor(threadId, (p) => p.runs[0]?.status === "interrupted");
             yield* capture("durableStopRefusal", ended);
             yield* manager.closeInstance(modelSelection.instanceId);
             return { frozen: null, completed: yield* orchestrator.getThreadProjection(threadId) };

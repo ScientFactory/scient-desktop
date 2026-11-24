@@ -404,6 +404,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     /** Exact adapter delivery observation, retained if stream ingestion loses the start race. */
     providerTurn: Schema.optional(OrchestrationV2ProviderTurn),
     cause: Schema.optional(Schema.Defect()),
+    /** The agent received no part of the turn, so context staged for it is still unsent. */
+    refusedBeforePrompt: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
