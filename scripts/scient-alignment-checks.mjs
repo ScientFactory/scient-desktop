@@ -374,7 +374,8 @@ export const failureId = (signature) => signature.split(SIGNATURE)[0];
 function failureKind(messages) {
   const kinds = (messages?.length ? messages : [""]).map((message) => {
     const first = String(message).trimStart();
-    if (/^(?:\w*Error: )?(?:Test|Hook) timed out in \d+ms/u.test(first)) return "timeout";
+    // Vitest raises its timeouts as a plain Error.
+    if (/^(?:Error: )?(?:Test|Hook) timed out in \d+ms/u.test(first)) return "timeout";
     return /^((?:[A-Z]\w*)?(?:Error|Exception))(?::|\s|$)/u.exec(first)?.[1] ?? "error";
   });
   return kinds.sort().join("+");

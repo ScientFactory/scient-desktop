@@ -499,6 +499,10 @@ test("Vitest failures are named by test and file error; only a clean, non-empty 
     "AssertionError: expected 'Test timed out in 5000ms' to be 'ok'",
   ];
   NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: AssertionError");
+  kinds.testResults[0].assertionResults[0].failureMessages = [
+    "AssertionError: Test timed out in 5000ms",
+  ];
+  NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: AssertionError");
   // A file error of its own is labeled beside the file's failed assertions.
   const hooked = fakeVitestReport(cwd);
   hooked.testResults[0].message = "Error: afterAll cleanup failed";
