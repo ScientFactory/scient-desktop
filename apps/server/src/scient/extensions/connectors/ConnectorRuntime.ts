@@ -757,11 +757,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   /** SHA-256 fingerprints of rejected non-OAuth secrets so unchanged bad keys stay blocked until updated. */
   const rejectedCredentialFingerprints = new Map<string, string>();
   /**
-   * In a dev app, the last token borrowed from the dev identity home that a service refused. Each
-   * lease names it, so the home lends a renewed token (or none), never that one. A stale entry is
-   * harmless: the home refreshes only a token that is still its current one.
+   * In a dev app, the last few tokens borrowed from the dev identity home that a service refused
+   * (hashes). A lease names the newest, so the home lends a renewed token or none; a lent token
+   * refused here is renewed once more, never sent. The home refreshes only its current token.
    */
-  const refusedBorrowedTokens = new Map<string, string>();
+  const refusedBorrowedTokens = new Map<string, ReadonlyArray<string>>();
+  const refuseBorrowedToken = (connectorId: string, token: string) => {
+    const hash = tokenHash(token);
+    const kept = (refusedBorrowedTokens.get(connectorId) ?? []).filter((held) => held !== hash);
+    // A few, so a refusal that arrives late cannot hide a newer one.
+    refusedBorrowedTokens.set(connectorId, [...kept.slice(-7), hash]);
+    return hash;
+  };
   /** Accounts' binding revision when a plugin key was refused; a later revision may hold a new key. */
   const pluginRefusalBindingRevisions = new Map<string, number | undefined>();
   /** Raised when a plugin key's refusal starts or ends, so its next delivery reloads the tools. */
@@ -1458,7 +1465,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         let session = entry?.material.session;
         // This app's own sign-in comes first; without one, the dev identity home may lend one.
         if (session === undefined && devBroker?.binds(record.connectorId, record.url) === true) {
-          return yield* leasedCredential(record, refusedBorrowedTokens.get(record.connectorId));
+          return yield* leasedCredential(
+            record,
+            refusedBorrowedTokens.get(record.connectorId)?.at(-1),
+          );
         }
         if (session === undefined) {
           if (record.status === "connected") {
@@ -1508,12 +1518,27 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     /** SHA-256 of the token a service refused; the home lends a renewed one or none. */
     staleTokenHash: string | undefined,
   ) {
-    const lease = yield* devBroker!.lease({
-      connectorId: record.connectorId,
-      url: record.url,
-      ...(staleTokenHash === undefined ? {} : { staleTokenHash }),
-    });
-    if (lease.status === "ok" && tokenHash(lease.accessToken) === staleTokenHash) {
+    const ask = (stale: string | undefined) =>
+      devBroker!.lease({
+        connectorId: record.connectorId,
+        url: record.url,
+        ...(stale === undefined ? {} : { staleTokenHash: stale }),
+      });
+    const refusedHere = (token: string) =>
+      (refusedBorrowedTokens.get(record.connectorId) ?? []).includes(tokenHash(token));
+    let lease = yield* ask(staleTokenHash);
+    // The home lends a token refused here after the one named: it renews that one instead.
+    if (
+      lease.status === "ok" &&
+      refusedHere(lease.accessToken) &&
+      tokenHash(lease.accessToken) !== staleTokenHash
+    ) {
+      lease = yield* ask(tokenHash(lease.accessToken));
+    }
+    if (
+      lease.status === "ok" &&
+      (refusedHere(lease.accessToken) || tokenHash(lease.accessToken) === staleTokenHash)
+    ) {
       return { type: "failed", message: refusedBorrowedSignInMessage(record) } satisfies Credential;
     }
     if (lease.status !== "ok" || !isProtectableCredential(lease.accessToken)) {
@@ -1745,8 +1770,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }
     if (credential.brokeredGrant !== undefined && credential.accessToken !== undefined) {
       // The home refreshes the grant it owns; this app only asks for the new token once.
-      const refusedHash = tokenHash(credential.accessToken);
-      refusedBorrowedTokens.set(record.connectorId, refusedHash);
+      const refusedHash = refuseBorrowedToken(record.connectorId, credential.accessToken);
       const leased: Credential = yield* leasedCredential(record, refusedHash);
       if (leased.type !== "ok") return leased satisfies SendOutcome;
       const refusedBorrowed = {
@@ -1775,7 +1799,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       if (borrowedVerdict.refused) {
         yield* cancelBody(borrowedReplay.value);
         if (leased.accessToken !== undefined) {
-          refusedBorrowedTokens.set(record.connectorId, tokenHash(leased.accessToken));
+          refuseBorrowedToken(record.connectorId, leased.accessToken);
         }
         return refusedBorrowed;
       }
