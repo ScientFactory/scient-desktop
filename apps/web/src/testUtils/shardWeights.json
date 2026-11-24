@@ -319,6 +319,7 @@
   "src/components/files/filePath.test.ts": 0.015,
   "src/components/files/filePathClipboard.test.ts": 0.013,
   "src/components/files/filePreviewMode.scient.test.ts": 0.005,
+  "src/components/files/FilePreviewPanel.browser.test.tsx": 4.29,
   "src/components/files/FilePreviewPanel.test.ts": 4.71,
   "src/components/files/FileRenameButton.browser.test.tsx": 0.507,
   "src/components/files/fileSaveCoordinator.test.ts": 0.362,
