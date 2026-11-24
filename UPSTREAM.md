@@ -1,14 +1,21 @@
 # Upstream maintenance
 
 Scient owns subscription-model policy in `packages/shared/src/scientModel.ts` and quota
-fallback in `packages/shared/src/scientAgentModelFallback.ts`, mounted in `ChatView.tsx`.
+fallback in `packages/shared/src/scientAgentModelFallback.ts` and `packages/shared/src/usageLimits.ts`,
+mounted in `ChatView.tsx`.
 Preserve exact-ID hidden defaults (new IDs visible), saved visibility/order/favorites and
 custom models, and explicit/persisted thread and global selections. Preferred subscription
 models, not catalog order, drive implicit defaults and the shared new-turn/explicit-resume
 quota fallback: configured fallback first (including an explicitly chosen API route or
 same-family account; default hiding cannot override it, but explicit hiding can), then
 Scient Agent's OpenAI, Anthropic, Antigravity, Muse Code accounts,
-subject to visibility, availability, sign-in, quota and task compatibility. Never silently
+subject to visibility, availability, sign-in, quota and task compatibility. Automatic
+new-draft fallback triggers only when current credible runtime evidence confirms the
+default route is blocked and a replacement has remaining quota; unknown, stale,
+non-blocking, or unrelated model-scoped readings retain the default, and the composer notice
+names the exact applicable limit while omitting the switch-back shortcut during confirmed
+blocks. Composer `/usage-limits` in a Scient Agent thread shows only limits applicable to
+the selected route while Usage → Limits remains aggregate. Never silently
 choose metered API routes automatically or auto-resume a limited thread. This automatic
 chain can recover a standalone-provider thread too. Antigravity's native
 `google-antigravity` and CLI `antigravity-cli` catalog identities stay distinct; Hydrogen is
@@ -261,7 +268,7 @@ sidebar closed, progress is a corner toast.
 The version shown by an install caller remains binding even when its final feed check
 discovers and downloads a newer release. Late download events cannot replace the current
 offer, and update events cannot mutate an install's reserved release.
-Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analytics.md`) live in
+Update outcomes and summaries (`app.update.*`, see `docs/internals/scient-product-analytics.md`) live in
 `apps/desktop/src/scient/updateOutcomes/`; `DesktopUpdates.ts`, `DesktopTelemetryPublisher.ts`,
 `DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`
 carry only marked calls into them. The four-hour poller contains an unexpected failure per
@@ -364,7 +371,7 @@ closing-thread resume retry. When syncing, take upstream's version of those hunk
 the marked Scient additions inside them: the `awaitRelease` detach argument and
 `idleUnloadedProviderThreads` fallback in `ProviderSessionManager.ts`, the release wait in
 `CodexAdapterV2.unloadThread`, the `expectedRuntime` release argument, and the linked-environments
-test assertions. See [provider lifecycle](docs/internals/providers.md#registry-and-routing).
+test assertions. See [provider lifecycle](docs/internals/scient-providers.md#registry-and-routing).
 
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
@@ -724,6 +731,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`4ce9f8c1b87e3b70682a9e1a5737679340ebdfae` is recorded in
+[the 2026-11-24 8ff66fc563 receipt](docs/internals/t3-upstream-sync-20261124-8ff66fc563.md).
+Literal merge `90e38a8031645ba1fe37b86c280be23ec4d33709` has owned base
+`3f2a2402ce4975dcdda3fc6a0fa3a40b07dcc039` and the frozen official target as parents, retaining
+the 192 official commits after `8ff66fc563`. T3's Workflows page is taken behind its Labs switch,
+off by default; agent feedback stays off. T3's numbered docs are adopted, with Scient's own content
+in `scient-*` docs. T3's migration 111 is Scient's 115. Release remains separate.
+
+The previous committed alignment through
 `8ff66fc563357110fdb79a0f7e3a64530b70fe29` is recorded in
 [the 2026-11-23 25440f5bd5 receipt](docs/internals/t3-upstream-sync-20261123-25440f5bd5.md).
 Literal merge `f1092cfee955108534019e0bf1a5c6ac42a301d7` has owned base
@@ -732,7 +748,7 @@ the 48 official commits after `25440f5bd5`. T3's durable workflows stay off as s
 feedback stays off in Scient; large files load in full in the file preview and a new thread opens
 its draft at once. T3's migrations 108-110 are Scient's 112-114. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `25440f5bd5050e262bab4a01b21895f52476e3b7` is recorded in
 [the 2026-11-22 15d945faef receipt](docs/internals/t3-upstream-sync-20261122-15d945faef.md).
 Literal merge `d4b67d21b8e98b1965bb99f8b24b731fc6fbc6b2` has owned base
@@ -1611,7 +1627,7 @@ database. Preserve its read-only original source, before-images, source identity
 Scient migration ledger, and conflict versions. The `EventSink` transaction hook prepares recovery
 events against current projections before appending them, so edits and interrupted retries remain
 safe. Historical imports never acquire provider-session, queue, or checkpoint execution authority.
-See [legacy migration and recovery](docs/internals/legacy-orchestration-migration.md).
+See [legacy migration and recovery](docs/internals/scient-legacy-orchestration-migration.md).
 
 The agent-capability foundation keeps workspace authority under
 `scient/projectScope`, not in T3's host project schema. Scient's existing
@@ -1688,7 +1704,7 @@ categories instead of folding them into `other`. Its shared allowlist, conforman
 generator and generated fixture are anchored `scientMounts`, not OMP-owned code.
 Deploy the revision-7 gateway before releasing this producer; old `other` records
 cannot be re-attributed. Analytics meanings and consent/content boundaries remain
-in `docs/internals/product-analytics.md`.
+in `docs/internals/scient-product-analytics.md`.
 `scripts/scient-seam-check.mjs --base --head` checks this inventory with the
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
@@ -1773,7 +1789,7 @@ with `scient-fork/ContextHistorySource.ts` and its bounded readers; preserve the
 Scient migration ledger and old source bodies. Generic budget accounting, formatting and item
 priority remain in provider-core. Source identity is private execution metadata. The decisive
 behavior and resource contract is maintained in
-[context handoffs](docs/internals/context-handoffs.md), with actual default-composition,
+[context handoffs](docs/internals/scient-context-handoffs.md), with actual default-composition,
 legacy/rebuild, receiving-model and reservation-recovery witnesses beside the production owners.
 
 Scient layers two sidebar divergences beside T3's thread list: user-defined
@@ -1893,13 +1909,13 @@ It does not replace T3's model catalog or ACP selection: choices, persistence,
 and dispatch retain exact native IDs. Preserve this presentation seam in web
 and mobile without moving grouping into the provider engine. If Google or T3
 exposes native reasoning options, prefer those; models with native options
-already bypass grouping. See [provider architecture](docs/internals/providers.md).
+already bypass grouping. See [provider architecture](docs/internals/scient-providers.md).
 
 Claude's health-check commands, `claude --version` and Scient's `claude auth status` gate, use a
 20-second deadline instead of the shared 4-second probe deadline, in `SCIENT-FORK` regions of
 `ClaudeProvider.ts`. The native CLI needs 2-4 seconds to answer on Windows. Drop the version-check
 region once upstream gives that check an equivalent deadline. See
-[Claude health check](docs/internals/providers.md#claude-health-check).
+[Claude health check](docs/internals/scient-providers.md#claude-health-check).
 
 Desktop/web also reconciles historical Antigravity family selections in unstarted
 drafts against the instance's live native variants. Preserve its draft-store write,
@@ -2428,12 +2444,14 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   from Scient) is upstream code now. Scient's marked blocks keep only its follow-up: overlapping
   status reads share one running listing, and the error keeps the listing's `GitCommandError` as
   `cause`. Tested in `GitVcsDriverCore.scient.test.ts`; offered as pingdotgg/t3code#34574.
-- `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
-  (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
-  is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
-  server dies, the fd-3 watcher lists the CLI's live descendants in other groups before its group
-  kill. Only the agent's own tree, never terminals. Tested in `ClaudeProcessGroup.scient.test.ts`.
-  Reported as pingdotgg/t3code#34459 with this design as a proposal.
+- `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): if the server dies, the fd-3 watcher lists the
+  CLI's live descendants in other process groups (its detached Bash tool shells and helpers)
+  before its group kill. While the server runs, T3's shared descendant poll stops them after the
+  CLI exits, so Scient's own sampling was removed. Only the agent's own tree, never terminals.
+  Tested in `ClaudeProcessGroup.scient.test.ts`. Reported as pingdotgg/t3code#34459.
+- `ClaudeAdapterV2.ts` (`makeClaudeDescendantPoll`): a failed exit read is retried twice and an unverified cleanup is logged. The CLI's pid is a root only as the process (pid and start time) first seen there, and a refresh that waited behind the CLI's exit records nothing, so a reused pid's processes are never stopped. Tested in `ClaudeAgentSdkQueryRunner.scient.test.ts`.
+- `storageCleanup.ts` (`removeLeftover`): only a missing `gitdir` back-pointer frees leftover metadata; an unreadable one is kept and reported. A leftover record holds its admin directory's file identity and back-pointer; the directory is deleted only while it is still that one, after being moved aside and checked again, so a worktree Git creates under the reused name is kept and the record dropped. Tested in `storageCleanup.test.ts`.
+- `McpProviderSessions.ts` and `McpHttpServer.ts` (`withToolResultCapture`): tool-result generations are unique tokens deleted on clear, not per-thread counters kept forever. A generation is issued, and a write naming a provider session accepted, only while that session is the thread's open one, so a call admitted before teardown cannot recreate a closed thread's results. Tested in `McpProviderSessions.scient.test.ts`.
 
 When T3 takes an equal change, use its version and delete the block and its `.scient` test.
 

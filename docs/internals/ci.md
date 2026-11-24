@@ -54,7 +54,7 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   files at a time, each in its own process, and spends no Electron download on these shards.
   **Test Server performance** runs beside them: the compute session Python bridge tests and the
   server timing budgets. Both suites split by the durations of recent main runs (see
-  [development](../operations/development.md)). Chromium is installed explicitly for the server browser integration tests. Exactly one shard writes the thread transfer budget
+  [Shard weights](#shard-weights)). Chromium is installed explicitly for the server browser integration tests. Exactly one shard writes the thread transfer budget
   report; a presence-gated upload keeps a single `thread-transfer-results` artifact, the exact name
   [`thread-transfer-report.yml`](../../.github/workflows/thread-transfer-report.yml) resolves when
   it posts the PR comment. Web and server shards also preserve their normal human-readable output
@@ -171,7 +171,53 @@ artifact. This avoids repeating dependency checks, especially on Windows, withou
 large registry metadata cache. pnpm checks the current lockfile and policy before it reuses a result.
 If the artifact is unavailable, installation runs the checks again.
 
-See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.
+See the [Scient release runbook](../operations/scient-release.md) for the full release/signing setup checklist.
+
+## Shard weights
+
+Server and web shards use longest-file-first allocation with package-relative path tie breaking and
+the lowest shard index on equal load. New files receive the sequencer's fallback weight (server
+0.6 seconds; web 1 second). Weights schedule tests; they never select or exclude them. They are the
+checked-in `apps/{server,web}/src/testUtils/shardWeights.json`, so every shard of a run derives the
+same split with no job before the shards. Refresh them from main's newest timings (successful
+reports only, medians over up to three runs per suite) after large test changes, or when one shard
+runs well behind the others:
+
+```sh
+out="$(mktemp -d)/weights"
+GITHUB_REPOSITORY=ScientFactory/scient-desktop node .github/scripts/ci-shard-weights.mjs "$out"
+cp "$out/web.json" apps/web/src/testUtils/shardWeights.json
+cp "$out/server.json" apps/server/src/testUtils/shardWeights.json
+node .github/scripts/verify-ci-shards.mjs
+```
+
+A suite takes a main run only when that run has a successful report from every shard, using each
+shard's latest attempt; otherwise its file is not written and its `cp` fails, so the checked-in
+weights stay. The verifier loads the actual Vitest configurations, discovers every test
+specification, and checks that the configured partitions cover each exactly once. Vitest's
+`list --filesOnly --shard` does not apply the sequencer.
+
+## Native Compute suites
+
+The required `Check` gate includes applicable native Compute suites, selected by
+`.github/scripts/compute-ci-gate.mjs`:
+
+- Preview-scanner changes and the real-kernel integration test files run the Linux/macOS/Windows
+  real-kernel matrix, without provisioning managed toolkits.
+- Managed live-test files and the managed `pyproject.toml`/`uv.lock` fixtures run managed Python
+  qualification, without the system-Python matrix.
+- Shared runtime, process ownership, persistence and Compute contracts run both. `ManagedPython*.ts`
+  is shared too: the existing-Python runtime imports it even when not provisioning an environment.
+- Broad inputs (package manifests, the lockfile, workspace and root Vite configuration, server
+  configuration and settings, `ci.yml`, workspace code and test infrastructure) run both suites on
+  Linux only; the nightly run covers all four computers.
+- Unit tests, which run in the ordinary lanes, and the server's RPC fixture
+  `ComputeRpcServerTests.ts` run neither, as do unrelated UI and docs changes. Mixed changes take
+  the union; uncertain diffs run everything.
+
+Both suites stay enabled on every platform by default for reusable callers and manual dispatch,
+which can also select either suite. The nightly run, and any main push that cannot reuse queue
+qualification, runs both on all four computers.
 
 The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. For a pull request, the seam check reads GitHub's merge of the pull request into its base, so commits that reached main after the branch left it are not counted as its changes. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.
 

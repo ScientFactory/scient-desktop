@@ -6,7 +6,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeReadlinePromises from "node:readline/promises";
 
-import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isCommandAvailable, resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -233,7 +234,14 @@ export const triageCommand = Command.make("triage", {
 
       const model = Option.getOrUndefined(flags.model);
       const launchPrompt = buildTriageLaunchPrompt(promptFilePath);
-      const spawnSpec = yield* resolveSpawnCommand(selected.command, [
+      // The agent starts in the session directory, so a PATH match relative to this one would
+      // be searched from there. Windows keeps the bare name for its .cmd shim handling.
+      const onPath =
+        (yield* HostProcess.Platform) === "win32"
+          ? null
+          : yield* resolveCommandPath(selected.command);
+      const command = onPath === null ? selected.command : NodePath.resolve(onPath);
+      const spawnSpec = yield* resolveSpawnCommand(command, [
         ...(model === undefined ? [] : ["--model", model]),
         ...(selected.promptArgs ?? []),
         launchPrompt,

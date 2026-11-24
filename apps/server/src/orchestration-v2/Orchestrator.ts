@@ -105,6 +105,7 @@ import { outputRequestProblem } from "./runOutput.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import { isSlashCommand } from "@t3tools/shared/composerTrigger";
 import {
+  backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
   hasPendingBackgroundSubagent,
   pendingBackgroundTurnItems,
@@ -1002,6 +1003,57 @@ function mayStartSubagentFollowup(
     command.usageLimitContinuationOfRunId !== undefined
   );
 }
+
+// SCIENT-FORK:START — new work on a delegated child takes over a task its parent has not yet
+// recorded the result of. Continuations and requeued steers resume work; monitor updates report it.
+function mayTakeOverChildTask(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+): boolean {
+  return (
+    command.restartContinuationOfRunId === undefined &&
+    command.usageLimitContinuationOfRunId === undefined &&
+    command.steerFollowUpOfRunId === undefined &&
+    !(command.notification?.source.kind === "monitor" && command.notification.outcome === "updated")
+  );
+}
+
+// Every command that can start a run on its own thread. Dispatch takes the parent's lock for each
+// and records a finished child's task before planning, so that run cannot take the task over.
+function mayStartChildTakeover(command: OrchestrationV2ServerCommand): boolean {
+  switch (command.type) {
+    case "message.dispatch":
+      return mayTakeOverChildTask(command);
+    case "thread.metadata.update": {
+      const continuation = metadataUpdateContinuation(command);
+      return continuation !== undefined && mayTakeOverChildTask(continuation);
+    }
+    case "provider-work.admit":
+      return mayTakeOverChildTask(providerWorkMessageCommand(command));
+    case "thread.room.guest-dispatch":
+      return command.send.type !== "stop";
+    // A message-mode answer, a pull request wake and a link answer each send a message.
+    case "runtime-request.respond":
+    case "thread.pull-request-watch.sync":
+    case "link_request.record":
+      return true;
+    default:
+      return false;
+  }
+}
+
+// The unread-steer preflight in dispatchWithReceiptEffect: a replayed user steer can record a
+// follow-up task on the parent, so the dispatch takes the parent's lock first.
+function requeuesUnreadSteersFirst(command: OrchestrationV2ServerCommand): boolean {
+  return (
+    command.type === "message.dispatch" &&
+    command.restartContinuationOfRunId === undefined &&
+    command.steerFollowUpOfRunId === undefined &&
+    (command.dispatchMode.type === "start_immediately" ||
+      command.dispatchMode.type === "queue_after_active" ||
+      command.dispatchMode.type === "defer_start")
+  );
+}
+// SCIENT-FORK:END
 
 /** Waiting runs only drain post-terminal output; their agent turn is over and still needs a wake. */
 function isLiveRun(run: OrchestrationV2Run): boolean {
@@ -5258,7 +5310,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (command.type === "thread.settle") {
-      const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"]);
+      const projection = yield* loadProjectionForCommand(
+        command,
+        ["runs", "runtimeRequests", "providerThreads", "turnItems"],
+        {
+          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        },
+      );
       if (
         command.expectedLatestRunId !== undefined &&
         projection.runs.reduce<OrchestrationV2Run | undefined>(
@@ -5307,13 +5366,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const blockingRequestExists = pendingRequests.some(
         (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
       );
+      // Settling detaches the provider session, which ends the work running inside it. Hold for
+      // the work auto-settle waits on. Delegated tasks run in their own thread and survive.
+      const awaitedSessionWorkExists =
+        !runningRunExists &&
+        backgroundWorkHoldsCompletion(
+          derivePendingBackgroundWork({
+            latestRun: projection.runs.findLast((run) => run.status !== "queued"),
+            providerThreads: projection.providerThreads,
+            turnItems: projection.turnItems.filter(
+              (item) => item.type !== "subagent" || item.origin !== "app_owned",
+            ),
+            activeProviderThreadId: projection.thread.activeProviderThreadId,
+            runs: projection.runs,
+          }),
+        );
       const blocker = blockingRequestExists
         ? "is waiting on an approval or question. Answer it before settling."
         : runningRunExists
           ? "is still running. Stop it before settling."
           : queuedMessageExists
             ? "has a queued message. Send it or remove it from the queue before settling."
-            : null;
+            : awaitedSessionWorkExists
+              ? "is still running background agents or commands, and settling would end them. Wait for them to finish, or press Stop, then settle."
+              : null;
       if (blocker !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -6890,6 +6966,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.sourceThreadId} is not a fork of ${command.targetThreadId}.`,
       });
     }
+    if (sourceProjection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.sourceThreadId} was deleted.`,
+      });
+    }
+    if (targetProjection.thread.deletedAt !== null || targetProjection.thread.archivedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.targetThreadId} is archived or deleted.`,
+      });
+    }
     // Queued runs cannot consume merge-back context. Refuse under the target's
     // command lock before a pending transfer can block its ordinary messages.
     if (targetProjection.runs.some((run) => isActiveRun(run) || run.status === "queued")) {
@@ -8385,7 +8475,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // An agent's automatic send must not overtake an earlier agent message still queued
+    // An agent's automatic send must not overtake its own earlier message still queued
     // (e.g. behind /compact), or the agent receives them out of send order.
     if (
       command.deliveryIntent === "auto" &&
@@ -8402,7 +8492,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             queuedRuns.map((run) => run.userMessageId),
           )
           .pipe(mapDispatchError(command));
-        if ([...queuedMessages.values()].some((message) => message.createdBy === "agent")) {
+        if (
+          [...queuedMessages.values()].some(
+            (message) =>
+              message.createdBy === "agent" && message.senderThreadId === command.senderThreadId,
+          )
+        ) {
           dispatchMode = { type: "queue_after_active" };
         }
       }
@@ -8518,6 +8613,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery.generation !== requestedCompletion.generation ||
         delivery.messageId !== command.messageId ||
         (projection.messages.some((candidate) => candidate.id === command.messageId) &&
+          command.steerFollowUpOfRunId === undefined &&
           !isUndeliveredMailboxSteer(projection, command.messageId))
       ) {
         return yield* new OrchestratorDispatchError({
@@ -8594,6 +8690,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const commandNotice = noticeKind === "command" && command.creationSource === "server";
     if (
       !freshContext &&
+      // A steer follow-up was declined by the active turn; steering it again loses it.
+      command.steerFollowUpOfRunId === undefined &&
       // Steering refuses a command, so a notice that reads like one stays queued.
       !isSlashCommand(command) &&
       (delegatedCompletion !== undefined
@@ -16794,6 +16892,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       options: {
         readonly settledContinuationOf?: RunId;
         readonly syncRunId?: RunId;
+        // SCIENT-FORK: the caller holds the child's lock, which the session release takes.
+        readonly childLocked?: boolean;
         readonly task: OrchestrationV2Subagent;
         readonly resultRun?: OrchestrationV2Run;
       },
@@ -17123,7 +17223,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ];
       yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
-      yield* releaseFinishedDelegateSessions(childThreadId, childRun.id, task.id);
+      // SCIENT-FORK: a child-locked settlement precedes the child's next run, which keeps its session.
+      if (options.childLocked !== true)
+        yield* releaseFinishedDelegateSessions(childThreadId, childRun.id, task.id);
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
@@ -17142,7 +17244,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const finalizeAppOwnedSubagent = Effect.fn("Orchestrator.finalizeAppOwnedSubagent")(function* (
     childThreadId: ThreadId,
-    options?: { readonly settledContinuationOf?: RunId; readonly syncRunId?: RunId },
+    options?: {
+      readonly settledContinuationOf?: RunId;
+      readonly syncRunId?: RunId;
+      // SCIENT-FORK: the caller holds the child's lock, so the question dismissal runs under it.
+      readonly childLocked?: boolean;
+    },
   ) {
     const child = yield* projectionStore.getThreadRecords(childThreadId, ["contextTransfers"]);
     const parentThreadId = child.thread.lineage.parentThreadId;
@@ -17241,12 +17348,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             node.id === request.nodeId && node.runId !== null && resultRunIds.has(node.runId),
         )
       ) {
-        yield* dispatchWithReceipt({
+        const dismiss = {
           type: "thread.user-input.dismiss",
           commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
           threadId: childThreadId,
           requestId: request.id,
-        }).pipe(
+        } as const;
+        // SCIENT-FORK: a child-locked settlement precedes new work, which this question must not steer.
+        yield* (
+          options?.childLocked === true
+            ? dispatchWithReceiptEffect(dismiss)
+            : dispatchWithReceipt(dismiss)
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to dismiss task question", {
               requestId: request.id,
@@ -18142,6 +18255,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
+    // SCIENT-FORK:START — new work that beats the child-settlement reaction first records the task
+    // its child finished, under the parent lock its dispatch took, so its run cannot take it over.
+    if (mayStartChildTakeover(command)) {
+      const threadId = commandThreadId(command);
+      const lockedParentThreadId = yield* SubagentParentLockHeld;
+      if (
+        lockedParentThreadId !== undefined &&
+        lockedParentThreadId ===
+          (yield* appOwnedSubagentParentThreadId(threadId).pipe(mapDispatchError(command)))
+      )
+        yield* finalizeAppOwnedSubagent(threadId, { childLocked: true }).pipe(
+          mapDispatchError(command),
+        );
+    }
+    // SCIENT-FORK:END
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(
       Effect.tap((planned) => refuseAboveRuntimeModeCeiling(command, planned.events)),
@@ -18425,26 +18553,81 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap(([parentThreadId, held]) =>
         parentThreadId === undefined || parentThreadId === held
           ? dispatch
-          : threadDispatch.withLock(parentThreadId, dispatch),
+          : threadDispatch.withLock(
+              parentThreadId,
+              dispatch.pipe(Effect.provideService(SubagentParentLockHeld, parentThreadId)),
+            ),
       ),
     );
+  // SCIENT-FORK:START — other new work takes the parent's lock only while the child's
+  // original task is open, so a server send to a settled child stays off its parent's lock.
+  const childOriginalTaskOpen = Effect.fn("Orchestrator.childOriginalTaskOpen")(function* (
+    threadId: ThreadId,
+  ) {
+    const child = yield* projectionStore.findThread(threadId);
+    const parentThreadId = child?.lineage.parentThreadId;
+    const originalTaskId = child?.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : null;
+    if (
+      child?.lineage.relationshipToParent !== "subagent" ||
+      parentThreadId == null ||
+      originalTaskId === null
+    )
+      return false;
+    const { subagents } = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+      subagentIds: [originalTaskId],
+    });
+    return subagents.some(
+      (task) => task.id === originalTaskId && task.origin === "app_owned" && task.result === null,
+    );
+  });
+  const withOpenTaskParentLock = <A, E, R>(threadId: ThreadId, dispatch: Effect.Effect<A, E, R>) =>
+    childOriginalTaskOpen(threadId).pipe(
+      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      Effect.flatMap((open) => (open ? withSubagentParentLock(threadId, dispatch) : dispatch)),
+    );
+  // SCIENT-FORK:END
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
-    // Freeze fork source facts and destination identity under one lock order.
+    // SCIENT-FORK:START — ancestors lock before descendants. A fork that takes both locks has a
+    // new destination, which can only become its source's descendant, so the source goes first.
     const ids =
       command.type === "thread.fork"
-        ? [...new Set([command.sourceThreadId, command.targetThreadId])].sort()
+        ? [...new Set([command.sourceThreadId, command.targetThreadId])]
         : [commandThreadId(command)];
+    // SCIENT-FORK:END
     const dispatch = ids.reduceRight(
       (effect, id) => threadDispatch.withLock(id, effect),
       dispatchWithReceiptEffect(command),
     );
     // SCIENT-FORK:START — a conversation fork's attempt owns its checkpoint reservation until it
     // commits; a running-turn fork captures the turn's unsaved text before it locks.
-    if (command.type === "thread.fork" && command.sideChat !== true)
+    if (command.type === "thread.fork" && command.sideChat !== true) {
+      // An existing destination (perhaps the source's delegated child or parent) is only replayed
+      // or refused, so it takes that thread's lock alone, as a side chat fork does. A fork from a
+      // missing source is refused there too, so two forks between missing threads never wait on
+      // each other; it is not dispatched, since a source created meanwhile would be unlocked.
+      const existing = yield* threadDispatch.withLock(
+        command.targetThreadId,
+        Effect.all([findThread(command.targetThreadId), findThread(command.sourceThreadId)]).pipe(
+          Effect.flatMap(([target, source]) =>
+            target !== null
+              ? Effect.asSome(dispatchWithReceiptEffect(command))
+              : source === null
+                ? Effect.fail(
+                    new OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause: new Error("The original conversation does not exist."),
+                    }),
+                  )
+                : Effect.succeedNone,
+          ),
+        ),
+      );
+      if (Option.isSome(existing)) return existing.value;
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const scope = yield* Effect.scope;
@@ -18456,6 +18639,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           );
         }),
       );
+    }
     // SCIENT-FORK:END
 
     // A fork holds its source's lock, so a source deletion and its fork never interleave. A
@@ -18507,9 +18691,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (message?.type === "message.dispatch")
       return yield* messageIntake.withLock(
         message.threadId,
-        mayStartSubagentFollowup(message)
+        // SCIENT-FORK: a send's unread-steer replay can record a follow-up as well.
+        mayStartSubagentFollowup(message) || requeuesUnreadSteersFirst(command)
           ? withSubagentParentLock(message.threadId, dispatch)
-          : dispatch,
+          : // SCIENT-FORK: other new work may still find its child's task unrecorded.
+            mayTakeOverChildTask(message)
+            ? withOpenTaskParentLock(message.threadId, dispatch)
+            : dispatch,
       );
     // SCIENT-FORK: settle a stopped child's row before returning, after releasing its lock.
     if (command.type === "thread.stop") {
@@ -18522,9 +18710,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
-    // SCIENT-FORK: a guest's send to the agent keeps its place among messages the same way.
+    // SCIENT-FORK: a guest's send to the agent keeps its place among messages the same way, and
+    // can start a follow-up as the owner's send does.
     if (command.type === "thread.room.guest-dispatch")
-      return yield* messageIntake.withLock(command.threadId, dispatch);
+      return yield* messageIntake.withLock(
+        command.threadId,
+        withSubagentParentLock(command.threadId, dispatch),
+      );
+    // SCIENT-FORK: provider-initiated work and other wakes may find a child's task unrecorded.
+    if (command.type !== "runtime-request.respond" && mayStartChildTakeover(command))
+      return yield* withOpenTaskParentLock(commandThreadId(command), dispatch);
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)
@@ -18665,6 +18860,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           )
           .pipe(
+            // SCIENT-FORK: a replayed user steer can record a follow-up task; lock its parent first.
+            (locked) => withSubagentParentLock(threadId, locked),
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),
             ),
@@ -18888,6 +19085,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadIds,
           (threadId) =>
             threadDispatch.withLock(threadId, requeueUnreadSteers(threadId)).pipe(
+              // SCIENT-FORK: as at run end, a replayed steer's follow-up locks the parent first.
+              (locked) => withSubagentParentLock(threadId, locked),
               Effect.catchCause((cause) =>
                 Effect.logWarning("Failed to requeue an unread steer during recovery", {
                   threadId,

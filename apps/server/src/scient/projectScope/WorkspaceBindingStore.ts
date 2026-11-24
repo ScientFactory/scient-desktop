@@ -20,6 +20,8 @@ import {
   WorkspaceBindingStoreError,
   WorkspaceRepositoryEvidence,
   WorkspaceWorktreeEvidence,
+  sameRepository,
+  storedRepositoryMatchesObserved,
 } from "./WorkspaceBinding.ts";
 
 const StoredWorkspaceBindingRow = Schema.Struct({
@@ -198,8 +200,7 @@ export const authorityEvidenceEqual = (
   binding.rootFileSystemIdentity?.inode === evidence.rootFileSystemIdentity?.inode &&
   binding.scientProjectId === evidence.scientProjectId &&
   binding.trustState === evidence.trustState &&
-  binding.repositoryIdentity?.canonicalKey === evidence.repositoryIdentity?.canonicalKey &&
-  binding.repositoryIdentity?.source === evidence.repositoryIdentity?.source &&
+  storedRepositoryMatchesObserved(binding.repositoryIdentity, evidence.repositoryIdentity) &&
   binding.worktreeIdentity?.kind === evidence.worktreeIdentity?.kind &&
   binding.worktreeIdentity?.rootPath === evidence.worktreeIdentity?.rootPath &&
   binding.worktreeIdentity?.metadataPath === evidence.worktreeIdentity?.metadataPath;
@@ -328,7 +329,7 @@ const make = Effect.gen(function* () {
       parentWorktree.metadataPath !== childWorktree.metadataPath ||
       (parent.repositoryIdentity !== null &&
         input.evidence.repositoryIdentity !== null &&
-        parent.repositoryIdentity.canonicalKey !== input.evidence.repositoryIdentity.canonicalKey)
+        !sameRepository(parent.repositoryIdentity, input.evidence.repositoryIdentity))
     ) {
       return yield* new WorkspaceBindingStoreError({
         operation: "validate-lineage",
@@ -569,8 +570,7 @@ const make = Effect.gen(function* () {
           if (
             current.repositoryIdentity !== null &&
             input.evidence.repositoryIdentity !== null &&
-            current.repositoryIdentity.canonicalKey !==
-              input.evidence.repositoryIdentity.canonicalKey
+            !sameRepository(current.repositoryIdentity, input.evidence.repositoryIdentity)
           ) {
             return yield* new WorkspaceBindingStoreError({
               operation: "confirm-replacement",

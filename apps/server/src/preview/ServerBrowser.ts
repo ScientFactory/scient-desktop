@@ -77,6 +77,7 @@ import type { GeneratedDocumentStore } from "../scient/documentArtifacts/Generat
 import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { appLinkUrl } from "@t3tools/shared/appLinks";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -1321,18 +1322,34 @@ const make = Effect.gen(function* () {
     }
     // Playwright's `request.frame()` throws for a request issued before its frame exists, and a
     // throw from a page listener is uncaught, so such a request is not a main-frame navigation.
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) => {
+    const isMainFrameNavigation = (request: {
+      isNavigationRequest(): boolean;
+      frame(): unknown;
+    }) => {
       try {
         return request.isNavigationRequest() && request.frame() === page.mainFrame();
       } catch {
         return false;
       }
     };
+    // Chromium aborts an app link's request and keeps the page, so it is no navigation.
+    const isMainNavigation = (request: {
+      isNavigationRequest(): boolean;
+      url(): string;
+      frame(): unknown;
+    }) => appLinkUrl(request.url()) === null && isMainFrameNavigation(request);
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
       // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
       networkStudyOf(page).onRequest(request);
       // SCIENT-FORK:END
+      if (appLinkUrl(request.url()) !== null && isMainFrameNavigation(request)) {
+        // A redirect into an app link ends the navigation that led there.
+        const redirectedFrom = request.redirectedFrom();
+        const generation = redirectedFrom && navigationGenerations.get(redirectedFrom);
+        if (generation) settleAbortedNavigation(tab, generation, request.url(), undefined);
+        return;
+      }
       if (!isMainNavigation(request)) return;
       // Playwright can deliver the first request after Stop has already settled its navigation.
       const stoppedInitialRequest =
@@ -3064,10 +3081,14 @@ const make = Effect.gen(function* () {
         return recordAction(tab, "upload", () =>
           uploadFiles(tab, input as PreviewAutomationUploadInput),
         );
-      case "type":
-        return recordAction(tab, "type", () =>
-          ServerBrowserPage.type(tab.page, input as PreviewAutomationTypeInput),
-        );
+      case "type": {
+        // As for click: typing stops at the broker's deadline instead of running on after the reply.
+        const typeInput = {
+          ...(input as PreviewAutomationTypeInput),
+          timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
+        };
+        return recordAction(tab, "type", () => ServerBrowserPage.type(tab.page, typeInput));
+      }
       case "press":
         return recordAction(tab, "press", () =>
           ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),

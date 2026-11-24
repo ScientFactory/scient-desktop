@@ -21,13 +21,14 @@ import { paginate } from "./OpenCode2Client.ts";
 
 interface AcceptanceTurn {
   providerTurn: OrchestrationV2ProviderTurn;
+  /** The last state emitted for this turn; the event feed may already have settled it. */
+  readonly emittedProviderTurn?: OrchestrationV2ProviderTurn;
   readonly unsent: boolean;
 }
 
 interface AcceptanceThread<Turn> {
   readonly sessionId: string;
   readonly providerThread: Pick<OrchestrationV2ProviderThread, "id">;
-  readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   readonly active: Turn | undefined;
 }
 
@@ -41,7 +42,6 @@ export const makeOpenCodeTurnAcceptance = <
   readonly lock: Semaphore.Semaphore;
   readonly threads: ReadonlyMap<string, State>;
   readonly emitProviderTurn: (
-    state: State,
     turn: Turn,
     providerTurn: OrchestrationV2ProviderTurn,
   ) => Effect.Effect<void, E, R>;
@@ -59,7 +59,7 @@ export const makeOpenCodeTurnAcceptance = <
       nativeAcceptance: "accepted",
       acceptedAt: yield* DateTime.now,
     };
-    yield* emitProviderTurn(state, turn, turn.providerTurn);
+    yield* emitProviderTurn(turn, turn.providerTurn);
   });
 
   const confirmPromptBoundary = (
@@ -81,7 +81,7 @@ export const makeOpenCodeTurnAcceptance = <
           return;
         // Only the native response can confirm a client-chosen message boundary.
         // The ordered event feed may already have settled this exact turn.
-        const latest = state.providerTurns.get(String(turn.providerTurn.id)) ?? turn.providerTurn;
+        const latest = turn.emittedProviderTurn ?? turn.providerTurn;
         if (
           latest.runAttemptId !== turnInput.attemptId ||
           latest.nodeId !== turnInput.rootNodeId ||
@@ -96,7 +96,7 @@ export const makeOpenCodeTurnAcceptance = <
           nativeAcceptance: "accepted",
           acceptedAt: latest.acceptedAt ?? (yield* DateTime.now),
         };
-        yield* emitProviderTurn(state, turn, turn.providerTurn);
+        yield* emitProviderTurn(turn, turn.providerTurn);
       }),
     );
 

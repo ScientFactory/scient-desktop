@@ -1,5 +1,9 @@
 import { desktopTrackMismatchText } from "@t3tools/client-runtime/state/server";
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopBridge,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
   SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY,
@@ -233,6 +237,11 @@ export function getDesktopUpdateButtonTooltip(
       : resolve(msg("Downloading update"));
   }
   if (state.status === "downloaded") {
+    if (state.errorContext === "install" && state.downloadedVersion) {
+      return resolve(
+        msg("Install failed for {version}. Click to retry.", { version: state.downloadedVersion }),
+      );
+    }
     // SCIENT-FORK: the click opens the restart card.
     const version = state.downloadedVersion ?? state.availableVersion;
     return version === null
@@ -300,6 +309,34 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
   if (typeof result.state.message !== "string") return null;
   const message = result.state.message.trim();
   return message.length > 0 ? message : null;
+}
+
+/**
+ * macOS can refuse the restart after installUpdate resolves; the desktop then reports it as a
+ * later state with errorContext "install". Success quits the app, so this never resolves then.
+ */
+export async function installDesktopUpdate(
+  bridge: Pick<DesktopBridge, "installUpdate" | "onUpdateState">,
+  expectedVersion?: string,
+): Promise<DesktopUpdateActionResult> {
+  let reportFailure: (state: DesktopUpdateState) => void = () => {};
+  const failure = new Promise<DesktopUpdateState>((resolve) => {
+    reportFailure = resolve;
+  });
+  // SCIENT-FORK:START — a refusal can arrive before the install reply; the promise keeps it.
+  const unsubscribe = bridge.onUpdateState((state) => {
+    if (state.errorContext === "install") reportFailure(state);
+  });
+  // SCIENT-FORK:END
+  try {
+    const result = await bridge.installUpdate(expectedVersion);
+    if (!result.accepted || result.completed || getDesktopUpdateActionError(result) !== null) {
+      return result;
+    }
+    return { ...result, state: await failure };
+  } finally {
+    unsubscribe();
+  }
 }
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {

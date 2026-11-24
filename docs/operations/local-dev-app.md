@@ -13,7 +13,7 @@ signing credentials to follow it. Use your own provider authentication when
 testing agent turns.
 
 Install the Node and package-manager versions declared in `package.json`; see
-[development setup](./development.md#first-checkout). Before installing native
+[development setup](./00_development.md#first-checkout). Before installing native
 dependencies on Windows, read the [Windows prerequisites](./local-dev-app-windows.md#prerequisites).
 From your existing clone, create a separate feature worktree (replace the
 example branch and directory names):
@@ -35,7 +35,7 @@ its own port preferences. Check the actual resolved paths and ports in output.
 - **Windows:** follow [Windows dev app](./local-dev-app-windows.md). Keep its
   PowerShell terminal open; background-service and clickable-launcher commands
   below are macOS-only.
-- **Other hosts:** use the [development guide](./development.md), including
+- **Other hosts:** use the [development guide](./00_development.md), including
   native prerequisites. Do not assume macOS lifecycle support.
 
 ### Verify and hand off

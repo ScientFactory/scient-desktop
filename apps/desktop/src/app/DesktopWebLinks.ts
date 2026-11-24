@@ -43,6 +43,7 @@ const make = Effect.gen(function* () {
   const pending: Array<string> = [];
   // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
   const webLinkRenderers = makeWebLinkRenderers(electronWindow);
+  let rendererHasListened = false;
 
   const flush = Effect.gen(function* () {
     if (pending.length === 0) return;
@@ -55,14 +56,16 @@ const make = Effect.gen(function* () {
   // SCIENT-FORK:END
 
   return DesktopWebLinks.of({
-    receive: Effect.fn("DesktopWebLinks.receive")(function (url) {
-      return Effect.suspend(() => {
-        pending.push(url);
-        return flush;
-      });
+    receive: Effect.fn("DesktopWebLinks.receive")(function* (url) {
+      pending.push(url);
+      yield* flush;
+      if (!rendererHasListened || Option.isSome(yield* electronWindow.main)) return;
+      // macOS fires `activate` only on reopen, not when a link opens the app.
+      yield* desktopWindow.activate.pipe(Effect.ignore);
     }),
     // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
     setRendererReady: Effect.fn("DesktopWebLinks.setRendererReady")(function (ready, senderId) {
+      if (ready) rendererHasListened = true;
       return webLinkRenderers.setReady(ready, senderId);
     }, Effect.andThen(flush)),
     // SCIENT-FORK:END

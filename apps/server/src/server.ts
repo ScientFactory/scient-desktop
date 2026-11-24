@@ -36,7 +36,6 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
-import * as NonBlockingSpawner from "./process/NonBlockingSpawner.ts";
 import * as KeepAwake from "./background/KeepAwake.ts";
 // SCIENT-FORK:START — keep-awake reads Scient's definition of work.
 import * as ScientKeepAwakeService from "./scient/keepAwake/KeepAwakeService.ts";
@@ -56,6 +55,7 @@ import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as ProcessLauncher from "./process/ProcessLauncher.ts";
 import * as SpawnWorker from "./process/SpawnWorker.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
@@ -92,6 +92,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ProviderHostLive from "./provider/ProviderHostLive.ts";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -473,11 +474,11 @@ const layerHttpServer = Layer.unwrap(
 ).pipe(
   Layer.provide(ManagedPolicy.layer),
   // NodeHttpServer.layer also outputs NodeServices, whose spawner would shadow the wrapped one.
-  (layer) => NonBlockingSpawner.layer.pipe(Layer.provideMerge(layer)),
+  (layer) => ProcessLauncher.layerServer.pipe(Layer.provideMerge(layer)),
 );
 
 const layerPlatformServices = DocumentText.layer.pipe(
-  Layer.provideMerge(NonBlockingSpawner.layer),
+  Layer.provideMerge(ProcessLauncher.layerServer),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)),
 );
 
@@ -1121,7 +1122,13 @@ export const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   ScientRouteServices.provideScientRouteServices,
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+  // SCIENT-FORK: one provide for both keeps this pipe within its 20 typed steps.
+  Layer.provide(
+    Layer.mergeAll(
+      ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate)),
+      ProviderMaintenanceRunner.layer,
+    ),
+  ),
   Layer.provide(layerCommandReadiness),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
@@ -1630,5 +1637,7 @@ const layerMakeServer = Layer.unwrap(
 
 export const runServer = Layer.launch(
   // For the layers above whose spawner requirement is not met by one of them.
-  layerMakeServer.pipe(Layer.provide(NonBlockingSpawner.layer.pipe(Layer.provide(layerSpawner)))),
+  layerMakeServer.pipe(
+    Layer.provide(ProcessLauncher.layerServer.pipe(Layer.provide(layerSpawner))),
+  ),
 );

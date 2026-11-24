@@ -1357,7 +1357,7 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
   transcripts; the agent-facing credential is only the existing session token.
 - The product-analytics gateway accepts the `extensions` settings section
   before this ships: its event contract is regenerated from the wire contract
-  and deployed as described in [product analytics](./product-analytics.md);
+  and deployed as described in [product analytics](./scient-product-analytics.md);
   otherwise batches that mention the section are rejected.
 
 ## Open decisions

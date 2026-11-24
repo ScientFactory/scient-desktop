@@ -49,7 +49,7 @@ describe("VegaLiteChartCard server fallback", () => {
     expect(html).not.toContain("vega-embed");
   });
 
-  it("shows malformed JSON as a recoverable source-first error", () => {
+  it("shows a compact parse error and keeps the source available to copy", () => {
     const html = renderToStaticMarkup(
       createElement(VegaLiteChartCard, {
         language: "vega-lite",
@@ -63,6 +63,7 @@ describe("VegaLiteChartCard server fallback", () => {
     expect(html).toContain("Unable to render this chart");
     expect(html).toContain("Invalid JSON at line 1");
     expect(html).toContain("&quot;mark&quot;: &quot;bar&quot;");
+    expect(html).not.toContain("<pre");
   });
 
   it("discloses viewing-device network resources before the chart loads", () => {

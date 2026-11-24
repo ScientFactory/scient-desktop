@@ -41,6 +41,8 @@ their `map` equivalents, so older figures still draw; the saved source is not
 rewritten. `Plotly.validate` throws on a one-trace figure with a `legend`
 object (every one-series Plotly Express figure), so it is retried without the
 legend, and its "did not get coerced" (`unused`) issues are not shown.
+Dynamic warnings for opaque slider and button command arguments are omitted,
+including a toggle button's alternate arguments.
 The original JSON or JSONC is never rewritten: a structured clone receives responsive host
 defaults, current light/dark presentation when the author supplied no template,
 and local interaction policy. The host disables editing and cloud/Chart Studio
@@ -99,11 +101,13 @@ until the upstream Vega release containing that fix is adopted.
 Valid JSONC conveniences (comments and trailing commas) are accepted, but the
 untouched source is retained. Source is bounded to 1,000,000 characters,
 100,000 inline rows, and 250,000 inspected values. Unsized unit/layer charts
-receive non-mutating responsive presentation defaults. Multi-view facet,
+receive non-mutating responsive presentation defaults when compatible with
+their authored autosize mode. Multi-view facet,
 repeat, and concatenation specifications retain authored child sizing because
 there is no single container-width rule that preserves both horizontal and
-vertical composition; agents should choose their dimensions deliberately. A
-Scient-owned render plan removes schema metadata from its disposable input so compatible older
+vertical composition. This also applies to facets written as `row`, `column`,
+or `facet` encoding channels. Agents should choose their dimensions deliberately.
+A Scient-owned render plan removes schema metadata from its disposable input so compatible older
 specifications do not produce Vega-Embed's version-only warning; a declared
 future major is rejected before compilation. The same plan scopes an otherwise
 unscoped layered selection to one deterministic view, including layers nested
@@ -134,6 +138,10 @@ blacklist.
 ## Interaction and UX lifecycle
 
 The card has explicit idle, loading, ready, warning, source, and error states.
+A rendered chart exposes diagnostics in its More menu. Vega-Lite's discrete
+axis fitting warning is omitted when the compiled chart fits the single axis
+requested. Failed charts show a compact recovery message with source available
+on demand.
 A chart can be retried without affecting its message. The expanded dialog owns
 a second live Vega view: current signal/data state moves into it on open and
 returns to the inline chart on close. Its toolbar retains source copy/download,
@@ -189,7 +197,7 @@ titles without replacing the author's semantic color encoding.
 Scient's compact shared awareness contract names Mermaid, Vega-Lite, and Plotly,
 requires self-contained source, and distinguishes chat representation from a
 durable artifact. Provider delivery and capability gating are governed centrally
-by [the provider architecture](./providers.md#scient-awareness), not by each
+by [the provider architecture](./scient-providers.md#scient-awareness), not by each
 renderer. No renderer injects hidden user text or project instruction files.
 
 Desktop and web render the rich chart. Mobile and older clients continue to

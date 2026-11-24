@@ -141,7 +141,7 @@ describe("brand check scope", () => {
     "native/kde-snap-shot/src/transport_tests.rs",
     "apps/server/src/orchestration-v2/testkit/fixtures/replay.ts",
     "apps/web/src/components/Example.test.tsx",
-    "docs/internals/t3-connect.md",
+    "docs/internals/06_t3-connect.md",
     "apps/mobile/src/features/settings/SettingsAboutRouteScreen.md",
     "apps/server/src/provider/pi/NOTICE.md",
   ])("leaves %s out of the shipped-surface rules", (path) => {

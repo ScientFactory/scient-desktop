@@ -433,12 +433,20 @@ rules to connected environments that support shared settings. Offline environmen
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
 
-## Panel motion
+### Settle or archive
 
-The main sidebar, right panel, and terminal drawer open and close immediately by default. Under
-**Settings → Appearance → Motion**, move the **Panel animations** slider above 0 ms to add motion.
-The duration can be set up to 400 ms. Clicking the preview replays all three panel transitions; at
-0 ms, it snaps between the same open and closed states.
+Settle is for work that is done for now. A settled thread stays in the sidebar's Settled
+section and in search, and a message to it, from you, an agent, or a scheduled task, makes it
+active again. Archive is for work you want out of the way. An archived thread leaves the
+sidebar and search and shows only in **Settings → Archive**, where you can unarchive or
+delete it. It refuses new messages, including ones from agents and scheduled tasks, until you
+unarchive it. Removing a project deletes its threads either way.
+
+A scheduled task that posts into one thread keeps running after you archive that thread, and
+each run fails. Settle the thread instead, or move or pause the task in **Settings → Scheduled
+tasks**.
+
+## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your
 apps are closed. Settled threads keep their saved links. Update the server if
@@ -448,6 +456,13 @@ On web and desktop, right-click a pull request link in a thread and choose
 **Link to thread** to select a different PR. Use **Unlink from thread** on the
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
+
+## Panel motion
+
+The main sidebar, right panel, and terminal drawer open and close immediately by default. Under
+**Settings → Appearance → Motion**, move the **Panel animations** slider above 0 ms to add motion.
+The duration can be set up to 400 ms. Clicking the preview replays all three panel transitions; at
+0 ms, it snaps between the same open and closed states.
 
 ## Icon rail
 

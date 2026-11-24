@@ -185,7 +185,7 @@ naming and work-log label, and test discovery together with existing host tools.
 
 Deferred work includes a capability Settings page and installable add-ons/plugins. Neither is
 needed to use the current shared admission boundary. Scient Agent's existing driver is described in
-[Provider architecture](./providers.md); it is not a future workspace-admission requirement.
+[Provider architecture](./scient-providers.md); it is not a future workspace-admission requirement.
 
 ## Verification boundaries
 

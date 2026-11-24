@@ -328,6 +328,7 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useWorktreeRepositoryChoices } from "../hooks/useWorktreeRepositoryChoices";
@@ -428,6 +429,7 @@ import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
+  offersWorkspaceModes,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -979,30 +981,52 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }
   const nowMinute = useNowMinute();
-  const draftDefaultModelSelection = draftThread
+  const stickyActiveProvider = useComposerDraftStore((store) => store.stickyActiveProvider);
+  const draftProjectSettings = draftThread
     ? resolveProjectSettings(
         settings,
         fallbackDraftProject?.id ?? null,
         fallbackDraftProject ?? undefined,
-      ).settings.defaultModelSelection
+      ).settings
     : null;
+  const draftDefaultModelSelection = draftProjectSettings?.defaultModelSelection ?? null;
+  const draftImplicitDefaultModelSelection =
+    draftThread && draftDefaultModelSelection === null && stickyActiveProvider === null
+      ? resolveProjectDefaultProviderModelSelection(
+          providersByEnvironment.get(draftThread.environmentId) ?? [],
+          settings,
+          draftThread.projectId,
+        )
+      : null;
   const draftModelResolution = draftThread
     ? resolveNewThreadModelSelection({
-        defaultSelection:
-          draftDefaultModelSelection ??
-          resolveProjectDefaultProviderModelSelection(
-            providersByEnvironment.get(draftThread.environmentId) ?? [],
-            settings,
-            draftThread.projectId,
-          ),
-        fallbackSelection: settings.fallbackModelSelection,
+        defaultSelection: draftDefaultModelSelection ?? draftImplicitDefaultModelSelection,
+        explicitSelection: composerModelSelectionExplicit ? composerSelectedModelSelection : null,
+        fallbackSelection: draftProjectSettings?.fallbackModelSelection ?? null,
         providers: providersByEnvironment.get(draftThread.environmentId) ?? [],
         settings,
         projectId: draftThread.projectId,
         now: Date.parse(`${nowMinute}:00Z`),
       })
     : null;
-  const draftFallback = draftModelResolution?.fallback ? draftModelResolution : null;
+  // A carried model from another thread on an unconfigured-default project stands rather than
+  // being replaced by an unrelated provider's implicit-default fallback.
+  const draftHasCarriedSelection =
+    draftDefaultModelSelection === null &&
+    composerSelectedModelSelection !== null &&
+    draftModelResolution?.fallback != null &&
+    !(
+      draftImplicitDefaultModelSelection !== null &&
+      composerSelectedModelSelection.instanceId === draftImplicitDefaultModelSelection.instanceId &&
+      composerSelectedModelSelection.model === draftImplicitDefaultModelSelection.model
+    ) &&
+    !(
+      draftModelResolution.selection !== null &&
+      composerSelectedModelSelection.instanceId === draftModelResolution.selection.instanceId &&
+      composerSelectedModelSelection.model === draftModelResolution.selection.model
+    );
+  const draftFallback =
+    draftModelResolution?.fallback && !draftHasCarriedSelection ? draftModelResolution : null;
   const localDraftThread = draftThread
     ? buildLocalDraftThread(
         threadId,
@@ -1139,6 +1163,20 @@ function ChatViewContent(props: ChatViewProps) {
             params: buildThreadRouteParams(
               resolveThreadOpenRoute(parentSubagentThreadRef, parentSubagentThread),
             ),
+          });
+        },
+      };
+    }
+    // An agent step of a workflow run leads back to the run, which is where its work is read.
+    const workflowRun = activeThread?.workflowRun ?? null;
+    if (workflowRun !== null) {
+      return {
+        title: `${workflowRun.workflow} · ${workflowRun.step}`,
+        relation: { label: gt("Step of the workflow run"), actionLabel: gt("Open run") },
+        open: (): void => {
+          void navigate({
+            to: "/workflows",
+            search: { env: workflowRun.environmentId, run: workflowRun.runId },
           });
         },
       };
@@ -1754,7 +1792,16 @@ function ChatViewContent(props: ChatViewProps) {
     [
       composerModelSelectionApplies ? composerSelectedModelSelection : null,
       activeThread?.modelSelection,
-    ].find((selection) => selection?.instanceId === activeProviderInstanceId)?.model ?? null;
+      activeProjectDefaultModelSelection,
+    ].find((selection) => selection?.instanceId === activeProviderInstanceId)?.model ??
+    (activeProviderStatus?.driver === "scient" && activeProviderInstanceId
+      ? resolveAppModelSelectionForInstance(
+          activeProviderInstanceId,
+          settings,
+          providerStatuses,
+          null,
+        )
+      : null);
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
@@ -1839,6 +1886,7 @@ function ChatViewContent(props: ChatViewProps) {
       : [
           routeThreadKey,
           activeProviderInstanceId,
+          activeProviderStatus?.driver === "scient" ? (activeUsageModel ?? "") : "",
           activeThread?.latestRun?.runId ?? "",
           activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? "",
         ].join(":");
@@ -3023,6 +3071,11 @@ function ChatViewContent(props: ChatViewProps) {
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
   const worktreeRepositoryChoices = useWorktreeRepositoryChoices(activeProject);
+  const workspaceModesOffered = offersWorkspaceModes({
+    isScratchProject: activeProjectIsScratch,
+    isGitRepo,
+    tracksGitRepositories: worktreeRepositoryChoices.tracksGitRepositories,
+  });
   const rememberedWorktreeRepositories = useRememberedWorktreeRepositories(activeProject ?? null);
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
@@ -3401,7 +3454,7 @@ function ChatViewContent(props: ChatViewProps) {
     limitRecoveryRun !== null && canResume && failedModel
       ? resolveUsageLimitContinueWith({
           currentSelection: failedModel,
-          fallbackSelection: settings.fallbackModelSelection,
+          fallbackSelection: activeProjectSettings.settings.fallbackModelSelection,
           providers: providerStatuses,
           now: Date.parse(`${nowMinute}:00Z`),
           settings,
@@ -3464,13 +3517,7 @@ function ChatViewContent(props: ChatViewProps) {
     });
     // SCIENT-FORK:END
     const fallbackSelection = draftFallback?.selection;
-    const defaultSelection =
-      draftDefaultModelSelection ??
-      resolveProjectDefaultProviderModelSelection(
-        providerStatuses,
-        settings,
-        draftThread?.projectId ?? null,
-      );
+    const defaultSelection = draftDefaultModelSelection ?? draftImplicitDefaultModelSelection;
     const fallback =
       !isServerThread &&
       multipleModelSelections === null &&
@@ -3482,7 +3529,7 @@ function ChatViewContent(props: ChatViewProps) {
         ? draftFallback.fallback
         : null;
     const fallbackWindow = fallback
-      ? `${fallback.provider.instanceId}:${fallback.resetsAt ?? ""}`
+      ? `${fallback.provider.instanceId}:${fallback.window.id}:${fallback.resetsAt ?? ""}`
       : null;
     const fallbackItems: ComposerBannerStackItem[] =
       fallback &&
@@ -3498,13 +3545,9 @@ function ChatViewContent(props: ChatViewProps) {
                     ?.models.find((model) => model.slug === fallbackSelection.model)?.name ??
                   fallbackSelection.model,
                 defaultProviderName: fallback.provider.displayName ?? fallback.provider.driver,
-                defaultModelName:
-                  fallback.provider.models.find((model) => model.slug === defaultSelection.model)
-                    ?.name ?? defaultSelection.model,
+                limitLabel: fallback.limitLabel,
                 resetsAt: fallback.resetsAt,
                 timestampFormat,
-                onUseDefault: () =>
-                  onProviderModelSelectStable(defaultSelection.instanceId, defaultSelection.model),
                 onDismiss: () => setDismissedFallbackWindow(fallbackWindow),
               },
               messages,
@@ -4497,6 +4540,11 @@ function ChatViewContent(props: ChatViewProps) {
                       ? messages(activeActivityRun.providerStartingLabelMsg)
                       : null
                   }
+                  providerStarting={
+                    activeActivityRun?.providerStartingLabelMsg
+                      ? (activeActivityRun.providerStarting ?? null)
+                      : null
+                  }
                   worktreeSetup={worktreeSetup}
                   onCancelWorktreeSetup={onCancelWorktreeSetupStable}
                   retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
@@ -4939,9 +4987,7 @@ function ChatViewContent(props: ChatViewProps) {
                                   projectId={activeThread.projectId}
                                   worktreePath={activeThread.worktreePath}
                                   isServerThread={isServerThread}
-                                  showGitControls={
-                                    isGitRepo || worktreeRepositoryChoices.tracksGitRepositories
-                                  }
+                                  showGitControls={workspaceModesOffered}
                                   showBranchControls={isGitRepo}
                                   {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                   onEnvModeChange={onEnvModeChangeStable}
@@ -5072,6 +5118,7 @@ function ChatViewContent(props: ChatViewProps) {
                   gitCwd={gitCwd}
                   workspaceMutationId={workspaceRevision.revision}
                   isGitRepo={isGitRepo}
+                  offersWorkspaceModes={workspaceModesOffered}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}

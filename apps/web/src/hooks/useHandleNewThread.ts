@@ -286,7 +286,7 @@ export function createNewThreadHandler(router: AnyRouter) {
               targetServerSettings,
               projectRef.projectId,
             )),
-      fallbackSelection: targetServerSettings.fallbackModelSelection ?? null,
+      fallbackSelection: projectSettings.settings.fallbackModelSelection ?? null,
       providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
       settings: targetServerSettings,
       projectId: projectRef.projectId,

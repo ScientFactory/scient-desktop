@@ -53,7 +53,6 @@ const acceptance = (turn: OrchestrationV2ProviderTurn, prompts: ReadonlyArray<st
   const state = {
     sessionId: "session:opencode-acceptance",
     providerThread: { id: providerThreadId },
-    providerTurns: new Map([[String(turn.id), turn]]),
     active: undefined,
   };
   return Effect.gen(function* () {

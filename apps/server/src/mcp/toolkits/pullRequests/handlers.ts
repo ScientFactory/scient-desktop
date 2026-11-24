@@ -312,10 +312,9 @@ const make = Effect.gen(function* () {
       | typeof PullRequestUnlinkFailedError
       | typeof PullRequestForgeError,
   ) =>
-    projects.getShell(thread.projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.mapError((cause) => new Failure({ cause })),
-    );
+    pullRequests
+      .addressedProject(thread.projectId)
+      .pipe(Effect.mapError((cause) => new Failure({ cause })));
 
   const dispatchFailure =
     (Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError) =>
@@ -365,10 +364,10 @@ const make = Effect.gen(function* () {
     let known: ReadonlyArray<OrchestrationProjectShell>;
     if (scope.thread !== undefined) {
       const caller = yield* requireThread(PullRequestListFailedError, scope.thread.threadId);
-      callerProject = yield* projects.getShell(caller.projectId).pipe(
-        Effect.map(Option.getOrUndefined),
-        Effect.mapError((cause) => new PullRequestListFailedError({ cause })),
-      );
+      // The refined forge the caller's tools are exposed for addresses its pull requests.
+      callerProject = yield* pullRequests
+        .addressedProject(caller.projectId)
+        .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
       known = callerProject === undefined ? [] : [callerProject];
     } else {
       known = yield* projects

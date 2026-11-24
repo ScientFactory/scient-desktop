@@ -269,8 +269,19 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
           );
           yield* h.startTurn(runtime, providerThread);
           yield* Deferred.await(succeeded);
+          // Turns reach orchestration only as `provider_turn.updated` events.
+          const latestTurns = () => [
+            ...new Map(
+              events.flatMap((event) =>
+                event.type === "provider_turn.updated"
+                  ? [[event.providerTurn.id, event.providerTurn] as const]
+                  : [],
+              ),
+            ).values(),
+          ];
           const before = yield* runtime.readThreadSnapshot({ providerThread });
-          assert.lengthOf(before.providerTurns, 1);
+          const beforeTurns = latestTurns();
+          assert.lengthOf(beforeTurns, 1);
           assert.lengthOf(before.messages, 1);
           assert.equal(before.messages[0]?.text, "Hello");
           const receivedMessage = events.findLast(
@@ -279,12 +290,12 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
           if (receivedMessage?.type !== "message.updated")
             return yield* Effect.die("Missing owned transcript");
           assert.equal(receivedMessage.message.text, "hello from mock");
-          assert.isDefined(before.providerTurns[0]?.acceptedAt);
-          assert.equal(before.providerTurns[0]?.nativeAcceptance, "accepted");
+          assert.isDefined(beforeTurns[0]?.acceptedAt);
+          assert.equal(beforeTurns[0]?.nativeAcceptance, "accepted");
           assert.isFalse(events.some((event) => event.type === "turn.terminal"));
           yield* runtime.interruptTurn({
             providerThread,
-            providerTurnId: before.providerTurns[0]!.id,
+            providerTurnId: beforeTurns[0]!.id,
             requestRuntimeRestart: true,
           });
           const outcome = yield* Deferred.await(terminal);
@@ -294,7 +305,7 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
           );
           yield* Deferred.succeed(release, undefined);
           const after = yield* runtime.readThreadSnapshot({ providerThread });
-          assert.lengthOf(after.providerTurns, 1);
+          assert.lengthOf(latestTurns(), 1);
           assert.lengthOf(after.messages, 2);
           assert.deepInclude(after.messages[0], {
             id: before.messages[0]!.id,

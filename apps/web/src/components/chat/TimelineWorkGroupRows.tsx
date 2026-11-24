@@ -46,6 +46,7 @@ import {
   type TimelineWorkEntry,
   type TimelineRow,
 } from "./timelineRowContext";
+import { ProviderStartingIcon } from "./ProviderStartingIcon";
 import { TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
 import {
   failedToolIconClassName,
@@ -471,8 +472,13 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const m = useMessages();
-  const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    liveAnswerPreview,
+    providerStartingLabel,
+    providerStarting,
+  } = use(TimelineRowActivityCtx);
   // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
   const { sendMotion } = use(TimelineRowActivityCtx);
   // SCIENT-FORK:END
@@ -488,6 +494,15 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
         gt("Thinking")
       }
       iconName="brain"
+      iconNode={
+        providerStarting === null ? undefined : (
+          <ProviderStartingIcon
+            environmentId={ctx.activeThreadEnvironmentId ?? null}
+            instanceId={providerStarting.instanceId}
+            driver={providerStarting.driver}
+          />
+        )
+      }
       active={live}
       // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
       shimmer={live && sendMotion.currentActivityRowId === row.id}
@@ -511,6 +526,7 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
 export function LiveActivityRow({
   label,
   iconName,
+  iconNode,
   toolIcon,
   failed = false,
   active = false,
@@ -518,6 +534,8 @@ export function LiveActivityRow({
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
+  /** Replaces the named icon. */
+  iconNode?: ReactNode;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   active?: boolean;
@@ -538,6 +556,7 @@ export function LiveActivityRow({
         <LiveActivityContent
           label={label}
           iconName={iconName}
+          iconNode={iconNode}
           toolIcon={toolIcon}
           failed={failed}
           announceFailure={failed}
@@ -547,7 +566,13 @@ export function LiveActivityRow({
       {/* SCIENT-FORK:END */}
       {showShimmer ? (
         <ActivityShimmerOverlay>
-          <LiveActivityContent label={label} iconName={iconName} toolIcon={toolIcon} highlighted />
+          <LiveActivityContent
+            label={label}
+            iconName={iconName}
+            iconNode={iconNode}
+            toolIcon={toolIcon}
+            highlighted
+          />
         </ActivityShimmerOverlay>
       ) : null}
     </div>
@@ -557,6 +582,7 @@ export function LiveActivityRow({
 function LiveActivityContent({
   label,
   iconName,
+  iconNode,
   toolIcon,
   failed = false,
   announceFailure = false,
@@ -565,6 +591,7 @@ function LiveActivityContent({
 }: {
   label: ReactNode;
   iconName: WorkEntryIconName | undefined;
+  iconNode?: ReactNode;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   announceFailure?: boolean;
@@ -591,14 +618,18 @@ function LiveActivityContent({
             role={announceFailure ? "img" : undefined}
             aria-label={announceFailure ? gt("Tool call failed") : undefined}
           >
-            <ToolActivityIconView
-              icon={toolIcon}
-              fallbackName={iconName}
-              // SCIENT-FORK:START — trace icon line weight.
-              className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
-              // SCIENT-FORK:END
-              muted={!highlighted}
-            />
+            {iconNode ? (
+              <span className={cn("flex", !highlighted && "opacity-70")}>{iconNode}</span>
+            ) : (
+              <ToolActivityIconView
+                icon={toolIcon}
+                fallbackName={iconName}
+                // SCIENT-FORK:START — trace icon line weight.
+                className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
+                // SCIENT-FORK:END
+                muted={!highlighted}
+              />
+            )}
           </span>
         ) : null
       }

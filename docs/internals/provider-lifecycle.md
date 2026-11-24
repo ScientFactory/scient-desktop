@@ -2,7 +2,7 @@
 
 > Canonical maintainer reference for Scient-assisted provider installation and account connection.
 > For user-facing behavior, see [Providers in Scient](../user/providers.md). For provider session and
-> turn architecture, see [Provider architecture](./providers.md).
+> turn architecture, see [Provider architecture](./scient-providers.md).
 
 Scient extends the existing T3 provider system with optional assisted installation, maintenance, and
 account connection. The extension is capability-driven: providers advertise only the operations they
@@ -99,7 +99,7 @@ process leases already belong to T3's installer. A narrow bridge adds Scient's
 qualified update catalog, repair/remove planning, supervision, and compact UI.
 Legacy `agy` remains a separate compatibility path for existing conversations,
 explicit legacy executables, and hosts without an official ACP artifact. See
-[the provider architecture](./providers.md#antigravity-ownership-and-protocol) for these boundaries.
+[the provider architecture](./scient-providers.md#antigravity-ownership-and-protocol) for these boundaries.
 
 Its explicit auth controller owns one five-minute deadline, including helper
 preparation, native startup, link capture, and verification. The bridge waits

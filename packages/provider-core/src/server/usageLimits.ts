@@ -83,6 +83,9 @@ export function applyUsageLimitsUpdate(input: {
     previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
+    ...(previous?.unknownProviderIds !== undefined
+      ? { unknownProviderIds: previous.unknownProviderIds }
+      : {}),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
     ...(previous?.zeroSpendCap ? { zeroSpendCap: true } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
@@ -95,6 +98,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.kind === b.kind &&
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
+    a.accountId === b.accountId &&
+    a.status === b.status &&
+    a.gating === b.gating &&
+    a.fetchedAt === b.fetchedAt &&
     (a.modelIds === b.modelIds ||
       (a.modelIds !== undefined &&
         b.modelIds !== undefined &&

@@ -267,7 +267,7 @@ test("checks replace the desktop host's variables with a synthetic home and keep
 });
 
 test("maintainer prose and reference repositories are explicit exclusions, runtime guidance is not", () => {
-  NodeAssert.deepEqual(ids(["docs/internals/overview.md", ".repos/example/a.ts"]), []);
+  NodeAssert.deepEqual(ids(["docs/internals/01_architecture.md", ".repos/example/a.ts"]), []);
   NodeAssert.deepEqual(ids(["AGENTS.md"]), all);
   NodeAssert.deepEqual(ids(["apps/server/src/provider/instructions.md"]), all);
 });

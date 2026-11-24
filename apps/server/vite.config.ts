@@ -116,7 +116,7 @@ export default mergeConfig(
           },
         },
       ],
-      // SEA embeds one entry; expose the history worker as a hidden subcommand.
+      // SEA embeds one entry; expose the workers as hidden subcommands.
       entry: packBootstrap
         ? ["src/bin.ts"]
         : packExecutable
@@ -131,6 +131,7 @@ export default mergeConfig(
               "src/pdf-validation-worker.ts",
               "src/tool-discovery-worker.ts",
               "src/pdf.worker.ts",
+              "src/process-launcher.ts",
             ],
       outDir: packBootstrap ? "dist-exe" : packExecutable ? cliAssetDir : "dist",
       sourcemap: !packExecutable,

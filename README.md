@@ -38,10 +38,10 @@ Immutable historical migrations remain compatibility owners, not live execution 
 V2 seeds its database from the original V1 database once, then reads retained historical facts
 through import/recovery services. Current forks use V2 events, projections and outbox provisioning,
 not the retired V1 lineage reactor. See
-[legacy migration and recovery](docs/internals/legacy-orchestration-migration.md) and
+[legacy migration and recovery](docs/internals/scient-legacy-orchestration-migration.md) and
 [Scient fork architecture](docs/internals/scient-fork-divergence.md) for these boundaries.
 
-Use the maintained [development and verification guidance](docs/operations/development.md) and
+Use the maintained [development and verification guidance](docs/operations/00_development.md) and
 [agent verification rules](AGENTS.md#verification), rather than commands for removed V1 suites.
 
 The remainder of this README is inherited T3 product documentation. It remains
@@ -135,7 +135,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
 - [Run T3 Code as a background service](./docs/user/background-service.md)
 
-Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
+Building from source? Start at [docs/internals/01_architecture.md](./docs/internals/01_architecture.md).
 
 ## If you REALLY want to contribute still.... read this first
 

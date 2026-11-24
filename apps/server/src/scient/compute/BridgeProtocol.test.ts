@@ -523,7 +523,7 @@ describe("bridge protocol sequence tracking", () => {
     }),
   );
 
-  it.effect("rejects a wrong-direction message", () =>
+  it.effect("rejects a sequence from the wrong direction", () =>
     Effect.gen(function* () {
       const tracker = makeBridgeSequenceTracker("bridge-to-server");
       const error = yield* Effect.flip(validateBridgeSequence(tracker, msg("hello", 0, {})));

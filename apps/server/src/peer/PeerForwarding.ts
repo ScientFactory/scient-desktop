@@ -263,10 +263,10 @@ const make = Effect.gen(function* () {
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
 
-  // A peer pages a client's cursorless read forward; an agent's gets the newest page, as it does here.
-  const newestPageForAgent = (scope: Scope, toolName: string, params: unknown) => {
+  // Older peers page some cursorless reads forward; ask for the newest page, as a read here gets.
+  const newestPage = (toolName: string, params: unknown) => {
     // SCIENT-FORK: upstream's t3_thread_read is Scient's scient_thread_inspect.
-    if (toolName !== "scient_thread_inspect" || scope.thread === undefined) return undefined;
+    if (toolName !== "scient_thread_inspect") return undefined;
     const input = params as OrchestratorMcpThreadReadInput;
     return input.afterPosition === undefined && input.beforePosition === undefined
       ? { ...input, beforePosition: Number.MAX_SAFE_INTEGER }
@@ -278,7 +278,7 @@ const make = Effect.gen(function* () {
       args: unknown,
     ): Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure> =>
       forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, args);
-    const newest = newestPageForAgent(scope, tool.name, params);
+    const newest = newestPage(tool.name, params);
     // SCIENT-FORK:START — Scient MCP tool names.
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,

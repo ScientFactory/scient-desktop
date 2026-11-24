@@ -156,6 +156,8 @@ import Migration0111 from "./Migrations/111_DeferredSlashCommandIndex.ts";
 import Migration0112 from "./Migrations/112_AgentFeedback.ts";
 import Migration0113 from "./Migrations/113_IssueTrackerAccounts.ts";
 import Migration0114 from "./Migrations/114_Workflows.ts";
+// T3's migration 111 follows Scient's immutable migration sequence.
+import Migration0115 from "./Migrations/115_SupersededRunAttemptIndex.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -309,6 +311,8 @@ export const migrationEntries = [
   [112, "AgentFeedback", Migration0112],
   [113, "IssueTrackerAccounts", Migration0113],
   [114, "Workflows", Migration0114],
+  // T3's migration 111 follows Scient's immutable migration sequence.
+  [115, "SupersededRunAttemptIndex", Migration0115],
   // SCIENT-FORK:END
 ] as const;
 
