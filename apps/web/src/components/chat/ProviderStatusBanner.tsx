@@ -17,8 +17,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RefreshIcon } from "../ui/refresh-icon";
-// SCIENT-FORK: Scient Agent can require the app's own update.
+// SCIENT-FORK:START — Only the provider on this desktop can offer its app update.
 import { ProviderAppUpdateButton } from "../../scient/desktopUpdate/ProviderAppUpdateButton";
+// SCIENT-FORK:END
 
 function isExpectedAssistedLifecycleState(status: ServerProvider): boolean {
   const runtimeOperation = status.connection?.runtime?.operation;
@@ -264,8 +265,12 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
                 {message}
               </TooltipPopup>
             </Tooltip>
-            {/* SCIENT-FORK: Scient Agent can require the app's own update. */}
-            <ProviderAppUpdateButton requiresAppUpdate={status.requiresAppUpdate} />
+            {/* SCIENT-FORK:START — Only the provider on this desktop can offer its app update. */}
+            <ProviderAppUpdateButton
+              environmentId={environmentId}
+              requiresAppUpdate={status.requiresAppUpdate}
+            />
+            {/* SCIENT-FORK:END */}
             <div className="flex flex-wrap items-center justify-end gap-3">
               {onOpenProviderSetup && hasProviderSetup(status) ? (
                 <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>

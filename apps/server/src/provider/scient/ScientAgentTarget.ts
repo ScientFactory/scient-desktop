@@ -68,14 +68,14 @@ const isSupportedScientAgentVersion = (version: string): boolean =>
 const isSupportedUpstreamVersion = (version: string): boolean =>
   SEMVER.test(version) && compareSemverVersions(version, OMP_MINIMUM_VERSION) >= 0;
 
-/** A Scient Agent release that speaks none of the RPC protocols this server does: a newer app does. */
-const speaksNoProtocolOfThisApp = (stdout: string): boolean => {
+const requiresNewerRpcProtocol = (stdout: string): boolean => {
   const info = decodeRuntimeInfo(stdout.trim());
   return (
     info._tag === "Some" &&
     info.value.product === SCIENT_AGENT_PRODUCT &&
     isSupportedScientAgentVersion(info.value.version) &&
-    !info.value.rpcProtocolVersions.includes(OMP_RPC_PROTOCOL_V2)
+    !info.value.rpcProtocolVersions.includes(OMP_RPC_PROTOCOL_V2) &&
+    info.value.rpcProtocolVersions.some((version) => version > OMP_RPC_PROTOCOL_V2)
   );
 };
 
@@ -112,7 +112,7 @@ export const scientAgentTarget: OmpTarget = {
       : undefined;
   },
   unsupportedDetail: `This is not a Scient Agent release this version of Scient supports (${SCIENT_AGENT_MINIMUM_VERSION} or newer). Check the configured executable.`,
-  needsNewerApp: speaksNoProtocolOfThisApp,
+  needsNewerApp: requiresNewerRpcProtocol,
   newerAppDetail:
     "This Scient Agent release needs a newer version of Scient. Update Scient to use it.",
   minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,

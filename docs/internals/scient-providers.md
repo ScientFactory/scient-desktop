@@ -884,9 +884,9 @@ Scient Agent.
   newer, the upstream release Oh My Pi 18.2.8 or newer, and RPC v2 offered. There is no ceiling on
   either version: Scient Agent is checked against Scient before each release, and a managed update
   is test-run before it is activated, so the version numbers carry no compatibility rule. A release
-  that offers only RPC protocols newer than v2 is refused with "needs a newer version of Scient",
-  and the provider's status carries `requiresAppUpdate` so the app can offer its own update. The
-  stock Oh My Pi provider keeps its supported major.
+  that omits v2 and offers a later protocol is refused with "needs a newer version of Scient".
+  Its status carries `requiresAppUpdate`. The desktop app offers its updater when the provider
+  belongs to its primary environment. The stock Oh My Pi provider keeps its supported major.
   An `omp` executable fails that probe, and a `scient-agent` executable fails Oh My Pi's. The probe
   runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
 - Two versions. A process reports `version` (the product's, shown to the user) and

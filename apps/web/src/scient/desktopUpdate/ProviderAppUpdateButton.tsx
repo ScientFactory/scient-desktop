@@ -1,5 +1,5 @@
 import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, EnvironmentId } from "@t3tools/contracts";
 import { T, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -7,6 +7,7 @@ import { getDesktopUpdateInstallConfirmationMessage } from "~/components/desktop
 import { requestConfirmDialog } from "~/confirmDialog";
 import { Button } from "~/components/ui/button";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
+import { usePrimaryEnvironmentId } from "~/state/environments";
 import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 
 import { checkForDesktopUpdate, downloadLocalUpdate } from "./desktopUpdateActions";
@@ -18,12 +19,18 @@ import {
 } from "./updateReadyNotice";
 
 export function ProviderAppUpdateButton({
+  environmentId,
   requiresAppUpdate,
 }: {
+  readonly environmentId: EnvironmentId | null;
   readonly requiresAppUpdate: boolean | undefined;
 }) {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
-  return requiresAppUpdate === true && typeof bridge?.checkForUpdate === "function" ? (
+  return requiresAppUpdate === true &&
+    environmentId !== null &&
+    environmentId === primaryEnvironmentId &&
+    typeof bridge?.checkForUpdate === "function" ? (
     <DesktopAppUpdateButton bridge={bridge} />
   ) : null;
 }

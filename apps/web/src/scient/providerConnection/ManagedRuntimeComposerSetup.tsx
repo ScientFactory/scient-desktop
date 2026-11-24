@@ -228,7 +228,10 @@ export function ManagedRuntimeComposerSetup(props: {
   }
 
   const appUpdateButton = (
-    <ProviderAppUpdateButton requiresAppUpdate={props.provider.requiresAppUpdate} />
+    <ProviderAppUpdateButton
+      environmentId={props.environmentId}
+      requiresAppUpdate={props.provider.requiresAppUpdate}
+    />
   );
 
   if (needsManagedRuntimeRecovery(props.provider)) {

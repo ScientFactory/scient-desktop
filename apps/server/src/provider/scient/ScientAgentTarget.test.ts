@@ -93,9 +93,17 @@ describe("scientAgentTarget.identify", () => {
     expect(scientAgentTarget.identify(runtimeInfo({ rpcProtocolVersions: [1] }))).toBeUndefined();
   });
 
-  it("says a release speaking only newer protocols needs a newer Scient", () => {
+  it("asks for a newer Scient when a release offers a newer protocol and omits v2", () => {
     expect(scientAgentTarget.needsNewerApp?.(runtimeInfo({ rpcProtocolVersions: [3] }))).toBe(true);
-    // Not for one that speaks v2, another product, or a release before the first.
+    expect(scientAgentTarget.needsNewerApp?.(runtimeInfo({ rpcProtocolVersions: [1] }))).toBe(
+      false,
+    );
+    expect(scientAgentTarget.needsNewerApp?.(runtimeInfo({ rpcProtocolVersions: [1, 3] }))).toBe(
+      true,
+    );
+    expect(scientAgentTarget.needsNewerApp?.(runtimeInfo({ rpcProtocolVersions: [2, 3] }))).toBe(
+      false,
+    );
     expect(scientAgentTarget.needsNewerApp?.(runtimeInfo())).toBe(false);
     expect(
       scientAgentTarget.needsNewerApp?.(runtimeInfo({ product: "omp", rpcProtocolVersions: [3] })),

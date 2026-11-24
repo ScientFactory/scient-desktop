@@ -771,6 +771,7 @@ export function ProviderRuntimeSection(props: {
               <div className="mt-0.5 flex items-center gap-2">
                 <p className="text-xs leading-relaxed text-muted-foreground">{statusMessage}</p>
                 <ProviderAppUpdateButton
+                  environmentId={environmentId}
                   requiresAppUpdate={
                     providerRuntimeError === statusMessage ? provider.requiresAppUpdate : undefined
                   }
