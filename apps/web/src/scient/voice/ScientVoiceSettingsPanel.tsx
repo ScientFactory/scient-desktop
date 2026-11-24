@@ -414,7 +414,6 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           ) : null}
         </div>
       </SettingsSection>
-      <DictationInputSettings />
       {prepared ? (
         <RecordingDefaultsSettings prepared={prepared} catalog={catalog} key={cloudRevision} />
       ) : null}
@@ -427,6 +426,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           />
         </SettingsSection>
       ) : null}
+      <DictationInputSettings />
       {prepared || environmentId ? (
         <SettingsSection id="voice-cloud" title={gt("Cloud engines")}>
           <SettingsRow
