@@ -139,28 +139,6 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
-  "Linux qualification failure or unknown/skipped execution blocks the required Test gate",
-  () => {
-    for (const native of ["failure", "cancelled", "skipped", ""]) {
-      const result = NodeChildProcess.spawnSync(process.execPath, [script, "check"], {
-        env: {
-          ...process.env,
-          WORKSPACE_RESULT: "success",
-          WINDOWS_DETECTION_RESULT: "success",
-          WINDOWS_CHANGED: "true",
-          WINDOWS_NATIVE_RESULT: "success",
-          REMOTE_SERVER_RESULT: "success",
-          LINUX_CHANGED: "true",
-          LINUX_NATIVE_RESULT: native,
-        },
-        encoding: "utf8",
-      });
-      NodeAssert.equal(result.status, 1, native);
-    }
-  },
-);
-
 NodeTest.test("unknown diff bounds run packaging instead of silently skipping it", () => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "windows-ci-gate-"));
   try {
@@ -183,36 +161,41 @@ NodeTest.test("unknown diff bounds run packaging instead of silently skipping it
   }
 });
 
+// compute-ci-gate.test.mjs checks every input of the shared predicate; these rows prove each
+// CLI binding reaches it.
 NodeTest.test(
-  "required gate rejects failure, cancellation, unknown detection and unqualified skips",
+  "required gate passes green or permitted skips and fails each input that is not green",
   () => {
-    for (const { changed, detection, native, passes } of [
-      { changed: "true", detection: "success", native: "success", passes: true },
-      { changed: "false", detection: "success", native: "skipped", passes: true },
-      { changed: "true", detection: "success", native: "failure", passes: false },
-      { changed: "true", detection: "success", native: "cancelled", passes: false },
-      { changed: "true", detection: "success", native: "skipped", passes: false },
-      { changed: "", detection: "success", native: "skipped", passes: false },
-      { changed: "false", detection: "failure", native: "skipped", passes: false },
+    const green = {
+      WORKSPACE_RESULT: "success",
+      WINDOWS_DETECTION_RESULT: "success",
+      WINDOWS_CHANGED: "true",
+      WINDOWS_NATIVE_RESULT: "success",
+      REMOTE_SERVER_RESULT: "success",
+      LINUX_CHANGED: "true",
+      LINUX_NATIVE_RESULT: "success",
+    };
+    const skipped = {
+      ...green,
+      WINDOWS_CHANGED: "false",
+      WINDOWS_NATIVE_RESULT: "skipped",
+      REMOTE_SERVER_RESULT: "skipped",
+      LINUX_CHANGED: "false",
+      LINUX_NATIVE_RESULT: "skipped",
+    };
+    for (const [label, env, passes] of [
+      ["all green", green, true],
+      ["permitted skip", skipped, true],
+      ["failed detection", { ...skipped, WINDOWS_DETECTION_RESULT: "failure" }, false],
+      ["failed workspace", { ...green, WORKSPACE_RESULT: "failure" }, false],
+      ["failed Windows packaging", { ...green, WINDOWS_NATIVE_RESULT: "failure" }, false],
+      ["failed Linux packaging", { ...green, LINUX_NATIVE_RESULT: "failure" }, false],
     ]) {
       const result = NodeChildProcess.spawnSync(process.execPath, [script, "check"], {
-        env: {
-          ...process.env,
-          WORKSPACE_RESULT: "success",
-          WINDOWS_DETECTION_RESULT: detection,
-          WINDOWS_CHANGED: changed,
-          WINDOWS_NATIVE_RESULT: native,
-          REMOTE_SERVER_RESULT: native,
-          LINUX_CHANGED: changed,
-          LINUX_NATIVE_RESULT: native,
-        },
+        env: { ...process.env, ...env },
         encoding: "utf8",
       });
-      NodeAssert.equal(
-        result.status,
-        passes ? 0 : 1,
-        JSON.stringify({ changed, detection, native }),
-      );
+      NodeAssert.equal(result.status, passes ? 0 : 1, label);
     }
   },
 );
