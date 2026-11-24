@@ -14219,6 +14219,7 @@
   "8988c8fd744b5fbf": "Impossible d’exécuter le fichier {runtime}",
   "35065b564af99539": "Vérifiez la connexion avant de réessayer. L’exécution reste rattachée à cet onglet.",
   "c7bf203c5e8833b8": "Écrit",
+  "b9ef4e724a7bd490": "Modifié pendant cette exécution",
   "1a22a4b56953145c": "Frame MATLAB externe",
   "d1abe7d106c548ec": "{count, plural, one {{count} cause liée} other {{count} causes liées}}",
   "ad7e9dde2af113ca": "Supprimer {size} de sortie et d’artefacts locaux de cette exécution ? Son statut, ses diagnostics, ses empreintes et sa provenance resteront dans l’historique.",

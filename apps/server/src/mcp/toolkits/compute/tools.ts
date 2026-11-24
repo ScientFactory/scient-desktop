@@ -113,6 +113,7 @@ const RunResult = Schema.Struct({
   run: ComputeToolRun,
   images: Schema.optional(Schema.Array(ComputeToolImage)),
   wrote: Schema.optional(Schema.Array(Schema.String)),
+  changed: Schema.optional(Schema.Array(Schema.String)),
 });
 
 const operation = (id: string): OperationDefinition => ({
@@ -175,7 +176,11 @@ const ScientComputeRunFileTool = Tool.make("scient_compute_run_file", {
     images: Schema.optional(Schema.Array(ComputeToolImage)),
     run: ComputeToolRun,
     wrote: Schema.Array(Schema.String).annotate({
-      description: "Project-relative files observed changing during the run.",
+      description: "Project-relative files the run reported writing.",
+    }),
+    changed: Schema.optional(Schema.Array(Schema.String)).annotate({
+      description:
+        "Other project files seen changing during the run; another program may have written them.",
     }),
   }),
   failure: ScientComputeToolError,

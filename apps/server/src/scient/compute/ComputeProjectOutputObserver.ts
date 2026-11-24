@@ -64,7 +64,10 @@ export interface ComputeProjectOutputCollection {
   readonly images: ReadonlyArray<ObservedComputeProjectImage>;
   /** Tables written during the observation, to point at. They are not read. */
   readonly tables: ReadonlyArray<string>;
+  /** Files the runtime reported writing. */
   readonly writtenFiles?: ReadonlyArray<string>;
+  /** Files only seen changing during the run; the writer is not known. */
+  readonly changedFiles?: ReadonlyArray<string>;
   readonly warnings: ReadonlyArray<string>;
   /** Structured facts only; analytics must never classify the warning text. */
   readonly capture?: ComputeProjectCaptureStatus;
@@ -465,13 +468,14 @@ async function collectProjectOutputs(input: {
   }
   const written = new Map<string, ProjectImageState>();
   const writtenFiles = new Set<string>();
+  const changedFiles = new Set<string>();
   for (const path of reported) {
     signal.throwIfAborted();
     const allowWrittenFile = includeWrittenFiles || runtimeWrites.has(path);
     const candidate = await authorizeCandidate(projectRoot, path, since, allowWrittenFile);
     if (candidate === null) continue;
     if (allowWrittenFile && candidate.relativePath.length <= 4096) {
-      writtenFiles.add(candidate.relativePath);
+      (runtimeWrites.has(path) ? writtenFiles : changedFiles).add(candidate.relativePath);
     }
     if (!OUTPUT_FILE.test(candidate.relativePath)) continue;
     if (input.shown.get(candidate.relativePath) === stateKey(candidate.state)) continue;
@@ -526,6 +530,9 @@ async function collectProjectOutputs(input: {
     tables,
     ...(includeWrittenFiles || writtenFiles.size > 0
       ? { writtenFiles: [...writtenFiles].toSorted().slice(0, MAXIMUM_WRITTEN_FILES) }
+      : {}),
+    ...(changedFiles.size > 0
+      ? { changedFiles: [...changedFiles].toSorted().slice(0, MAXIMUM_WRITTEN_FILES) }
       : {}),
     capture: {
       coverage: coverageReason === undefined ? "complete" : "partial",

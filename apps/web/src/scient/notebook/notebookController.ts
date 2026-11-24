@@ -54,6 +54,7 @@ export interface NotebookLiveRun {
   readonly executionId: string;
   readonly generation: number;
   readonly writtenFiles?: ReadonlyArray<string> | undefined;
+  readonly changedFiles?: ReadonlyArray<string> | undefined;
 }
 
 export interface NotebookState {
@@ -538,18 +539,21 @@ export function createNotebookController(transport: NotebookTransport) {
       for (const [cellId, execution] of runs) {
         const { executionId, sessionId, generation } = execution.request;
         const writtenFiles = execution.result?.writtenFiles;
+        const changedFiles = execution.result?.changedFiles;
         const prior = state.liveRuns[cellId];
         liveRuns[cellId] =
           prior?.executionId === executionId &&
           prior.sessionId === sessionId &&
           prior.generation === generation &&
-          prior.writtenFiles === writtenFiles
+          prior.writtenFiles === writtenFiles &&
+          prior.changedFiles === changedFiles
             ? prior
             : {
                 sessionId,
                 executionId,
                 generation,
                 ...(writtenFiles === undefined ? {} : { writtenFiles }),
+                ...(changedFiles === undefined ? {} : { changedFiles }),
               };
         const status = execution.result?.status;
         if (status === undefined || status === "queued" || status === "submitting") {

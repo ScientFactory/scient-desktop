@@ -14215,6 +14215,7 @@
   "8988c8fd744b5fbf": "No se pudo ejecutar el archivo de {runtime}",
   "35065b564af99539": "Comprueba la conexión antes de volver a intentarlo. La ejecución sigue perteneciendo a esta pestaña.",
   "c7bf203c5e8833b8": "Escribió",
+  "b9ef4e724a7bd490": "Cambiado durante esta ejecución",
   "1a22a4b56953145c": "Marco externo de MATLAB",
   "d1abe7d106c548ec": "{count, plural, one {{count} causa relacionada} other {{count} causas relacionadas}}",
   "ad7e9dde2af113ca": "¿Quitar {size} de salida y artefactos locales de esta ejecución? Su estado, diagnóstico, hashes y procedencia se mantendrán en el historial.",

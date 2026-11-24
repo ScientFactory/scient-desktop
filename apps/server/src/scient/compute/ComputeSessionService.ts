@@ -2058,7 +2058,7 @@ const make = Effect.gen(function* () {
         resources: [],
       });
     }
-    return collection.writtenFiles;
+    return { writtenFiles: collection.writtenFiles, changedFiles: collection.changedFiles };
   });
 
   const recordDiagnostics = Effect.fn("ComputeSessionService.recordDiagnostics")(function* (
@@ -2496,7 +2496,7 @@ const make = Effect.gen(function* () {
         const record = yield* Ref.get(live.recordRef);
         if (event.generation !== record.generation) return false;
         const executionId = ComputeExecutionId.make(event.requestId);
-        const writtenFiles = yield* collectProjectOutputs(live, event);
+        const { writtenFiles, changedFiles } = (yield* collectProjectOutputs(live, event)) ?? {};
         const finished = (yield* Ref.get(live.pendingRef)).get(executionId);
         const {
           reads,
@@ -2510,6 +2510,7 @@ const make = Effect.gen(function* () {
           ...result,
           ...(event.executionCount === undefined ? {} : { executionCount: event.executionCount }),
           ...(writtenFiles === undefined ? {} : { writtenFiles }),
+          ...(changedFiles === undefined ? {} : { changedFiles }),
           ...(reads === undefined
             ? {}
             : {

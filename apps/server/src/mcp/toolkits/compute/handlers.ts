@@ -260,6 +260,7 @@ const describeRun = Effect.fn("ScientComputeToolkit.describeRun")(function* (
     session: sessionSummary(session, scope.threadId),
     run,
     ...(result?.writtenFiles === undefined ? {} : { wrote: result.writtenFiles }),
+    ...(result?.changedFiles === undefined ? {} : { changed: result.changedFiles }),
     ...(images.length > 0 ? { images } : {}),
   };
 });
@@ -356,7 +357,9 @@ const describeFileRun = (run: AnalysisRunSnapshot) => {
       ...(run.parameters === undefined ? {} : { parameters: run.parameters }),
       ...(run.inputs === undefined ? {} : { inputs: run.inputs }),
     },
-    wrote: [...(run.writtenFiles ?? []), ...run.artifacts.map((artifact) => artifact.label)],
+    // A separate program reports nothing it wrote; files are only seen changing while it ran.
+    wrote: [],
+    changed: [...(run.writtenFiles ?? []), ...run.artifacts.map((artifact) => artifact.label)],
   };
 };
 

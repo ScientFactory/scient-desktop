@@ -209,8 +209,10 @@ export const ComputeExecutionResultRecord = Schema.Struct({
   failureReason: Schema.NullOr(ShortText),
   /** The kernel's number for this run, for kernels that report one. */
   executionCount: Schema.optional(Count),
-  /** Project-relative files observed changing during an agent's saved-file execution. */
+  /** Project-relative files the runtime reported writing. */
   writtenFiles: Schema.optional(Schema.Array(ShortText).check(Schema.isMaxLength(128))),
+  /** Project-relative files seen changing during the run, which another program may have written. */
+  changedFiles: Schema.optional(Schema.Array(ShortText).check(Schema.isMaxLength(128))),
   /** Project files the run was seen opening for reading; absent where reads are not observed. */
   reads: Schema.optional(
     Schema.Struct({

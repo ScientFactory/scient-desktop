@@ -388,6 +388,7 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
       <ComputeWrittenFiles
         threadRef={props.threadRef}
         paths={execution.result?.writtenFiles}
+        changed={execution.result?.changedFiles}
         className="mt-1"
       />
       {status !== "cancelled" && execution.result?.failureReason && !explained ? (

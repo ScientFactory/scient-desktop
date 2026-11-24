@@ -14219,6 +14219,7 @@
   "8988c8fd744b5fbf": "Não foi possível executar o arquivo {runtime}",
   "35065b564af99539": "Verifique a conexão antes de tentar novamente. A execução continua pertencendo a esta aba.",
   "c7bf203c5e8833b8": "Gravou",
+  "b9ef4e724a7bd490": "Alterado durante esta execução",
   "1a22a4b56953145c": "Frame externo do MATLAB",
   "d1abe7d106c548ec": "{count, plural, one {{count} causa relacionada} other {{count} causas relacionadas}}",
   "ad7e9dde2af113ca": "Remover {size} de saídas e artefatos locais desta execução? O status, os diagnósticos, os hashes e a proveniência continuarão no histórico.",

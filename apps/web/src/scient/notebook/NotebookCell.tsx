@@ -536,6 +536,7 @@ export function NotebookCell(props: {
     liveRun.generation === props.place.liveSessionGeneration &&
     cell.run?.execution === liveRun.executionId;
   const writtenFiles = producedInLiveSession ? liveRun.writtenFiles : undefined;
+  const changedFiles = producedInLiveSession ? liveRun.changedFiles : undefined;
   return (
     // `application` keeps command-mode keys here instead of the chat's type-to-focus.
     <section
@@ -729,10 +730,11 @@ export function NotebookCell(props: {
               cell={cell}
               near={live}
             />
-            {activity === null && writtenFiles !== undefined && writtenFiles.length > 0 ? (
+            {activity === null && (writtenFiles?.length ?? 0) + (changedFiles?.length ?? 0) > 0 ? (
               <ComputeWrittenFiles
                 threadRef={props.place.threadRef}
                 paths={writtenFiles}
+                changed={changedFiles}
                 className="px-3 pb-1.5"
               />
             ) : null}
