@@ -6,10 +6,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock"; // SCIENT-FORK: watch-backoff-test-clock
 
 import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
-it.live.skipIf(!symlinksSupported)(
+// SCIENT-FORK: watch-backoff-test-clock — real ticks raced the acquire under load; offered upstream.
+it.effect.skipIf(!symlinksSupported)(
   "backs off stopped watches for an unchanged linked directory",
   () =>
     Effect.gen(function* () {
@@ -42,8 +44,19 @@ it.live.skipIf(!symlinksSupported)(
         ),
         Effect.forkScoped,
       );
+      // SCIENT-FORK:START watch-backoff-test-clock
+      // Each second starts once the last one's acquire, which does real I/O, has finished.
+      const nextSecond = (count: number) =>
+        TestClock.adjust("1 second").pipe(Effect.andThen(Queue.takeN(events, count)));
+      const backoff = [
+        ...(yield* Queue.takeN(events, 3)),
+        ...(yield* nextSecond(3)),
+        ...(yield* nextSecond(1)),
+        ...(yield* nextSecond(3)),
+      ];
+      // SCIENT-FORK:END watch-backoff-test-clock
       assert.deepEqual(
-        yield* Queue.takeN(events, 10),
+        backoff,
         // Each acquire stats too: the first, a retry after 1 tick, then after 2 more.
         [
           "probe",
@@ -60,7 +73,8 @@ it.live.skipIf(!symlinksSupported)(
       );
 
       identity = secondIdentity;
-      assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
+      // SCIENT-FORK: watch-backoff-test-clock
+      assert.deepEqual(yield* nextSecond(3), ["probe", "probe", "refresh"]);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
