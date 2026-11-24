@@ -555,6 +555,7 @@ describe("CI workflow decisions", () => {
       id?: string;
       if?: string;
       uses?: string;
+      run?: string;
       with?: Record<string, string>;
     };
     const action = YAML.parse(
