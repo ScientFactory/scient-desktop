@@ -3827,7 +3827,7 @@ it.live(
                 },
               })),
             });
-            // A historical Stop was answered; an unanswered one would stop this run (T3 #41685).
+            // A historical Stop was answered; an unanswered one now stops the run.
             const historicalResultId = (yield* IdAllocatorV2).derive.runSignalTurnItem({
               runId: foreground.input.runId,
               signal: "interrupt-result",
