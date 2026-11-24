@@ -71,14 +71,16 @@ export function watchPinchZoom(
   let pendingDeltaY = 0;
   const inPinch = () => pinching || now() - pinchEndedAt <= PINCH_SETTLE_MS;
   const inputEvent = (_event: unknown, input: Electron.InputEvent): void => {
-    if (input.type === "gesturePinchBegin") {
-      pinching = true;
-      pendingDeltaY = 0;
-    } else if (input.type === "gesturePinchEnd") {
+    if (input.type === "gesturePinchBegin") pinching = true;
+    else if (input.type === "gesturePinchEnd") {
       pinching = false;
       pinchEndedAt = now();
-    } else if (!pinching && (input.type === "mouseWheel" || input.type === "gestureScrollBegin")) {
-      // New wheel input after a pinch is not part of it.
+    } else if (
+      !pinching &&
+      (input.type === "mouseWheel" || input.type === "gestureScrollBegin") &&
+      input.modifiers?.includes("control")
+    ) {
+      // A new ctrl+wheel after a pinch is not part of it; a plain scroll cannot be mistaken for it.
       pinchEndedAt = Number.NEGATIVE_INFINITY;
     }
   };

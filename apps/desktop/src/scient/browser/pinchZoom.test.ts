@@ -56,11 +56,21 @@ describe("watchPinchZoom", () => {
     expect(pinch).toHaveBeenCalledOnce();
     expect(pinch.mock.calls[0]![0]).toBeCloseTo(-0.5);
 
+    // A plain scroll right after the pinch leaves its late frames, and the next pinch takes
+    // up what was too small to apply.
+    fire("input-event", { type: "mouseWheel", modifiers: [] });
+    fire(PINCH_ZOOM_CHANNEL, -0.3);
+    fire("input-event", { type: "gesturePinchBegin" });
+    fire(PINCH_ZOOM_CHANNEL, -0.3);
+    expect(pinch).toHaveBeenCalledTimes(2);
+    expect(pinch.mock.calls[1]![0]).toBeCloseTo(-0.7);
+    fire("input-event", { type: "gesturePinchEnd" });
+
     // Ctrl+mouse wheel right after the pinch is its own input, not the pinch's last frames.
-    fire("input-event", { type: "mouseWheel" });
+    fire("input-event", { type: "mouseWheel", modifiers: ["control"] });
     fire(PINCH_ZOOM_CHANNEL, -12);
     fire("zoom-changed", "in");
-    expect(pinch).toHaveBeenCalledOnce();
+    expect(pinch).toHaveBeenCalledTimes(2);
     expect(step.mock.calls).toEqual([["in"]]);
   });
 
