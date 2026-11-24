@@ -84,7 +84,7 @@ export const isProminentThreadMcpIssue = (server: ThreadMcpServerObservation): b
 
 const LEGACY_MCP_STARTUP_NATIVE_PREFIXES = ["mcp-startup-failed:", "mcp-sign-in:"] as const;
 
-/** Startup and sign-in notices older adapters wrote into the transcript; their title is the readable label. */
+/** Startup and sign-in notices older adapters wrote into the transcript; clients no longer show them. */
 export const isLegacyMcpStartupNotice = (item: {
   readonly mcpSignIn?: unknown;
   readonly nativeItemRef?: { readonly nativeId: string | null } | null | undefined;

@@ -155,8 +155,8 @@ describe("Scient work-log entries", () => {
     expect(workEntrySignalsSevereFailure(noticeEntry.entry)).toBe(false);
   });
 
-  it("uses concise item.title for legacy MCP startup notices while keeping generic notice messages", () => {
-    const [mcpEntry, genericEntry] = entriesFor(
+  it("leaves out MCP startup and sign-in notices older servers wrote", () => {
+    const entries = entriesFor(
       {
         ...base,
         id: TurnItemId.make("mcp-notice"),
@@ -176,14 +176,18 @@ describe("Scient work-log entries", () => {
         title: "Steer delivery not confirmed",
         message: "Your steer could not be confirmed before the turn ended.",
       },
+      {
+        ...base,
+        id: TurnItemId.make("sign-in-notice"),
+        type: "system_notice" as const,
+        title: "MCP server guru needs a sign-in",
+        message: "The guru MCP server needs a sign-in before Claude can use it.",
+        mcpSignIn: { server: "guru" },
+      },
     );
-    if (mcpEntry?.kind !== "work" || genericEntry?.kind !== "work") {
-      throw new Error("Expected work entries");
-    }
-    expect(mcpEntry.entry.label).toBe("MCP server cloudflare failed to start");
-    expect(genericEntry.entry.label).toBe(
-      "Your steer could not be confirmed before the turn ended.",
-    );
+    expect(
+      entries.map((entry) => (entry?.kind === "work" ? entry.entry.label : entry?.kind)),
+    ).toEqual(["Your steer could not be confirmed before the turn ended."]);
   });
 
   // regression: 5b6c34265c fix(fork): keep inherited readers and windows consistent

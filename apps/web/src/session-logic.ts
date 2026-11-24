@@ -482,15 +482,12 @@ function projectedWorkEntry(
         changedFiles: item.files.map((file) => file.path),
         toolData: item,
       };
-    case "system_notice": {
-      const noticeTitle = item.title?.trim();
-      const isMcpStartupNotice = isLegacyMcpStartupNotice(item);
+    case "system_notice":
       return {
         ...common,
-        label: isMcpStartupNotice && noticeTitle ? noticeTitle : item.message,
+        label: item.message,
         ...(item.level === "info" ? {} : { sourceActivityKind: "runtime.warning" }),
       };
-    }
     case "error": {
       const presentation = providerErrorPresentation(item, resolve);
       return {
@@ -773,6 +770,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         item.deliveries?.some((delivery) => delivery.status === "sent") === true)
     )
       continue;
+    // MCP startup and sign-in notices older servers wrote; the thread's live MCP status replaces them.
+    if (item.type === "system_notice" && isLegacyMcpStartupNotice(item)) continue;
     // SCIENT-FORK:END
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
       entries.push({

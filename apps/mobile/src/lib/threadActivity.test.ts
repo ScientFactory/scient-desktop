@@ -2212,7 +2212,7 @@ it("caps live thought previews while preserving reasoning detail", () => {
   expect(activity.getCopyText()).toContain(text);
 });
 
-it("labels an older MCP startup notice by its title and keeps the raw error as detail", () => {
+it("leaves out MCP startup and sign-in notices older servers wrote", () => {
   const item = {
     ...base("mcp-startup-notice", "2026-06-20T00:00:02.000Z", 1),
     type: "system_notice" as const,
@@ -2232,9 +2232,17 @@ it("labels an older MCP startup notice by its title and keeps the raw error as d
     title: "Steer delivery not confirmed",
     message: "Your steer could not be confirmed before the turn ended.",
   };
-  const [startup, other] = buildThreadFeed([projected(item, 0), projected(generic, 1)]).flatMap(
-    (entry) => (entry.type === "activity-group" ? entry.activities : []),
-  );
-  expect(startup?.summary).toBe("MCP server cloudflare failed to start");
-  expect(other?.summary).toBe(generic.message);
+  const signIn = {
+    ...base("mcp-sign-in-notice", "2026-06-20T00:00:04.000Z", 3),
+    type: "system_notice" as const,
+    title: "MCP server guru needs a sign-in",
+    message: "The guru MCP server needs a sign-in before Claude can use it.",
+    mcpSignIn: { server: "guru" },
+  };
+  const activities = buildThreadFeed([
+    projected(item, 0),
+    projected(generic, 1),
+    projected(signIn, 2),
+  ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+  expect(activities.map((activity) => activity.summary)).toEqual([generic.message]);
 });

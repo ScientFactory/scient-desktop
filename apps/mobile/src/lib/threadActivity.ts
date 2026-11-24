@@ -682,11 +682,7 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "room_message")
     return item.deletedAt ? resolve(msg("Message deleted")) : resolve(msg("To people"));
-  if (item.type === "system_notice") {
-    const noticeTitle = item.title?.trim();
-    const isMcpStartupNotice = isLegacyMcpStartupNotice(item);
-    return isMcpStartupNotice && noticeTitle ? noticeTitle : item.message;
-  }
+  if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item, resolve);
   const title =
     (item.type === "dynamic_tool"
@@ -2682,6 +2678,9 @@ export function buildThreadFeed(
       entryRows.push(index);
       continue;
     }
+    // SCIENT-FORK: MCP startup and sign-in notices older servers wrote; the thread's live MCP
+    // status card replaces them.
+    if (item.type === "system_notice" && isLegacyMcpStartupNotice(item)) continue;
     if (item.type === "room_message") {
       // SCIENT-FORK: a room message leaves the feed once deleted or sent to the agent; the
       // agent's message stands in for it. A cancelled send brings it back.
