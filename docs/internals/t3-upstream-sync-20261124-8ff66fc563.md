@@ -93,9 +93,8 @@ The branch is `codex/t3-sync-8ff66fc563-20261123`. The `upstream` push URL stays
 - **Reading position (#41184).** T3 keeps the reading position when side panels resize. Scient's
   timeline has no `liveFollowEnabled`, so a marked predicate skips the correction while the
   answer follow runs, while timeline positioning is pending, or at the reading end.
-- **Desktop update (#41262).** The "Install failed" tooltip is taken. Scient's own install path
-  (`updateReadyNotice.tsx`) does not wait for a later install failure, so T3's
-  `installDesktopUpdate` is used only by its test (recorded below).
+- **Desktop update (#41262).** The "Install failed" tooltip and T3's late-failure listener are
+  taken; Scient's single install action uses the listener (below).
 - **Mark unread (#41365)** hides on threads with no completed run, next to Scient's Share item.
 - **Files search (#41616)** clears on Escape without closing the sheet, in Scient's own search
   field.
@@ -126,48 +125,56 @@ binding), and Scient tests read the new required `hasCompletedRun` menu field.
 
 T3's faster event replay (#26719) reads ahead in its own fiber, so a replayed event reaches a
 stream a few scheduler steps later. Scient tests that advanced a test clock or read a projection
-on the old timing now wait for the event or state they check; none of them was a product bug.
+on the old timing now wait for the event or state they check. One of them hid a real race in
+Scient's delegated tasks, fixed below.
 Three Scient tests that assumed T3's earlier behaviour follow it: Full access Codex no longer asks
 (#40773), a settle blocked by background work raises Scient's typed error (#31449), and a cancelled
 run that started has delivered its queued message (#41307).
 
 ## Scient fixes and cleanups in this alignment
 
-- **Claude CLI descendants.** T3's shared process-table poll now records and stops the CLI's
-  detached Bash shells and helpers after it exits. Scient's own per-CLI sampling did the same work
-  a second time on macOS and is removed with its test; Scient's watcher for a server that dies
-  stays (`ClaudeProcessGroup.scient.test.ts`).
-- **Dev database pruning.** T3's `migrate-dev-db --drop-resumable` refused only `~/.t3`; it now
-  also refuses the Scient app's and dev app's databases in `~/.scient-next`.
-- **Install refusals.** Scient's install action waits through T3's late-failure listener (#41262),
-  so a restart macOS refuses after accepting the install shows its failure toast or summary line.
-- **Reading position.** T3's width-change correction now also runs while a thread's open-at-end
-  restore is finishing, and a wider list that clamps the reader to the end no longer turns it off.
-- **TIFF previews.** A single `BitsPerSample` value applies to every sample, so two-sample images
-  with alpha (T3's #41196 case) open. Scient's decoder does not follow Exif or GPS directories, so
-  T3's pointer-rejection cases have no Scient counterpart.
-- **Tests.** A duplicated workspace read test is removed and a clashing test title renamed.
+- **Claude CLI descendants.** T3's shared process-table poll records and stops the CLI's detached
+  Bash shells and helpers after it exits. Scient's own per-CLI sampling did the same work a second
+  time on macOS and is removed; Scient's watcher for a server that dies stays. A failed read at
+  exit is retried twice and cleanup it could not verify is logged, as Scient's sampling did.
+- **Delegated results.** A message that reached a delegated child just after its wait returned,
+  before the parent recorded the result, took over the finished task: the result was lost and the
+  task settled as interrupted. The dispatch now records the finished task under both threads'
+  locks before the new run starts.
+- **Dev database writes.** `migrate-dev-db` (rebuild and `--drop-resumable`) refuses any database
+  inside the T3 home or a Scient home, every profile included, and hard links to their databases.
+  Scient's managed checkouts under its home stay usable.
+- **Install refusals.** Scient's install action waits through T3's failure listener (#41262), which
+  now also keeps a refusal that arrives before the install reply, so the failure toast or summary
+  line shows in either order.
+- **Reading position.** T3's width-change correction also runs while a thread's open-at-end
+  restore is finishing, and decides once per width change, so a wider list that clamps the reader
+  to the end turns off neither correction.
+- **TIFF previews.** One stored `BitsPerSample` value, or none, applies to every sample (up to
+  1,024), so two-sample images with alpha (T3's #41196 case) open; a partial list is refused.
+  Scient's decoder does not follow Exif or GPS directories, so T3's pointer-rejection cases have
+  no Scient counterpart.
+- **Storage cleanup (#41386).** Leftover worktree metadata whose back-pointer cannot be read is
+  kept and reported, and retried on the next sweep, instead of deleted.
+- **MCP tool results (#41552).** A thread's result generation is dropped with its session, so the
+  cache no longer keeps one per thread a long-lived server has seen; late writes stay refused.
+- **Development runbook.** T3's forge-mirror section no longer tells contributors to repoint
+  `origin`.
+- **Tests.** A duplicated workspace read test is removed (its revision check moved into T3's copy)
+  and a clashing test title renamed.
+
+The marked blocks in T3 files are listed in `UPSTREAM.md` to offer upstream.
 
 ## Known limits
 
-- **Delegated results (pre-existing).** A message sent to a delegated child in the few
-  milliseconds between its wait returning and the parent recording the result loses that result,
-  and the task settles as interrupted. The replay read-ahead widens the window slightly
-  (about 4–16 ms). Not changed here.
-- **Storage cleanup and the MCP result cache** keep T3's behaviour: a leftover worktree admin
-  directory whose back-pointer cannot be read is removed, and the result cache keeps one
-  generation per thread it has seen.
-- **Workspace binding** still reads `git remote -v`, so behind an `insteadOf` rewrite its evidence
-  can differ from the repository resolver's (#41364).
-- **Development runbook.** T3's forge-mirror section stays; the Scient section below it says not
-  to repoint `origin`.
+- **Workspace binding** reads `git remote -v`, which applies `insteadOf` rewrites itself; the
+  resolver's new `insteadOf` handling (#41364) is not needed there.
 
 ## Review
 
-An independent Codex review (GPT-6.2 Sol, `reviews/t3-sync-4ce9-20261123/codex-review-1.md`)
-found one P1, three P2s and two P3s. Fixed: dev pruning reaching Scient's databases (P1), late
-install refusals (P2) and the duplicate Claude polling (P2). Recorded above as T3 behaviour or
-already-overridden text: the storage-cleanup and result-cache items and the runbook mirror.
+Independent Codex reviews (GPT-6.2 Sol) are in `reviews/t3-sync-4ce9-20261123/`. The first found
+one P1, three P2s and two P3s; its re-check found one P1, four P2s and three P3s. All are fixed
+above.
 
 ## Analytics
 

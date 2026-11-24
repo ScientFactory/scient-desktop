@@ -26,15 +26,9 @@ Open the pairing URL printed by the dev runner (the bare origin does not authent
 
 ## Forge mirror (optional)
 
-GitHub is the source of truth; [source.tanstack.com/@pingdotgg/t3code](https://source.tanstack.com/@pingdotgg/t3code) is a two-way mirror for parallel agent work:
-
-```sh
-git remote set-url origin https://source.tanstack.com/@pingdotgg/t3code.git
-git remote add github https://github.com/pingdotgg/t3code.git
-src auth login --web && src auth setup-git
-```
-
-With `origin` on the mirror, use `src` instead of `gh`. PRs into `main` still merge on GitHub, and numbers can differ between forges—use the GitHub number in text that reaches GitHub.
+T3's [source.tanstack.com/@pingdotgg/t3code](https://source.tanstack.com/@pingdotgg/t3code) mirror
+is useful for read-only upstream research. In Scient, keep `origin` and `upstream` as they are;
+see [Scient](#scient) below.
 
 ## Running dev servers
 

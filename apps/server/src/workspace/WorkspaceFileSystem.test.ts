@@ -290,7 +290,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(result).toEqual({
           relativePath: "src/index.ts",
           contents: "export const answer = 42;\n",
-          revision: expect.any(String),
+          // SCIENT-FORK: a revision-checked save needs a well-formed token.
+          revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           byteLength: 26,
           truncated: false,
         });
