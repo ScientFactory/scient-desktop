@@ -42,6 +42,9 @@ interface ToolResultState {
   readonly epochs: ReadonlyMap<ThreadId, number>;
   // SCIENT-FORK:START — generations are unique tokens held only while their thread has one.
   readonly nextEpoch: number;
+  // The thread's active provider session, kept here so a generation is issued and written only
+  // while that session is open, checked in the same update.
+  readonly sessions: ReadonlyMap<ThreadId, string>;
   // SCIENT-FORK:END
 }
 
@@ -75,7 +78,13 @@ export class McpProviderSessions extends Context.Service<
       input: PageInput,
       reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
-    readonly toolResultEpoch: (threadId: ThreadId) => Effect.Effect<number>;
+    // SCIENT-FORK:START — given a provider session, a generation is issued only while it is the
+    // thread's active one; otherwise the token matches no write.
+    readonly toolResultEpoch: (
+      threadId: ThreadId,
+      providerSessionId?: string,
+    ) => Effect.Effect<number>;
+    // SCIENT-FORK:END
     readonly recordToolResult: (
       threadId: ThreadId,
       toolName: string,
@@ -195,6 +204,28 @@ const clearThreadToolResults = (state: ToolResultState, threadId: ThreadId): Too
   // SCIENT-FORK:END
 };
 
+// SCIENT-FORK:START — a generation is issued and written only while its session is open.
+const REFUSED_EPOCH = 0;
+const openThreadToolResults = (
+  state: ToolResultState,
+  threadId: ThreadId,
+  providerSessionId: string,
+): ToolResultState =>
+  state.sessions.get(threadId) === providerSessionId
+    ? state
+    : {
+        ...clearThreadToolResults(state, threadId),
+        sessions: new Map(state.sessions).set(threadId, providerSessionId),
+      };
+const closeThreadToolResults = (state: ToolResultState, threadId: ThreadId): ToolResultState => {
+  const cleared = clearThreadToolResults(state, threadId);
+  if (!cleared.sessions.has(threadId)) return cleared;
+  const sessions = new Map(cleared.sessions);
+  sessions.delete(threadId);
+  return { ...cleared, sessions };
+};
+// SCIENT-FORK:END
+
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
@@ -204,6 +235,7 @@ const make = Effect.gen(function* () {
     // SCIENT-FORK:START — generations are unique tokens held only while their thread has one.
     // Tokens start at 1, so a thread without one never matches a handed-out token.
     nextEpoch: 1,
+    sessions: new Map(),
     // SCIENT-FORK:END
   });
   return McpProviderSessions.of({
@@ -222,6 +254,11 @@ const make = Effect.gen(function* () {
       // SCIENT-FORK:START Scient Extensions connectors
       yield* Ref.update(sessions, (current) =>
         new Map(current).set(config.threadId, copyConfig(config)),
+      );
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — a generation is issued and written only while its session is open.
+      yield* Ref.update(toolResultState, (state) =>
+        openThreadToolResults(state, config.threadId, config.providerSessionId),
       );
       // SCIENT-FORK:END
     }),
@@ -248,9 +285,11 @@ const make = Effect.gen(function* () {
             return next;
           }),
         ),
+        // SCIENT-FORK:START — a generation is issued and written only while its session is open.
         Effect.andThen(
-          Ref.update(toolResultState, (state) => clearThreadToolResults(state, threadId)),
+          Ref.update(toolResultState, (state) => closeThreadToolResults(state, threadId)),
         ),
+        // SCIENT-FORK:END
       );
     }),
     recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
@@ -299,16 +338,21 @@ const make = Effect.gen(function* () {
         });
       },
     ),
-    toolResultEpoch: Effect.fn("McpProviderSessions.toolResultEpoch")(function (threadId) {
-      // SCIENT-FORK:START — generations are unique tokens held only while their thread has one.
-      return Ref.modify(toolResultState, (state): [number, ToolResultState] => {
-        const current = state.epochs.get(threadId);
-        if (current !== undefined) return [current, state];
-        const epochs = new Map(state.epochs).set(threadId, state.nextEpoch);
-        return [state.nextEpoch, { ...state, epochs, nextEpoch: state.nextEpoch + 1 }];
-      });
-      // SCIENT-FORK:END
-    }),
+    toolResultEpoch: Effect.fn("McpProviderSessions.toolResultEpoch")(
+      function (threadId, providerSessionId) {
+        // SCIENT-FORK:START — generations are unique tokens held only while their thread has one.
+        return Ref.modify(toolResultState, (state): [number, ToolResultState] => {
+          const open = state.sessions.get(threadId);
+          if (open === undefined || (providerSessionId !== undefined && open !== providerSessionId))
+            return [REFUSED_EPOCH, state];
+          const current = state.epochs.get(threadId);
+          if (current !== undefined) return [current, state];
+          const epochs = new Map(state.epochs).set(threadId, state.nextEpoch);
+          return [state.nextEpoch, { ...state, epochs, nextEpoch: state.nextEpoch + 1 }];
+        });
+        // SCIENT-FORK:END
+      },
+    ),
     recordToolResult: Effect.fn("McpProviderSessions.recordToolResult")(
       function* (threadId, toolName, input, output, options) {
         const providerSessionId = options?.providerSessionId;
@@ -332,9 +376,17 @@ const make = Effect.gen(function* () {
         const expectedEpoch = options?.epoch;
         yield* Ref.update(toolResultState, (state) => {
           // A handler finishing after its turn closed must not populate the next turn.
-          if (expectedEpoch !== undefined && (state.epochs.get(threadId) ?? 0) !== expectedEpoch) {
+          // SCIENT-FORK:START — no generation, or a refused one, matches; a write names its session.
+          if (expectedEpoch !== undefined && state.epochs.get(threadId) !== expectedEpoch) {
             return state;
           }
+          if (
+            providerSessionId !== undefined &&
+            state.sessions.get(threadId) !== providerSessionId
+          ) {
+            return state;
+          }
+          // SCIENT-FORK:END
           const entries = new Map(state.entries);
           entries.set(
             threadId,

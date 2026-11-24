@@ -1609,10 +1609,12 @@ const withToolResultCapture = Effect.fn("McpHttpServer.withToolResultCapture")(f
             McpInvocationContext.McpInvocationContext,
           );
           const thread = Option.getOrUndefined(scopeOption)?.thread;
+          // SCIENT-FORK:START — the generation belongs to the call's own provider session.
           const epoch =
             thread === undefined
               ? undefined
-              : yield* mcpSessions.value.toolResultEpoch(thread.threadId);
+              : yield* mcpSessions.value.toolResultEpoch(thread.threadId, thread.providerSessionId);
+          // SCIENT-FORK:END
           return yield* options.handle(payload).pipe(
             Effect.onExit((exit) => {
               if (thread === undefined) return Effect.void;
