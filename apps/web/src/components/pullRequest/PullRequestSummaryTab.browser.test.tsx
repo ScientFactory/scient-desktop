@@ -310,7 +310,9 @@ it("comes back at the scroll position it left when the right panel remounts the 
   const value = { ...detail, body, url: "https://github.com/owner/repo/pull/2" };
   const mount = async (shown = value) => {
     const container = document.createElement("div");
-    container.className = "flex h-[300px]";
+    // SCIENT-FORK:START — Scient's CSS omits Tailwind classes used only in tests.
+    container.style.cssText = "display: flex; height: 300px;";
+    // SCIENT-FORK:END
     const screen = await renderUi(tab(shown), { container });
     const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
     return Object.assign(screen, { scroller });

@@ -188,7 +188,8 @@ describe("wordsHast", () => {
     const rawHtml =
       '<p align="center">\n  <img src="https://x.dev/a.png" width="400">\n</p>\n\n<ul>\n<li>\none\ntwo\n</li>\n</ul>';
     expect(wordsHtml(rawHtml, { breaks: true })).toBe(
-      '<p align="center">\n  <img src="https://x.dev/a.png" width="400" data-standalone>\n</p>\n<ul dir="ltr">\n<li>\none\ntwo\n</li>\n</ul>',
+      // SCIENT-FORK: Scient directs every paragraph, raw HTML ones too (scient/bidi/rehypeScientBidi.ts).
+      '<p align="center" dir="ltr">\n  <img src="https://x.dev/a.png" width="400" data-standalone>\n</p>\n<ul dir="ltr">\n<li>\none\ntwo\n</li>\n</ul>',
     );
   });
 
