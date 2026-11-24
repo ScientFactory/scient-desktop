@@ -418,7 +418,11 @@ async function runDevElectronStartup({
       SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV,
       SCIENT_DEV_APP_FAILURE_FILE_ENV,
       createCoalescedRestartScheduler: () => ({ request: () => undefined }),
-      createWatchedFileStamps: () => ({ changed: () => false }),
+      createWatchedFileStamps: () => ({
+        changed: () => false,
+        contentChanged: () => true,
+        markLaunched: () => {},
+      }),
       developmentLauncherIsActive,
       findOwnedDevelopmentProcesses: (input) =>
         findOwnedDevelopmentProcesses({
