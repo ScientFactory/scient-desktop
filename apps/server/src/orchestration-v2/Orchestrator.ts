@@ -1016,6 +1016,43 @@ function mayTakeOverChildTask(
     !(command.notification?.source.kind === "monitor" && command.notification.outcome === "updated")
   );
 }
+
+// Every command that can start a run on its own thread. Dispatch takes the parent's lock for each
+// and records a finished child's task before planning, so that run cannot take the task over.
+function mayStartChildTakeover(command: OrchestrationV2ServerCommand): boolean {
+  switch (command.type) {
+    case "message.dispatch":
+      return mayTakeOverChildTask(command);
+    case "thread.metadata.update": {
+      const continuation = metadataUpdateContinuation(command);
+      return continuation !== undefined && mayTakeOverChildTask(continuation);
+    }
+    case "provider-work.admit":
+      return mayTakeOverChildTask(providerWorkMessageCommand(command));
+    case "thread.room.guest-dispatch":
+      return command.send.type !== "stop";
+    // A message-mode answer, a pull request wake and a link answer each send a message.
+    case "runtime-request.respond":
+    case "thread.pull-request-watch.sync":
+    case "link_request.record":
+      return true;
+    default:
+      return false;
+  }
+}
+
+// The unread-steer preflight in dispatchWithReceiptEffect: a replayed user steer can record a
+// follow-up task on the parent, so the dispatch takes the parent's lock first.
+function requeuesUnreadSteersFirst(command: OrchestrationV2ServerCommand): boolean {
+  return (
+    command.type === "message.dispatch" &&
+    command.restartContinuationOfRunId === undefined &&
+    command.steerFollowUpOfRunId === undefined &&
+    (command.dispatchMode.type === "start_immediately" ||
+      command.dispatchMode.type === "queue_after_active" ||
+      command.dispatchMode.type === "defer_start")
+  );
+}
 // SCIENT-FORK:END
 
 /** Waiting runs only drain post-terminal output; their agent turn is over and still needs a wake. */
@@ -17210,7 +17247,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     options?: {
       readonly settledContinuationOf?: RunId;
       readonly syncRunId?: RunId;
-      // SCIENT-FORK: settles tasks only; the question dismissal below takes the child's lock.
+      // SCIENT-FORK: the caller holds the child's lock, so the question dismissal runs under it.
       readonly childLocked?: boolean;
     },
   ) {
@@ -17259,7 +17296,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    if (options?.childLocked === true) return;
     // Only the run a cancelled task settled from ends with it. The row read above has no
     // such run yet when this call settled the task, from the same result run.
     const { resultRun } = progress;
@@ -17312,12 +17348,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             node.id === request.nodeId && node.runId !== null && resultRunIds.has(node.runId),
         )
       ) {
-        yield* dispatchWithReceipt({
+        const dismiss = {
           type: "thread.user-input.dismiss",
           commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
           threadId: childThreadId,
           requestId: request.id,
-        }).pipe(
+        } as const;
+        // SCIENT-FORK: a child-locked settlement precedes new work, which this question must not steer.
+        yield* (
+          options?.childLocked === true
+            ? dispatchWithReceiptEffect(dismiss)
+            : dispatchWithReceipt(dismiss)
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to dismiss task question", {
               requestId: request.id,
@@ -18213,16 +18255,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
-    // SCIENT-FORK:START — a send that beats the child-settlement reaction first records the task
+    // SCIENT-FORK:START — new work that beats the child-settlement reaction first records the task
     // its child finished, under the parent lock its dispatch took, so its run cannot take it over.
-    if (command.type === "message.dispatch" && mayTakeOverChildTask(command)) {
+    if (mayStartChildTakeover(command)) {
+      const threadId = commandThreadId(command);
       const lockedParentThreadId = yield* SubagentParentLockHeld;
       if (
         lockedParentThreadId !== undefined &&
         lockedParentThreadId ===
-          (yield* appOwnedSubagentParentThreadId(command.threadId).pipe(mapDispatchError(command)))
+          (yield* appOwnedSubagentParentThreadId(threadId).pipe(mapDispatchError(command)))
       )
-        yield* finalizeAppOwnedSubagent(command.threadId, { childLocked: true }).pipe(
+        yield* finalizeAppOwnedSubagent(threadId, { childLocked: true }).pipe(
           mapDispatchError(command),
         );
     }
@@ -18622,7 +18665,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (message?.type === "message.dispatch")
       return yield* messageIntake.withLock(
         message.threadId,
-        mayStartSubagentFollowup(message)
+        // SCIENT-FORK: a send's unread-steer replay can record a follow-up as well.
+        mayStartSubagentFollowup(message) || requeuesUnreadSteersFirst(command)
           ? withSubagentParentLock(message.threadId, dispatch)
           : // SCIENT-FORK: other new work may still find its child's task unrecorded.
             mayTakeOverChildTask(message)
@@ -18640,9 +18684,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
-    // SCIENT-FORK: a guest's send to the agent keeps its place among messages the same way.
+    // SCIENT-FORK: a guest's send to the agent keeps its place among messages the same way, and
+    // can start a follow-up as the owner's send does.
     if (command.type === "thread.room.guest-dispatch")
-      return yield* messageIntake.withLock(command.threadId, dispatch);
+      return yield* messageIntake.withLock(
+        command.threadId,
+        withSubagentParentLock(command.threadId, dispatch),
+      );
+    // SCIENT-FORK: provider-initiated work and other wakes may find a child's task unrecorded.
+    if (command.type !== "runtime-request.respond" && mayStartChildTakeover(command))
+      return yield* withOpenTaskParentLock(commandThreadId(command), dispatch);
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)
@@ -18783,6 +18834,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           )
           .pipe(
+            // SCIENT-FORK: a replayed user steer can record a follow-up task; lock its parent first.
+            (locked) => withSubagentParentLock(threadId, locked),
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),
             ),
@@ -19006,6 +19059,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadIds,
           (threadId) =>
             threadDispatch.withLock(threadId, requeueUnreadSteers(threadId)).pipe(
+              // SCIENT-FORK: as at run end, a replayed steer's follow-up locks the parent first.
+              (locked) => withSubagentParentLock(threadId, locked),
               Effect.catchCause((cause) =>
                 Effect.logWarning("Failed to requeue an unread steer during recovery", {
                   threadId,

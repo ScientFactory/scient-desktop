@@ -7,6 +7,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Subagent,
   OrchestrationV2RpcSchemas,
   ProjectId,
   ProviderDriverKind,
@@ -14,6 +15,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
@@ -47,7 +49,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+import { SubagentParentLockHeld } from "./scient-fork/SubagentParentLockHeld.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1399,6 +1403,136 @@ it.effect.each([
       assert.equal((yield* request)?.status, question);
       assert.equal((yield* request)?.decision, question === "resolved" ? "cancel" : undefined);
     }).pipe(Effect.provide(layerTest)),
+);
+
+// The child's run ends by projection alone, and the new work runs under the parent's lock as a
+// parent-locked caller's would, so no settlement reaction records the task before that work.
+const afterChildRunEnds = <A, E, R>(
+  name: string,
+  ending: "completed" | "interrupted",
+  question: boolean,
+  work: (child: {
+    readonly childThreadId: ThreadId;
+    readonly childRunId: RunId;
+    readonly originalTask: Effect.Effect<OrchestrationV2Subagent, Orchestrator.OrchestratorV2Error>;
+  }) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const parentThreadId = ThreadId.make(`thread:takeover-parent:${name}`);
+    yield* createWatchingThread(parentThreadId, 21);
+    yield* send(parentThreadId, "first", "start_immediately");
+    const childThreadId = yield* delegate(parentThreadId, `takeover task ${name}`);
+    const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+    const originalTask = Effect.map(
+      orchestrator.getThreadProjection(parentThreadId),
+      (projection) => projection.subagents.find((task) => task.childThreadId === childThreadId)!,
+    );
+    return yield* executor.withLock(
+      parentThreadId,
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        if (question)
+          yield* projections.apply({
+            id: EventId.make(`event:takeover:${name}:request`),
+            type: "runtime-request.updated",
+            threadId: childThreadId,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: {
+              id: RuntimeRequestId.make(`request:takeover:${name}`),
+              nodeId: childRun.rootNodeId!,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "message" },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          });
+        yield* projections.apply({
+          id: EventId.make(`event:takeover:${name}:${ending}`),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          occurredAt: now,
+          payload: { ...childRun, status: ending, startedAt: now, completedAt: now },
+        });
+        assert.equal((yield* originalTask).result, null);
+        return yield* work({ childThreadId, childRunId: childRun.id, originalTask }).pipe(
+          Effect.provideService(SubagentParentLockHeld, parentThreadId),
+        );
+      }),
+    );
+  });
+
+it.effect.each(["message", "workspace continuation"] as const)(
+  "a %s to a finished delegated child records its task before the new run",
+  (entry) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const name = entry.replace(" ", "-");
+      const messageId = MessageId.make(`message:takeover:${name}`);
+      yield* afterChildRunEnds(
+        name,
+        "completed",
+        false,
+        ({ childThreadId, childRunId, originalTask }) =>
+          Effect.gen(function* () {
+            yield* orchestrator.dispatch(
+              entry === "message"
+                ? {
+                    type: "message.dispatch",
+                    commandId: CommandId.make(`takeover:${name}`),
+                    threadId: childThreadId,
+                    messageId,
+                    text: "carry on",
+                    attachments: [],
+                    dispatchMode: { type: "start_immediately" },
+                    createdBy: "user",
+                    creationSource: "web",
+                  }
+                : // What t3_worktree_handoff dispatches.
+                  {
+                    type: "thread.metadata.update",
+                    commandId: CommandId.make(`takeover:${name}`),
+                    threadId: childThreadId,
+                    branch: "takeover-handoff",
+                    continuation: { messageId, text: "continue in the worktree" },
+                  },
+            );
+            const task = yield* originalTask;
+            assert.equal(task.status, "completed");
+            assert.notEqual(task.result, null);
+            // The finished task keeps its result; the new run owns a follow-up task.
+            const newRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs.find(
+              (run) => run.userMessageId === messageId,
+            )!;
+            assert.notEqual(newRun.id, childRunId);
+            assert.isDefined(newRun.delegatedTaskId);
+            assert.notEqual(newRun.delegatedTaskId, task.id);
+          }),
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a send to an interrupted delegated child dismisses the task's open question", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* afterChildRunEnds("question", "interrupted", true, ({ childThreadId, originalTask }) =>
+      Effect.gen(function* () {
+        yield* send(childThreadId, "carry on", "start_immediately");
+        assert.equal((yield* originalTask).status, "interrupted");
+        // Answered later, the question would otherwise steer the new run.
+        const [request] = (yield* orchestrator.getThreadProjection(childThreadId)).runtimeRequests;
+        assert.equal(request?.status, "resolved");
+        assert.equal(request?.decision, "cancel");
+      }),
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("a delegated task that cannot be stopped fails the walk after its siblings stop", () =>
