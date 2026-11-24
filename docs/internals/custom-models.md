@@ -226,7 +226,7 @@ transport) receive the removed names masked, so the merge cannot bring them back
 limitation: an instance variable whose name differs from an inherited one only in case (`path`
 beside `Path`) is set beside it, and the process may get the inherited value. Oh My Pi's
 processes use the same contract without that merge, plus OMP's own home, profile and
-session-directory handling (`docs/internals/providers.md`). `FACTORY_API_KEY` from the login or
+session-directory handling (`docs/internals/scient-providers.md`). `FACTORY_API_KEY` from the login or
 instance environment still reaches Droid; it is Droid's own documented authentication.
 
 ### Request limits

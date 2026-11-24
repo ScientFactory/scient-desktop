@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import "@fontsource-variable/inter";
 import "./index.css";
 
+import { trackKeyboardLayout } from "./keyboardLayout";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
@@ -13,6 +14,9 @@ import { chunkLoadState } from "./lib/chunkReloadGuard";
 // SCIENT-FORK:START — one tooltip timing for the whole app.
 import { AppTooltipTiming } from "./scient/presentation/AppTooltipTiming";
 // SCIENT-FORK:END
+
+const stopTrackingKeyboardLayout = trackKeyboardLayout();
+import.meta.hot?.dispose(stopTrackingKeyboardLayout);
 
 const router = startAppServices();
 

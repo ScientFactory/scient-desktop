@@ -19,15 +19,16 @@ breaking it. Do not ask again for an action already explicitly authorized.
   points before duplicating a capability in an app.
 - `.repos/`: read-only reference code; do not edit it or import from it.
 
-Architecture: [overview](docs/internals/overview.md); terminology:
-[glossary](docs/internals/glossary.md).
+Architecture: [01_architecture](docs/internals/01_architecture.md); terminology:
+[00_glossary](docs/internals/00_glossary.md). Before changing code in an area, read its numbered
+internal doc or Scient owner (`scient-*.md`); [docs/README.md](docs/README.md) indexes them.
 
 ## Shared quality defaults
 
 Read the relevant owner before choosing or changing an implementation:
 
 - For server features or transports—RPC, HTTP routes, MCP tools, scheduled tasks
-  and CLI entries—read [Effect services](docs/internals/effect-services.md).
+  and CLI entries—read [Effect services](docs/internals/02_effect-services.md).
   Capabilities live in services; transports only decode, call one service method
   and map errors. Protocol complexity belongs in adapters, not shared orchestration
   or presentation code.
@@ -37,11 +38,11 @@ Read the relevant owner before choosing or changing an implementation:
   for inline programs and layers. Preserve span names/options and pass combinators
   as builder arguments. Untraced work follows the guide's listed cases and explains
   its reason nearby; a loop alone is not an exemption.
-- For web controls/styles, read [web UI](docs/internals/web-ui.md). Shared controls
+- For web controls/styles, read [web UI](docs/internals/10_web-ui.md). Shared controls
   own their appearance: select a variant/size, not a restyling `className`.
   Generic new looks become shared variants; feature-only looks stay in that feature.
   Layout classes belong on the parent.
-- Before writing or reviewing tests, read [testing](docs/internals/testing.md).
+- Before writing or reviewing tests, read [testing](docs/internals/15_testing.md).
   The Scient coverage and clock-lifetime rules below define project policy;
   the guide supplies compatible authoring details and examples.
 
@@ -117,7 +118,7 @@ Use pinned versions/lockfile. `vp i` installs; `vp run dev` starts server/web.
 If `.t3/setup-running` identifies active setup, wait for `.t3/setup-done` or
 `.t3/setup-failed`; inspect failure rather than starting a second install.
 Do not overlap installs or heavy local suites. Commands/platform prerequisites:
-[development](docs/operations/development.md).
+[development](docs/operations/00_development.md).
 
 ### Verification
 
@@ -187,11 +188,12 @@ Prove flake fixes fail-before/pass-after under the same targeted slowness/probe:
 conditions, 6 for slow-runner conditions, 8 for stress; not a hardware guarantee).
 
 Prove a UI change with before/after screenshots of every screen it changes, in light
-and dark, checked against the [UI checklist](docs/internals/web-ui.md#ui-checklist);
+and dark, checked against the [UI checklist](docs/internals/10_web-ui.md#ui-checklist);
 capture the before-state before editing. The agent that opens the PR captures them,
 subagent or not.
 Verify user-visible frontend changes once after integration in a real browser or
-simulator without asking first, using synthetic state. The primary agent performs
+simulator without asking first, using synthetic state. For a user-reproducible bug, a
+[scenario](docs/internals/15_testing.md#scenarios) (`vp run scenarios:prove`) can be the real-app proof. The primary agent performs
 this pass; subagents do not launch duplicate dev servers. This does not override
 host/tool restrictions or authorize consequential actions. Mocks/markup do not prove
 real-provider/native compatibility; automated proof and the user's visual acceptance
@@ -295,8 +297,10 @@ Use [docs/README.md](docs/README.md) and its cross-repository links to locate re
 owners. Read them before working and check whether they describe current behavior,
 a proposal or history. Use available local/authenticated Scient access; external
 contributors need not obtain private-repository access.
-Keep current guidance distinct from proposals/history. Update facts/instructions when
-they change; document durable constraints, not field inventories or implementation
-narration. Keep temporary plans, transcripts, scratch and PR-only media out of
+Keep current guidance distinct from proposals/history. Most code changes need no
+internal-doc change. Internal docs hold decisions, cross-component constraints and traps
+the source cannot show, not field inventories, feature catalogs or implementation
+narration. When a documented decision changes, rewrite or remove the text rather than
+appending; a new internal page needs a distinct, durable reason. Keep temporary plans, transcripts, scratch and PR-only media out of
 committed source. PRs include `Documentation impact: None — reason`, `Updated — paths`,
 or `Dependent PR — repository and link`.

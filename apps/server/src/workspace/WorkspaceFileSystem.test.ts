@@ -174,27 +174,6 @@ const makeWslHost = Effect.gen(function* () {
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
-    it.effect("reads UTF-8 files relative to the workspace root", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
-
-        const result = yield* workspaceFileSystem.readFile({
-          cwd,
-          relativePath: "src/index.ts",
-        });
-
-        expect(result).toEqual({
-          relativePath: "src/index.ts",
-          contents: "export const answer = 42;\n",
-          byteLength: 26,
-          truncated: false,
-          revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-        });
-      }),
-    );
-
     // Windows cannot hold a file name that ends in a space.
     it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "reads the file a path names when a sibling differs only by a trailing space",
@@ -311,7 +290,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(result).toEqual({
           relativePath: "src/index.ts",
           contents: "export const answer = 42;\n",
-          revision: expect.any(String),
+          // SCIENT-FORK: a revision-checked save needs a well-formed token.
+          revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           byteLength: 26,
           truncated: false,
         });

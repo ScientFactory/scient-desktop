@@ -17,6 +17,8 @@ const MAX_OUTPUT_PIXELS = 32_000_000;
 const MAX_OUTPUT_SIDE = 16_384;
 const MAX_SOURCE_SIDE = 1 << 20;
 const MAX_SOURCE_PIXELS = 256_000_000;
+// Samples per pixel a preview fills BitsPerSample for; spectral stacks stay well under this.
+const MAX_FILLED_SAMPLES = 1024;
 // Peak memory stays under about 400 MiB. Decoding: values ≤128 MiB, one window ≤64 MiB counting
 // packed, unpacked and interleaved copies, compressed input ≤1.5× packed (≤96 MiB): ≤288 MiB.
 // Then values plus 128 MiB of RGBA at 32 MP: 256 MiB. PNG encoding holds the RGBA, the canvas and
@@ -138,9 +140,16 @@ function parseDescription(description: string | undefined): Description | null {
 async function openDirectory(tiff: GeoTIFF, offset: number) {
   const image = await new GeoTIFF(tiff.source, tiff.littleEndian, tiff.bigTiff, offset).getImage(0);
   // TIFF 6.0 defaults BitsPerSample to 1, as in bilevel files; geotiff has no default of its own.
+  // Some writers store one value for every sample, which geotiff applies to the first only. Only
+  // those two cases are filled in, and only for a sample count a preview can decode; a partial
+  // list of mixed widths is left for the decoder to refuse.
   const directory = image.getFileDirectory();
-  if (!directory.hasTag("BitsPerSample"))
-    directory.actualizedFields.set(258, Array<number>(image.getSamplesPerPixel()).fill(1));
+  const samples = image.getSamplesPerPixel();
+  const bits = directory.hasTag("BitsPerSample")
+    ? Array.from(directory.getValue("BitsPerSample") as ArrayLike<number>, Number)
+    : [];
+  if (bits.length <= 1 && samples > bits.length && samples <= MAX_FILLED_SAMPLES)
+    directory.actualizedFields.set(258, Array<number>(samples).fill(bits[0] ?? 1));
   return image;
 }
 
@@ -421,7 +430,12 @@ export async function readTiffPlane(
       : format === "float"
         ? ![16, 32, 64].includes(bits)
         : bits > 24 && bits !== 32;
-  if (unsupportedWidth || allBits.some((sampleBits) => sampleBits !== bits))
+  // Every sample needs its own stored width: a shorter list leaves a sample the budget never counted.
+  if (
+    unsupportedWidth ||
+    allBits.length !== image.getSamplesPerPixel() ||
+    allBits.some((sampleBits) => sampleBits !== bits)
+  )
     throw tiffPreviewError("This TIFF's sample width isn't supported for preview.");
   // Bits stored lowest first (FillOrder 2) are a fax convention geotiff does not reverse.
   if (Number((await directory.loadValue("FillOrder")) ?? 1) === 2)

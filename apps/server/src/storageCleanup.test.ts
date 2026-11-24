@@ -1282,14 +1282,39 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
       expect((yield* taskFolders.find(root))?.repositories).toHaveLength(2);
 
       yield* command(`${root}/dist/api`, ["checkout", "--", "tracked.txt"]);
+      // Git deletes the checkout, then fails on metadata it cannot delete.
+      const adminDir = (yield* command(`${root}/dist/api`, [
+        "rev-parse",
+        "--absolute-git-dir",
+      ])).stdout.trim();
+      const stuck = `${adminDir}/scratch`;
+      yield* fs.makeDirectory(stuck);
+      yield* fs.writeFileString(`${stuck}/f`, "x\n");
+      yield* fs.chmod(stuck, 0o555);
+      yield* Effect.addFinalizer(() => fs.chmod(stuck, 0o755).pipe(Effect.ignore));
       const second = yield* service.runNow;
 
       expect(second.entries.filter((entry) => entry.path?.startsWith(root))).toEqual(
         [`${root}/dist/api`, root].map((path) =>
-          expect.objectContaining({ path, outcome: "removed" }),
+          expect.objectContaining({ path, outcome: "kept" }),
         ),
       );
+      expect(yield* fs.exists(`${root}/dist/api`)).toBe(false);
+      // The checkout is gone, so the folder goes and only the record keeps the metadata in view.
+      expect(
+        (yield* service.runNow).entries.filter((entry) => entry.path?.startsWith(root)),
+      ).toEqual(
+        [
+          { path: `${root}/dist/api`, outcome: "failed" },
+          { path: root, outcome: "removed" },
+        ].map((entry) => expect.objectContaining(entry)),
+      );
       expect(yield* fs.exists(root)).toBe(false);
+      yield* fs.chmod(stuck, 0o755);
+      expect((yield* service.runNow).entries).toEqual([
+        expect.objectContaining({ path: `${root}/dist/api`, outcome: "removed" }),
+      ]);
+      expect(yield* fs.exists(adminDir)).toBe(false);
       expect(yield* fs.readFileString(`${api.path}/tracked.txt`)).toBe("original\n");
     }),
   ),
@@ -3410,6 +3435,154 @@ describe("storage cleanup reports and local file policies", () => {
           expect.objectContaining({ path: fixture.worktree, outcome: "kept" }),
         ]);
         expect(yield* fixture.fs.exists(`${fixture.worktree}/node_modules`)).toBe(true);
+      }),
+    ),
+  );
+  it.live("keeps reporting a worktree whose git metadata cannot be deleted", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const adminDir = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ])).stdout.trim();
+        // Stands in for root-owned files a container wrote into the worktree's git dir.
+        const stuck = `${adminDir}/scratch/fanal`;
+        yield* fixture.fs.makeDirectory(stuck, { recursive: true });
+        yield* fixture.fs.writeFileString(`${stuck}/f`, "x\n");
+        yield* fixture.fs.chmod(stuck, 0o555);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(stuck, 0o755).pipe(Effect.ignore));
+        yield* fixture.service.runNow;
+        // Git may delete these before it reaches the folder it cannot, and then stops listing
+        // the worktree.
+        yield* fixture.fs.remove(`${adminDir}/gitdir`, { force: true });
+        yield* fixture.fs.remove(`${adminDir}/HEAD`, { force: true });
+        const later = yield* fixture.service.runNow;
+        expect(later.entries).toEqual([
+          expect.objectContaining({
+            path: fixture.worktree,
+            outcome: expect.stringMatching(/^(kept|failed)$/),
+          }),
+        ]);
+        expect((yield* fixture.service.runNow).entries).toEqual(later.entries);
+        expect(yield* fixture.fs.exists(stuck)).toBe(true);
+        yield* fixture.fs.chmod(stuck, 0o755);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "removed" }),
+        ]);
+        expect(yield* fixture.fs.exists(adminDir)).toBe(false);
+        expect((yield* fixture.service.runNow).entries).toEqual([]);
+        // An unreadable record may still name leftovers, so it is reported and kept as it is.
+        const record = `${fixture.config.stateDir}/storage-cleanup-leftovers.json`;
+        yield* fixture.fs.writeFileString(record, "{");
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: record, outcome: "failed" }),
+        ]);
+        expect(yield* fixture.fs.readFileString(record)).toBe("{");
+      }),
+    ),
+  );
+  // SCIENT-FORK:START — leftover git metadata whose back-pointer cannot be read is kept.
+  it.live("keeps leftover git metadata whose back-pointer cannot be read", (context) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        if ((yield* HostProcess.isWindows) || (yield* HostProcess.UserId) === 0)
+          return context.skip();
+        const fixture = yield* cleanupFixture();
+        const adminDir = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ])).stdout.trim();
+        const stuck = `${adminDir}/scratch`;
+        yield* fixture.fs.makeDirectory(stuck);
+        yield* fixture.fs.writeFileString(`${stuck}/f`, "x\n");
+        yield* fixture.fs.chmod(stuck, 0o555);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(stuck, 0o755).pipe(Effect.ignore));
+        yield* fixture.service.runNow;
+        // The metadata could be deleted now, but nothing shows which checkout owns it.
+        yield* fixture.fs.chmod(stuck, 0o755);
+        const gitdir = `${adminDir}/gitdir`;
+        yield* fixture.fs.writeFileString(gitdir, `${fixture.worktree}/.git\n`);
+        yield* fixture.fs.chmod(gitdir, 0o000);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(gitdir, 0o644).pipe(Effect.ignore));
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "failed" }),
+        ]);
+        expect(yield* fixture.fs.exists(`${stuck}/f`)).toBe(true);
+        // Readable again, it names a checkout that is gone, so the next sweep deletes it.
+        yield* fixture.fs.chmod(gitdir, 0o644);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "removed" }),
+        ]);
+        expect(yield* fixture.fs.exists(adminDir)).toBe(false);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — a leftover's name that Git gave to a new worktree is kept.
+  it.live.each([
+    ["before it writes its back-pointer", false],
+    ["once its back-pointer names its checkout", true],
+  ] as const)("keeps a new worktree's git metadata that took a leftover's name %s", (_, linked) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const path = yield* Path.Path;
+        const adminDir = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ])).stdout.trim();
+        const stuck = `${adminDir}/scratch`;
+        yield* fixture.fs.makeDirectory(stuck);
+        yield* fixture.fs.writeFileString(`${stuck}/f`, "x\n");
+        yield* fixture.fs.chmod(stuck, 0o555);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(stuck, 0o755).pipe(Effect.ignore));
+        yield* fixture.service.runNow;
+        // Pruned by hand, then Git adds a worktree elsewhere under the same name; its metadata
+        // exists before its checkout does.
+        yield* fixture.fs.chmod(stuck, 0o755);
+        yield* fixture.command(fixture.repo, ["worktree", "prune"]);
+        expect(yield* fixture.fs.exists(adminDir)).toBe(false);
+        const elsewhere = `${fixture.config.worktreesDir}/elsewhere/${path.basename(fixture.worktree)}`;
+        yield* fixture.fs.makeDirectory(adminDir, { recursive: true });
+        yield* fixture.fs.writeFileString(`${adminDir}/locked`, "initializing\n");
+        if (linked) yield* fixture.fs.writeFileString(`${adminDir}/gitdir`, `${elsewhere}/.git\n`);
+        yield* fixture.service.runNow;
+        expect(yield* fixture.fs.readFileString(`${adminDir}/locked`)).toBe("initializing\n");
+        // The record is dropped with the leftover it named.
+        expect(
+          yield* fixture.fs.exists(`${fixture.config.stateDir}/storage-cleanup-leftovers.json`),
+        ).toBe(false);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
+  it.live("leaves git metadata that a recreated worktree took over from a failed removal", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const adminDir = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ])).stdout.trim();
+        const stuck = `${adminDir}/scratch`;
+        yield* fixture.fs.makeDirectory(stuck);
+        yield* fixture.fs.writeFileString(`${stuck}/f`, "x\n");
+        yield* fixture.fs.chmod(stuck, 0o555);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(stuck, 0o755).pipe(Effect.ignore));
+        yield* fixture.service.runNow;
+        // The user repairs and prunes the leftover, then the thread resumes under the same name.
+        yield* fixture.fs.chmod(stuck, 0o755);
+        yield* fixture.command(fixture.repo, ["worktree", "prune"]);
+        yield* fixture.command(fixture.repo, ["worktree", "add", fixture.worktree, "feature"]);
+        // Only the cleanup rules remove it now: its metadata is no longer a leftover.
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: fixture.worktree,
+            outcome: "removed",
+            reason: expect.stringMatching(/^Inactive for/),
+          }),
+        ]);
       }),
     ),
   );

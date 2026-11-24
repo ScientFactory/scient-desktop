@@ -219,7 +219,7 @@ Agents do not infer renderer capabilities from the UI. Scient's compact shared
 awareness contract names Mermaid, places the diagram declaration before its
 contents (not necessarily before valid frontmatter/comments), and distinguishes
 inline representation from a durable artifact. Provider delivery and capability gating are governed centrally by
-[the provider architecture](./providers.md#scient-awareness); the diagram
+[the provider architecture](./scient-providers.md#scient-awareness); the diagram
 renderer does not inject hidden user text or project instruction files.
 
 ## Platforms and fallback

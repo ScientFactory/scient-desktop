@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
-import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ReplayWorkspacePolicy from "./scient-fork/ReplayWorkspacePolicy.testkit.ts";
 import {
   CodexCapabilities,
   makeProviderSession,
@@ -66,7 +66,7 @@ it.effect.each([
         ProviderSwitch.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              RuntimePolicy.layer,
+              ReplayWorkspacePolicy.layerThreadWorktree,
               NodeServices.layer,
               Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
                 get: () => Effect.succeed(adapter),

@@ -433,6 +433,7 @@ describe("runUpdateEverything", () => {
       beganInstall = resolve;
     });
     const shell = {
+      onUpdateState: () => () => {},
       installUpdate: async () => {
         calls.push("install");
         beganInstall();
@@ -470,6 +471,7 @@ describe("runUpdateEverything", () => {
     const reported: string[] = [];
     const relaunching = await installDesktopUpdateNow(
       {
+        onUpdateState: () => () => {},
         installUpdate: async () => ({
           accepted: true,
           completed: false,

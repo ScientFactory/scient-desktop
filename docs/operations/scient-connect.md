@@ -2,7 +2,7 @@
 
 Scient Connect is T3 Connect run by Scient: the relay in `infra/relay`, Clerk sign-in, Cloudflare
 tunnels, and the hosted app. This page is the Scient runbook. The inherited
-[Connect setup reference](./connect-setup.md), [architecture note](../internals/t3-connect.md) and
+[Connect setup reference](./02_connect-setup.md), [architecture note](../internals/06_t3-connect.md) and
 [relay README](../../infra/relay/README.md) explain how the pieces work. Cloud copies and share
 links run on a separate Worker; see [Scient Cloud operations](./scient-cloud.md).
 

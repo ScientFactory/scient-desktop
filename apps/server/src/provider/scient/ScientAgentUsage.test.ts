@@ -394,7 +394,7 @@ describe("scientAgentUsageReader", () => {
       provider: "scient",
       records: [],
       tailRecords: [],
-      malformedRecords: 0,
+      malformedRecords: [],
       position: { resumeOffset: 10, guardLength: 4, guardHash: 1, state },
     });
     const saved = JSON.parse(

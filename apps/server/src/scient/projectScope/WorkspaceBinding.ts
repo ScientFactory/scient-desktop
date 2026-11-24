@@ -34,8 +34,34 @@ export const WorkspaceRepositoryEvidence = Schema.Struct({
   canonicalKey: Schema.NonEmptyString,
   source: Schema.Literal("git-remote"),
   remoteName: Schema.NonEmptyString,
+  /** Key of Git's `insteadOf`-rewritten fetch URL, present only when it differs. */
+  transportCanonicalKey: Schema.optional(Schema.NonEmptyString),
 });
 export type WorkspaceRepositoryEvidence = typeof WorkspaceRepositoryEvidence.Type;
+
+export const sameRepository = (
+  left: WorkspaceRepositoryEvidence,
+  right: WorkspaceRepositoryEvidence,
+): boolean => left.source === right.source && left.canonicalKey === right.canonicalKey;
+
+// A record written before evidence preferred the configured URL holds the rewritten
+// key and no transport key; only the same root's fresh observation may migrate it.
+const isLegacyTransportRecord = (
+  stored: WorkspaceRepositoryEvidence,
+  observed: WorkspaceRepositoryEvidence,
+): boolean =>
+  stored.transportCanonicalKey === undefined &&
+  observed.transportCanonicalKey !== undefined &&
+  stored.source === observed.source &&
+  stored.canonicalKey === observed.transportCanonicalKey;
+
+export const storedRepositoryMatchesObserved = (
+  stored: WorkspaceRepositoryEvidence | null,
+  observed: WorkspaceRepositoryEvidence | null,
+): boolean =>
+  stored === null || observed === null
+    ? stored === observed
+    : sameRepository(stored, observed) || isLegacyTransportRecord(stored, observed);
 
 /**
  * Exact checkout evidence retained from T3's VCS detection.

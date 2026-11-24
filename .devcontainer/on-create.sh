@@ -34,5 +34,5 @@ Scient devcontainer
                         open the pairing URL it prints (the bare forwarded
                         port will not authenticate)
 
-Details: docs/internals/devcontainer.md
+Details: docs/operations/01_devcontainer.md
 EOF

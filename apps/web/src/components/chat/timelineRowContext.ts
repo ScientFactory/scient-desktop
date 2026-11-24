@@ -5,6 +5,7 @@ import { type AgentPanelModel } from "@t3tools/client-runtime/state/subagentRunt
 import { type ChatMessage } from "../../types";
 // SCIENT-FORK:END
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import type {
   ProviderApprovalDecision,
   ResponseContextRecord,
@@ -136,6 +137,7 @@ export interface TimelineRowActivityState {
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
   providerStartingLabel: string | null;
+  providerStarting: NonNullable<ThreadRunSummary["providerStarting"]> | null;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   liveAnswerPreview: string | null;

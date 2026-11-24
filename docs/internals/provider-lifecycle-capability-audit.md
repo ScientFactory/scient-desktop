@@ -5,7 +5,7 @@
 > This document is evidence for the
 > [provider lifecycle architecture](./provider-lifecycle.md), not an
 > implementation contract and not proof that every listed path has passed packaged-app qualification.
-> Current behavior belongs to [Provider architecture](./providers.md) and
+> Current behavior belongs to [Provider architecture](./scient-providers.md) and
 > [Provider lifecycle architecture](./provider-lifecycle.md).
 > This ledger records what code and provider documentation at each dated boundary appeared to support, why some differences
 > should remain, and which gaps need more investigation. Revalidate the affected rows against the
@@ -36,7 +36,7 @@ account storage, denied/expired login and revocation remain unqualified.
 The Antigravity rows in the 2026-08-25 evidence below describe the retained **legacy `agy`**
 transport. They do not constrain the newly aligned official ACP implementation. Its selected
 OAuth/API-key methods, isolated profiles, remote callback URLs, paired installer, and five-target
-catalog are documented in [Provider architecture](./providers.md#antigravity-ownership-and-protocol)
+catalog are documented in [Provider architecture](./scient-providers.md#antigravity-ownership-and-protocol)
 and the current [lifecycle matrix](./provider-lifecycle.md). The ACP adapter and authentication
 engine come from T3; Scient supplies the management bridge and legacy-cursor routing. Native
 Apple-silicon install/initialize/activation/removal passed in a synthetic root. Hosted qualification
