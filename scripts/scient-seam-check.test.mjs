@@ -600,3 +600,96 @@ describe("Scient seam snapshot verification", () => {
     },
   );
 });
+
+describe("Scient tests placed in T3's test files", () => {
+  const t3File = "apps/app/feature.test.ts";
+  const t3Tests = [
+    'it("keeps the T3 case", () => {});',
+    "it.effect(",
+    '  "wraps a long T3 title onto its own line",',
+    "  () => Effect.void,",
+    ");",
+    'it.skipIf(process.platform === "win32")("skips the T3 case on Windows", () => {});',
+  ];
+  function placementFixture() {
+    const f = fixture();
+    f.write(t3File, `${t3Tests.join("\n")}\n`);
+    const upstream = f.commit();
+    f.write("upstream-state.json", JSON.stringify({ integrationBase: upstream }));
+    const base = f.commit();
+    const writeTests = (...lines) => f.write(t3File, `${[...t3Tests, ...lines].join("\n")}\n`);
+    const inspect = (args = ["--base", base]) => f.inspect(args, ["test-placement"]);
+    return { ...f, upstream, base, writeTests, inspect };
+  }
+
+  it.each([
+    ['it("a Scient case", () => {});'],
+    ['it.effect(\n  "a Scient case wrapped onto its own line",\n  () => Effect.void,\n);'],
+    ['it.skipIf(isWindows)("a Scient case", () => {});'],
+    ['test.each([1, 2])("a Scient case %s", () => {});'],
+  ])("asks for the sibling when a new test lands unmarked in a T3 file: %s", (test) => {
+    const f = placementFixture();
+    f.writeTests(test);
+    const result = f.inspect();
+    expect(result.checks[0].status).toBe("review-needed");
+    expect(f.messages(result)).toEqual([
+      expect.stringContaining(`put it in the .scient. sibling: ${t3File}: "a Scient case`),
+    ]);
+  });
+
+  it("accepts the same test in the sibling or inside a SCIENT-FORK region", () => {
+    const f = placementFixture();
+    f.write("apps/app/feature.scient.test.ts", 'it("a Scient case", () => {});\n');
+    f.writeTests(
+      "// SCIENT-FORK:START — needs this file's private harness",
+      'it("a Scient case", () => {});',
+      "// SCIENT-FORK:END",
+    );
+    expect(f.inspect().checks[0]).toMatchObject({ status: "passed", findings: [] });
+  });
+
+  it("counts a marker comment on one line as no region", () => {
+    const f = placementFixture();
+    f.writeTests('it("a Scient case", () => {}); // SCIENT-FORK: Scient behaviour');
+    expect(f.inspect().checks[0].status).toBe("review-needed");
+  });
+
+  it("treats a retitled test as an edit, not a new test", () => {
+    const f = placementFixture();
+    f.write(
+      t3File,
+      `${t3Tests.join("\n").replace("keeps the T3 case", "keeps the Scient case")}\n`,
+    );
+    expect(f.inspect().checks[0].status).toBe("passed");
+  });
+
+  it("knows tests an alignment brings from T3 and tests already on main", () => {
+    const f = placementFixture();
+    f.writeTests('it("an older Scient case", () => {});');
+    const main = f.commit();
+    f.git("checkout", "--quiet", f.upstream);
+    f.writeTests('it("a new T3 case", () => {});');
+    const nextUpstream = f.commit();
+    f.git("checkout", "--quiet", main);
+    f.writeTests('it("an older Scient case", () => {});', 'it("a new T3 case", () => {});');
+    f.write("upstream-state.json", JSON.stringify({ integrationBase: nextUpstream }));
+    expect(f.inspect(["--base", main]).checks[0].status).toBe("passed");
+    // The same line without the newer upstream is a Scient addition.
+    f.write("upstream-state.json", JSON.stringify({ integrationBase: f.upstream }));
+    expect(f.inspect(["--base", main]).checks[0].status).toBe("review-needed");
+  });
+
+  it("counts a second test with a T3 test's title as new", () => {
+    const f = placementFixture();
+    f.writeTests('it("keeps the T3 case", () => {});');
+    expect(f.inspect().checks[0].status).toBe("review-needed");
+  });
+
+  it("leaves Scient's own test files and inventory runs alone", () => {
+    const f = placementFixture();
+    f.write("apps/app/scient-only.test.ts", 'it("a Scient case", () => {});\n');
+    expect(f.inspect().checks[0].status).toBe("passed");
+    f.writeTests('it("a Scient case", () => {});');
+    expect(f.inspect([]).checks[0]).toMatchObject({ status: "passed", findings: [] });
+  });
+});

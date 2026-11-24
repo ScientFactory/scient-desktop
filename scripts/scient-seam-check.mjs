@@ -410,11 +410,84 @@ function check(name, ctx) {
   };
 }
 
+// A test declaration's title: `it(`, `test(`, modifiers such as `it.effect(` or
+// `it.skipIf(cond)(`, and a title on the next line as the formatter wraps it.
+const testDeclaration =
+  /^[ \t]*(?:it|test)(?:\.\w+(?:\([^()\n]*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
+const upstreamTestFile = (path) =>
+  /(^|\/)(__tests__\/|[^/]+\.(test|spec)\.[cm]?[jt]sx?$)/u.test(path) &&
+  !NodePath.posix.basename(path).includes(".scient.");
+
+function testTitles(source) {
+  const titles = [];
+  let line = 1;
+  let scanned = 0;
+  let depth = 0;
+  const regions = [];
+  for (const [index, text] of source.split("\n").entries()) {
+    if (text.includes("SCIENT-FORK:START")) depth += 1;
+    regions[index + 1] = depth > 0;
+    if (text.includes("SCIENT-FORK:END")) depth = Math.max(0, depth - 1);
+  }
+  for (const match of source.matchAll(testDeclaration)) {
+    for (; scanned < match.index; scanned += 1) if (source[scanned] === "\n") line += 1;
+    titles.push({ title: match[2], marked: regions[line] === true });
+  }
+  return titles;
+}
+
+const countTitles = (titles) => {
+  const counts = new Map();
+  for (const { title } of titles) counts.set(title, (counts.get(title) ?? 0) + 1);
+  return counts;
+};
+
+// A Scient test belongs in the file's `.scient.` sibling, which T3 never edits.
+// One that needs the T3 file's private helpers stays in a SCIENT-FORK region.
+// Counted per file, so retitling a test (one title out, one in) is not a new test,
+// and tests an alignment brings from T3 are known from the frozen upstream.
+function testPlacement(ctx) {
+  const findings = [];
+  if (!ctx.base) return { name: "test-placement", status: "passed", findings };
+  for (const path of ctx.changed) {
+    if (
+      path.startsWith(".repos/") ||
+      !upstreamTestFile(path) ||
+      !ctx.upstreamPaths.has(path) ||
+      !ctx.paths.has(path)
+    )
+      continue;
+    const headAll = testTitles(read(ctx.run, ctx.tree, path));
+    const base = ctx.basePaths.has(path) ? testTitles(read(ctx.run, ctx.base, path)) : [];
+    const known = countTitles(base);
+    for (const [title, count] of countTitles(testTitles(read(ctx.run, ctx.upstream, path))))
+      known.set(title, Math.max(count, known.get(title) ?? 0));
+    const remaining = new Map(known);
+    const added = [];
+    for (const { title } of headAll.filter(({ marked }) => !marked)) {
+      const left = remaining.get(title) ?? 0;
+      if (left > 0) remaining.set(title, left - 1);
+      else added.push(title);
+    }
+    const headTitles = countTitles(headAll);
+    let retitled = 0;
+    for (const [title, count] of countTitles(base))
+      retitled += Math.max(0, count - (headTitles.get(title) ?? 0));
+    if (added.length > retitled) {
+      findings.push({
+        kind: "review-needed",
+        message: `New test in T3's test file outside a SCIENT-FORK:START/END region; put it in the .scient. sibling: ${path}: ${added.map((title) => JSON.stringify(title)).join(", ")}`,
+      });
+    }
+  }
+  return { name: "test-placement", status: findings.length ? "review-needed" : "passed", findings };
+}
+
 // Public for fixture-based tests and other maintainer tooling. No output, fetch,
 // branch movement, checkout change, or persistent receipt/cache is performed.
 export function inspectScientSeams(
   argv = [],
-  { cwd = process.cwd(), names = Object.keys(definitions) } = {},
+  { cwd = process.cwd(), names = [...Object.keys(definitions), "test-placement"] } = {},
 ) {
   let ctx;
   const resources = { directory: null };
@@ -424,6 +497,7 @@ export function inspectScientSeams(
     ctx.diffs = readDiffs(ctx);
     const checks = names.map((name) => {
       try {
+        if (name === "test-placement") return testPlacement(ctx);
         if (!Object.hasOwn(definitions, name)) throw new Error(`Unknown seam: ${name}`);
         return check(name, ctx);
       } catch (error) {
@@ -435,7 +509,8 @@ export function inspectScientSeams(
       }
     });
     return {
-      scope: "seam locators and changed-path classification, not behavioral or ancestry proof",
+      scope:
+        "seam locators, changed-path classification and test placement, not behavioral or ancestry proof",
       context: {
         base: ctx.base,
         head: ctx.head,

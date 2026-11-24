@@ -331,7 +331,8 @@ Every changed line in a file that exists upstream is a future conflict. Change o
    schemes, the `scient/` branch prefix, commit identity, process names and displayed paths;
 3. a required behavior change, inside `SCIENT-FORK:START` … `SCIENT-FORK:END`;
 4. the minimal test edit asserting one of the above, including fixtures and test titles that
-   encode a Scient policy; or
+   encode a Scient policy (a new Scient test is not an edit: it goes in the `.scient.` sibling,
+   or, when it needs the file's private helpers, inside `SCIENT-FORK:START` … `SCIENT-FORK:END`); or
 5. a comment the change would otherwise make false. Prefer a marker comment over rewriting
    upstream prose; if prose must change, change only the false words and never re-wrap it.
 
@@ -516,7 +517,10 @@ add `--snapshot index` for staged content or `--head <candidate-sha>` for an exa
 Without `--base`, the result checks current locators only and explicitly does **not** audit a
 changed-file diff. The local snapshot uses private temporary Git index/objects and includes
 deletions and non-ignored untracked files. Reference snapshots under `.repos/` are counted but
-not scanned as product code. The command reports `passed`, `review-needed`, `failed`, or
+not scanned as product code. It also checks test placement: a test whose title neither the base
+nor the frozen upstream has, added to a T3 test file outside a `SCIENT-FORK:START`/`END`
+region, is `review-needed`. Retitling a test counts as an edit, and tests an alignment brings
+from T3 are known from the upstream. The command reports `passed`, `review-needed`, `failed`, or
 `unavailable`; it proves neither behavior nor ancestry. A moved locator is a review signal:
 trace the new implementation and callers, update the manifest only after establishing the same
 behavior, then rerun the behavioral tests. Never remove an assertion just to turn the gate green.
