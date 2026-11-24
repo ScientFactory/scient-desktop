@@ -39,7 +39,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDb
 ) {
   override get message(): string {
     // SCIENT-FORK: the guard covers Scient's homes too.
-    return "Refusing to write a live T3 or Scient home's database. Use an isolated --base-dir.";
+    return "Refusing to write a database outside a Git checkout or temp folder, or linked to a live one. Use an isolated --base-dir.";
   }
 }
 
@@ -132,9 +132,11 @@ export interface RunMigrateDevDbInput {
 export interface RunMigrateDevDbOptions {
   /** Test override for the directory writes must never target. */
   readonly sharedHome?: string | undefined;
-  // SCIENT-FORK:START — Scient's live home is never pruned either.
-  /** Test override for the Scient home whose databases pruning must never target. */
+  // SCIENT-FORK:START — writes need a scratch destination.
+  /** Test override for the Scient home whose databases writes must never target. */
   readonly scientHome?: string | undefined;
+  /** Test override for the temp folders that count as scratch (default: the system's). */
+  readonly scratchRoots?: ReadonlyArray<string> | undefined;
   // SCIENT-FORK:END
 }
 
@@ -373,11 +375,11 @@ export class MigrateDevDbResumableWorkError extends Schema.TaggedError<MigrateDe
   }
 }
 
-// SCIENT-FORK:START — every write path refuses a live home's database.
+// SCIENT-FORK:START — every write path needs a scratch destination.
 /**
- * Fails unless `databasePath` is a scratch copy: outside every T3 and Scient home (any profile;
- * Scient's managed checkouts are scratch) and no hard link to their databases. Paths compare
- * where they lead, so a symlink, `..` or another letter case cannot name a live database.
+ * Fails unless `databasePath` is scratch: inside a Git checkout (a worktree's dev home) or the
+ * system temp folder, and no hard link to a T3 or Scient home's database. A stopped profile can
+ * live anywhere, so scratch is proven, not guessed from where homes usually are.
  */
 const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
   databasePath: string,
@@ -387,6 +389,7 @@ const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
+  // Where a path leads, so a symlink, `..` or another letter case cannot slip past.
   const resolve = (file: string) =>
     fs.realPath(file).pipe(
       Effect.catch(() =>
@@ -398,46 +401,45 @@ const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
     );
   const comparable = (resolved: string) =>
     platform === "linux" ? resolved : resolved.toLowerCase();
+  const target = yield* resolve(databasePath);
+  const scratchRoots = yield* Effect.forEach(options.scratchRoots ?? [NodeOS.tmpdir()], resolve);
+  const inTemp = scratchRoots.some((root) =>
+    comparable(target).startsWith(`${comparable(root)}${path.sep}`),
+  );
+  let inCheckout = false;
+  if (!inTemp) {
+    for (let dir = path.dirname(target); !inCheckout; dir = path.dirname(dir)) {
+      inCheckout = yield* fs.exists(path.join(dir, ".git")).pipe(Effect.orElseSucceed(() => false));
+      if (path.dirname(dir) === dir) break;
+    }
+  }
+  if (!inTemp && !inCheckout) return yield* new MigrateDevDbSharedHomeError();
+  // A hard link has its own path, so the file itself is compared with every known live database.
+  const expandHome = (home: string) =>
+    home === "~" || home.startsWith("~/") ? path.join(NodeOS.homedir(), home.slice(1)) : home;
+  const homes = [
+    options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"),
+    options.scientHome ?? path.join(NodeOS.homedir(), SCIENT_DESKTOP_IDENTITY.baseDirName),
+    environment.T3CODE_HOME,
+    environment.SCIENT_NEXT_HOME,
+  ].flatMap((home) => (home ? [path.resolve(expandHome(home))] : []));
   const identity = (file: string) =>
     fs.stat(file).pipe(
       Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
       Effect.orElseSucceed(() => Option.none<string>()),
     );
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  const scientHome = path.resolve(
-    options.scientHome ?? path.join(NodeOS.homedir(), SCIENT_DESKTOP_IDENTITY.baseDirName),
-  );
-  // Homes a server reads its state from: the defaults, and any home this shell points at.
-  const homes = [
-    sharedHome,
-    scientHome,
-    ...(options.sharedHome === undefined && options.scientHome === undefined
-      ? [environment.T3CODE_HOME, environment.SCIENT_NEXT_HOME].filter(
-          (home): home is string => home !== undefined && home.length > 0,
-        )
-      : []),
-  ];
-  const target = comparable(yield* resolve(databasePath));
-  const resolvedHomes = yield* Effect.forEach(homes, (home) =>
-    resolve(home).pipe(Effect.map(comparable)),
-  );
-  const managedCheckouts = comparable(path.join(yield* resolve(scientHome), "worktrees"));
-  const inside = (directory: string) => target.startsWith(`${directory}${path.sep}`);
-  if (resolvedHomes.some(inside) && !inside(managedCheckouts)) {
-    return yield* new MigrateDevDbSharedHomeError();
-  }
+  const targetIdentity = yield* identity(databasePath);
+  if (Option.isNone(targetIdentity)) return;
   const liveDatabases = homes.flatMap((home) =>
     ["userdata", SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName].map((stateDir) =>
       path.join(home, stateDir, "statev2.sqlite"),
     ),
   );
-  const targetIdentity = yield* identity(databasePath);
   const liveIdentities = yield* Effect.forEach(
     liveDatabases.flatMap((database) => [database, `${database}-wal`, `${database}-shm`]),
     identity,
   );
   if (
-    Option.isSome(targetIdentity) &&
     liveIdentities.some(
       (candidate) => Option.isSome(candidate) && candidate.value === targetIdentity.value,
     )
