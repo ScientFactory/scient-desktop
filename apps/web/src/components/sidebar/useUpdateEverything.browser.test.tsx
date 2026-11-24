@@ -24,7 +24,8 @@ type TestEnvironment = {
   label: string;
   serverConfig: NonNullable<UpdateEverythingMachine["serverConfig"]>;
   connection: { phase: "connected" | "offline" };
-  entry: { target: { _tag: "SshConnectionTarget" } };
+  // A real saved connection always says whether it is switched on; off ones are skipped.
+  entry: { enabled: boolean; target: { _tag: "SshConnectionTarget" } };
 };
 
 const testState = vi.hoisted(() => ({
@@ -222,7 +223,7 @@ function environment(id: string, selfUpdate: ServerSelfUpdateCapability): TestEn
       settings: { continueThreadsAfterServerUpdate: true },
     },
     connection: { phase: "connected" },
-    entry: { target: { _tag: "SshConnectionTarget" } },
+    entry: { enabled: true, target: { _tag: "SshConnectionTarget" } },
   };
 }
 
@@ -843,7 +844,10 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
         base.serverConfig.environment.capabilities;
       return {
         ...base,
-        entry: { target: { _tag: tag, connectionId: id } } as TestEnvironment["entry"],
+        entry: {
+          enabled: true,
+          target: { _tag: tag, connectionId: id },
+        } as TestEnvironment["entry"],
         serverConfig: {
           ...base.serverConfig,
           environment: { ...base.serverConfig.environment, capabilities },
@@ -872,6 +876,38 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
       { environmentId: "bearer", label: "bearer", skipped: "needs a manual update" },
     ]);
   });
+});
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — T3's "turned off" skip reads the saved connection in Scient's composed hook.
+it("skips a server whose saved connection is turned off and updates the rest", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const off = environment("off", "boot-service");
+  testState.environments = [
+    { ...off, entry: { ...off.entry, enabled: false } },
+    environment("on", "boot-service"),
+  ];
+  for (const id of ["off", "on"]) {
+    testState.sessions.set(
+      id,
+      Atom.make<AsyncResult.AsyncResult<AuthSessionState, never>>(AsyncResult.success(session)),
+    );
+  }
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
+  });
+  expect(
+    _fixture.current!.rows.map(({ environmentId, skipped }) => ({ environmentId, skipped })),
+  ).toEqual([
+    { environmentId: "on", skipped: null },
+    { environmentId: "off", skipped: "turned off" },
+  ]);
 });
 // SCIENT-FORK:END
 
