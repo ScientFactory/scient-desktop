@@ -29,6 +29,8 @@ const MAXIMUM_WRITTEN_FILES = 128;
 const MAXIMUM_IMAGE_BYTES = 8 * 1024 * 1024;
 // File clocks lag the wall clock by up to a kernel tick, and FAT keeps times to two seconds.
 const FINE_TIME_SLACK_NS = 50_000_000n;
+/** Linux stamps files from a coarse clock that can trail the wall clock by one tick. */
+const CLOCK_TICK_SLACK_NS = 10_000_000n;
 const COARSE_TIME_SLACK_NS = 2_000_000_000n;
 const FALLBACK_SCAN_ENTRIES = 16_384;
 const FALLBACK_SCAN_TIME_MS = 750;
@@ -195,8 +197,8 @@ async function scanRecentOutputs(
         const metadata = await NodeFSP.lstat(path, { bigint: true }).catch(() => null);
         if (
           metadata !== null &&
-          (metadata.mtimeNs >= since ||
-            metadata.ctimeNs >= since ||
+          (metadata.mtimeNs >= since - CLOCK_TICK_SLACK_NS ||
+            metadata.ctimeNs >= since - CLOCK_TICK_SLACK_NS ||
             (limits.timestampSlack && changedSince(metadata, since)))
         ) {
           files.push(path);
