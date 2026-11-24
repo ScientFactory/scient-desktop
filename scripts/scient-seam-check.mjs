@@ -415,7 +415,7 @@ function check(name, ctx) {
 // onto the next line. A title held in a variable, or new cases added to an existing
 // `.each` table, are out of reach of this text scan; review catches those.
 const testDeclaration =
-  /^[ \t]*(?:it|test)(?:\.\w+(?:\((?:[^()]|\([^()]*\))*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
+  /^[ \t]*(?:it|test)(?:\.\w+(?:<[^<>()\n]*>)?(?:\((?:[^()]|\([^()]*\))*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
 const t3TestFile = (path) => /(^|\/)(__tests__\/.+|[^/]+\.(test|spec))\.[cm]?[jt]sx?$/u.test(path);
 // A marker is a comment line that starts with it, as every region in T3's test files
 // is written, and counts only as a START…END pair: an unclosed START marks nothing.
@@ -454,8 +454,8 @@ const countTitles = (titles) => {
 };
 
 // A Scient test goes in the `.scient.` sibling, or in a SCIENT-FORK region when it
-// needs the file's private helpers. A title the base or T3 has is not new. Each
-// expected test (T3's now, or Scient's own) the head drops offsets one new title.
+// needs the file's private helpers. Counted per title, line-based; each expected test
+// the change drops offsets one new title, as a retitle.
 function testPlacement(ctx) {
   const findings = [];
   if (!ctx.base) return { name: "test-placement", status: "passed", findings };
@@ -475,28 +475,26 @@ function testPlacement(ctx) {
       !ctx.paths.has(path)
     )
       continue;
-    const head = testTitles(read(ctx.run, ctx.tree, path));
-    const base = titlesAt(ctx.base, ctx.basePaths, path);
+    const headTests = testTitles(read(ctx.run, ctx.tree, path));
+    const head = countTitles(headTests);
+    const headUnmarked = countTitles(headTests.filter(({ marked }) => !marked));
+    const baseTests = ctx.basePaths.has(path) ? testTitles(read(ctx.run, ctx.base, path)) : [];
+    const base = countTitles(baseTests);
+    const baseUnmarked = countTitles(baseTests.filter(({ marked }) => !marked));
     const previous = titlesAt(baseUpstream, baseUpstreamPaths, path);
-    const expected = titlesAt(ctx.upstream, ctx.upstreamPaths, path);
-    for (const [title, count] of base) {
-      const scient = count - (previous.get(title) ?? 0);
-      if (scient > 0) expected.set(title, (expected.get(title) ?? 0) + scient);
-    }
-    // Anything the base or T3 has is not new; only the expected tests offset a drop.
-    const remaining = new Map(base);
-    for (const [title, count] of expected)
-      remaining.set(title, Math.max(count, remaining.get(title) ?? 0));
+    const upstream = titlesAt(ctx.upstream, ctx.upstreamPaths, path);
     const added = [];
-    for (const { title } of head.filter(({ marked }) => !marked)) {
-      const left = remaining.get(title) ?? 0;
-      if (left > 0) remaining.set(title, left - 1);
-      else added.push(title);
-    }
-    const headCounts = countTitles(head);
     let dropped = 0;
-    for (const [title, count] of expected)
-      dropped += Math.max(0, count - (headCounts.get(title) ?? 0));
+    for (const title of new Set([...head.keys(), ...base.keys(), ...upstream.keys()])) {
+      const [h, b, p, u] = [head, base, previous, upstream].map((m) => m.get(title) ?? 0);
+      // Unmarked occurrences beyond what the base had unmarked or T3 has now are new.
+      const extra = (headUnmarked.get(title) ?? 0) - Math.max(baseUnmarked.get(title) ?? 0, u);
+      for (let i = 0; i < extra; i += 1) added.push(title);
+      // Only a test this change drops offsets one: the base's T3 tests T3 still has,
+      // tests T3 added since the base, and Scient's own.
+      const expected = Math.min(b, p, u) + Math.max(0, u - p) + Math.max(0, b - p);
+      dropped += Math.max(0, expected - h);
+    }
     if (added.length > dropped) {
       findings.push({
         kind: "review-needed",

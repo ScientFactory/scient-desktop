@@ -629,6 +629,7 @@ describe("Scient tests placed in T3's test files", () => {
     ['test.each([1, 2])("a Scient case %s", () => {});'],
     ['it.for([\n  { input: 1 },\n  { input: 2 },\n])("a Scient case $input", () => {});'],
     ['it.prop({ x: fc.integer() })("a Scient case", () => {});'],
+    ['it.each<number>([1, 2])("a Scient case %s", () => {});'],
   ])("asks for the sibling when a new test lands unmarked in a T3 file: %s", (test) => {
     const f = placementFixture();
     f.writeTests(test);
@@ -738,6 +739,31 @@ describe("Scient tests placed in T3's test files", () => {
       'it("a new T3 case for this Scient home", () => {});',
     );
     f.write("upstream-state.json", JSON.stringify({ integrationBase: nextUpstream }));
+    expect(f.inspect(["--base", main]).checks[0].status).toBe("passed");
+  });
+
+  it("gives no credit for a retitle an earlier change made", () => {
+    const f = placementFixture();
+    const retitled = t3Tests.join("\n").replace("keeps the T3 case", "keeps the Scient case");
+    f.write(t3File, `${retitled}\n`);
+    const main = f.commit();
+    f.write(t3File, `${retitled}\nit("a Scient case", () => {});\n`);
+    expect(f.inspect(["--base", main]).checks[0].status).toBe("review-needed");
+  });
+
+  it("does not let a marked test's title cover an unmarked copy, but allows the reverse", () => {
+    const f = placementFixture();
+    const region = ["// SCIENT-FORK:START", 'it("a Scient case", () => {});', "// SCIENT-FORK:END"];
+    f.writeTests(...region);
+    const main = f.commit();
+    f.writeTests(...region, 'it("a Scient case", () => {});');
+    expect(f.inspect(["--base", main]).checks[0].status).toBe("review-needed");
+    f.writeTests(
+      ...region,
+      "// SCIENT-FORK:START",
+      'it("keeps the T3 case", () => {});',
+      "// SCIENT-FORK:END",
+    );
     expect(f.inspect(["--base", main]).checks[0].status).toBe("passed");
   });
 
