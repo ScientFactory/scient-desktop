@@ -104,6 +104,14 @@ jobs:
         # to two minutes, the project's ceiling, so real programs get five.
         run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
 
+      # Stopping a run must end every process it started, on each computer's own process model.
+      - name: Clean up process trees
+        if: ${{ !cancelled() && matrix.group == 'scripts' }}
+        working-directory: apps/server
+        run: >-
+          vp test run src/scient/execution/LocalExecutionProcess.test.ts
+          src/scient/execution/LocalDuplexProcess.test.ts --maxWorkers=1
+
       - name: Languages not installed
         if: ${{ !cancelled() && env.SCIENT_RUN_LANGUAGES_NOT_INSTALLED != '' }}
         run: |

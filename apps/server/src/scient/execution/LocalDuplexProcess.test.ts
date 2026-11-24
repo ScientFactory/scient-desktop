@@ -21,6 +21,10 @@ const Live = layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const encoder = new TextEncoder();
 
+// Windows always passes PATH and a few system variables to a child, so the tests use their own.
+const HOST_ONLY = "SCIENT_DUPLEX_TEST_HOST_ONLY";
+NodeProcess.env[HOST_ONLY] = "1";
+
 /** Answers every line on stdout, comments on it on stderr, and stays alive. */
 const echoFixture = [
   "process.stdin.setEncoding('utf8');",
@@ -172,7 +176,7 @@ describe("LocalDuplexProcess", () => {
           processes.start({
             processId: DuplexProcessId.make("duplex-extend-env-false"),
             executable: NodeProcess.execPath,
-            args: ["-e", "process.stdout.write(process.env.PATH ? 'present' : 'absent')"],
+            args: ["-e", `process.stdout.write(process.env.${HOST_ONLY} ? 'present' : 'absent')`],
             cwd: NodeProcess.cwd(),
             environment: {},
             extendEnv: false,
@@ -198,7 +202,7 @@ describe("LocalDuplexProcess", () => {
           processes.start({
             processId: DuplexProcessId.make("duplex-extend-env-default"),
             executable: NodeProcess.execPath,
-            args: ["-e", "process.stdout.write(process.env.PATH ? 'present' : 'absent')"],
+            args: ["-e", `process.stdout.write(process.env.${HOST_ONLY} ? 'present' : 'absent')`],
             cwd: NodeProcess.cwd(),
             environment: {},
           }),
