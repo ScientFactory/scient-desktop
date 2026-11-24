@@ -38,7 +38,8 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDb
   {},
 ) {
   override get message(): string {
-    return "Refusing to rebuild the shared ~/.t3 database. Use an isolated --base-dir.";
+    // SCIENT-FORK: the guard covers Scient's homes too.
+    return "Refusing to write a live T3 or Scient home's database. Use an isolated --base-dir.";
   }
 }
 
@@ -372,18 +373,20 @@ export class MigrateDevDbResumableWorkError extends Schema.TaggedError<MigrateDe
   }
 }
 
+// SCIENT-FORK:START — every write path refuses a live home's database.
 /**
- * Drops, in place, every thread family a server started on `databasePath` would resume, and fails
- * if any remain. A database seeded by an older checkout can miss a recovery kind added since.
+ * Fails unless `databasePath` is a scratch copy: outside every T3 and Scient home (any profile;
+ * Scient's managed checkouts are scratch) and no hard link to their databases. Paths compare
+ * where they lead, so a symlink, `..` or another letter case cannot name a live database.
  */
-export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(function* (
+const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
   databasePath: string,
-  options: RunMigrateDevDbOptions = {},
+  options: RunMigrateDevDbOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
-  // A symlink, `..` or another letter case can name the live database; compare where they lead.
+  const environment = yield* HostProcess.Environment;
   const resolve = (file: string) =>
     fs.realPath(file).pipe(
       Effect.catch(() =>
@@ -395,39 +398,71 @@ export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(fun
     );
   const comparable = (resolved: string) =>
     platform === "linux" ? resolved : resolved.toLowerCase();
-  // A hard link has its own path, so the file itself is compared too.
   const identity = (file: string) =>
     fs.stat(file).pipe(
       Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
       Effect.orElseSucceed(() => Option.none<string>()),
     );
   const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  // SCIENT-FORK:START — the Scient app's and dev app's databases are live too.
   const scientHome = path.resolve(
     options.scientHome ?? path.join(NodeOS.homedir(), SCIENT_DESKTOP_IDENTITY.baseDirName),
   );
-  const liveDatabases = [
-    path.join(sharedHome, "userdata", "statev2.sqlite"),
-    path.join(scientHome, "userdata", "statev2.sqlite"),
-    path.join(scientHome, SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName, "statev2.sqlite"),
+  // Homes a server reads its state from: the defaults, and any home this shell points at.
+  const homes = [
+    sharedHome,
+    scientHome,
+    ...(options.sharedHome === undefined && options.scientHome === undefined
+      ? [environment.T3CODE_HOME, environment.SCIENT_NEXT_HOME].filter(
+          (home): home is string => home !== undefined && home.length > 0,
+        )
+      : []),
   ];
-  const target = yield* resolve(databasePath);
-  const live = yield* Effect.forEach(liveDatabases, resolve);
-  const targetIdentity = yield* identity(target);
+  const target = comparable(yield* resolve(databasePath));
+  const resolvedHomes = yield* Effect.forEach(homes, (home) =>
+    resolve(home).pipe(Effect.map(comparable)),
+  );
+  const managedCheckouts = comparable(path.join(yield* resolve(scientHome), "worktrees"));
+  const inside = (directory: string) => target.startsWith(`${directory}${path.sep}`);
+  if (resolvedHomes.some(inside) && !inside(managedCheckouts)) {
+    return yield* new MigrateDevDbSharedHomeError();
+  }
+  const liveDatabases = homes.flatMap((home) =>
+    ["userdata", SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName].map((stateDir) =>
+      path.join(home, stateDir, "statev2.sqlite"),
+    ),
+  );
+  const targetIdentity = yield* identity(databasePath);
   const liveIdentities = yield* Effect.forEach(
     liveDatabases.flatMap((database) => [database, `${database}-wal`, `${database}-shm`]),
     identity,
   );
-  // SCIENT-FORK:END
   if (
-    live.some((database) => comparable(target) === comparable(database)) ||
-    (Option.isSome(targetIdentity) &&
-      liveIdentities.some(
-        (candidate) => Option.isSome(candidate) && candidate.value === targetIdentity.value,
-      ))
+    Option.isSome(targetIdentity) &&
+    liveIdentities.some(
+      (candidate) => Option.isSome(candidate) && candidate.value === targetIdentity.value,
+    )
   ) {
     return yield* new MigrateDevDbSharedHomeError();
   }
+});
+// SCIENT-FORK:END
+
+/**
+ * Drops, in place, every thread family a server started on `databasePath` would resume, and fails
+ * if any remain. A database seeded by an older checkout can miss a recovery kind added since.
+ */
+export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(function* (
+  databasePath: string,
+  options: RunMigrateDevDbOptions = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // SCIENT-FORK: one guard for every write path (refuseLiveDatabase).
+  yield* refuseLiveDatabase(databasePath, options);
+  // Where the path leads, so the server-state check and the writes use the real file.
+  const target = yield* fs
+    .realPath(databasePath)
+    .pipe(Effect.orElseSucceed(() => path.resolve(databasePath)));
   // Beside the real file, where a running server keeps its runtime state.
   yield* ensureNotInUse(target);
   return yield* Effect.gen(function* () {
@@ -664,6 +699,8 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   if (canonicalBaseDir === canonicalSharedHome) {
     return yield* new MigrateDevDbSharedHomeError();
   }
+  // SCIENT-FORK: a rebuild writes the database in place, like pruning.
+  yield* refuseLiveDatabase(databasePath, options);
   // Both destination and snapshot are deleted below; reject sources resolving to either.
   const canonicalSourcePath = yield* fs
     .realPath(sourcePath)

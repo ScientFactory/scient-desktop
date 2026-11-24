@@ -318,23 +318,69 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
-  // SCIENT-FORK:START — Scient's live and dev app databases are refused like T3's.
-  it.effect.each(["userdata", "scient-next-dev"])(
-    "refuses to drop from the Scient %s database",
-    (stateDir) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-home-" });
-        const scientHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-scient-" });
-        const fixture = yield* createFixtureSource(scientHome);
-        const live = path.join(scientHome, stateDir, "statev2.sqlite");
-        yield* fs.makeDirectory(path.dirname(live), { recursive: true });
-        yield* fs.rename(fixture, live);
+  // SCIENT-FORK:START — every write path refuses a database in a T3 or Scient home.
+  it.effect.each([
+    "userdata",
+    "scient-next-dev",
+    "dev-identity/scient-next-dev",
+    "a-custom-profile/userdata",
+  ])("refuses to drop from or rebuild the Scient home's %s database", (stateDir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-home-" });
+      const scientHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-scient-" });
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
+      const source = yield* createFixtureSource(sourceDir);
+      const live = path.join(scientHome, stateDir, "statev2.sqlite");
+      yield* fs.makeDirectory(path.dirname(live), { recursive: true });
+      yield* fs.copyFile(source, live);
+      const before = yield* fs.readFile(live);
 
-        const refused = yield* Effect.flip(dropResumableFamilies(live, { sharedHome, scientHome }));
-        assert.equal(refused._tag, "MigrateDevDbSharedHomeError");
-      }),
+      const pruned = yield* Effect.flip(dropResumableFamilies(live, { sharedHome, scientHome }));
+      assert.equal(pruned._tag, "MigrateDevDbSharedHomeError");
+      const [baseDir, stateDirName] = [
+        path.dirname(path.dirname(live)),
+        path.basename(path.dirname(live)),
+      ];
+      const rebuilt = yield* Effect.flip(
+        runMigrateDevDb(
+          {
+            baseDir,
+            developmentState: stateDirName === SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName,
+            source,
+            projects: 1,
+            threadsPerProject: 0,
+          },
+          { sharedHome, scientHome },
+        ),
+      );
+      assert.equal(rebuilt._tag, "MigrateDevDbSharedHomeError");
+      assert.deepStrictEqual(yield* fs.readFile(live), before);
+    }),
+  );
+
+  it.effect("prunes a copy inside a checkout Scient manages under its home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-home-" });
+      const scientHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-scient-" });
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
+      const copy = path.join(
+        scientHome,
+        "worktrees",
+        "project",
+        "repo",
+        ".t3",
+        "userdata",
+        "statev2.sqlite",
+      );
+      yield* fs.makeDirectory(path.dirname(copy), { recursive: true });
+      yield* fs.copyFile(yield* createFixtureSource(sourceDir), copy);
+
+      assert.equal(yield* dropResumableFamilies(copy, { sharedHome, scientHome }), 4);
+    }),
   );
   // SCIENT-FORK:END
 
