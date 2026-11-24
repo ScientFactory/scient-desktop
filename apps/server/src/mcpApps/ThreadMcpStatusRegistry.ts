@@ -25,8 +25,8 @@ import * as Stream from "effect/Stream";
 /** Bounded thread retention so idle history cannot grow server memory without bound. */
 const MAX_RETAINED_THREADS = 1_024;
 const MAX_SERVERS_PER_THREAD = 256;
-/** Longer names exceed the row contract (`source:name` ids stay within 200) and are not shown. */
-const MAX_SERVER_NAME_LENGTH = 180;
+/** The longest name an MCP sign-in accepts; longer ones are not shown. */
+const MAX_SERVER_NAME_LENGTH = 256;
 const MAX_DISPLAY_LENGTH = 200;
 const fitsRow = (server: NativeMcpServerInput) =>
   server.name.trim().length > 0 && server.name.length <= MAX_SERVER_NAME_LENGTH;

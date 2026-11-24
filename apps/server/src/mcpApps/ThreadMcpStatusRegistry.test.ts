@@ -223,9 +223,9 @@ describe("ThreadMcpStatusRegistry", () => {
     Effect.gen(function* () {
       const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
       const attachment = yield* registry.attach(attachInput("session-1"));
-      // Too long for a row id while there is still room: not shown.
+      // Longer than any sign-in may name a server: not shown.
       yield* registry.upsertNative(attachment, {
-        name: "x".repeat(194),
+        name: "x".repeat(257),
         source: "native",
         status: "ready",
       });

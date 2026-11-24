@@ -39,8 +39,9 @@ export const ThreadMcpServerActionKind = Schema.Literals([
 export type ThreadMcpServerActionKind = typeof ThreadMcpServerActionKind.Type;
 
 export const ThreadMcpServerObservation = Schema.Struct({
-  id: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  /** `source:name`; a name is as long as a sign-in may name it (256). */
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(272)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   displayName: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   source: ThreadMcpServerSource,
   status: ThreadMcpServerStatusKind,
