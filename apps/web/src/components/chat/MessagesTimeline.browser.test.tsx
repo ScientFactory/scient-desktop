@@ -661,6 +661,66 @@ describe("MessagesTimeline messages", () => {
     }
   });
 
+  it("keeps the visible sentence when rows remeasure to the list's end after a width change", async () => {
+    setup();
+    const size = { width: window.innerWidth, height: window.innerHeight };
+    onTestFinished(() => page.viewport(size.width, size.height));
+    await page.viewport(1200, 1400);
+    const props = { ...baseProps(), liveFollowEnabled: false };
+    const paragraphs = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `Paragraph ${index + 1}. ${"A side panel should not move the sentence being read out of view. ".repeat(5)}`,
+    );
+    await using screen = await renderTimeline(
+      [message(paragraphs.join("\n\n"), { role: "assistant" })],
+      props,
+    );
+    screen.container.style.width = "500px";
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const paragraph = (index: number) =>
+      page.getByText(paragraphs[index]!.trim(), { exact: true }).element() as HTMLElement;
+    const targetIndex = 24;
+    const target = paragraph(targetIndex);
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    await props.listRef.current!.scrollToOffset({
+      offset:
+        viewport.scrollTop +
+        target.getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top -
+        24,
+      animated: false,
+    });
+    viewport.dispatchEvent(new Event("scroll"));
+    const top = () => target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    const before = top();
+    expect(Math.abs(before - 24)).toBeLessThan(2);
+    // Text above shrinks after the first correction, as rows that finish measuring do: the list
+    // clamps at its new end, which the next frame's correction must not take for the reader's.
+    // This observer is newer than the timeline's shared one, so it runs after that correction.
+    const narrow = viewport.clientWidth;
+    let shrunk = 0;
+    let gap = 0;
+    const remeasure = new ResizeObserver(() => {
+      if (shrunk > 0 || viewport.clientWidth === narrow) return;
+      gap =
+        paragraph(paragraphs.length - 1).getBoundingClientRect().bottom -
+        viewport.getBoundingClientRect().bottom;
+      for (let index = targetIndex - 1; index >= 0 && shrunk <= gap; index -= 1) {
+        shrunk += paragraph(index).getBoundingClientRect().height;
+        paragraph(index).style.display = "none";
+      }
+    });
+    remeasure.observe(viewport);
+    onTestFinished(() => remeasure.disconnect());
+    screen.container.style.width = "900px";
+    await vi.waitFor(() => expect(shrunk).toBeGreaterThan(gap));
+    expect(gap).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(Math.abs(top() - before)).toBeLessThan(30));
+  });
+
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
     setup();
     const props = baseProps();

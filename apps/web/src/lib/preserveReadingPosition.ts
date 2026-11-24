@@ -59,7 +59,7 @@ export function preserveReadingPosition(
   };
   const restore = () => {
     if (
-      !enabled() ||
+      // SCIENT-FORK: enabled() is asked once per width change (below).
       !anchor ||
       anchor.range.startContainer.nodeType !== Node.TEXT_NODE ||
       !scroller.contains(anchor.range.startContainer)
@@ -76,6 +76,10 @@ export function preserveReadingPosition(
       return;
     }
     width = nextWidth;
+    // SCIENT-FORK:START — asked once for both corrections: rows that remeasure in between can
+    // clamp the list at its end, which is not where the reader was.
+    if (!enabled()) anchor = null;
+    // SCIENT-FORK:END
     restore();
     if (frame !== null) cancelAnimationFrame(frame);
     // Virtualized rows can finish measuring in the next frame. Keep the same text anchor then.
