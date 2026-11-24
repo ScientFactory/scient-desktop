@@ -811,6 +811,7 @@ export default function ScientNotebookSurface(props: {
     liveSessionGeneration: liveSession?.generation ?? null,
     runtimeInspection,
     dependencyRecovery: { contextId, onSettled: model.refresh },
+    runCell: (cellId: string) => runCells([cellId]),
     cellRuns,
     // Saved outputs need a label only beside outputs from this session.
     labelSavedOutputs: shownFromSession !== "",

@@ -1,6 +1,6 @@
 import { T, useGT, Var } from "gt-react";
 import { useRef, useState } from "react";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, Play } from "lucide-react";
 import { ComputeSessionId, type ComputeSessionRecord } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Button } from "~/components/ui/button";
@@ -17,17 +17,28 @@ import {
   type ComputeContextId,
 } from "./computeContextStore";
 
+/** What an error row can do about a missing dependency, given by the surface that owns the run. */
+export interface ComputeDependencyRecoveryPlace {
+  readonly contextId: ComputeContextId;
+  readonly onSettled: () => void;
+  /** Runs the failed code again in the same session: the run's code, or a notebook's cell. */
+  readonly runAgain?: (() => void) | undefined;
+  /** The same code has since run successfully, so there is nothing left to fix. */
+  readonly resolved?: boolean | undefined;
+}
+
 /**
- * Adds a reviewed package beside the session's Python, never into it. The session keeps its
- * variables and finds the package on its next run, so nothing restarts.
+ * Adds a reviewed package beside the session's Python, never into it, then offers to run the
+ * failed code again in the same place. The session keeps its variables, so nothing restarts.
  */
 export function ComputeAddPackageAction(props: {
   readonly contextId: ComputeContextId;
   readonly sessionId: ComputeSessionId;
   readonly distribution: string;
+  readonly runAgain?: (() => void) | undefined;
 }) {
   const gt = useGT();
-  const [state, setState] = useState<"idle" | "adding" | "added">("idle");
+  const [state, setState] = useState<"idle" | "adding" | "added" | "ran">("idle");
   const addLibrary = useAtomCommand(computeEnvironment.addPythonLibrary, { reportFailure: false });
 
   const add = async () => {
@@ -49,13 +60,26 @@ export function ComputeAddPackageAction(props: {
     });
   };
 
+  if (state === "ran") return null;
   if (state === "added")
-    return (
+    return props.runAgain === undefined ? (
       <span className="text-[11px] text-muted-foreground">
         <T>
           Added <Var>{props.distribution}</Var>. Run again to use it.
         </T>
       </span>
+    ) : (
+      <Button
+        size="xs"
+        variant="outline"
+        onClick={() => {
+          setState("ran");
+          props.runAgain?.();
+        }}
+      >
+        <Play />
+        <T>Run again</T>
+      </Button>
     );
   return (
     <Button size="xs" variant="outline" disabled={state === "adding"} onClick={() => void add()}>

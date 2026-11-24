@@ -92,6 +92,8 @@ export interface NotebookPlace {
         readonly runThrough: (cellId: string) => void;
       }
     | undefined;
+  /** Runs one cell, as its Run button does. */
+  readonly runCell?: ((cellId: string) => void) | undefined;
 }
 
 const RASTER_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
@@ -443,7 +445,15 @@ function LiveOutputs(props: {
         runtimeInspection={props.place.runtimeInspection ?? null}
         {...(props.place.dependencyRecovery === undefined
           ? {}
-          : { dependencyRecovery: props.place.dependencyRecovery })}
+          : {
+              dependencyRecovery: {
+                ...props.place.dependencyRecovery,
+                runAgain:
+                  props.place.runCell === undefined
+                    ? undefined
+                    : () => props.place.runCell?.(props.cell.id),
+              },
+            })}
         notebook={{
           path: props.place.path,
           onReplay: props.onReplay,

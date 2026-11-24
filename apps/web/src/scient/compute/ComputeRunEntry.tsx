@@ -1,3 +1,4 @@
+import type { ComputeDependencyRecoveryPlace } from "./ComputeDependencyRecoveryAction";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ComputeOutputProjection } from "@t3tools/client-runtime/state/compute";
 import {
@@ -26,7 +27,6 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useEnvironmentQuery } from "~/state/query";
 import { formatReceiptDateTime } from "~/timestampFormat";
 
-import type { ComputeContextId } from "./computeContextStore";
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ComputeWrittenFiles } from "./ComputeWrittenFiles";
 import { computeRunAttributes, useAskAboutCompute } from "./ComputeQuoteActions";
@@ -78,10 +78,7 @@ export interface ComputeRunEntryProps {
   readonly fresh: boolean;
   readonly includeSourcePath: boolean;
   readonly runtimeInspection: ComputeRuntimeInspection | null;
-  readonly dependencyRecovery?: {
-    readonly contextId: ComputeContextId;
-    readonly onSettled: () => void;
-  };
+  readonly dependencyRecovery?: ComputeDependencyRecoveryPlace;
   readonly onRevealSource?: (source: Extract<ComputeExecutionSource, { _tag: "document" }>) => void;
 }
 

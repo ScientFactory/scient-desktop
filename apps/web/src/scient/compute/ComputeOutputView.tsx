@@ -31,8 +31,8 @@ import { computeDependencyRecovery, managedDependencyRuntime } from "./computeDe
 import {
   ComputeAddPackageAction,
   ComputeDependencyRecoveryAction,
+  type ComputeDependencyRecoveryPlace,
 } from "./ComputeDependencyRecoveryAction";
-import type { ComputeContextId } from "./computeContextStore";
 
 import type { NotebookDefiningCell } from "../notebook/notebookRunSummary";
 import { extractUndefinedName } from "../notebook/notebookRunSummary";
@@ -216,19 +216,18 @@ function ComputeDiagnostic(props: {
   readonly session: ComputeSessionRecord;
   readonly threadRef: ScopedThreadRef;
   readonly runtimeInspection: ComputeRuntimeInspection | null;
-  readonly dependencyRecovery?: {
-    readonly contextId: ComputeContextId;
-    readonly onSettled: () => void;
-  };
+  readonly dependencyRecovery?: ComputeDependencyRecoveryPlace;
   readonly onAskAgent?: ((text: string) => void) | undefined;
   readonly notebook?: NotebookDiagnosticContext | undefined;
 }) {
   const { diagnostic } = props.output;
-  const recovery = computeDependencyRecovery({
-    diagnostic,
-    session: props.session,
-    inspection: props.runtimeInspection,
-  });
+  const recovery = props.dependencyRecovery?.resolved
+    ? null
+    : computeDependencyRecovery({
+        diagnostic,
+        session: props.session,
+        inspection: props.runtimeInspection,
+      });
   const managed =
     recovery === null
       ? null
@@ -254,29 +253,17 @@ function ComputeDiagnostic(props: {
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <p className="min-w-0 flex-1 font-medium break-words text-destructive">{summary}</p>
-              {props.onAskAgent === undefined ? null : (
-                <Button size="xs" variant="outline" onClick={() => props.onAskAgent?.(fullText)}>
-                  <T>Ask agent</T>
-                </Button>
-              )}
-            </div>
-            {recovery !== null ? (
-              <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                {props.notebook !== undefined && props.session.runtime !== null ? (
-                  <span className="text-muted-foreground">
-                    {props.session.runtime.origin ?? props.session.runtime.displayName}
-                    {" · "}
-                    {props.session.runtime.languageVersion}
-                  </span>
-                ) : null}
-                {props.dependencyRecovery !== undefined && canAddPackages ? (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                {recovery !== null && props.dependencyRecovery !== undefined && canAddPackages ? (
                   <ComputeAddPackageAction
                     contextId={props.dependencyRecovery.contextId}
                     sessionId={props.session.sessionId}
                     distribution={recovery.distribution}
+                    runAgain={props.dependencyRecovery.runAgain}
                   />
                 ) : null}
-                {managed !== null && props.dependencyRecovery !== undefined ? (
+                {recovery === null ? null : managed !== null &&
+                  props.dependencyRecovery !== undefined ? (
                   <ComputeDependencyRecoveryAction
                     contextId={props.dependencyRecovery.contextId}
                     session={props.session}
@@ -299,8 +286,13 @@ function ComputeDiagnostic(props: {
                     <T>Python settings</T>
                   </Button>
                 )}
+                {props.onAskAgent === undefined ? null : (
+                  <Button size="xs" variant="outline" onClick={() => props.onAskAgent?.(fullText)}>
+                    <T>Ask agent</T>
+                  </Button>
+                )}
               </div>
-            ) : null}
+            </div>
             <ComputeDiagnosticFrames
               frames={diagnostic.frames}
               threadRef={props.threadRef}
@@ -356,10 +348,7 @@ export function ComputeOutputView(props: {
   readonly runtimeInspection?: ComputeRuntimeInspection | null;
   /** Puts an error in the chat as a quote of this run. */
   readonly onAskAgent?: ((text: string) => void) | undefined;
-  readonly dependencyRecovery?: {
-    readonly contextId: ComputeContextId;
-    readonly onSettled: () => void;
-  };
+  readonly dependencyRecovery?: ComputeDependencyRecoveryPlace;
 }) {
   const gt = useGT();
   const messages = useMessages();

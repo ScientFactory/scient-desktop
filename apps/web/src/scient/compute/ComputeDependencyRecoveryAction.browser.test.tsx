@@ -220,11 +220,12 @@ describe("confirmed managed-Python recovery action", () => {
       expect(mocks.start).not.toHaveBeenCalled();
     },
   );
-  it("adds the package beside the session's own Python and leaves the session running", async () => {
+  it("adds the package beside the session's Python, then runs the failed code again", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
     mocks.add.mockResolvedValue({ _tag: "Success", value: undefined });
+    const runAgain = vi.fn();
 
     await act(
       async () =>
@@ -233,6 +234,7 @@ describe("confirmed managed-Python recovery action", () => {
             contextId={contextId}
             sessionId={session.sessionId}
             distribution="pandas"
+            runAgain={runAgain}
           />,
         ),
     );
@@ -241,8 +243,10 @@ describe("confirmed managed-Python recovery action", () => {
       environmentId,
       input: { cwd: "/remote/project", sessionId: session.sessionId, distribution: "pandas" },
     });
-    expect(_fixture.container.textContent).toBe("Added pandas. Run again to use it.");
     expect(mocks.stop).not.toHaveBeenCalled();
+    await click(_fixture, "Run again");
+    expect(runAgain).toHaveBeenCalledOnce();
+    expect(_fixture.container.textContent).toBe("");
   });
   it("refreshes the owning host and starts the explicit managed executable in one step", async () => {
     await using _fixture = _createFixture();

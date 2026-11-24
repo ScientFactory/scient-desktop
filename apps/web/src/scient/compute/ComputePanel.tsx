@@ -1,4 +1,4 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { ComputeExecutionId, type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { Link } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { MenuItem } from "~/components/ui/menu";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { ComputeVariableTableDialog } from "~/scient/dataTable/ComputeVariableTable";
 import { scientComputeSurface } from "~/scient/rightPanel/surfaces";
@@ -214,6 +214,27 @@ export function ComputePanel(props: {
   const saveNotebook = useAtomCommand(computeEnvironment.saveConsoleNotebook, {
     reportFailure: false,
   });
+  const submitExecution = useAtomCommand(computeEnvironment.submitExecution, {
+    reportFailure: false,
+  });
+  /** The failed run's own code, again in its session, followed like any new run. */
+  const runAgain = async (entry: Extract<ComputeFeedEntry, { readonly kind: "run" }>) => {
+    const executionId = ComputeExecutionId.make(randomUUID());
+    const result = await submitExecution({
+      environmentId: props.environmentId,
+      input: {
+        cwd: props.cwd,
+        sessionId: entry.session.sessionId,
+        executionId,
+        expectedGeneration: entry.session.generation,
+        code: entry.execution.request.code,
+        source: entry.execution.request.source,
+      },
+    });
+    if (result._tag === "Failure") return reportComputeFailure(gt("Unable to run again"), result);
+    setPanelView("results");
+    setFollowRun(executionId);
+  };
   const runConsole = useComputeConsoleRun({
     environmentId: props.environmentId,
     cwd: props.cwd,
@@ -315,6 +336,16 @@ export function ComputePanel(props: {
       {...(props.onRunSource === undefined ? {} : { onRun: props.onRunSource })}
     />
   );
+  /** A later run of the same code that succeeded means this failure is already dealt with. */
+  const fixedLater = (entry: Extract<ComputeFeedEntry, { readonly kind: "run" }>) =>
+    allEntries.some(
+      (other) =>
+        other.kind === "run" &&
+        other.session.sessionId === entry.session.sessionId &&
+        other.execution.request.code === entry.execution.request.code &&
+        other.execution.request.submittedAt > entry.execution.request.submittedAt &&
+        other.execution.result?.status === "succeeded",
+    );
   const dependencyRecoveryFor = (entry: Extract<ComputeFeedEntry, { readonly kind: "run" }>) =>
     props.contextId !== undefined &&
     contextBinding?.parentContextId === undefined &&
@@ -328,6 +359,8 @@ export function ComputePanel(props: {
             model.refresh();
             runtimes.refresh();
           },
+          runAgain: () => void runAgain(entry),
+          resolved: fixedLater(entry),
         }
       : undefined;
   const revealSource =
