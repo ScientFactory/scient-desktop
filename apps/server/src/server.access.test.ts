@@ -117,48 +117,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect.each(
-      (
-        [
-          ["absent", null],
-          ["old", String(ORCHESTRATION_PROTOCOL_VERSION - 1)],
-          ["newer", String(ORCHESTRATION_PROTOCOL_VERSION + 1)],
-          ["invalid", "not-a-protocol"],
-        ] as const
-      ).map(([label, protocol]) => ({
-        caseTitle: `rejects ${label} WebSocket protocol before authentication or RPC`,
-        label,
-        protocol,
-      })),
-    )("$caseTitle", ({ label: _label, protocol }) =>
-      Effect.gen(function* () {
-        const app = yield* buildAppUnderTest();
-        // Observe the exact memoized live auth service; the spy delegates rather
-        // than replacing the production authentication decision.
-        const authenticate = vi.spyOn(app.auth, "authenticateWebSocketUpgrade");
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            authenticate.mockRestore();
-          }),
-        );
-        const url = new URL(yield* getHttpServerUrl("/ws"));
-        if (protocol !== null) url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, protocol);
-        const response = yield* fetchEffect(url.toString(), {
-          headers: {
-            authorization: "Bearer synthetic-invalid-protocol-credential",
-            [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-          },
-        });
-        const body = yield* response.json;
-        assert.equal(response.status, 426);
-        assert.deepEqual(body, {
-          code: "orchestration_protocol_incompatible",
-          message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
-          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-        });
-        assert.equal(authenticate.mock.calls.length, 0);
-        assert.equal(yield* app.v2.eventSink.latestSequence(), 0);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
+    it.effect(
+      "rejects absent, old, newer and invalid WebSocket protocols before authentication or RPC",
+      () =>
+        Effect.gen(function* () {
+          const app = yield* buildAppUnderTest();
+          // Observe the exact memoized live auth service; the spy delegates rather
+          // than replacing the production authentication decision.
+          const authenticate = vi.spyOn(app.auth, "authenticateWebSocketUpgrade");
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              authenticate.mockRestore();
+            }),
+          );
+          for (const [label, protocol] of [
+            ["absent", null],
+            ["old", String(ORCHESTRATION_PROTOCOL_VERSION - 1)],
+            ["newer", String(ORCHESTRATION_PROTOCOL_VERSION + 1)],
+            ["invalid", "not-a-protocol"],
+          ] as const) {
+            const url = new URL(yield* getHttpServerUrl("/ws"));
+            if (protocol !== null)
+              url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, protocol);
+            const response = yield* fetchEffect(url.toString(), {
+              headers: {
+                authorization: "Bearer synthetic-invalid-protocol-credential",
+                [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+              },
+            });
+            const body = yield* response.json;
+            assert.equal(response.status, 426, label);
+            assert.deepEqual(
+              body,
+              {
+                code: "orchestration_protocol_incompatible",
+                message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
+                orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+              },
+              label,
+            );
+            assert.equal(authenticate.mock.calls.length, 0, label);
+            assert.equal(yield* app.v2.eventSink.latestSequence(), 0, label);
+          }
+        }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
     it.effect("preserves authentication and real RPC for the current WebSocket protocol", () =>
@@ -428,32 +429,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect.each(
-      ["scient://app", "scient-next-dev://app"].map((desktopOrigin) => ({
-        caseTitle: `allows credentialed preflights from ${desktopOrigin} in development`,
-        desktopOrigin,
-      })),
-    )("$caseTitle", ({ desktopOrigin }) =>
+    it.effect("allows credentialed preflights from both desktop origins in development", () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({
           config: { devUrl: new URL(crossOriginClientOrigin) },
         });
 
         const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
-        const response = yield* fetchEffect(sessionUrl, {
-          method: "OPTIONS",
-          headers: {
-            origin: desktopOrigin,
-            "access-control-request-method": "GET",
-            "access-control-request-headers": "content-type",
-          },
-        });
+        for (const desktopOrigin of ["scient://app", "scient-next-dev://app"]) {
+          const response = yield* fetchEffect(sessionUrl, {
+            method: "OPTIONS",
+            headers: {
+              origin: desktopOrigin,
+              "access-control-request-method": "GET",
+              "access-control-request-headers": "content-type",
+            },
+          });
 
-        assert.equal(response.status, 204);
-        assertBrowserApiCorsPreflightHeaders(response.headers, {
-          origin: desktopOrigin,
-          credentials: true,
-        });
+          assert.equal(response.status, 204, desktopOrigin);
+          assertBrowserApiCorsPreflightHeaders(response.headers, {
+            origin: desktopOrigin,
+            credentials: true,
+          });
+        }
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
