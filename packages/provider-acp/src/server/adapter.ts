@@ -47,6 +47,7 @@ import {
   compactT3McpToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
+  toolOutputImageBlocks,
 } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -5555,6 +5556,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 break;
               }
               case "execute": {
+                // SCIENT-FORK:START — command_execution has text output only.
+                if (
+                  toolCall.data.name === "bash" &&
+                  Array.isArray(rawOutputRecord?.content) &&
+                  toolOutputImageBlocks(rawOutputRecord.content).length > 0
+                ) {
+                  turnItem = {
+                    ...base,
+                    type: "dynamic_tool",
+                    toolName: "bash",
+                    input: rawInputRecord ?? {},
+                    output: { content: rawOutputRecord.content },
+                  };
+                  break;
+                }
+                // SCIENT-FORK:END
                 const exitCode = acpProjectedCommandExitCode(status, rawOutput);
                 turnItem = {
                   ...base,

@@ -3,9 +3,14 @@ import * as Predicate from "effect/Predicate";
 
 import type { AcpMcpToolCallIdentity, AcpToolCallState } from "./runtimeModel.ts";
 
+// Accept literal shell words, including quoted JSON. Shell operators and expansions stay on bash.
+const literalInvocation =
+  /^([\w.-]+)(?:[ \t](?:[^'"$`\\;&|()<>#\r\n]|'[^']*'|"(?:[^"$`\\]|\\[^\r\n])*"|\\[^\r\n])*)?$/u;
+
 /** One ACP card can represent one dispatch. Progress may still acquire more commands. */
 export function scientOmpCommandIdentity(
   status: AcpToolCallState["status"],
+  shellInput: unknown,
   commands: ReadonlyArray<unknown>,
   shellResult: Record<string, unknown>,
   isT3McpServer: (name: string) => boolean,
@@ -17,6 +22,8 @@ export function scientOmpCommandIdentity(
     !Predicate.isObject(command) ||
     command.mode !== "execute" ||
     typeof command.tool !== "string" ||
+    typeof shellInput !== "string" ||
+    literalInvocation.exec(shellInput.trim())?.[1] !== command.tool ||
     typeof command.exitCode !== "number" ||
     !Predicate.isObject(command.args)
   )

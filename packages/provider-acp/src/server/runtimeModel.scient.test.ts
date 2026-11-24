@@ -2,15 +2,19 @@ import { expect, it } from "vite-plus/test";
 
 import { extractMcpToolCallIdentity, mergeToolCallState } from "./runtimeModel.ts";
 
-const args = { title: "Chart", html: "<p>Chart</p>" };
+const args = { title: "Chart", html: "<p>A && B; C | D</p>" };
 const content = [{ type: "text", text: "Rendered" }];
 const command = { tool: "html_render", mode: "execute", args, exitCode: 0, inner: { content } };
 
-function completed(commands: readonly unknown[], name = "bash") {
+function completed(
+  commands: readonly unknown[],
+  name = "bash",
+  script = `html_render -j '${JSON.stringify(args)}'`,
+) {
   return mergeToolCallState(
     {
       toolCallId: "shell",
-      data: { name, rawInput: { command: `html_render -j '${JSON.stringify(args)}'` } },
+      data: { name, rawInput: { command: script } },
     },
     {
       toolCallId: "shell",
@@ -33,7 +37,11 @@ it("uses the MCP bridge's original tool name for a shortened command", () => {
   const inner = { serverName: "scient", mcpToolName: "scient_thread_inspect", rawContent: content };
   expect(
     extractMcpToolCallIdentity(
-      completed([{ ...command, tool: "mcp__scient_thread_inspect", inner }]),
+      completed(
+        [{ ...command, tool: "mcp__scient_thread_inspect", inner }],
+        "bash",
+        "mcp__scient_thread_inspect --thread-id example",
+      ),
     ),
   ).toMatchObject({
     server: "t3-code",
@@ -50,6 +58,19 @@ it("keeps help, multiple dispatches, and non-bash results out of Scient's tool c
   expect(
     extractMcpToolCallIdentity({ ...completed([command]), status: "inProgress" }),
   ).toBeUndefined();
+});
+
+it.each([
+  "html_render; exit 1",
+  "html_render && echo ok",
+  "html_render || echo failed",
+  "html_render | cat",
+  "html_render\nprintf diagnostic",
+  'html_render --title "$(date)"',
+  "html_render > render.log",
+  "other_tool --arg html_render",
+])("keeps the shell identity for %s", (script) => {
+  expect(extractMcpToolCallIdentity(completed([command], "bash", script))).toBeUndefined();
 });
 
 it("retains the command failure when the shell exits successfully", () => {

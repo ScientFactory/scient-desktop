@@ -1223,6 +1223,7 @@ export function extractMcpToolCallIdentity(
   ) {
     return scientOmpCommandIdentity(
       toolCall.status,
+      rawInput?.command,
       rawOutput.details.toolCommands,
       rawOutput,
       isT3McpServer,
