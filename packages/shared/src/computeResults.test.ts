@@ -11,7 +11,8 @@ import {
   readResultValues,
   resultPointer,
   resultReferenceState,
-  resultValueAt,
+  parseResultValues,
+  resultValueIn,
 } from "./computeResults.ts";
 
 const revision = "r0123456789ab";
@@ -51,6 +52,11 @@ describe("linked result references", () => {
     expect(source.slice(references[0]!.start, references[0]!.end)).toBe(value);
   });
 
+  const resultValueAt = (text: string, pointer: string) => {
+    const values = parseResultValues(text);
+    return values === null ? null : resultValueIn(values, pointer);
+  };
+
   it("reads numbers as written, so formatting chosen in the analysis survives", () => {
     const text = '{"hr": 0.720, "n": 1204, "ci": ["0.61", 0.85], "fit": {"ok": true}}';
     expect(readResultValues(text)).toEqual([
@@ -61,6 +67,11 @@ describe("linked result references", () => {
     ]);
     expect(resultValueAt(text, "/hr")).toBe("0.720");
     expect(resultValueAt(text, "/fit/ok")).toBeNull();
+    const crowded = {
+      ...Object.fromEntries([...Array(600).keys()].map((n) => [`v${n}`, n])),
+      hr: 0.72,
+    };
+    expect(resultValueAt(JSON.stringify(crowded), "/hr")).toBe("0.72");
     expect(readResultValues("not json")).toBeNull();
     // A value inside a sentence cannot hold a paragraph break.
     expect(readResultValues('{"note": "a\\n\\nb"}')).toEqual([]);

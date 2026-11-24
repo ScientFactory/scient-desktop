@@ -53,7 +53,11 @@ def cell_value(value: Any) -> Any:
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, decimal.Decimal):
-        return float(value) if value.is_finite() else str(value)
+        # A JSON number only when its written form is this decimal; otherwise its exact digits.
+        if not value.is_finite():
+            return str(value)
+        number = float(value)
+        return number if decimal.Decimal(repr(number)) == value else str(value)
     if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
     if isinstance(value, (bytes, bytearray, memoryview)):
@@ -86,12 +90,17 @@ def html_table(columns: list[str], rows: list[list[Any]], footer: Optional[str])
     return table if footer is None else f"{table}<p>{html.escape(footer)}</p>"
 
 
+def cell_text(value: Any) -> Any:
+    return str(value) if isinstance(value, decimal.Decimal) else cell_value(value)
+
+
 def table_bundle(columns: list[str], raw_rows: list[tuple[Any, ...]], truncated: bool) -> dict[str, Any]:
     rows = [[cell_value(value) for value in row] for row in raw_rows]
+    shown = [[cell_text(value) for value in row] for row in raw_rows]
     footer = f"First {MAX_ROWS} rows" if truncated else None
     bundle: dict[str, Any] = {
-        "text/plain": plain_table(columns, rows, footer),
-        "text/html": html_table(columns, rows, footer),
+        "text/plain": plain_table(columns, shown, footer),
+        "text/html": html_table(columns, shown, footer),
     }
     if len(set(columns)) == len(columns) and all(columns):
         resource = {

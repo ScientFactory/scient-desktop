@@ -240,7 +240,10 @@ export function readResultValues(text: string): ReadonlyArray<JsonLeaf> | null {
   );
 }
 
-function parseResultJson(text: string): { root: unknown } | null {
+/** A values file parsed once, for looking up many pointers in it. */
+export type ParsedResultValues = { readonly root: unknown };
+
+export function parseResultValues(text: string): ParsedResultValues | null {
   try {
     return {
       root: JSON.parse(text, (_key, value, context?: { readonly source?: string }) =>
@@ -293,11 +296,11 @@ export function* pairedResultValues(from: string, to: string) {
     }
   }
 
-  yield* visit(parseResultJson(from)?.root, parseResultJson(to)?.root, []);
+  yield* visit(parseResultValues(from)?.root, parseResultValues(to)?.root, []);
 }
 
 function readValueLeaves(text: string, limit: number): ReadonlyArray<ComparableJsonLeaf> | null {
-  const parsed = parseResultJson(text);
+  const parsed = parseResultValues(text);
   if (parsed === null) return null;
   const leaves: ComparableJsonLeaf[] = [];
   const visit = (node: unknown, keys: ReadonlyArray<string>) => {
@@ -313,12 +316,16 @@ function readValueLeaves(text: string, limit: number): ReadonlyArray<ComparableJ
   return leaves;
 }
 
-export function resultValueAt(text: string, pointer: string): string | null {
-  const keys = JSON.stringify(pointerKeys(pointer));
-  return (
-    readResultValues(text)?.find((leaf) => JSON.stringify(pointerKeys(leaf.pointer)) === keys)
-      ?.value ?? null
-  );
+/** The value at a pointer, found directly however many values come before it. */
+export function resultValueIn(values: ParsedResultValues, pointer: string): string | null {
+  const keys = pointerKeys(pointer);
+  let node = values.root;
+  for (const key of keys) {
+    const children = resultChildren(node);
+    if (!Object.hasOwn(children, key)) return null;
+    node = children[key];
+  }
+  return resultLeaf(node, keys)?.value ?? null;
 }
 
 /** What the reader must act on first; a figure counts as present when the revision has it. */

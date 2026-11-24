@@ -27,3 +27,33 @@ it("uses the recorded value for relative tolerance and keeps strings and large i
   });
   expect(boundary.differenceCount).toBe(1);
 });
+
+it("decides tolerance exactly, at any scale", () => {
+  const differs = (expected: string, actual: string, absolute: number, relative: number) =>
+    comparePackageValues(`{"n":${expected}}`, `{"n":${actual}}`, { absolute, relative })
+      .differenceCount === 1;
+  // Two decimals one double cannot tell apart.
+  expect(differs("9007199254740992.0", "9007199254740993.0", 0.5, 0)).toBe(true);
+  // A 100% change far below the smallest double.
+  expect(differs("1e-1001", "2e-1001", 0, 1e-7)).toBe(true);
+  // Past the tolerance by a digit a thousand places down.
+  expect(differs("1.0", `1.5${"0".repeat(1000)}1`, 0.5, 0)).toBe(true);
+  // Within a relative tolerance above the largest double.
+  expect(differs("1e310", "1.0000000005e310", 0, 1e-9)).toBe(false);
+  expect(differs("0.3", "0.35", 0.1, 0)).toBe(false);
+  // Far below the absolute tolerance, at a scale no alignment reaches.
+  expect(differs("1e-12000", "2e-12000", 1e-12, 0)).toBe(false);
+  expect(differs("1e-12000", "9e-13", 1e-12, 0)).toBe(false);
+  // Exponents past what a double counts exactly cannot be shown equal.
+  expect(differs("1e9007199254740992", "1e9007199254740993", 0, 0)).toBe(true);
+  expect(
+    comparePackageValues('{"n":4e-324}', '{"n":5e-324}', { absolute: 0, relative: 0 }).values[0],
+  ).toMatchObject({ relativeDifference: 0.25 });
+  const long = "12345678901234567890123456789012345678901234567890";
+  expect(
+    comparePackageValues(`{"n":${long}}`, `{"n":${long.slice(0, -1)}1}`, {
+      absolute: 0,
+      relative: 0,
+    }).values[0]?.relativeDifference,
+  ).toBeCloseTo(1 / Number(long), 60);
+});

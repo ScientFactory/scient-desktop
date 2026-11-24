@@ -34,7 +34,9 @@ import {
   readResultValues,
   resultFreshnessIncomplete,
   resultSourceChanged,
-  resultValueAt,
+  parseResultValues,
+  resultValueIn,
+  type ParsedResultValues,
 } from "@t3tools/shared/computeResults";
 import { isSavedDataView, savedViewReferences } from "@t3tools/shared/savedDataView";
 import * as Schema from "effect/Schema";
@@ -1022,7 +1024,7 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
           }),
     };
   };
-  const valuesText = new Map<string, Promise<string | null>>();
+  const parsedValues = new Map<string, Promise<ParsedResultValues | null>>();
   const valueOf = async (
     revision: ComputeResultRevision,
     outputName: string,
@@ -1043,15 +1045,17 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
     }
     if (output.kind !== "values" || pointer === null) return { value: null, figure: false };
     const key = `${revision.revision}/${output.name}`;
-    let text = valuesText.get(key);
-    if (text === undefined) {
+    let values = parsedValues.get(key);
+    if (values === undefined) {
       const path = revisionOutputPath(layout, projectId, revision.revision, output.name);
-      text =
-        path === null ? Promise.resolve(null) : NodeFSP.readFile(path, "utf8").catch(() => null);
-      valuesText.set(key, text);
+      values =
+        path === null
+          ? Promise.resolve(null)
+          : NodeFSP.readFile(path, "utf8").then(parseResultValues, () => null);
+      parsedValues.set(key, values);
     }
-    const contents = await text;
-    return { value: contents === null ? null : resultValueAt(contents, pointer), figure: false };
+    const parsed = await values;
+    return { value: parsed === null ? null : resultValueIn(parsed, pointer), figure: false };
   };
 
   const resolve = async (reference: ComputeResultReference): Promise<ComputeResultResolution> => {
