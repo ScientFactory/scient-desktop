@@ -35,7 +35,7 @@ import {
   effectiveCustomModelReasoning,
   type CustomModelReasoning,
 } from "../../customModelCapabilities.ts";
-import type { ServerSettingsService } from "../../serverSettings.ts";
+import type { CustomModelSettingsSource } from "../../scientServerSettings.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeDroidAcpRuntime, type DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
 import {
@@ -313,9 +313,9 @@ const promptWithinBudget = Effect.fn("DroidCustomModels.promptWithinBudget")(fun
 export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
   "DroidCustomModels.makeRuntimeFactory",
 )(function* (
-  settings: Pick<
-    ServerSettingsService["Service"],
-    "resolveCustomModels" | "committedCustomModels" | "subscribeChanges"
+  settings: CustomModelSettingsSource<
+    "subscribeChanges",
+    "resolveCustomModels" | "committedCustomModels"
   >,
   instanceId: ProviderInstanceId,
   makeRuntime: DroidAcpRuntimeFactory = makeDroidAcpRuntime,

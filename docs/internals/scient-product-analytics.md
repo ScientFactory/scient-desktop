@@ -81,7 +81,16 @@ installed runtime. Revision 5 names every settings page in `settings.viewed`
 the desktop derives its page list from the settings sidebar, and a test fails
 when a page is missing from the contract. Revision 6 adds `feature.viewed` with
 `feature: latex-visual` and UI-owned `scient.operation.*` with
-`operationKind: latex-visual-edit`. Revision 7 names Scient Agent (`scient`),
+`operationKind: latex-visual-edit`.
+
+The Desktop records one `latex.visual.opened` result per visible opening after
+preparation settles. Outcomes are `editable`, `source-only-content` (the editor
+contains elements that can only be edited as LaTeX source), `unavailable` and
+`open-error`. Failure outcomes carry only an allowlisted reason. `latex.visual.source-fallback` records a switch to Source from a failed or
+unavailable opening. A view abandoned during loading can have no opening result.
+These events carry no document content, paths, construct names or error text.
+
+Revision 7 names Scient Agent (`scient`),
 Oh My Pi (`omp`), Muse (`muse`) and ACP Registry (`acpRegistry`) instead of
 collapsing them into `other`. Only these fixed driver kinds are added; custom
 provider labels, configured instance IDs and runtime paths remain private.
@@ -315,6 +324,14 @@ booleans and attachment buckets from older producers remain accepted.
 `creationSource`, `scheduled` and `subagent`. Most turns start without a person
 (provider continuations, agent sends, delegated subagents), so filter on these to
 count user turns.
+
+`provider.readiness.observed` records the first settled live status for an enabled
+provider instance as seen by the server. Cached status, pending probes and instances
+the registry could not start are excluded. A new enabled lifetime can produce another
+observation. Use the coarse driver, state and runtime source to group observations.
+When a warning or error has a typed check failure, the producer includes its category.
+A missing cause is unclassified. Events carry no provider instance identifier, so
+counts are observations, and several can come from one installation.
 
 Scient Agent uses the existing installation observations, installed-state
 changes, lifecycle operations, submissions, terminal outcomes and token usage.

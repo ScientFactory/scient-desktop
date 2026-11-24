@@ -9,7 +9,13 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { makeCheckHome, runTool } from "./scient-alignment-checks.mjs";
+import {
+  compareFailures,
+  failureId,
+  makeCheckHome,
+  readVitestReport,
+  runTool,
+} from "./scient-alignment-checks.mjs";
 
 const WINDOWS_TESTS =
   "not run: the local aggregate is not a supported Windows lane; hosted test qualification pending";
@@ -51,9 +57,129 @@ const HEAVY_GATES = new Set(["typecheck", "test", "build", "smoke"]);
  * Parallel server test files: CI runs one per vCPU on 4-vCPU runners. Locally,
  * half the cores (efficiency cores count) leave room for the owner and other
  * work, at most six, and 4 GiB of memory each (a worker peaks near 1.5 GiB).
+ * Cores already busy (the load average) are not counted as free.
  */
-export const serverWorkers = (cores = NodeOS.availableParallelism(), memory = NodeOS.totalmem()) =>
-  Math.max(1, Math.min(6, Math.floor(cores / 2), Math.floor(memory / (4 * GiB))));
+export const serverWorkers = (
+  cores = NodeOS.availableParallelism(),
+  memory = NodeOS.totalmem(),
+  load = 0,
+) =>
+  Math.max(
+    1,
+    Math.min(
+      6,
+      Math.floor(cores / 2),
+      Math.floor(memory / (4 * GiB)),
+      Math.floor((cores - load) / 2),
+    ),
+  );
+
+/**
+ * Test failures this machine also has on main, recorded with `--record-baseline` from a clean
+ * main checkout. Kept in the shared Git directory, one file per platform, architecture and Node
+ * major, so every worktree of the repository compares against the same record.
+ */
+export const baselinePath = (
+  commonDir,
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone alignment CLI has no Effect runtime.
+  { platform = NodeOS.platform(), arch = NodeOS.arch(), node = process.versions.node } = {},
+) =>
+  NodePath.join(
+    commonDir,
+    "scient-test-baseline",
+    `${platform}-${arch}-node${node.split(".")[0]}.json`,
+  );
+
+/** A baseline older than this, or from a commit outside the candidate's history, is not used. */
+const BASELINE_MAX_AGE_DAYS = 7;
+
+const gitRef = (args, cwd) => {
+  const result = runTool(["git", ...args], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+};
+
+/** The baseline, or `{ unusable }` saying why it cannot judge `head`; null when there is none. */
+export function usableBaseline(path, head, root, now = Date.now()) {
+  const baseline = readGatesBaseline(path);
+  if (!baseline) return null;
+  const ageDays = (now - Date.parse(baseline.recordedAt)) / 86_400_000;
+  if (!(ageDays <= BASELINE_MAX_AGE_DAYS))
+    return { unusable: `recorded more than ${BASELINE_MAX_AGE_DAYS} days ago, record it again` };
+  const ancestor = runTool(["git", "merge-base", "--is-ancestor", baseline.head, head], {
+    cwd: root,
+    stdio: "ignore",
+  });
+  if (ancestor.status !== 0)
+    return {
+      unusable: `its main commit ${String(baseline.head).slice(0, 10)} is not in this candidate's history`,
+    };
+  return baseline;
+}
+
+export function readGatesBaseline(path) {
+  try {
+    const baseline = JSON.parse(NodeFS.readFileSync(path, "utf8"));
+    return Array.isArray(baseline?.failures) ? { ...baseline, path } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The machine at the start of a run: load average and, on macOS, the file events daemon,
+ * whose saturation makes every test that waits for a file change fail or time out.
+ */
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone alignment CLI has no Effect runtime.
+export function machineLoad(platform = NodeOS.platform(), cores = NodeOS.availableParallelism()) {
+  // Windows reports no load average.
+  const load = platform === "win32" ? null : Number(NodeOS.loadavg()[0].toFixed(1));
+  let fseventsd = null;
+  if (platform === "darwin") {
+    const ps = runTool(["ps", "-axco", "%cpu=,comm="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const line = (ps.stdout ?? "").split("\n").find((row) => row.trim().endsWith(" fseventsd"));
+    fseventsd = line === undefined ? null : Number.parseFloat(line.trim());
+  }
+  const busy = [
+    ...(load !== null && load > 0.75 * cores ? [`load average ${load} on ${cores} CPUs`] : []),
+    ...(fseventsd !== null && fseventsd >= 80
+      ? [`fseventsd at ${fseventsd}% CPU, so file change events arrive late or never`]
+      : []),
+  ];
+  return { load, fseventsd, busy };
+}
+
+/** Failed tests whose failure is a Vitest timeout, from a JSON report. */
+const timedOut = (reportPath, cwd) => {
+  try {
+    const report = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
+    return report.testResults.flatMap((file) =>
+      (file.assertionResults ?? [])
+        .filter(
+          (test) =>
+            test.status === "failed" &&
+            (test.failureMessages ?? []).some((message) => /timed out in \d+ms/u.test(message)),
+        )
+        .map(
+          (test) => `${NodePath.relative(cwd, file.name).replaceAll("\\", "/")} > ${test.fullName}`,
+        ),
+    );
+  } catch {
+    return [];
+  }
+};
+
+const fileOf = (id) => id.slice(0, id.indexOf(" > "));
+const FILE_ERROR = " > (file error)";
+const RUN_OUTCOME_REPORTER = NodeURL.fileURLToPath(
+  new URL("./vitest-run-outcome-reporter.mjs", import.meta.url),
+);
 
 const runLogged = (argv, { root, home, log, env }) => {
   const fd = NodeFS.openSync(log, "a");
@@ -106,7 +232,7 @@ const CANCELLED = new Set([137, 143]);
  * server runs alone with parallel files; up to RERUN_LIMIT failed files rerun alone
  * as a diagnostic, and the gate still fails.
  */
-function runTests({ root, home, out, log, workers }) {
+function runTests({ root, home, out, log, workers, baseline, recording }) {
   const packagesLog = log;
   const started = performance.now();
   const cacheRoot = NodePath.join(out, "aggregate-task-cache");
@@ -157,7 +283,7 @@ function runTests({ root, home, out, log, workers }) {
   const serverLog = log;
   NodeFS.appendFileSync(serverLog, `\n### ${SERVER.name}, ${workers} file(s) at a time\n`);
   const serverCwd = NodePath.join(root, SERVER.dir);
-  const serverRun = (files, reportPath, parallel) =>
+  const serverRun = (files, reportPath, parallel, outcomePath) =>
     runLogged(
       [
         "pnpm",
@@ -173,42 +299,107 @@ function runTests({ root, home, out, log, workers }) {
         "--reporter=default",
         "--reporter=json",
         `--outputFile.json=${reportPath}`,
+        ...(outcomePath ? [`--reporter=${RUN_OUTCOME_REPORTER}`] : []),
         ...files,
       ],
-      { root, home, log: serverLog },
+      {
+        root,
+        home,
+        log: serverLog,
+        ...(outcomePath ? { env: { SCIENT_VITEST_RUN_OUTCOME: outcomePath } } : {}),
+      },
     );
   const report = NodePath.join(out, "test-server.json");
-  const parallelRun = serverRun([], report, workers > 1);
+  const outcome = NodePath.join(out, "test-server-outcome.json");
+  const parallelRun = serverRun([], report, workers > 1, outcome);
   const server = { workers, report };
-  if (parallelRun.status !== 0 || parallelRun.error) {
-    const failed = failedFiles(report, serverCwd);
-    if (!failed?.length) {
-      server.reason = "the server suite failed without a failed file in its report";
-    } else if (workers === 1 || failed.length > RERUN_LIMIT) {
-      server.failed = failed;
+  const serverPassed = parallelRun.status === 0 && !parallelRun.error;
+  // Failure signatures, `<file> > <full test name> :: <kind>`, relative to the server package:
+  // a test main fails by timing out does not waive the same test failing an assertion.
+  const serverReport = readVitestReport(report, serverCwd);
+  const failures = serverReport?.signatures ?? null;
+  // Errors outside any test, an interrupted run and unfinished files: never known on main.
+  server.runErrors = runErrors(parallelRun, outcome, serverCwd);
+  if (failures === null || serverReport.files === 0)
+    server.reason = "no readable report of any test file from the server suite";
+  else if (!serverPassed && failures.length === 0 && server.runErrors.length === 0)
+    server.reason = `the server suite exited ${parallelRun.status} without a failure in its report`;
+  if (!serverPassed && failures !== null) server.timedOut = timedOut(report, serverCwd);
+  // A file that failed to load is never waived either.
+  const labels =
+    baseline && failures !== null
+      ? compareFailures(
+          failures,
+          baseline.failures.filter((signature) => !failureId(signature).endsWith(FILE_ERROR)),
+        )
+      : null;
+  const blocking = labels ? labels.new : (failures ?? []);
+  const blockingFiles = [...new Set(blocking.map(fileOf))].toSorted();
+  // Evidence only: a file that passes alone still failed in the suite, from load or from a
+  // race with other files, so it blocks either way.
+  if (!recording && blockingFiles.length > 0) {
+    if (workers === 1 || blockingFiles.length > RERUN_LIMIT) {
+      server.failed = blockingFiles;
     } else {
       NodeFS.appendFileSync(serverLog, `\n### Failed files again, one at a time\n`);
       const recheck = NodePath.join(out, "test-server-alone.json");
-      const alone = serverRun(failed, recheck, false);
+      const alone = serverRun(blockingFiles, recheck, false);
       const stillFailing = alone.status === 0 ? [] : failedFiles(recheck, serverCwd);
       if (stillFailing === null || (alone.status !== 0 && stillFailing.length === 0)) {
-        server.reason = "the one-at-a-time rerun of the failed files did not finish";
-        server.failed = failed;
+        server.failed = blockingFiles;
+        server.rerunUnfinished = true;
       } else {
         server.failedAgainAlone = stillFailing;
-        server.passedWhenRerunAlone = failed.filter((file) => !stillFailing.includes(file));
+        server.passedWhenRerunAlone = blockingFiles.filter((file) => !stillFailing.includes(file));
       }
     }
   }
-  const serverPassed = parallelRun.status === 0 && !parallelRun.error;
   server.seconds = Math.round((performance.now() - serverStarted) / 1000);
+  const details = { packagesSeconds, packagesFailed, packagesRerun, server };
+  if (failures !== null) details.failures = failures;
+  const complete = !server.reason && server.runErrors.length === 0;
+  if (recording) {
+    if (complete) details.recorded = { failures };
+    return { status: complete && packagesFailed.length === 0 ? 0 : 1, details };
+  }
+  if (labels) {
+    details.baseline = {
+      path: baseline.path,
+      head: baseline.head,
+      recordedAt: baseline.recordedAt,
+      new: labels.new,
+      knownOnMain: labels.preexisting,
+      notFailingHere: labels.noLongerFailing,
+    };
+  }
+  const serverClean = labels ? labels.new.length === 0 : serverPassed;
   return {
-    status: packagesFailed.length === 0 && serverPassed ? 0 : 1,
-    details: { packagesSeconds, packagesFailed, packagesRerun, server },
+    status: complete && serverClean && packagesFailed.length === 0 ? 0 : 1,
+    details,
   };
 }
 
-const describeTests = ({ packagesFailed, packagesRerun = [], server }) => {
+/** Why the server run cannot be judged by its failed tests alone; empty when it can. */
+function runErrors(run, outcomePath, cwd) {
+  if (run.error || run.signal) return [`the run ended abnormally (${run.signal ?? run.error})`];
+  let outcome;
+  try {
+    outcome = JSON.parse(NodeFS.readFileSync(outcomePath, "utf8"));
+  } catch {
+    return ["Vitest wrote no run outcome"];
+  }
+  const relative = (file) => NodePath.relative(cwd, file).replaceAll("\\", "/");
+  return [
+    ...(outcome.reason === "interrupted" ? ["the run was interrupted"] : []),
+    ...(outcome.unfinished ?? []).map((file) => `unfinished: ${relative(file)}`),
+    ...(outcome.unhandledErrors ?? []).map((message) => `error outside any test: ${message}`),
+    ...(outcome.suiteErrors ?? []).map(
+      (error) => `error in a file or suite hook: ${relative(error.file)}: ${error.message}`,
+    ),
+  ];
+}
+
+const describeTests = ({ packagesFailed, packagesRerun = [], server, baseline, recorded }) => {
   const parts = [
     `server ${server.seconds} s, ${server.workers} file${server.workers === 1 ? "" : "s"} at a time`,
   ];
@@ -216,11 +407,29 @@ const describeTests = ({ packagesFailed, packagesRerun = [], server }) => {
   if (packagesRerun.length)
     parts.push(`rerun after the aggregate stopped: ${packagesRerun.join(", ")}`);
   if (server.reason) parts.push(`server: ${server.reason}`);
-  if (server.failed?.length) parts.push(`failed: ${server.failed.join(", ")}`);
+  if (server.runErrors?.length) parts.push(`server run: ${server.runErrors.join(", ")}`);
+  if (baseline) {
+    const since = `main \`${baseline.head?.slice(0, 10)}\``;
+    parts.push(
+      baseline.new.length ? `new failures: ${baseline.new.join(", ")}` : "no new failures",
+    );
+    if (baseline.knownOnMain.length)
+      parts.push(`also failing on ${since}: ${baseline.knownOnMain.join(", ")}`);
+    if (baseline.notFailingHere.length)
+      parts.push(
+        `failing on ${since}, absent from this run's failures: ${baseline.notFailingHere.join(", ")}`,
+      );
+  }
+  if (server.failed?.length) parts.push(`failed files: ${server.failed.join(", ")}`);
   if (server.failedAgainAlone?.length)
     parts.push(`failed again alone: ${server.failedAgainAlone.join(", ")}`);
   if (server.passedWhenRerunAlone?.length)
-    parts.push(`passed when rerun alone: ${server.passedWhenRerunAlone.join(", ")}`);
+    parts.push(
+      `passed when rerun alone (load, or a race with other files): ${server.passedWhenRerunAlone.join(", ")}`,
+    );
+  if (server.timedOut?.length) parts.push(`timed out: ${server.timedOut.join(", ")}`);
+  if (recorded)
+    parts.push(`baseline recorded: ${recorded.failures.length} failure(s) on this machine`);
   return parts.join("; ");
 };
 
@@ -321,11 +530,12 @@ export function acquireGatesLock(commonDir, { root, wait = sleep, log = console.
 }
 
 function parseArgs(argv) {
-  const args = { only: null, tests: false, serverWorkers: null };
+  const args = { only: null, tests: false, serverWorkers: null, recordBaseline: false };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
     if (key === "--") continue;
     if (key === "--tests" && !args.tests) args.tests = true;
+    else if (key === "--record-baseline" && !args.recordBaseline) args.recordBaseline = true;
     else if (key === "--server-workers" && args.serverWorkers === null) {
       args.serverWorkers = Number(argv[++i]);
       if (!Number.isSafeInteger(args.serverWorkers) || args.serverWorkers < 1)
@@ -363,7 +573,15 @@ function formatTable(record) {
     `Candidate \`${record.head}\` (tree \`${record.tree}\`${record.dirty ? ", plus uncommitted changes" : ""}), ` +
       `${record.platform}, Node ${record.node}, pnpm ${record.pnpm}, ${record.cores} CPUs` +
       `${record.load === null ? "" : ` (load average ${record.load} at start)`}` +
+      `${record.fseventsd === null || record.fseventsd === undefined ? "" : `, fseventsd ${record.fseventsd}% CPU`}` +
       `${record.partial ? `; partial run: ${record.partial.join(", ")}` : ""}.`,
+    ...(record.busy?.length
+      ? [
+          "",
+          `Busy machine at start: ${record.busy.join("; ")}. Timeouts and file-watch failures ` +
+            "below may come from that, not from the candidate.",
+        ]
+      : []),
     "",
     "| Gate | Result |",
     "| --- | --- |",
@@ -375,6 +593,8 @@ function formatTable(record) {
 export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() } = {}) {
   const args = parseArgs(argv);
   const root = capture(["git", "rev-parse", "--show-toplevel"], cwd);
+  const commonDir = NodePath.resolve(root, capture(["git", "rev-parse", "--git-common-dir"], root));
+  const cores = NodeOS.availableParallelism();
   const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-alignment-gates-"));
   const record = {
     head: capture(["git", "rev-parse", "HEAD"], root),
@@ -383,9 +603,10 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
     platform: `${platform} ${NodeOS.release()}`,
     node: process.version,
     pnpm: capture(["pnpm", "--version"], root),
-    cores: NodeOS.availableParallelism(),
-    // Windows reports no load average.
-    load: platform === "win32" ? null : Number(NodeOS.loadavg()[0].toFixed(1)),
+    cores,
+    load: null,
+    fseventsd: null,
+    busy: [],
     partial: args.only,
     gates: [],
   };
@@ -395,12 +616,32 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
       `${JSON.stringify(record, null, 2)}\n`,
     );
   const selected = GATES.filter((gate) => !args.only || args.only.includes(gate.id));
+  const baselineFile = baselinePath(commonDir, { platform });
+  if (args.recordBaseline) {
+    const testGate = selected.find((gate) => gate.id === "test");
+    if (!testGate) throw new Error("--record-baseline needs the test gate");
+    if (testGate.windows && platform === "win32" && !args.tests)
+      throw new Error("--record-baseline needs --tests on Windows, where the test gate is skipped");
+    const originMain = gitRef(
+      ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"],
+      root,
+    );
+    if (record.dirty || originMain !== record.head)
+      throw new Error(
+        "--record-baseline needs a clean checkout of origin/main (fetch it, then check out that commit)",
+      );
+  }
+  const baseline = args.recordBaseline ? null : usableBaseline(baselineFile, record.head, root);
+  if (baseline?.unusable) {
+    console.log(`\nTest baseline ${baselineFile} not used: ${baseline.unusable}.`);
+  }
   const release = selected.some((gate) => HEAVY_GATES.has(gate.id))
-    ? acquireGatesLock(
-        NodePath.resolve(root, capture(["git", "rev-parse", "--git-common-dir"], root)),
-        { root },
-      )
+    ? acquireGatesLock(commonDir, { root })
     : () => {};
+  // Sampled once this run holds the lock, so a wait for another run does not make it stale.
+  const machine = machineLoad(platform, cores);
+  Object.assign(record, { load: machine.load, fseventsd: machine.fseventsd, busy: machine.busy });
+  const workers = args.serverWorkers ?? serverWorkers(cores, NodeOS.totalmem(), machine.load ?? 0);
   const onSignal = (signal) => {
     release();
     process.exit(signal === "SIGINT" ? 130 : 143);
@@ -408,11 +649,49 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    runGates(selected, { args, platform, root, out, record, save });
+    runGates(selected, {
+      args,
+      platform,
+      root,
+      out,
+      record,
+      save,
+      baseline: baseline?.unusable ? null : baseline,
+      workers,
+    });
   } finally {
     release();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+  }
+  const recorded = record.gates.find((gate) => gate.id === "test")?.tests?.recorded;
+  if (args.recordBaseline && recorded) {
+    NodeFS.mkdirSync(NodePath.dirname(baselineFile), { recursive: true });
+    NodeFS.writeFileSync(
+      baselineFile,
+      `${JSON.stringify(
+        {
+          head: record.head,
+          tree: record.tree,
+          recordedAt: new Date().toISOString(),
+          platform: record.platform,
+          node: record.node,
+          failures: recorded.failures,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    console.log(`\nBaseline: ${baselineFile}`);
+  } else if (
+    !args.recordBaseline &&
+    (!baseline || baseline.unusable) &&
+    selected.some((gate) => gate.id === "test")
+  ) {
+    console.log(
+      `\nNo test baseline for this machine (${baselineFile}): every failure counts. ` +
+        `Record one from a clean checkout of origin/main with \`pnpm alignment:gates --only test${platform === "win32" ? " --tests" : ""} --record-baseline\`.`,
+    );
   }
   console.log(`\nResults: ${NodePath.join(out, "results.json")}\n\n${formatTable(record)}`);
   const failed = record.gates.filter((gate) => gate.status === "failed").map((gate) => gate.id);
@@ -422,7 +701,7 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   return failed.length ? 1 : 0;
 }
 
-function runGates(selected, { args, platform, root, out, record, save }) {
+function runGates(selected, { args, platform, root, out, record, save, baseline, workers }) {
   for (const gate of selected) {
     if (gate.windows && platform === "win32" && !args.tests) {
       record.gates.push({ id: gate.id, status: "not-run", reason: gate.windows });
@@ -437,7 +716,15 @@ function runGates(selected, { args, platform, root, out, record, save }) {
     let homeFiles;
     try {
       result = gate.run
-        ? gate.run({ root, home, out, log, workers: args.serverWorkers ?? serverWorkers() })
+        ? gate.run({
+            root,
+            home,
+            out,
+            log,
+            workers,
+            baseline,
+            recording: args.recordBaseline,
+          })
         : runTool(gate.argv, { cwd: root, home, stdio: ["ignore", fd, fd] });
       homeFiles = countFiles(home);
     } finally {

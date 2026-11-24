@@ -97,8 +97,6 @@ const withEnvironmentThemes = <A, E>(
                       });
                       return DEFAULT_SERVER_SETTINGS;
                     }),
-              // SCIENT-FORK: Scient's settings service also reports committed custom models.
-              committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
             }),
           ),
           Layer.provide(Layer.succeed(FileSystem.FileSystem, options.wrapFileSystem?.(fs) ?? fs)),

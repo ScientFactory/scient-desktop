@@ -627,16 +627,27 @@ describe("MessagesTimeline messages", () => {
       (_, index) =>
         `Paragraph ${index + 1}. ${"A side panel should not move the sentence being read out of view. ".repeat(5)}`,
     );
+    // SCIENT-FORK:START — the opening restore holds the end until it settles; a scroll before
+    // then is pulled back, and no reading position is kept while it runs.
+    let positioned: string | null = null;
     await using screen = await renderTimeline(
       [message(paragraphs.join("\n\n"), { role: "assistant" })],
-      props,
+      {
+        ...props,
+        onPositionedThreadKeyChange: (key) => {
+          positioned = key;
+        },
+      },
     );
+    // SCIENT-FORK:END
     screen.container.style.width = "900px";
     const viewport = props.listRef.current!.getScrollableNode()!;
     const target = page.getByText(paragraphs[15]!.trim(), { exact: true }).element();
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(1000);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      // SCIENT-FORK: see above.
+      expect(positioned).toBe(props.routeThreadKey);
     });
     await props.listRef.current!.scrollToOffset({
       offset:
@@ -669,9 +680,16 @@ describe("MessagesTimeline messages", () => {
       (_, index) =>
         `Paragraph ${index + 1}. ${"A side panel should not move the sentence being read out of view. ".repeat(5)}`,
     );
+    // The opening restore holds the end until it settles, pulling back an earlier scroll.
+    let positioned: string | null = null;
     await using screen = await renderTimeline(
       [message(paragraphs.join("\n\n"), { role: "assistant" })],
-      props,
+      {
+        ...props,
+        onPositionedThreadKeyChange: (key) => {
+          positioned = key;
+        },
+      },
     );
     screen.container.style.width = "500px";
     const viewport = props.listRef.current!.getScrollableNode()!;
@@ -679,9 +697,10 @@ describe("MessagesTimeline messages", () => {
       page.getByText(paragraphs[index]!.trim(), { exact: true }).element() as HTMLElement;
     const targetIndex = 24;
     const target = paragraph(targetIndex);
-    await vi.waitFor(() =>
-      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
-    );
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      expect(positioned).toBe(props.routeThreadKey);
+    });
     await props.listRef.current!.scrollToOffset({
       offset:
         viewport.scrollTop +

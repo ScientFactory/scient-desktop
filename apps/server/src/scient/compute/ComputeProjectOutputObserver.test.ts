@@ -3,12 +3,15 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ComputeRuntimeWriteReport } from "@scientfactory/compute";
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import {
   ComputeProjectOutputObserver,
@@ -17,6 +20,10 @@ import {
   type ComputeProjectOutputWatch,
 } from "./ComputeProjectOutputObserver.ts";
 import { makeProjectWriteWatches, type ProjectWatchBackend } from "./ComputeProjectWriteWatch.ts";
+import {
+  platformFileEventLatency,
+  type StartNativeWatch,
+} from "../workspace/nativeFileWatch.testkit.ts";
 
 const PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3V8AAAAASUVORK5CYII=",
@@ -147,6 +154,42 @@ const runWithoutReportedLoss = (watch: ComputeProjectOutputWatch, body: Effect.E
     }
   });
 
+/** How long ComputeProjectWriteWatch waits for each of its sync files. */
+const WATCH_SYNC_WAIT = Duration.seconds(1);
+
+/** The project watch's own backend, which can lag behind other native watches. */
+const startProjectWatchBackend: StartNativeWatch = async (directory, onReport) => {
+  const backend = await import("@parcel/watcher");
+  const subscription = await backend.subscribe(directory, (_error, events) => {
+    for (const event of events) onReport(NodePath.basename(event.path));
+  });
+  return () => subscription.unsubscribe();
+};
+
+/**
+ * The observer rightly falls back to a scan when its real watch's sync files do not come back in
+ * time. Then, instead of failing on the coverage alone, this says how fast a fresh subscription
+ * on the same folder reports a new file. That is evidence, not a verdict on which side is slow.
+ */
+const expectRealWatchAvailable = (root: string, coverageReason: string | undefined) =>
+  coverageReason !== "watch-unavailable"
+    ? Effect.void
+    : platformFileEventLatency(root, startProjectWatchBackend).pipe(
+        Effect.provide(NodeServices.layer),
+        Effect.map((latency) =>
+          expect.fail(
+            `The project watch reported watch-unavailable (it waits ${Duration.format(WATCH_SYNC_WAIT)} for each sync file); a fresh @parcel/watcher subscription on the same folder then ${Option.match(
+              latency,
+              {
+                onNone: () => "reported no new file within 10 s",
+                onSome: (taken) =>
+                  `reported a new file in ${Math.round(Duration.toMillis(taken))} ms`,
+              },
+            )}.`,
+          ),
+        ),
+      );
+
 /** A project as large and deep as the ones the old before/after scan gave up on. */
 async function fillLargeProject(root: string) {
   const environment = NodePath.join(root, "venv", "lib", "site-packages");
@@ -192,6 +235,7 @@ describe("ComputeProjectOutputObserver", () => {
             Effect.asVoid,
           ),
         );
+        yield* expectRealWatchAvailable(root, collection.capture?.coverageReason);
         expect(collection.images.map((image) => image.relativePath)).toEqual([
           `${Array.from({ length: 12 }, () => "deeper").join("/")}/plot.svg`,
           "figures/plot.png",
@@ -204,9 +248,10 @@ describe("ComputeProjectOutputObserver", () => {
   );
 
   it.live("says a run in a large, deep project wrote nothing when it wrote nothing", () =>
-    withWatch(largeProject, (_root, watch) =>
+    withWatch(largeProject, (root, watch) =>
       Effect.gen(function* () {
         const collection = yield* runWithoutReportedLoss(watch, Effect.void);
+        yield* expectRealWatchAvailable(root, collection.capture?.coverageReason);
         expect(collection.images).toEqual([]);
         expect(collection.capture).toEqual(watchedCoverage);
         expect(collection.warnings).toEqual([]);

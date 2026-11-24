@@ -106,6 +106,7 @@ import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
+import * as ThreadMcpStatusRegistry from "./mcpApps/ThreadMcpStatusRegistry.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
@@ -176,6 +177,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { ScientServerSettings } from "./scientServerSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -622,6 +624,7 @@ export const buildAppUnderTest = (options?: {
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     codexInstallation?: Partial<CodexInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+    scientServerSettings?: Partial<ScientServerSettings["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
@@ -801,17 +804,22 @@ export const buildAppUnderTest = (options?: {
         }),
       ...options?.layers?.vcsDriverRegistry,
     });
-    const serverSettingsLayer = Layer.mock(ServerSettings.ServerSettingsService)({
-      managedPolicy: undefined,
-      start: Effect.void,
-      ready: Effect.void,
-      getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-      updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
-      committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
-      ...options?.layers?.serverSettings,
-    });
+    const serverSettingsLayer = Layer.merge(
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        managedPolicy: undefined,
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+        ...options?.layers?.serverSettings,
+      }),
+      Layer.mock(ScientServerSettings)({
+        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
+        ...options?.layers?.scientServerSettings,
+      }),
+    );
     const gitVcsDriverLayer = Layer.mock(GitVcsDriver.GitVcsDriver)({
       // Worktree launches read the local branch names first; none block by default.
       listLocalBranchNames: () => Effect.succeed([]),
@@ -1073,7 +1081,7 @@ export const buildAppUnderTest = (options?: {
         // Provider installs run through T3's service, over the mocked installations below.
         Layer.provide(ProviderInstallation.layer),
         // Provider maintenance and text generation wait on the server's one installation gate.
-        Layer.provide(ProviderInstallationGate.layer),
+        Layer.provide(Layer.merge(ProviderInstallationGate.layer, ThreadMcpStatusRegistry.layer)),
         Layer.provide(Layer.mock(SecretCheck.SecretCheck)({})),
         // The runtime layer, not the websocket layer, owns the one session scanner.
         Layer.provide(

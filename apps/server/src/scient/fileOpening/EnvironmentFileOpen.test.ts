@@ -2,20 +2,24 @@
 import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentFilePath } from "@t3tools/contracts";
+import { EnvironmentFilePath, type EnvironmentFileChangeEvent } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import {
+  awaitNativeReport,
+  syncNativeWatch,
+  within,
+  type NativeWatchReports,
+} from "../workspace/nativeFileWatch.testkit.ts";
 import {
   classifyEnvironmentFile,
   prepareEnvironmentFileOpen,
@@ -25,9 +29,37 @@ import {
 const TestLayer = NodeServices.layer;
 const bytes = (value: string) => new TextEncoder().encode(value);
 
-const watchReceipts = vi.hoisted(() => ({
-  afterCallback: undefined as ((filename: string | Buffer | null) => void) | undefined,
-}));
+/**
+ * Watch `selectedPath` on the TestClock and collect its hints, starting once the watch is ready
+ * and every change made before it has been reported.
+ */
+const startWatch = Effect.fn("startWatch")(function* (selectedPath: string) {
+  const path = yield* Path.Path;
+  const ready = yield* Deferred.make<void>();
+  const hints: Array<EnvironmentFileChangeEvent> = [];
+  yield* watchEnvironmentFile({ path: EnvironmentFilePath.make(selectedPath) }).pipe(
+    Stream.runForEach((event) =>
+      event._tag === "watch-ready"
+        ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
+        : Effect.sync(() => void hints.push(event)),
+    ),
+    Effect.forkScoped({ startImmediately: true }),
+  );
+  yield* TestClock.adjust("100 millis");
+  yield* Deferred.await(ready).pipe(within(`watch-ready for ${selectedPath}`));
+  yield* syncNativeWatch(watchReports, path.dirname(selectedPath));
+  yield* TestClock.adjust("100 millis");
+  hints.length = 0;
+  return hints;
+});
+
+/** Make a change, wait for the native watch to report it, then let the 100 ms batch flush. */
+const changeAndFlush = <E, R>(reportedName: string, change: Effect.Effect<unknown, E, R>) =>
+  awaitNativeReport(watchReports, reportedName, change).pipe(
+    Effect.andThen(TestClock.adjust("150 millis")),
+  );
+
+const watchReports = vi.hoisted((): NativeWatchReports => new Map());
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
@@ -40,7 +72,7 @@ vi.mock("node:fs", async (importOriginal) => {
         ...args.slice(0, -1),
         (event: string, filename: string | Buffer | null) => {
           Reflect.apply(listener, undefined, [event, filename]);
-          watchReceipts.afterCallback?.(filename);
+          watchReports.get(String(filename))?.();
         },
       ]);
     },
@@ -213,48 +245,18 @@ describe("EnvironmentFileOpen", () => {
       yield* fileSystem.writeFileString(selectedPath, "before\n");
       yield* fileSystem.writeFileString(otherPath, "unrelated\n");
 
-      const ready = yield* Deferred.make<void>();
-      const unrelatedObserved = Promise.withResolvers<void>();
-      const selectedObserved = Promise.withResolvers<void>();
-      const changes = yield* Effect.forkChild(
-        watchEnvironmentFile({
-          path: EnvironmentFilePath.make(selectedPath),
-        }).pipe(
-          Stream.tap((event) =>
-            event._tag === "watch-ready" ? Deferred.succeed(ready, undefined) : Effect.void,
-          ),
-          Stream.filter((event) => event._tag === "file-changed"),
-          Stream.runHead,
-        ),
-        { startImmediately: true },
+      const hints = yield* startWatch(selectedPath);
+      yield* changeAndFlush(
+        "other.txt",
+        fileSystem.writeFileString(otherPath, "still unrelated\n"),
       );
-      yield* TestClock.adjust("100 millis");
-      yield* Deferred.await(ready);
-      watchReceipts.afterCallback = (filename) => {
-        if (filename?.toString() === path.basename(otherPath)) unrelatedObserved.resolve();
-        if (filename?.toString() === path.basename(selectedPath)) selectedObserved.resolve();
-      };
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          watchReceipts.afterCallback = undefined;
-        }),
-      );
-      yield* fileSystem.writeFileString(otherPath, "still unrelated\n");
-      // The native callback has returned before virtual time flushes any coalesced event.
-      yield* Effect.promise(() => unrelatedObserved.promise);
-      yield* TestClock.adjust("150 millis");
-      expect(changes.pollUnsafe()).toBeUndefined();
-      yield* fileSystem.writeFileString(selectedPath, "after\n");
-      yield* Effect.promise(() => selectedObserved.promise);
-      yield* TestClock.adjust("100 millis");
-      const event = yield* Fiber.join(changes);
+      expect(hints).toEqual([]);
+      yield* changeAndFlush("selected.txt", fileSystem.writeFileString(selectedPath, "after\n"));
 
-      expect(event).toEqual(
-        Option.some({
-          _tag: "file-changed",
-          path: EnvironmentFilePath.make(selectedPath),
-        }),
-      );
+      expect(hints).toContainEqual({
+        _tag: "file-changed",
+        path: EnvironmentFilePath.make(selectedPath),
+      });
       expect(yield* fileSystem.readFileString(selectedPath)).toBe("after\n");
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
@@ -267,33 +269,25 @@ describe("EnvironmentFileOpen", () => {
       const selectedPath = path.join(root, "report.html");
       yield* fileSystem.writeFileString(selectedPath, "<p>before</p>\n");
 
-      const event = yield* watchEnvironmentFile({
-        path: EnvironmentFilePath.make(selectedPath),
-      }).pipe(
-        Stream.tap((event) =>
-          event._tag === "watch-ready"
-            ? Effect.gen(function* () {
-                yield* fileSystem.remove(selectedPath);
-                yield* fileSystem.writeFileString(selectedPath, "<p>after</p>\n");
-              })
-            : Effect.void,
-        ),
-        Stream.filter((event) => event._tag === "file-changed"),
-        Stream.runHead,
-      );
-
-      expect(event).toEqual(
-        Option.some({
-          _tag: "file-changed",
-          path: EnvironmentFilePath.make(selectedPath),
+      const hints = yield* startWatch(selectedPath);
+      yield* changeAndFlush(
+        "report.html",
+        Effect.gen(function* () {
+          yield* fileSystem.remove(selectedPath);
+          yield* fileSystem.writeFileString(selectedPath, "<p>after</p>\n");
         }),
       );
+
+      expect(hints).toContainEqual({
+        _tag: "file-changed",
+        path: EnvironmentFilePath.make(selectedPath),
+      });
       const refreshed = yield* prepareEnvironmentFileOpen({
         path: EnvironmentFilePath.make(selectedPath),
       });
       expect(refreshed.presentation.kind).toBe("html");
       expect(yield* fileSystem.readFileString(selectedPath)).toBe("<p>after</p>\n");
-    }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 
   it.effect("watches creation of a selected file that is initially missing", () =>
@@ -303,28 +297,20 @@ describe("EnvironmentFileOpen", () => {
       const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-file-create-" });
       const selectedPath = path.join(root, "new-report.md");
 
-      const event = yield* watchEnvironmentFile({
-        path: EnvironmentFilePath.make(selectedPath),
-      }).pipe(
-        Stream.tap((event) =>
-          event._tag === "watch-ready"
-            ? fileSystem.writeFileString(selectedPath, "# Created later\n")
-            : Effect.void,
-        ),
-        Stream.filter((event) => event._tag === "file-changed"),
-        Stream.runHead,
+      const hints = yield* startWatch(selectedPath);
+      yield* changeAndFlush(
+        "new-report.md",
+        fileSystem.writeFileString(selectedPath, "# Created later\n"),
       );
 
-      expect(event).toEqual(
-        Option.some({
-          _tag: "file-changed",
-          path: EnvironmentFilePath.make(selectedPath),
-        }),
-      );
+      expect(hints).toContainEqual({
+        _tag: "file-changed",
+        path: EnvironmentFilePath.make(selectedPath),
+      });
       const refreshed = yield* prepareEnvironmentFileOpen({
         path: EnvironmentFilePath.make(selectedPath),
       });
       expect(refreshed.presentation.kind).toBe("markdown");
-    }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 });

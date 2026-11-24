@@ -182,6 +182,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.extensionsProviderStoreSearch,
       WS_METHODS.extensionsProviderStoreEntry,
       WS_METHODS.extensionsDeliveryReceipt,
+      WS_METHODS.threadMcpStatusSubscribe,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }

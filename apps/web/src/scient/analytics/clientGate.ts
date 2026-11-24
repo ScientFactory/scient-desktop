@@ -156,7 +156,11 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     return true;
   };
   return {
-    observeView(connection: Connection, read: () => ScientAnalyticsUiEvent | null) {
+    observeView(
+      connection: Connection,
+      read: () => ScientAnalyticsUiEvent | null,
+      onEnqueued?: () => void,
+    ) {
       const state = stateFor(connection);
       let reportedContext: string | undefined;
       let disposed = false;
@@ -174,8 +178,10 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
           context !== undefined &&
           reportedContext !== context &&
           enqueue(connection, ready, { ...event, collectionContext: context })
-        )
+        ) {
           reportedContext = context;
+          onEnqueued?.();
+        }
       };
       // Only current visible state is read after discovery; never replay an
       // action or a screen the user has already left. Bound retained observers.

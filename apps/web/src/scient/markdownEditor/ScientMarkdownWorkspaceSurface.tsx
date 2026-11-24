@@ -65,9 +65,11 @@ const CHROME_BLOCK_SHORTCUTS = [
   ["duplicateBlock", "duplicate"],
 ] as const satisfies ReadonlyArray<readonly [ScientMarkdownShortcutId, ScientMarkdownBlockAction]>;
 
+// A task checkbox sits inside the editable document but edits no text, like a button.
 function targetOwnsTextEditing(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
+    !target.matches("input[type='checkbox']") &&
     target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])") !==
       null
   );

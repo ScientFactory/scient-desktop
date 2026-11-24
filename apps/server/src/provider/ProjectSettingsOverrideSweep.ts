@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Settings from "../serverSettings.ts";
+import { ScientServerSettings } from "../scientServerSettings.ts"; // SCIENT-FORK
 
 export function deletedProjectOverridePatch(entry: ProjectSettingsOverrides | undefined) {
   // Keep cleanup policy for deleted threads; omitting providerInstances would preserve obsolete references in the merge.
@@ -36,7 +37,7 @@ export const sweep = Effect.gen(function* () {
 
   // SCIENT-FORK:START — a merged patch keeps title instructions for released clients, so every
   // entry is removed server-side first and only a kept cleanup policy is written back.
-  yield* serverSettings.removeProjectSettingsOverrides(
+  yield* (yield* ScientServerSettings).removeProjectSettingsOverrides(
     overrides.map(([projectId]) => projectId as ProjectId),
   );
   const kept = overrides.filter(([, patch]) => patch !== null);

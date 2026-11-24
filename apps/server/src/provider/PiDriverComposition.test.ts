@@ -38,6 +38,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ManagedRuntimeCatalog from "../scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { ScientServerSettings } from "../scientServerSettings.ts";
 import type { ResolvedModelConnection } from "../customModels.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
@@ -391,6 +392,9 @@ it.layer(testLayer)("PiDriver production composition", (it) => {
             ...DEFAULT_SERVER_SETTINGS,
             customModels: { revision: 1, connections: [connection] },
           }),
+        };
+        const scientSettings = {
+          ...(yield* ScientServerSettings),
           resolveCustomModels: () => Effect.succeed([resolvedConnection]),
         };
         const launches: Array<{
@@ -411,6 +415,7 @@ it.layer(testLayer)("PiDriver production composition", (it) => {
           },
         }).pipe(
           Effect.provideService(ServerSettings.ServerSettingsService, composedSettings),
+          Effect.provideService(ScientServerSettings, scientSettings),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             makePiCompositionDiscoverySpawner({

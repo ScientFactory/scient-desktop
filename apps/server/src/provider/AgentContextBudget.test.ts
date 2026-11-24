@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
@@ -84,6 +84,7 @@ import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 import { AccountsService } from "../scient/accounts/AccountsService.ts";
 import { OverleafSync } from "../scient/overleaf/OverleafSync.ts";
+import { ScientServerSettings } from "../scientServerSettings.ts";
 // SCIENT-FORK:END
 
 // Registration only stores tool definitions, so the handlers' services are never called.
@@ -125,11 +126,7 @@ const toolHandlerServices = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-context-budget-" }),
   Layer.mock(ServerEnvironment)({}),
   Layer.mock(ServerSecretStore)({}),
-  // SCIENT-FORK:START Scient settings service requires committed custom models.
-  Layer.mock(ServerSettingsService)({
-    committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
-  }),
-  // SCIENT-FORK:END
+  Layer.mock(ServerSettingsService)({}),
   Layer.mock(SourceControlRepositoryService)({}),
   Layer.mock(ThreadIssueService)({}),
   Layer.mock(ThreadLaunchService)({}),
@@ -151,6 +148,9 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(WorkspacePaths)({}),
   Layer.mock(AccountsService)({}),
   Layer.mock(OverleafSync)({}),
+  Layer.mock(ScientServerSettings)({
+    committedCustomModels: () => ({ revision: 0, connections: [] }),
+  }),
   // SCIENT-FORK:END
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 

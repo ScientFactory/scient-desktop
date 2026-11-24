@@ -15408,6 +15408,11 @@
     },
     " för"
   ],
+  "343ed23b123919d6": "Det gick inte att starta inloggningen",
+  "1bfcefb0511c17c5": "Öppna Inställningar → Tillägg för att slutföra inloggningen till {name}",
+  "0595a3dddcfced3b": "Logga in på {name}",
+  "165b1e80e7911320": "Öppnar…",
+  "9f90d63bcad3e2a7": "Hantera",
   "5c6b2c0220202c13": "Se {first}, {second} och {count} till",
   "8e531b8a23c825ed": "Se {first} och {second}",
   "cfdd30a105672dea": "Se {name}",
@@ -15607,9 +15612,26 @@
   "b95005276b251a4f": "Anslut en körmiljö för att hantera tillägg.",
   "ecc76bbd8a7fa124": "Upptäck",
   "c136813370b18a00": "Bläddra bland alla MCP-servrar",
+  "85f63fdc66c617bc": "Kontrollen misslyckades",
+  "32e4206b582653e6": "{name} är ansluten",
+  "a553be36e93303cd": "Redo",
+  "1f8fa7d98ec3df40": "Inloggningsuppgiften avvisades",
+  "efe132d82235637c": "Behörigheter krävs",
+  "b2d917bb4b78f1fe": "Anslutna tjänster: {connected} redo, {issues} behöver åtgärdas",
   "7f83064be7319b99": "Anslutna tjänster: {delivered} levererade, {skipped} överhoppade",
+  "479ca9411badb6b5": "Anslutna tjänster: {count} aktiva",
   "c7370daf10755896": "Levererad",
+  "b10b1d18e63b6ca6": "Agentens MCP-servrar",
   "0dfc582858939130": "Överhoppad",
+  "1adf711055ecf6ae": "Skicka ett meddelande för att väcka sessionen och logga sedan in här.",
+  "0cd6a948710dc4f9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " behöver åtgärdas"
+  ],
   "166fd2daa35c3b7b": [
     "· ",
     {
@@ -15620,8 +15642,19 @@
     " överhoppade"
   ],
   "34d5da835e278d6f": "Anslutna tjänster",
+  "57886ae9c159ba86": "Behöver åtgärdas",
   "60595a8acf9f6a18": "Levererad till den här sessionen",
   "a87212dee280b4c9": "Inga",
+  "eefabf57c07b099f": "Agentens MCP-servrar",
+  "cbf2f207ca8b952b": [
+    "Valfria plugin- eller kontoservrar som inte är inloggade:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "bb4910d55ac221b8": "Hantera anslutna tjänster",
   "04a25cc23244a916": "Scient kunde inte logga in på GitHub. Försök igen.",
   "3ccba1564083dc6e": "Kopiera inloggningskod",

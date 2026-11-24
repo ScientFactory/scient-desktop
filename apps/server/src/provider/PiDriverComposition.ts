@@ -32,6 +32,7 @@ import { customModelDiscoverySnapshot } from "../customModelCapabilities.ts";
 import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { customModelSettingsSource, ScientServerSettings } from "../scientServerSettings.ts";
 import { makePiCustomModelsClientFactory } from "./pi/PiCustomModels.ts";
 import { makePiCustomModelsConnectionFactory } from "./pi/PiCustomModelsConnection.ts";
 import { PiRpcProtocolError, type PiRpcSpawnOptions } from "@t3tools/provider-pi/server/rpcClient";
@@ -44,7 +45,11 @@ import type { ScientProviderDriver, ScientProviderInstance } from "./ScientProvi
 
 const PI_DRIVER = ProviderDriverKind.make("pi");
 
-export type PiCompositionRequirements = PiDriverEnv | ServerConfig | ServerSettingsService;
+export type PiCompositionRequirements =
+  | PiDriverEnv
+  | ServerConfig
+  | ServerSettingsService
+  | ScientServerSettings;
 
 type PiCompositionExtension = Pick<ScientProviderInstance, "managedRuntimeActions">;
 
@@ -103,6 +108,10 @@ const resolvePiRuntime = Effect.fn("PiDriverComposition.resolvePiRuntime")(funct
   const serverConfig = yield* ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* ServerSettingsService;
+  const customModelSettings = customModelSettingsSource(
+    serverSettings,
+    yield* ScientServerSettings,
+  );
   const managedRuntime = yield* makePiManagedRuntimeResolution({
     settings: input.config,
     baseDir: input.baseDir,
@@ -119,7 +128,7 @@ const resolvePiRuntime = Effect.fn("PiDriverComposition.resolvePiRuntime")(funct
     ),
   } satisfies PiSettings;
   const customModelClientFactory = yield* makePiCustomModelsClientFactory(
-    serverSettings,
+    customModelSettings,
     input.instanceId,
     input.stateDir,
   ).pipe(
@@ -144,7 +153,7 @@ const resolvePiRuntime = Effect.fn("PiDriverComposition.resolvePiRuntime")(funct
       ),
     );
   const makeConnection = yield* makePiCustomModelsConnectionFactory(
-    serverSettings,
+    customModelSettings,
     input.instanceId,
     input.stateDir,
   );

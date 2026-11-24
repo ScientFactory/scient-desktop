@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import { Link } from "@tanstack/react-router";
 import { Columns2, LoaderCircle, Play, Rows2 } from "lucide-react";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 
 import { Button } from "~/components/ui/button";
 
@@ -104,6 +104,7 @@ interface ScientComputeFileSurfaceProps {
   readonly onSaveResolutionApplied: () => void;
   readonly saveResolution: FileSaveResolution | null;
   readonly contextId: ComputeContextId;
+  readonly onEditorChange?: ComponentProps<typeof EditableFileSurface>["onEditorChange"];
 }
 
 function initialResultsView(): ComputeFileResultsView {
@@ -582,6 +583,7 @@ function ComputeFileSurfaceContent(
               onSaveConfirmed={props.onSaveConfirmed}
               onSaveResolutionApplied={props.onSaveResolutionApplied}
               saveResolution={props.saveResolution}
+              onEditorChange={props.onEditorChange}
               onSelectionChange={setSelection}
               activeLineRange={activeCellRange}
               caretQuote={(source, line) =>

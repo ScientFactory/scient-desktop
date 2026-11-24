@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { customModelSettingsSource, ScientServerSettings } from "../scientServerSettings.ts";
 import { makeOmpCustomModelsClientFactory } from "../provider/omp/OmpCustomModels.ts";
 import { layer as gateLayer } from "../provider/omp/OmpExecutableGate.ts";
 import { ompTarget } from "../provider/omp/OmpTarget.ts";
@@ -127,7 +128,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           // No injected process factory: this is the production gate/version/spawn/client path.
           const makeProcess = yield* makeOmpCustomModelsClientFactory(
             ompTarget,
-            settings,
+            customModelSettingsSource(settings, yield* ScientServerSettings),
             instanceId,
             config.stateDir,
           );

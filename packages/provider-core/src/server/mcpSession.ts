@@ -20,6 +20,7 @@ export interface McpProviderSessionConnector {
   readonly serverName: string;
   readonly displayName: string;
   readonly url: string;
+  readonly authRevision?: number;
 }
 
 /**

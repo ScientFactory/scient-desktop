@@ -22,6 +22,7 @@ import * as ServerConfig from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
+import { customModelSettingsSource, ScientServerSettings } from "../../scientServerSettings.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { DroidAcpRuntimeInput } from "../acp/DroidAcpSupport.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
@@ -416,10 +417,11 @@ describe("Droid per-turn request limits", () => {
       ).pipe(Layer.provide(ServerSecretStore.layer));
       yield* Effect.gen(function* () {
         const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const scient = yield* ScientServerSettings;
         const config = yield* ServerConfig.ServerConfig;
         yield* settings.start;
         const pi = ProviderInstanceId.make("pi");
-        yield* settings.saveCustomModel({
+        yield* scient.saveCustomModel({
           revision: 0,
           connection: {
             id: "reload",
@@ -443,7 +445,11 @@ describe("Droid per-turn request limits", () => {
           apiKey: Redacted.make("reload-real-key-0123456789"),
         });
         const droid = makeLoopingDroid(1);
-        const factory = yield* makeDroidCustomModelsRuntimeFactory(settings, pi, droid.factory);
+        const factory = yield* makeDroidCustomModelsRuntimeFactory(
+          customModelSettingsSource(settings, scient),
+          pi,
+          droid.factory,
+        );
         const runtime = yield* factory(runtimeInput);
         // A catalog written before key hints: reloading it reads the stored key.
         holdNextKeyRead = true;

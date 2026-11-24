@@ -59,7 +59,13 @@ import type {
   ScheduledTaskId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  idleCompactionOf,
+  isCompactionCommandMessage,
+  isLegacyMcpStartupNotice,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -676,7 +682,10 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "room_message")
     return item.deletedAt ? resolve(msg("Message deleted")) : resolve(msg("To people"));
-  if (item.type === "system_notice") return item.message;
+  if (item.type === "system_notice") {
+    const noticeTitle = item.title?.trim();
+    return isLegacyMcpStartupNotice(item) && noticeTitle ? noticeTitle : item.message;
+  }
   if (item.type === "compaction") return contextCompactionLabel(item, resolve);
   const title =
     (item.type === "dynamic_tool"
@@ -2527,6 +2536,11 @@ export function buildThreadFeed(
     readonly resolve?: MessageResolver;
     /** Keys the caches; text comes from `resolve`. */
     readonly locale?: string;
+    /**
+     * SCIENT-FORK: the host reports the thread's live MCP status, whose card replaces the startup
+     * and sign-in notices older hosts wrote. Without it those notices stay, with their sign-in.
+     */
+    readonly hideMcpStartupNotices?: boolean;
   },
 ): ThreadFeedEntry[] {
   const anchoredMessages = options?.anchoredMessages ?? [];
@@ -2628,6 +2642,12 @@ export function buildThreadFeed(
     ) {
       continue;
     }
+    if (
+      options?.hideMcpStartupNotices === true &&
+      item.type === "system_notice" &&
+      isLegacyMcpStartupNotice(item)
+    )
+      continue;
     const attemptId = resolveAttemptId(item);
     const cached = projectedEntriesCache.get(row);
     if (cached?.attemptId === attemptId && cached.locale === locale) {

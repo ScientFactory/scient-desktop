@@ -15398,6 +15398,11 @@
     },
     " para"
   ],
+  "343ed23b123919d6": "Não foi possível iniciar o login",
+  "1bfcefb0511c17c5": "Abra Configurações → Extensões para concluir o login em {name}",
+  "0595a3dddcfced3b": "Entrar em {name}",
+  "165b1e80e7911320": "Abrindo…",
+  "9f90d63bcad3e2a7": "Gerenciar",
   "5c6b2c0220202c13": "Ver {first}, {second} e mais {count}",
   "8e531b8a23c825ed": "Ver {first} e {second}",
   "cfdd30a105672dea": "Ver {name}",
@@ -15597,9 +15602,26 @@
   "b95005276b251a4f": "Conecte um ambiente de execução para gerenciar extensões.",
   "ecc76bbd8a7fa124": "Descobrir",
   "c136813370b18a00": "Navegar por todos os servidores MCP",
+  "85f63fdc66c617bc": "Falha na verificação",
+  "32e4206b582653e6": "{name} está conectado",
+  "a553be36e93303cd": "Pronto",
+  "1f8fa7d98ec3df40": "Credencial recusada",
+  "efe132d82235637c": "Permissões necessárias",
+  "b2d917bb4b78f1fe": "Serviços conectados: {connected} prontos, {issues} precisam de atenção",
   "7f83064be7319b99": "Serviços conectados: {delivered} entregues, {skipped} ignorados",
+  "479ca9411badb6b5": "Serviços conectados: {count} ativos",
   "c7370daf10755896": "Entregue",
+  "b10b1d18e63b6ca6": "Servidores MCP do agente",
   "0dfc582858939130": "Pulada",
+  "1adf711055ecf6ae": "Envie uma mensagem para reativar esta sessão e depois entre aqui.",
+  "0cd6a948710dc4f9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisam de atenção"
+  ],
   "166fd2daa35c3b7b": [
     "· ",
     {
@@ -15610,8 +15632,19 @@
     " ignorados"
   ],
   "34d5da835e278d6f": "Serviços conectados",
+  "57886ae9c159ba86": "Precisa de atenção",
   "60595a8acf9f6a18": "Entregue a esta sessão",
   "a87212dee280b4c9": "Nenhum",
+  "eefabf57c07b099f": "Servidores MCP do agente",
+  "cbf2f207ca8b952b": [
+    "Servidores opcionais de plugins ou contas sem login:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "bb4910d55ac221b8": "Gerenciar serviços conectados",
   "04a25cc23244a916": "O Scient não conseguiu entrar no GitHub. Tente novamente.",
   "3ccba1564083dc6e": "Copiar o código de login",

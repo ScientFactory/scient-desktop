@@ -135,7 +135,9 @@ function run() {
     const output = path.join(scratch, "results.json");
     try {
       const args = ["test", "run", ...files, "--fileParallelism", `--maxWorkers=${WORKERS}`];
-      execFileSync("vp", [...args, "--reporter=json", `--outputFile=${output}`], {
+      // The default reporter also prints a failed test's logs, such as why a disk had no identity.
+      const reporters = ["--reporter=default", "--reporter=json", `--outputFile.json=${output}`];
+      execFileSync("vp", [...args, ...reporters], {
         cwd,
         env,
         stdio: "inherit",

@@ -168,7 +168,11 @@ break its covered logic and show a retained test fails. Do not assume equivalenc
 from a shared code path or an upstream deletion, or evade proof by calling a test
 obsolete, low-value or flaky. Intentionally removing the guarded behavior needs
 explicit scope, not a claim that another test still covers it.
-Keep Scient extensions to upstream tests in `.scient.` siblings.
+A new Scient test goes in the `.scient.` sibling of T3's test file (`Foo.test.ts` →
+`Foo.scient.test.ts`), even when it tests the same code as a T3 test. Only a test that
+needs that file's private helpers stays in T3's file, inside `SCIENT-FORK:START`/`END`;
+never copy the helpers. `pnpm alignment:seams:check --base origin/main` flags new tests
+outside those regions, and CI runs it on every PR.
 
 Use receipts, persisted events and worker completion for asynchronous tests; controlled
 clocks for time. The test guide owns wait/retry/skip rules and browser-resource setup.

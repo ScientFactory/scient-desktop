@@ -1,4 +1,8 @@
-import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
+import type {
+  ProviderRuntimeOperation,
+  ProviderStatusCheckFailure,
+  ServerProvider,
+} from "@t3tools/contracts";
 
 const MAX_INSTANCES = 1_000;
 
@@ -18,8 +22,9 @@ interface Operation {
 interface Snapshot {
   readonly installed: boolean;
   readonly source: string;
-  readonly state: string;
-  readonly checkFailure: string | undefined;
+  readonly state: ServerProvider["status"];
+  readonly readinessKnown: boolean;
+  readonly checkFailure: ProviderStatusCheckFailure | "not_authenticated" | undefined;
   readonly runtime: Operation | null;
   readonly connection: Operation | null;
   readonly update: Operation | null;
@@ -70,7 +75,10 @@ function snapshot(provider: ServerProvider): Snapshot {
     installed: provider.installed,
     source: provider.installed ? (runtime?.source ?? "unknown") : "missing",
     state: provider.status,
-    checkFailure: provider.connection?.checkFailure,
+    readinessKnown: !provider.statusFromCache && provider.availability !== "unavailable",
+    checkFailure:
+      provider.connection?.checkFailure ??
+      (provider.auth.status === "unauthenticated" ? "not_authenticated" : undefined),
     runtime: operation
       ? {
           key: operation.operationId,
@@ -251,17 +259,35 @@ export function createProviderLifecycleAnalyticsMapper() {
       const next = keepSignInPage(before, snapshot(provider));
       previous.set(id, next);
       const driver = String(provider.driver);
+      const failure =
+        (next.state === "error" || next.state === "warning") && next.checkFailure !== undefined
+          ? { checkFailure: next.checkFailure }
+          : {};
+      const firstCheck =
+        provider.enabled &&
+        next.readinessKnown &&
+        next.state !== "disabled" &&
+        (!before?.readinessKnown || before.state === "disabled");
+      if (firstCheck) {
+        events.push({
+          name: "provider.readiness.observed",
+          properties: {
+            provider: driver,
+            state: next.state,
+            runtimeSource: next.source,
+            ...failure,
+          },
+        });
+      }
       if (before) {
-        if (before.state !== next.state)
+        if (before.readinessKnown && next.readinessKnown && before.state !== next.state)
           events.push({
             name: "provider.readiness.changed",
             properties: {
               provider: driver,
               from: before.state,
               to: next.state,
-              ...(next.state === "error" && next.checkFailure !== undefined
-                ? { checkFailure: next.checkFailure }
-                : {}),
+              ...failure,
             },
           });
         if (before.source !== next.source)

@@ -73,7 +73,6 @@ const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderIns
   listUnavailable: Effect.succeed([]),
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,
-  rebuildInstance: () => Effect.die("Unexpected provider rebuild"),
 });
 const layerRegistry = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
   Layer.provide(ModelManifest.layerTest),

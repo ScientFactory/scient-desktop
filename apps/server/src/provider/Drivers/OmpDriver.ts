@@ -14,6 +14,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { customModelSettingsSource, ScientServerSettings } from "../../scientServerSettings.ts";
 import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/OmpManagedRuntimeActions.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -67,7 +68,8 @@ export type OmpDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | ScientServerSettings;
 
 export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -85,6 +87,7 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
     const serverConfig = yield* ServerConfig;
     const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
     const serverSettings = yield* ServerSettingsService;
+    const scientSettings = yield* ScientServerSettings;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -121,7 +124,7 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
     );
     const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
       ompTarget,
-      serverSettings,
+      customModelSettingsSource(serverSettings, scientSettings),
       instanceId,
       serverConfig.stateDir,
     ).pipe(

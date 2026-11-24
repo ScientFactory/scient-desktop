@@ -91,7 +91,11 @@ import {
 import { probeConnector } from "./ConnectorProbe.ts";
 import { GitHubSourceControlCredential } from "./GitHubSourceControlCredential.ts";
 import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
-import { makeConnectorRuntime, MAX_IN_FLIGHT_PER_CONNECTOR } from "./ConnectorRuntime.ts";
+import {
+  bearerChallengeError,
+  makeConnectorRuntime,
+  MAX_IN_FLIGHT_PER_CONNECTOR,
+} from "./ConnectorRuntime.ts";
 import { CONNECTOR_STATE_FILE } from "./ConnectorStateStore.ts";
 import type { RunTool } from "./PackageSource.ts";
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
@@ -130,7 +134,12 @@ interface FakeVendor {
    * Tokens answered with HTTP 403: naming an auth error in JSON, with a `WWW-Authenticate`
    * challenge, or as an edge-policy HTML page that says nothing about the credential.
    */
-  forbiddenTokens: Map<string, "json" | "challenge" | "edge">;
+  forbiddenTokens: Map<
+    string,
+    "json" | "challenge" | "invalid-token" | "realm" | "described" | "edge"
+  >;
+  /** The open endpoint answers 403 naming a key error, though nobody sent one. */
+  openForbidden: boolean;
   refusing: Gate;
   refreshCount: number;
   registrations: Array<Record<string, unknown>>;
@@ -231,7 +240,13 @@ const handleMcp = async (
         "content-type": "text/html",
         ...(forbidden === "challenge"
           ? { "www-authenticate": 'Bearer error="insufficient_scope"' }
-          : {}),
+          : forbidden === "invalid-token"
+            ? { "www-authenticate": 'Bearer error="invalid_token"' }
+            : forbidden === "realm"
+              ? { "www-authenticate": 'Bearer realm="vendor"' }
+              : forbidden === "described"
+                ? { "www-authenticate": 'Bearer realm="vendor", error_description="invalid_token"' }
+                : {}),
       });
       response.end("<html><body>Access denied</body></html>");
       return;
@@ -242,6 +257,9 @@ const handleMcp = async (
       authorization,
       session,
     });
+  }
+  if (challenge === undefined && vendor.openForbidden) {
+    return json(response, 403, { error: { code: "invalid_api_key", message: "Key revoked." } });
   }
   if (session !== undefined && vendor.expiredSessions.has(session)) {
     response.writeHead(404);
@@ -478,6 +496,7 @@ const resetVendor = (base: string): FakeVendor => ({
   exchange: { gate: undefined, arrived: undefined },
   refusedTokens: new Set(),
   forbiddenTokens: new Map(),
+  openForbidden: false,
   refusing: { gate: undefined, arrived: undefined },
   refreshCount: 0,
   registrations: [],
@@ -497,8 +516,10 @@ const resetVendor = (base: string): FakeVendor => ({
 
 const listen = async (target: NodeHttp.Server) => {
   const listening = Promise.withResolvers<void>();
+  target.once("error", listening.reject);
   target.listen(0, "127.0.0.1", listening.resolve);
   await listening.promise;
+  target.off("error", listening.reject);
   const address = target.address();
   if (address === null || typeof address === "string") throw new Error("server has no port");
   return `http://127.0.0.1:${address.port}`;
@@ -2136,10 +2157,20 @@ describe("connector token lifecycle", () => {
         released.resolve();
 
         // The request refreshes B (the current grant), which is lost.
-        expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject({
-          id: 1,
-          error: { code: -32001 },
-        });
+        expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject(
+          loss === "invalid_grant"
+            ? {
+                id: 1,
+                result: {
+                  content: [{ type: "text", text: expect.stringContaining("reconnect") }],
+                  isError: true,
+                },
+              }
+            : {
+                id: 1,
+                error: { code: -32001 },
+              },
+        );
         expect(vendor.refreshCount).toBe(1);
         expect(yield* current).toMatchObject({ status: "needs-auth", authRevision: 3 });
 
@@ -2192,7 +2223,10 @@ describe("connector token lifecycle", () => {
         refusing.release();
         expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject({
           id: 1,
-          error: { code: -32001 },
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("reconnect") }],
+            isError: true,
+          },
         });
 
         // The newer sign-in is untouched and keeps working.
@@ -2203,7 +2237,13 @@ describe("connector token lifecycle", () => {
         // The same refusal of the grant that owns the connector still counts.
         refuseNextReplay();
         const refused = yield* harness.proxy(connectorId, toolCall(3));
-        expect(yield* readJson(refused)).toMatchObject({ id: 3, error: { code: -32001 } });
+        expect(yield* readJson(refused)).toMatchObject({
+          id: 3,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("reconnect") }],
+            isError: true,
+          },
+        });
         expect(yield* current).toMatchObject({ status: "needs-auth", authRevision: 3 });
       }).pipe(Effect.provide(testLayer)),
   );
@@ -2281,7 +2321,7 @@ describe("connector token lifecycle", () => {
   );
 
   it.live(
-    "marks needs-auth on invalid_grant and answers the agent with a JSON-RPC error, not 401",
+    "marks needs-auth on invalid_grant and answers the agent with an MCP tool error, not 401",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness();
@@ -2295,8 +2335,14 @@ describe("connector token lifecycle", () => {
         expect(response.headers.get("www-authenticate")).toBeNull();
         expect(yield* readJson(response)).toMatchObject({
           id: 4,
-          error: {
-            message: expect.stringContaining("reconnect it in Scient Settings → Extensions"),
+          result: {
+            content: [
+              {
+                type: "text",
+                text: expect.stringContaining("reconnect it in Scient Settings → Extensions"),
+              },
+            ],
+            isError: true,
           },
         });
 
@@ -2309,7 +2355,18 @@ describe("connector token lifecycle", () => {
         expect(delivery.skipped).toMatchObject([{ connectorId, reason: "needs-auth" }]);
 
         const next = yield* harness.proxy(connectorId, toolCall(5));
-        expect(yield* readJson(next)).toMatchObject({ id: 5, error: { code: -32001 } });
+        expect(yield* readJson(next)).toMatchObject({
+          id: 5,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: expect.stringContaining("reconnect it in Scient Settings → Extensions"),
+              },
+            ],
+            isError: true,
+          },
+        });
         // Further refusals while already needs-auth are not new generations.
         expect((yield* harness.runtime.list()).connectors[0]?.authRevision).toBe(signedIn + 1);
       }).pipe(Effect.provide(testLayer)),
@@ -2431,12 +2488,27 @@ describe("connector disconnect", () => {
   );
 
   it.live.each([
-    { status: 401, forbidden: undefined, says: "rejected the credential stored in Scient" },
-    { status: 403, forbidden: "json", says: "answered with HTTP 403" },
-    { status: 403, forbidden: "challenge", says: "answered with HTTP 403" },
+    {
+      status: 401,
+      forbidden: undefined,
+      expectedStatus: "needs-credential",
+      says: "rejected the credential stored in Scient",
+    },
+    {
+      status: 403,
+      forbidden: "json",
+      expectedStatus: "needs-credential",
+      says: "rejected the credential stored in Scient",
+    },
+    {
+      status: 403,
+      forbidden: "challenge",
+      expectedStatus: "connected",
+      says: "additional permissions",
+    },
   ] as const)(
-    "keeps discovery failing when the service refuses a key it accepted before ($status $forbidden)",
-    ({ forbidden, says }) =>
+    "completes discovery quietly, updates status, and returns MCP isError when the service refuses a key ($status $forbidden)",
+    ({ forbidden, expectedStatus, says }) =>
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         vendor.validTokens.add("entered-secret-value");
@@ -2454,23 +2526,39 @@ describe("connector disconnect", () => {
 
         if (forbidden === undefined) vendor.validTokens.delete("entered-secret-value");
         else vendor.forbiddenTokens.set("entered-secret-value", forbidden);
-        // regression: a refused stored key met the empty server, so discovery reported success.
-        const refused = { code: -32001, message: expect.stringContaining(says) };
-        expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toEqual({
+        expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toMatchObject({
           jsonrpc: "2.0",
           id: 2,
-          error: refused,
+          result: { instructions: expect.stringContaining("offers no tools") },
         });
+        expect((yield* harness.runtime.list()).connectors[0]?.status).toBe(expectedStatus);
         expect(
           yield* readJson(
             yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 3, method: "tools/list" }),
           ),
-        ).toEqual({ jsonrpc: "2.0", id: 3, error: refused });
+        ).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [] } });
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, {
+              jsonrpc: "2.0",
+              id: 4,
+              method: "tools/call",
+              params: { name: "search", arguments: {} },
+            }),
+          ),
+        ).toEqual({
+          jsonrpc: "2.0",
+          id: 4,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining(says) }],
+            isError: true,
+          },
+        });
       }).pipe(Effect.provide(testLayer)),
   );
 
   it.live.each(["refresh refused", "replay refused"] as const)(
-    "fails discovery when the service refuses the sign-in (%s)",
+    "marks needs-auth, completes discovery quietly, and returns MCP isError on tool calls (%s)",
     (refusal) =>
       Effect.gen(function* () {
         const harness = yield* makeHarness();
@@ -2478,32 +2566,46 @@ describe("connector disconnect", () => {
         vendor.validTokens.delete("vendor-access-token-1");
         if (refusal === "refresh refused") vendor.refreshMode = "invalid_grant";
         else vendor.refusedTokens.add("vendor-access-token-2");
-        const refused = { code: -32001, message: expect.stringContaining("no longer connected") };
         expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toMatchObject({
           id: 2,
-          error: refused,
+          result: { instructions: expect.stringContaining("offers no tools") },
         });
         expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-auth");
-        // regression: only the request that saw the refusal failed; later discovery met the
-        // empty server and reported success with no tools.
         expect(yield* readJson(yield* harness.proxy(connectorId, initialize(3)))).toMatchObject({
           id: 3,
-          error: refused,
+          result: { instructions: expect.stringContaining("offers no tools") },
         });
         expect(
           yield* readJson(
             yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 4, method: "tools/list" }),
           ),
-        ).toMatchObject({ id: 4, error: refused });
+        ).toEqual({ jsonrpc: "2.0", id: 4, result: { tools: [] } });
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, {
+              jsonrpc: "2.0",
+              id: 5,
+              method: "tools/call",
+              params: { name: "search", arguments: {} },
+            }),
+          ),
+        ).toEqual({
+          jsonrpc: "2.0",
+          id: 5,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("no longer connected") }],
+            isError: true,
+          },
+        });
 
-        // Turning it off is the person dealing with it: from then on it is merely unavailable.
+        // Turning it off and back on keeps discovery empty while still needs-auth.
         yield* harness.runtime.update({ connectorId, enabled: false });
         yield* harness.runtime.update({ connectorId, enabled: true });
         expect(
           yield* readJson(
-            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 5, method: "tools/list" }),
+            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 6, method: "tools/list" }),
           ),
-        ).toEqual({ jsonrpc: "2.0", id: 5, result: { tools: [] } });
+        ).toEqual({ jsonrpc: "2.0", id: 6, result: { tools: [] } });
       }).pipe(Effect.provide(testLayer)),
   );
 
@@ -2529,6 +2631,101 @@ describe("connector disconnect", () => {
           yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 3, method: "tools/list" }),
         ),
       ).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [] } });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps a key whose 403 challenge names no credential error", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.validTokens.add("entered-secret-value");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      // A policy answer with a bare realm says nothing about the key.
+      vendor.forbiddenTokens.set("entered-secret-value", "realm");
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+      vendor.forbiddenTokens.delete("entered-secret-value");
+      expect(
+        yield* readJson(
+          yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 2, method: "tools/list" }),
+        ),
+      ).toMatchObject({ id: 2, result: { tools: [{ name: "search" }] } });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never takes a 403 as a refused key when no key was sent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/open/mcp` },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      vendor.openForbidden = true;
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("reads only the challenge's own error code, not text in other parameters", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.validTokens.add("entered-secret-value");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      vendor.forbiddenTokens.set("entered-secret-value", "described");
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never resends a refused key until the person checks it, and recovers on check", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.validTokens.add("entered-secret-value");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      vendor.forbiddenTokens.set("entered-secret-value", "invalid-token");
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-credential");
+      const reached = vendor.upstream.length;
+      // The refused key stays home, whatever asks for it.
+      const call = yield* readJson(yield* harness.proxy(connectorId, toolCall(2)));
+      expect(call).toMatchObject({ id: 2, result: { isError: true } });
+      expect(vendor.upstream.length).toBe(reached);
+
+      // The service accepts it again; the person's check finds out and delivers it again.
+      vendor.forbiddenTokens.delete("entered-secret-value");
+      const checked = yield* harness.runtime.test({ connectorId });
+      expect(checked.outcome).toBe("ok");
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("refreshes a sign-in whose 403 names the token, instead of dropping the grant", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.accessTokenTtlSeconds = 3600;
+      const connectorId = yield* harness.connectSecure();
+      vendor.forbiddenTokens.set("vendor-access-token-1", "invalid-token");
+      expect(yield* readJson(yield* harness.proxy(connectorId, toolCall(1)))).toMatchObject({
+        id: 1,
+        result: { content: [{ type: "text", text: "found" }] },
+      });
+      expect(vendor.refreshCount).toBe(1);
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -3019,21 +3216,32 @@ describe("GitHub with Source Control's account", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.live("fails discovery when GitHub refuses every token Source Control has", () =>
-    Effect.gen(function* () {
-      vendor.validTokens.add(OCTO_TOKEN);
-      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
-      const harness = yield* makeHarness({ github: github.service });
-      const connector = yield* connectGitHub(harness);
-      vendor.refusedTokens.add(OCTO_TOKEN);
-      expect(
-        yield* readJson(yield* harness.proxy(connector.connectorId, initialize(1))),
-      ).toMatchObject({
-        id: 1,
-        error: { code: -32001, message: expect.stringContaining("refused Source Control") },
-      });
-      expect(github.state.invalidated).toEqual([OCTO_TOKEN]);
-    }).pipe(Effect.provide(testLayer)),
+  it.live(
+    "marks needs-credential, completes discovery quietly, and returns MCP isError when GitHub refuses every Source Control token",
+    () =>
+      Effect.gen(function* () {
+        vendor.validTokens.add(OCTO_TOKEN);
+        const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+        const harness = yield* makeHarness({ github: github.service });
+        const connector = yield* connectGitHub(harness);
+        vendor.refusedTokens.add(OCTO_TOKEN);
+        expect(
+          yield* readJson(yield* harness.proxy(connector.connectorId, initialize(1))),
+        ).toMatchObject({
+          id: 1,
+          result: { instructions: expect.stringContaining("offers no tools") },
+        });
+        expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-credential");
+        expect(yield* readJson(yield* harness.proxy(connector.connectorId, toolCall(2)))).toEqual({
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("refused Source Control") }],
+            isError: true,
+          },
+        });
+        expect(github.state.invalidated).toEqual([OCTO_TOKEN]);
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("sends the credential only to GitHub's own MCP server", () =>
@@ -3755,19 +3963,16 @@ createInterface({ input: process.stdin }).on("line", () => process.exit(4));`,
 
 /** A connector an agent writes: logs a line, then answers `version` with its manifest version. */
 const AGENT_SERVER = `
-import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { get } from "node:http";
 import { createInterface } from "node:readline";
 const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
 process.stderr.write("starting " + manifest.version + "\\n");
 if (process.env.MODE === "broken") { process.stderr.write("cannot find module ./lib.mjs\\n"); process.exit(1); }
-// MODE "gate:<file>": answers its first message only once <file> exists.
+// MODE "gate:<url>": answers its first message only once a request to <url> is answered.
 const gate = process.env.MODE?.startsWith("gate:") ? process.env.MODE.slice(5) : undefined;
-const opened = gate === undefined ? Promise.resolve() : new Promise((resolve) => {
-  const check = () => { if (existsSync(gate)) { watcher.close(); resolve(); } };
-  const watcher = watch(dirname(gate), check);
-  writeFileSync(gate + ".started", "");
-  check();
+const opened = gate === undefined ? Promise.resolve() : new Promise((resolve, reject) => {
+  get(gate, (response) => { response.resume(); response.on("end", resolve); }).on("error", reject);
 });
 const send = (message) => opened.then(() => process.stdout.write(JSON.stringify(message) + "\\n"));
 createInterface({ input: process.stdin }).on("line", (line) => {
@@ -3872,15 +4077,29 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-/** Succeeds once `path` exists, watching its folder rather than polling; the watch ends with it. */
-const appears = (path: string) =>
-  Effect.callback<void>((resume) => {
-    const watcher = NodeFS.watch(NodePath.dirname(path), () => {
-      if (NodeFS.existsSync(path)) resume(Effect.void);
+/** What a "gate:<url>" connector waits on; its request is the receipt that it started. */
+const connectorGate = Effect.acquireRelease(
+  Effect.promise(async () => {
+    const started = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<void>();
+    const server = NodeHttp.createServer((_request, response) => {
+      started.resolve();
+      void opened.promise.then(() => response.end());
     });
-    if (NodeFS.existsSync(path)) resume(Effect.void);
-    return Effect.sync(() => watcher.close());
-  });
+    return { server, url: await listen(server), started, opened };
+  }),
+  ({ server }) =>
+    Effect.promise(() => {
+      server.closeAllConnections();
+      return new Promise<void>((closed) => server.close(() => closed()));
+    }),
+).pipe(
+  Effect.map(({ url, started, opened }) => ({
+    mode: `gate:${url}`,
+    started: Effect.promise(() => started.promise),
+    open: Effect.sync(() => opened.resolve()),
+  })),
+);
 
 /** Each change that reaches a connector's lock, and a wait for the n-th one to arrive. */
 const lockArrivals = () => {
@@ -4487,19 +4706,18 @@ describe("connectors agents make and fix", () => {
       yield* writeConnectorFolder(work, { version: "1.1.0" });
       yield* harness.runtime.saveFolder({ folder: work, connector: connectorId }, undefined);
 
-      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
-      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
-      yield* writeConnectorFolder(work, { version: "1.2.0", mode: `gate:${gate}` });
+      const gate = yield* connectorGate;
+      yield* writeConnectorFolder(work, { version: "1.2.0", mode: gate.mode });
       locks.reset();
       const saving = yield* harness.runtime
         .saveFolder({ folder: work, connector: connectorId }, undefined)
         .pipe(Effect.forkScoped);
       // The save is in its check; an Undo now must wait for it rather than run inside it.
-      yield* appears(`${gate}.started`);
+      yield* gate.started;
       const undoing = yield* harness.runtime.undo({ connectorId }).pipe(Effect.forkScoped);
       // Receipt: the Undo has reached the connector's lock (or, unlocked, already ran).
       yield* Effect.raceFirst(locks.reached(2), Fiber.await(undoing));
-      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* gate.open;
       yield* Fiber.join(saving);
       yield* Fiber.join(undoing);
       // regression: Undo ran during the save, which then wrote over what it restored.
@@ -4517,25 +4735,24 @@ describe("connectors agents make and fix", () => {
       yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false, region: true });
       const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
       const connectorId = saved.connector.connectorId;
-      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
-      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
+      const gate = yield* connectorGate;
       yield* writeConnectorFolder(work, {
         version: "1.1.0",
         keyRequired: false,
         region: true,
-        mode: `gate:${gate}`,
+        mode: gate.mode,
       });
       locks.reset();
       const saving = yield* harness.runtime
         .saveFolder({ folder: work, connector: connectorId }, undefined)
         .pipe(Effect.forkScoped);
-      yield* appears(`${gate}.started`);
+      yield* gate.started;
       const setting = yield* harness.runtime
         .update({ connectorId, localSetup: { settings: { region: "eu" }, keys: {} } })
         .pipe(Effect.forkScoped);
       // Receipt: the setup has reached the connector's lock (or, unlocked, already ran).
       yield* Effect.raceFirst(locks.reached(2), Fiber.await(setting));
-      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* gate.open;
       yield* Fiber.join(saving);
       yield* Fiber.join(setting);
       const after = (yield* harness.runtime.list()).connectors[0]!;
@@ -4998,3 +5215,268 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
 });
 `;
+
+describe("Bearer challenge error", () => {
+  it.each([
+    ['Bearer error="invalid_token"', "invalid_token"],
+    ['Bearer realm="api", error=insufficient_scope, scope="read"', "insufficient_scope"],
+    ['Basic realm="x", Bearer error="invalid_token"', "invalid_token"],
+    // Text inside another parameter's quoted value is not the error.
+    ['Bearer vendor.detail="Access denied, error=invalid_token please retry"', undefined],
+    ['Bearer realm="vendor", error_description="invalid_token"', undefined],
+    // Another scheme's error is not Bearer's.
+    ['Basic error="invalid_token"', undefined],
+    ['Negotiate abc123==, Bearer realm="x"', undefined],
+    // A token68 credential before Bearer does not end the reading.
+    ["Negotiate abc123==, Bearer error=insufficient_scope", "insufficient_scope"],
+    ["Negotiate abc123, Bearer error=invalid_token", "invalid_token"],
+  ] as const)("reads %s", (header, expected) => {
+    expect(bearerChallengeError(header)).toBe(expected);
+  });
+});
+
+describe("connector sign-ins a dev app borrows from the dev identity home", () => {
+  const hashOf = (token: string) =>
+    NodeCrypto.createHash("sha256").update(token).digest("base64url");
+  /** Serves the home runtime's leases on loopback, as the home's server route does. */
+  const serveLeases = (lease: NonNullable<ConnectorRuntime["Service"]["leaseForDevApp"]>) =>
+    Effect.gen(function* () {
+      const services = yield* Effect.context<never>();
+      // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- the home route is a Node HTTP handler; its requests reach the runtime here.
+      const run = Effect.runPromiseWith(services);
+      return yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<NodeHttp.Server>((resolve) => {
+              const server = NodeHttp.createServer((request, response) => {
+                const chunks: Buffer[] = [];
+                request.on("data", (chunk: Buffer) => chunks.push(chunk));
+                request.on("end", () => {
+                  void run(lease(JSON.parse(Buffer.concat(chunks).toString("utf8")))).then(
+                    (lent) => {
+                      // As the home's route answers: with proof it holds the endpoint's token.
+                      const body = JSON.stringify(lent);
+                      const nonce = String(request.headers["x-scient-lease-nonce"]);
+                      response.writeHead(200, {
+                        "content-type": "application/json",
+                        "x-scient-lease-proof": NodeCrypto.createHmac("sha256", "lease-token")
+                          .update(`scient-lease-response\n${nonce}\n${body}`)
+                          .digest("base64url"),
+                      });
+                      response.end(body);
+                    },
+                  );
+                });
+              });
+              server.listen(0, "127.0.0.1", () => resolve(server));
+            }),
+        ),
+        (server) => Effect.promise(() => new Promise<void>((done) => server.close(() => done()))),
+      );
+    });
+
+  it.live("refreshes once at the home however many times the borrowed token is refused", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      const lease = home.runtime.leaseForDevApp!;
+      const url = `${vendor.base}/secure/mcp`;
+      const first = yield* lease({ connectorId, url });
+      expect(first).toMatchObject({ status: "ok", accessToken: "vendor-access-token-1" });
+      vendor.validTokens.delete("vendor-access-token-1");
+      const [a, b] = yield* Effect.all(
+        [
+          lease({ connectorId, url, staleTokenHash: hashOf("vendor-access-token-1") }),
+          lease({ connectorId, url, staleTokenHash: hashOf("vendor-access-token-1") }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(a).toMatchObject({ status: "ok", accessToken: "vendor-access-token-2" });
+      expect(b).toEqual(a);
+      expect(vendor.refreshCount).toBe(1);
+      expect(yield* lease({ connectorId, url: `${vendor.base}/other` })).toEqual({
+        status: "needs-sign-in",
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never repeats a refused call as the account the home signed in since", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      // The home was signed in again between the first lease and the retry.
+      const server = yield* serveLeases((request) =>
+        home.runtime.leaseForDevApp!(request).pipe(
+          Effect.map((lease) =>
+            lease.status === "ok" && request.staleTokenHash !== undefined
+              ? { ...lease, grantId: "another-account" }
+              : lease,
+          ),
+        ),
+      );
+      const port = (server.address() as { port: number }).port;
+      // The dev app: the same connector without a grant, borrowed from a home on this machine.
+      const homeRoot = NodePath.join(home.config.stateDir, "..", "identity-home");
+      const homeStateDir = NodePath.join(homeRoot, "scient-next-dev");
+      const state = JSON.parse(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(home.config.stateDir, CONNECTOR_STATE_FILE), "utf8"),
+        ),
+      );
+      for (const connector of state.connectors) delete connector.auth.credentialRef;
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(homeStateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(homeRoot, "dev-identity-home.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(homeStateDir, "dev-connector-lease.json"),
+          JSON.stringify({ version: 1, host: "127.0.0.1", port, token: "lease-token" }),
+        );
+        await NodeFSP.writeFile(NodePath.join(home.config.stateDir, "dev-identity.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(home.config.stateDir, "dev-connector-broker.json"),
+          JSON.stringify({
+            version: 1,
+            homeStateDir,
+            connectors: { [connectorId]: { url: `${vendor.base}/secure/mcp` } },
+          }),
+        );
+      });
+      const devApp = yield* makeHarness({ seedStateFile: JSON.stringify(state) });
+      devApp.delivered.add(connectorId);
+      vendor.validTokens.delete("vendor-access-token-1");
+      const refused = yield* readJson(yield* devApp.proxy(connectorId, toolCall(1)));
+      expect(JSON.stringify(refused)).toContain("signed in again");
+      expect(
+        vendor.upstream.some((entry) => entry.authorization === "Bearer vendor-access-token-2"),
+      ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never sends a borrowed token again once the service refused it", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      // The vendor refuses even the token the home renews.
+      const server = yield* serveLeases((request) =>
+        home.runtime.leaseForDevApp!(request).pipe(
+          Effect.tap((lease) =>
+            Effect.sync(() => {
+              if (lease.status === "ok" && request.staleTokenHash !== undefined) {
+                vendor.refusedTokens.add(lease.accessToken);
+              }
+            }),
+          ),
+        ),
+      );
+      const port = (server.address() as { port: number }).port;
+      const homeRoot = NodePath.join(home.config.stateDir, "..", "identity-home");
+      const homeStateDir = NodePath.join(homeRoot, "scient-next-dev");
+      const state = JSON.parse(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(home.config.stateDir, CONNECTOR_STATE_FILE), "utf8"),
+        ),
+      );
+      for (const connector of state.connectors) delete connector.auth.credentialRef;
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(homeStateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(homeRoot, "dev-identity-home.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(homeStateDir, "dev-connector-lease.json"),
+          JSON.stringify({ version: 1, host: "127.0.0.1", port, token: "lease-token" }),
+        );
+        await NodeFSP.writeFile(NodePath.join(home.config.stateDir, "dev-identity.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(home.config.stateDir, "dev-connector-broker.json"),
+          JSON.stringify({
+            version: 1,
+            homeStateDir,
+            connectors: { [connectorId]: { url: `${vendor.base}/secure/mcp` } },
+          }),
+        );
+      });
+      const devApp = yield* makeHarness({ seedStateFile: JSON.stringify(state) });
+      devApp.delivered.add(connectorId);
+      vendor.validTokens.delete("vendor-access-token-1");
+      let renewedRefusals = 0;
+      vendor.refusing.arrived = () => void renewedRefusals++;
+      const refusedResult = {
+        content: [{ type: "text", text: expect.stringContaining("Sign in to it there") }],
+        isError: true,
+      };
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(1)))).toMatchObject({
+        id: 1,
+        result: refusedResult,
+      });
+      // The next call asks the home for a token other than the refused one; none is sent twice.
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(2)))).toMatchObject({
+        id: 2,
+        result: refusedResult,
+      });
+      // Each renewed token was sent, and refused, once.
+      expect(renewedRefusals).toBe(vendor.refreshCount);
+      expect(new Set(vendor.issued.map(({ token }) => token)).size).toBe(vendor.issued.length);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("uses the home's token in a dev app with no sign-in of its own", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHarness();
+      const connectorId = yield* home.connectSecure();
+      const server = yield* serveLeases(home.runtime.leaseForDevApp!);
+      const port = (server.address() as { port: number }).port;
+      // The dev app: the same connector without a grant, borrowed from a home on this machine.
+      const homeRoot = NodePath.join(home.config.stateDir, "..", "identity-home");
+      const homeStateDir = NodePath.join(homeRoot, "scient-next-dev");
+      const state = JSON.parse(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(home.config.stateDir, CONNECTOR_STATE_FILE), "utf8"),
+        ),
+      );
+      for (const connector of state.connectors) delete connector.auth.credentialRef;
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(homeStateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(homeRoot, "dev-identity-home.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(homeStateDir, "dev-connector-lease.json"),
+          JSON.stringify({ version: 1, host: "127.0.0.1", port, token: "lease-token" }),
+        );
+        await NodeFSP.writeFile(NodePath.join(home.config.stateDir, "dev-identity.json"), "{}");
+        await NodeFSP.writeFile(
+          NodePath.join(home.config.stateDir, "dev-connector-broker.json"),
+          JSON.stringify({
+            version: 1,
+            homeStateDir,
+            connectors: { [connectorId]: { url: `${vendor.base}/secure/mcp` } },
+          }),
+        );
+      });
+      const devApp = yield* makeHarness({ seedStateFile: JSON.stringify(state) });
+      devApp.delivered.add(connectorId);
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(1)))).toMatchObject({
+        id: 1,
+        result: { content: [{ type: "text", text: "found" }] },
+      });
+      expect(vendor.upstream.at(-1)?.authorization).toBe("Bearer vendor-access-token-1");
+      // Refused: the dev app asks the home, which refreshes; nothing refreshes here.
+      vendor.validTokens.delete("vendor-access-token-1");
+      expect(yield* readJson(yield* devApp.proxy(connectorId, toolCall(2)))).toMatchObject({
+        id: 2,
+        result: { content: [{ type: "text", text: "found" }] },
+      });
+      expect(vendor.upstream.at(-1)?.authorization).toBe("Bearer vendor-access-token-2");
+      expect(vendor.refreshCount).toBe(1);
+      // Signed out at the home: the dev app stops at once, though the vendor still takes it.
+      yield* home.runtime.remove({ connectorId });
+      vendor.validTokens.add("vendor-access-token-2");
+      const signedOut = yield* readJson(yield* devApp.proxy(connectorId, toolCall(3)));
+      expect(JSON.stringify(signedOut)).toContain("needs a sign-in in Scient (Dev)");
+      // With the home closed, the connector pauses instead of asking for a sign-in here.
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(homeStateDir, "dev-connector-lease.json")),
+      );
+      const paused = yield* readJson(yield* devApp.proxy(connectorId, toolCall(4)));
+      expect(JSON.stringify(paused)).toContain("not running");
+      expect((yield* devApp.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+});

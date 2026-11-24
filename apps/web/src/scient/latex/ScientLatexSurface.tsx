@@ -3,7 +3,12 @@ import { m } from "~/i18n/messages";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { LatexSelect } from "./LatexSelect";
 import { LatexResultsStatus } from "../results/LatexResultsStatus";
-import { useScientAnalyticsView } from "~/scient/analytics/client";
+import {
+  recordScientAnalyticsInContext,
+  scientAnalyticsProductContext,
+  useScientAnalyticsView,
+} from "~/scient/analytics/client";
+import type { LatexVisualOpenResult } from "./LatexVisualEditor";
 import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
 import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
 import { File, Virtualizer } from "@pierre/diffs/react";
@@ -31,11 +36,13 @@ import {
   Suspense,
   useEffect,
   useEffectEvent,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
+  type Ref,
 } from "react";
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
@@ -606,6 +613,65 @@ function bindLatexSource(
   return { documentId, editVersion, snapshot: createLatexEditorSourceSnapshot(source) };
 }
 
+interface VisualOpeningObservation {
+  readonly key: string;
+  readonly reportOpen: (result: LatexVisualOpenResult) => void;
+  readonly reportSourceFallback: () => void;
+}
+
+// Keep the analytics receipt in a leaf so recording it does not render the editor again.
+function VisualOpeningAnalytics({
+  environmentId,
+  openingKey,
+  ref,
+}: {
+  environmentId: EnvironmentId;
+  openingKey: string;
+  ref: Ref<VisualOpeningObservation>;
+}) {
+  const [result, setResult] = useState<LatexVisualOpenResult | null>(null);
+  const firstResult = useRef<LatexVisualOpenResult | null>(null);
+  const fallbackReported = useRef(false);
+  useImperativeHandle(
+    ref,
+    () => ({
+      key: openingKey,
+      reportOpen(next) {
+        if (firstResult.current !== null) return;
+        firstResult.current = next;
+        setResult(next);
+      },
+      reportSourceFallback() {
+        const opened = firstResult.current;
+        if (
+          fallbackReported.current ||
+          (opened?.outcome !== "unavailable" && opened?.outcome !== "open-error")
+        )
+          return;
+        fallbackReported.current = true;
+        try {
+          const context = scientAnalyticsProductContext(environmentId);
+          if (context)
+            recordScientAnalyticsInContext(environmentId, context, {
+              name: "latex.visual.source-fallback",
+              properties: opened,
+            });
+        } catch {
+          // Analytics is best-effort, including when the prepared connection disappears.
+        }
+      },
+    }),
+    [environmentId, openingKey],
+  );
+  useScientAnalyticsView(
+    result ? { name: "latex.visual.opened", properties: result } : null,
+    environmentId,
+    openingKey,
+    true,
+  );
+  return null;
+}
+
 export const ScientLatexSurface = memo(function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const gt = useGT();
   const messages = useMessages();
@@ -1006,17 +1072,6 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     sourceIdentity !== null &&
     sourceIdentity.revision === compiledRevision &&
     build.snapshot?.state === "succeeded";
-  const selectMode = (next: ScientLatexPreviewMode) => {
-    finishVisualEditingRef.current?.();
-    setPreferredMode(next);
-    setHandledRevealRequestId(revealRequestId);
-    persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
-    if (next === "pdf" || next === "visual") {
-      setSplitPreview(next);
-      persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
-    }
-  };
-
   const selectSplitPreview = (next: ScientLatexSplitPreview) => {
     finishVisualEditingRef.current?.();
     setSplitPreview(next);
@@ -1378,6 +1433,22 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const showEditor = mode === "source" || mode === "split";
   const activePreview = mode === "split" ? splitPreview : mode === "source" ? null : mode;
   const showVisual = activePreview === "visual";
+  const openingKey = showVisual ? (documentId ?? visualDraftKey) : null;
+  const visualOpening = useRef<VisualOpeningObservation | null>(null);
+  const selectMode = (next: ScientLatexPreviewMode) => {
+    const reportSourceFallback =
+      next === "source" ? visualOpening.current?.reportSourceFallback : undefined;
+    finishVisualEditingRef.current?.();
+    setPreferredMode(next);
+    setHandledRevealRequestId(revealRequestId);
+    persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
+    if (next === "pdf" || next === "visual") {
+      setSplitPreview(next);
+      persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
+    }
+    reportSourceFallback?.();
+  };
+
   useScientAnalyticsView(
     showVisual ? { name: "feature.viewed", properties: { feature: "latex-visual" } } : null,
     props.environmentId,
@@ -2237,6 +2308,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         setLastEditAt(Date.now());
       }}
     >
+      {openingKey !== null && (
+        <VisualOpeningAnalytics
+          key={openingKey}
+          ref={visualOpening}
+          openingKey={openingKey}
+          environmentId={props.environmentId}
+        />
+      )}
       <div
         ref={setHeaderRow}
         className="scient-latex-toolbar"
@@ -2482,6 +2561,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                       }
                     >
                       <LatexProjectVisualEditor
+                        onOpenResult={
+                          openingKey === null
+                            ? undefined
+                            : (result) => {
+                                const observation = visualOpening.current;
+                                if (observation?.key === openingKey) observation.reportOpen(result);
+                              }
+                        }
                         sourceNavigation={showVisual ? visualNavigation : null}
                         citationSource={
                           props.threadRef ? { ...props.threadRef, cwd: props.cwd } : undefined
@@ -2507,6 +2594,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                         // unsaved, so a failed or queued save of this file counts too.
                         selectedPending={sourcePending}
                         fileTruncated={props.truncated}
+                        fileReadOnly={persistence === null}
                         onSaved={() => {
                           if (target) notifyLatexBindingChange(target);
                         }}

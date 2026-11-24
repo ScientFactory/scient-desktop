@@ -761,6 +761,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
+        // SCIENT-FORK: distinguish failure to execute from the version check's deadline.
+        checkFailure: isCommandMissingCause(error) ? "start_failed" : "version_failed",
         message: isCommandMissingCause(error)
           ? "Claude Agent CLI (`claude`) was not found on PATH."
           : "Failed to execute Claude Agent CLI health check.",
@@ -779,6 +781,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
+        // SCIENT-FORK: the version command exceeded the probe deadline.
+        checkFailure: "version_timeout",
         message:
           "Claude Agent CLI is installed but failed to run. Timed out while running command.",
       },
@@ -803,6 +807,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unknown" },
+        // SCIENT-FORK: the CLI ran and returned a nonzero status.
+        checkFailure: "version_failed",
         message: "Claude Agent CLI is installed but failed to run.",
       },
     });
@@ -845,6 +851,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           version: parsedVersion,
           status: "warning",
           auth: { status: "unknown", required: true },
+          // SCIENT-FORK: report the typed account command outcome.
+          checkFailure: Result.isFailure(authStatusProbe)
+            ? "command_failed"
+            : authStatusResult === undefined
+              ? "command_timeout"
+              : authStatusResult.code !== 0
+                ? "exit"
+                : "parse",
           message: "Could not verify Claude account status.",
         },
       });
@@ -927,6 +941,15 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         auth: firstPartyAccountConfirmed
           ? { status: "authenticated", required: true }
           : { status: "unknown" },
+        // SCIENT-FORK: a failed capability check can follow successful account verification.
+        ...(resolveCapabilities
+          ? {
+              checkFailure:
+                probeFailure && Cause.isTimeoutError(probeFailure)
+                  ? "command_timeout"
+                  : "command_failed",
+            }
+          : {}),
         message: firstPartyAccountConfirmed
           ? "Claude is signed in, but Scient could not complete its readiness check."
           : probeFailure

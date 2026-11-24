@@ -9,6 +9,49 @@ const context = {
 };
 
 describe("Scient analytics contract", () => {
+  it.each([
+    [
+      "provider.readiness.observed",
+      {
+        provider: "private-driver",
+        state: "private-state",
+        runtimeSource: "private-runtime",
+        checkFailure: "private-failure",
+      },
+      { provider: "unknown", state: "unknown", runtimeSource: "unknown" },
+    ],
+    [
+      "latex.visual.opened",
+      {
+        outcome: "editable",
+        reason: "private-reason",
+      },
+      { outcome: "editable" },
+    ],
+    [
+      "latex.visual.source-fallback",
+      {
+        outcome: "open-error",
+        reason: "private-command",
+      },
+      { outcome: "open-error", reason: "unknown" },
+    ],
+  ] as const)(
+    "restricts the %s payload to known dimensions and values",
+    (name, input, expected) => {
+      const event = normalizeInheritedEvent(
+        name,
+        { ...input, customField: "private-label" },
+        context,
+      );
+      expect(event?.properties).toEqual({
+        ...expected,
+        ...context,
+        contractRevision: ANALYTICS_CONTRACT_REVISION,
+      });
+    },
+  );
+
   it("does not turn inherited terminal notifications into duplicate successes", () => {
     for (const terminalStatus of ["completed", "failed", "cancelled", "interrupted"]) {
       expect(

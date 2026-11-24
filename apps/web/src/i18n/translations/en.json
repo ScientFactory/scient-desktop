@@ -15411,6 +15411,11 @@
     },
     " for"
   ],
+  "343ed23b123919d6": "Couldn't start sign-in",
+  "1bfcefb0511c17c5": "Open Settings → Extensions to finish signing in to {name}",
+  "0595a3dddcfced3b": "Sign in to {name}",
+  "165b1e80e7911320": "Opening…",
+  "9f90d63bcad3e2a7": "Manage",
   "5c6b2c0220202c13": "See {first}, {second}, and {count} more",
   "8e531b8a23c825ed": "See {first} and {second}",
   "cfdd30a105672dea": "See {name}",
@@ -15611,9 +15616,26 @@
   "b95005276b251a4f": "Connect an execution environment to manage extensions.",
   "ecc76bbd8a7fa124": "Discover",
   "c136813370b18a00": "Browse all MCP servers",
+  "85f63fdc66c617bc": "Check failed",
+  "32e4206b582653e6": "{name} is connected",
+  "a553be36e93303cd": "Ready",
+  "1f8fa7d98ec3df40": "Credential rejected",
+  "efe132d82235637c": "Permissions needed",
+  "b2d917bb4b78f1fe": "Connected services: {connected} ready, {issues} need attention",
   "7f83064be7319b99": "Connected services: {delivered} delivered, {skipped} skipped",
+  "479ca9411badb6b5": "Connected services: {count} active",
   "c7370daf10755896": "Delivered",
+  "b10b1d18e63b6ca6": "Agent MCP servers",
   "0dfc582858939130": "Skipped",
+  "1adf711055ecf6ae": "Send a message to wake this session, then sign in here.",
+  "0cd6a948710dc4f9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " attention"
+  ],
   "166fd2daa35c3b7b": [
     "· ",
     {
@@ -15624,8 +15646,19 @@
     " skipped"
   ],
   "34d5da835e278d6f": "Connected services",
+  "57886ae9c159ba86": "Needs attention",
   "60595a8acf9f6a18": "Delivered to this session",
   "a87212dee280b4c9": "None",
+  "eefabf57c07b099f": "Agent MCP servers",
+  "cbf2f207ca8b952b": [
+    "Optional plugin or account servers not signed in:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "bb4910d55ac221b8": "Manage connected services",
   "04a25cc23244a916": "Scient could not sign in to GitHub. Try again.",
   "3ccba1564083dc6e": "Copy sign-in code",

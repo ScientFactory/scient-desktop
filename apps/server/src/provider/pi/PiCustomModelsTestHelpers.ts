@@ -1,11 +1,11 @@
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import type { ServerSettingsService } from "../../serverSettings.ts";
+import type { CustomModelSettingsMethods } from "../../scientServerSettings.ts";
 
 /** Synthetic catalogs for native wire fixtures; lifecycle tests supply a real change stream. */
 export function piModelSettings(
-  source: Pick<ServerSettingsService["Service"], "resolveCustomModels">,
+  source: Pick<CustomModelSettingsMethods, "resolveCustomModels">,
   instanceId: Parameters<typeof source.resolveCustomModels>[0],
 ) {
   return {

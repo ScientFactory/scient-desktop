@@ -198,7 +198,8 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     // A task folder can miss one repository's worktree while the thread's own folder is there.
     const taskFolder = yield* taskFolders.find(worktreePath).pipe(Effect.orElseSucceed(() => null));
     if (taskFolder !== null) {
-      return yield* taskFolders
+      // SCIENT-FORK:START task-folder-restore-setup — a rebuilt task folder runs setup like a worktree.
+      const rebuilt = yield* taskFolders
         .restore({
           taskFolder,
           branch,
@@ -228,6 +229,13 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
               : new WorktreeRecreateError({ worktreePath, branch, cause }),
           ),
         );
+      if (!rebuilt) return;
+      const project = yield* projects.getById(thread.projectId).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.orElseSucceed(() => undefined),
+      );
+      return project === undefined ? undefined : { project, worktreePath };
+      // SCIENT-FORK:END task-folder-restore-setup
     }
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
     const leftover = exists && (yield* isLeftoverFolder(worktreePath));

@@ -127,7 +127,6 @@ const layerTestProviderInstanceRegistry = Layer.merge(
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.never,
-    rebuildInstance: () => Effect.die("Unexpected provider rebuild"),
   }),
 );
 

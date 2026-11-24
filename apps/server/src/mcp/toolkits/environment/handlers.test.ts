@@ -132,7 +132,6 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
       }),
       Layer.mock(Settings.ServerSettingsService)({
         getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
         updateSettings: () =>
           Ref.update(updates, (count) => count + 1).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
       }),

@@ -45,7 +45,7 @@ export interface UninstallPlan {
 }
 
 /** Delete only launchers targeting this home's runtime/versions. */
-const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(function* (input: {
+export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(function* (input: {
   readonly launchedAs: string | undefined;
   readonly versionsDir: string;
 }) {
@@ -111,8 +111,7 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
  * point into this home's runtime/versions. npx can run a different version than the installed
  * one, so the launcher this process started from does not always name them.
  */
-// SCIENT-FORK: module-local; Scient does not keep upstream's uninstall test.
-const findRecordedLaunchers = Effect.fn("cli.uninstall.find_recorded_launchers")(function* (
+export const findRecordedLaunchers = Effect.fn("cli.uninstall.find_recorded_launchers")(function* (
   versionsDir: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -128,7 +127,7 @@ const findRecordedLaunchers = Effect.fn("cli.uninstall.find_recorded_launchers")
 });
 
 // cmd.exe needs verbatim quoting and a literal path, with delayed expansion disabled.
-function spawnWindowsRemoval(comspec: string, dir: string) {
+export function spawnWindowsRemoval(comspec: string, dir: string) {
   return NodeChildProcess.spawn(
     comspec,
     [

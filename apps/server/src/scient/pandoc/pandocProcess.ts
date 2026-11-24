@@ -7,6 +7,8 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
+
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -260,10 +262,11 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
               child.kill("SIGKILL");
             }
           } else if (child.pid !== undefined) {
-            NodeChildProcess.spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-              windowsHide: true,
-              timeout: 5_000,
-            });
+            NodeChildProcess.spawnSync(
+              windowsSystem32Path(input.hostEnvironment, "taskkill.exe"),
+              ["/PID", String(child.pid), "/T", "/F"],
+              { windowsHide: true, timeout: 5_000 },
+            );
             child.kill("SIGKILL");
           }
           // A paused stdout pipe can otherwise keep ChildProcess.close pending

@@ -66,7 +66,7 @@ function errorItem(
 }
 
 // SCIENT-FORK:START
-describe("runtime diagnostics in the work log", () => {
+describe("runtime diagnostics in the v2 work log", () => {
   it("keeps the issue heading and the full diagnostic beyond its truncated title", () => {
     const entry = workEntry(errorItem({ title: warningSummary }));
 

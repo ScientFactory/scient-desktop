@@ -46,9 +46,6 @@ export interface ProviderInstanceRegistryShape {
   readonly getInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ScientProviderInstance | undefined>;
-  /** Rebuild for dependencies outside settings, such as app-private runtime updates.
-   * Unknown ids are a no-op; close the old scope before creating the replacement. */
-  readonly rebuildInstance: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
   /**
    * Every available (driver-registered, successfully created) instance,
    * in stable settings-author order.
@@ -665,19 +662,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
           Effect.provideContext(driverContext),
         ),
       );
-  // SCIENT-FORK:START — rebuild for app-private runtime updates, serialized with reconcile.
-  const rebuildInstanceUnserialized = Effect.fn(
-    "ProviderInstanceRegistry.rebuildInstanceUnserialized",
-  )(function* (instanceId: ProviderInstanceId) {
-    const currentConfigMap = yield* Ref.get(configMapRef);
-    if (!(instanceId in currentConfigMap)) return;
-    yield* reconcileWithR(currentConfigMap, new Set([instanceId])).pipe(
-      Effect.provideContext(driverContext),
-    );
-  });
-  const rebuildInstance: ProviderInstanceRegistryShape["rebuildInstance"] = (instanceId) =>
-    semaphore.withPermits(1)(rebuildInstanceUnserialized(instanceId));
-  // SCIENT-FORK:END
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does
   // not restart providers whose credentials are the same. Without `checked` the cached values are
@@ -800,7 +784,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
 
   const registry: ProviderInstanceRegistry["Service"] = {
     getInstance: (id) => Ref.get(entries).pipe(Effect.map((map) => map.get(id)?.instance)),
-    rebuildInstance,
     listInstances: Ref.get(entries).pipe(
       Effect.map(
         (map) =>

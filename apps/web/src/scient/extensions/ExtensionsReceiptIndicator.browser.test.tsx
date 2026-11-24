@@ -1,23 +1,51 @@
 import {
   ConnectorId,
   EnvironmentId,
+  IsoDateTime,
+  NonNegativeInt,
   type ExtensionDeliveryReceipt,
   ProviderInstanceId,
+  ProviderThreadId,
   ThreadId,
+  type ThreadMcpStatusSnapshot,
 } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   receipt: undefined as ExtensionDeliveryReceipt | undefined,
+  mcpStatus: null as ThreadMcpStatusSnapshot | null,
   receiptAtom: vi.fn((target: unknown) => target),
+  mcpStatusAtom: vi.fn((target: unknown) => target),
 }));
 
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { receipt: state.receipt }, error: null }),
+  useEnvironmentSubscription: () => ({ data: state.mcpStatus, error: null }),
+  formatEnvironmentQueryError: () => "Error",
 }));
-vi.mock("./extensionsState", () => ({ extensionsDeliveryReceipt: state.receiptAtom }));
+vi.mock("../../state/environments", () => ({
+  useEnvironmentHttpBaseUrl: () => "http://127.0.0.1:3773",
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: () => vi.fn(async () => ({ _tag: "Success", value: {} })),
+}));
+vi.mock("../../components/chat/McpSignInAction", () => ({
+  McpSignInAction: ({ server }: { readonly server: string }) => (
+    <button type="button" data-native-sign-in={server}>
+      Sign in
+    </button>
+  ),
+}));
+vi.mock("./extensionsState", () => ({
+  extensionsDeliveryReceipt: state.receiptAtom,
+  threadMcpStatus: state.mcpStatusAtom,
+  extensionsInventory: vi.fn((target: unknown) => target),
+  startConnectorSignIn: { permissionAtom: () => Atom.make(true) },
+  testConnector: { permissionAtom: () => Atom.make(true) },
+}));
 
 import { ExtensionsReceiptIndicator } from "./ExtensionsReceiptIndicator";
 
@@ -52,7 +80,9 @@ function receipt(overrides: Partial<ExtensionDeliveryReceipt> = {}): ExtensionDe
 
 function setup() {
   state.receipt = undefined;
+  state.mcpStatus = null;
   state.receiptAtom.mockClear();
+  state.mcpStatusAtom.mockClear();
 }
 
 describe("ExtensionsReceiptIndicator", () => {
@@ -121,5 +151,60 @@ describe("ExtensionsReceiptIndicator", () => {
     await userEvent.click(trigger);
     expect(document.querySelector('[aria-label="Delivered"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Skipped"]')).toBeNull();
+  });
+
+  it("shows live native MCP issues on native-only threads without counting ambient plugin servers in the badge", async () => {
+    setup();
+    state.mcpStatus = {
+      threadId,
+      revision: NonNegativeInt.make(1),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerThreadId: ProviderThreadId.make("pt-1"),
+      sessionActive: true,
+      servers: [
+        {
+          id: "native:linear",
+          name: "linear",
+          displayName: "linear",
+          source: "native",
+          status: "needs-sign-in",
+          observedAt: IsoDateTime.make("2026-11-23T00:00:00.000Z"),
+          detail: "Sign in required.",
+          action: "sign-in",
+          providerThreadId: ProviderThreadId.make("pt-1"),
+          sessionActive: true,
+        },
+        {
+          id: "native-plugin:plugin:design:figma",
+          name: "plugin:design:figma",
+          displayName: "plugin:design:figma",
+          source: "native-plugin",
+          status: "needs-sign-in",
+          observedAt: IsoDateTime.make("2026-11-23T00:00:00.000Z"),
+          action: "sign-in",
+          providerThreadId: ProviderThreadId.make("pt-1"),
+          sessionActive: true,
+        },
+      ],
+    };
+    await using screen = await render(
+      <ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />,
+    );
+    const trigger = screen.container.querySelector<HTMLButtonElement>("[data-extensions-receipt]")!;
+    expect(trigger.getAttribute("aria-label")).toBe(
+      "Connected services: 0 ready, 1 need attention",
+    );
+    await userEvent.click(trigger);
+    expect(document.querySelector('[aria-label="Needs attention"]')?.textContent).toContain(
+      "linear",
+    );
+    expect(document.querySelector('[data-native-sign-in="linear"]')).not.toBeNull();
+    // Unconnected plugin and claude.ai servers are counted once, not listed one by one.
+    expect(document.querySelector('[aria-label="Agent MCP servers"]')).toBeNull();
+    const ambient = document.querySelector<HTMLElement>("[data-ambient-mcp-issues]");
+    expect(ambient?.textContent).toContain("1");
+    // Opening the list names the server and offers its sign-in.
+    await userEvent.click(ambient!.querySelector("button")!);
+    expect(document.querySelector('[data-native-sign-in="plugin:design:figma"]')).not.toBeNull();
   });
 });

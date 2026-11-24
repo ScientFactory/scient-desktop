@@ -283,8 +283,6 @@ const harness = Effect.gen(function* () {
             snapshotBegins.pipe(
               Effect.andThen(settingsLock.withPermits(1)(readSettings.pipe(Effect.flatMap(use)))),
             ),
-          // SCIENT-FORK: Scient's settings service also reports committed custom models.
-          committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
         }),
         Layer.mock(Analytics.AnalyticsService)({
           record: (event, properties) =>

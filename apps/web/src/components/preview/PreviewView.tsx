@@ -15,7 +15,6 @@ import {
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
-  PREVIEW_ZOOM_LEVELS,
   type PreviewAdjustInput,
 } from "@t3tools/contracts";
 import {
@@ -109,6 +108,9 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+// SCIENT-FORK:START — Scient Browser: a pinch leaves a natively shown server tab between the server's steps.
+import { stepPreviewZoom } from "~/scient/browser/previewZoomSteps";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — keep PDF export actions in their Scient owner.
 import { ScientPreviewExportActions } from "~/scient/pdf/ScientPreviewExportActions";
 import { SaveToLibraryMenuItem } from "~/scient/sources/SaveToLibraryMenuItem";
@@ -461,19 +463,16 @@ export function PreviewView({
   };
 
   const serverZoomFactor = snapshot?.zoomFactor ?? DEFAULT_PREVIEW_ZOOM_FACTOR;
+  // SCIENT-FORK:START — Scient Browser: a pinch leaves a natively shown server tab between the server's steps.
+  const shownServerZoomFactor =
+    (nativeServerTab ? desktopOverlay?.zoomFactor : undefined) ?? serverZoomFactor;
   const stepServerZoom = (direction: -1 | 0 | 1) => {
-    const index = PREVIEW_ZOOM_LEVELS.indexOf(serverZoomFactor);
-    const next =
-      direction === 0
-        ? DEFAULT_PREVIEW_ZOOM_FACTOR
-        : PREVIEW_ZOOM_LEVELS[
-            Math.min(
-              Math.max((index < 0 ? 7 : index) + direction, 0),
-              PREVIEW_ZOOM_LEVELS.length - 1,
-            )
-          ]!;
+    const next = stepPreviewZoom(shownServerZoomFactor, direction);
     if (next !== serverZoomFactor) void adjustServerTab({ zoomFactor: next });
+    else if (next !== shownServerZoomFactor && previewBridge && runtimeTabId)
+      void previewBridge.setZoomFactor(runtimeTabId, next).catch(() => undefined);
   };
+  // SCIENT-FORK:END
 
   const canFindInPage =
     previewBridge !== null &&
@@ -1208,9 +1207,11 @@ export function PreviewView({
               findShortcutLabel={shortcutLabelForCommand(keybindings, "preview.find", {
                 context: { previewFocus: true },
               })}
+              // SCIENT-FORK:START — Scient Browser: a pinch leaves a natively shown server tab between the server's steps.
               zoomFactor={
-                serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
+                serverOwnsRendering ? shownServerZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
               }
+              // SCIENT-FORK:END
               colorScheme={
                 serverOwnsRendering
                   ? (snapshot?.colorScheme ?? "system")

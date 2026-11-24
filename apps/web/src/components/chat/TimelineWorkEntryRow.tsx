@@ -49,6 +49,10 @@ import { workGroupImageGallery } from "./markdownImageGallery";
 import { McpSignInAction } from "./McpSignInAction";
 // SCIENT-FORK:START — Antigravity plugin sign-in from its notice.
 import { PluginSignInAction } from "~/scient/antigravity/PluginSignInAction";
+import {
+  ConnectorRecoveryAction,
+  connectorRecoveryTarget,
+} from "~/scient/extensions/ConnectorRecoveryAction";
 // SCIENT-FORK:END
 import * as DateTime from "effect/DateTime";
 import { ChevronRightIcon, CircleAlertIcon, RotateCcwIcon } from "lucide-react";
@@ -499,6 +503,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : null;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const payload = workEntry.structuredPayload;
+  // SCIENT-FORK: a connector lookup or check offers that connector's own recovery.
+  const connectorTarget =
+    payload?.type === "dynamic_tool"
+      ? connectorRecoveryTarget(payload.toolName, payload.input)
+      : null;
   const mcpSignIn =
     payload?.type === "system_notice" &&
     payload.mcpSignIn !== undefined &&
@@ -519,6 +528,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         threadId={payload.threadId}
         providerThreadId={payload.providerThreadId}
         pluginSignIn={payload.pluginSignIn}
+      />
+    ) : connectorTarget !== null ? (
+      <ConnectorRecoveryAction
+        environmentId={ctx.activeThreadEnvironmentId}
+        connectorName={connectorTarget}
       />
     ) : // SCIENT-FORK:END
     null;
@@ -575,9 +589,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     plainOutput !== undefined &&
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
-  // A notice's details repeat its row, so it expands only to show text the row cuts off.
+  // A notice's details repeat its row, so it expands only to show cut-off text or a separate body.
+  const noticeHasSeparateDetail =
+    noticeMessage !== null && previewText.trim() !== noticeMessage.trim();
   const canExpandProjectedItem =
-    (noticeMessage === null || noticeCutOff) &&
+    (noticeMessage === null || noticeCutOff || noticeHasSeparateDetail) &&
     (plainOutput !== undefined
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
       : workEntry.projectedItem === undefined

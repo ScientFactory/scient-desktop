@@ -247,6 +247,8 @@ test("checks replace the desktop host's variables with a synthetic home and keep
         ELECTRON_RUN_AS_NODE: "1",
         T3CODE_HOME: "live",
         T3CODE_CLI_PATH: "live",
+        T3CODE_THREAD_ID: "host-thread",
+        T3CODE_DESKTOP_HOST_SCOPE: "host",
         Scient_Next_Home: "live",
         SCIENT_NEXT_SAFETY_ENVELOPE: "true",
         SCIENT_ANALYTICS_ENABLED: "true",
@@ -469,7 +471,38 @@ test("Vitest failures are named by test and file error; only a clean, non-empty 
   NodeAssert.deepEqual(failing, {
     files: 3,
     failures: ["src/a.test.ts > a fails", "src/broken.test.ts > (file error)"],
+    signatures: [
+      "src/a.test.ts > a fails :: AssertionError",
+      "src/broken.test.ts > (file error) :: file",
+    ],
   });
+  // How a test failed, without the message: a timeout, an error's name, or neither.
+  const kinds = fakeVitestReport(cwd);
+  kinds.testResults[0].assertionResults[0].failureMessages = [
+    "Error: Test timed out in 120000ms.\nIf this is a long-running test...",
+  ];
+  NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: timeout");
+  kinds.testResults[0].assertionResults[0].failureMessages = ["boom at /tmp/x:12"];
+  NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: error");
+  // Every error counts, so a cleanup error after a known assertion changes the signature.
+  kinds.testResults[0].assertionResults[0].failureMessages = [
+    "TypeError: cannot read x",
+    "AssertionError: expected 1 to be 2",
+    "Error: plain",
+  ];
+  NodeAssert.equal(
+    read(kinds).signatures[0],
+    "src/a.test.ts > a fails :: AssertionError+Error+TypeError",
+  );
+  // An assertion that prints a timeout message in its value is still an assertion.
+  kinds.testResults[0].assertionResults[0].failureMessages = [
+    "AssertionError: expected 'Test timed out in 5000ms' to be 'ok'",
+  ];
+  NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: AssertionError");
+  kinds.testResults[0].assertionResults[0].failureMessages = [
+    "AssertionError: Test timed out in 5000ms",
+  ];
+  NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: AssertionError");
   // A file error of its own is labeled beside the file's failed assertions.
   const hooked = fakeVitestReport(cwd);
   hooked.testResults[0].message = "Error: afterAll cleanup failed";
@@ -509,7 +542,11 @@ function fakeVitestReport(cwd) {
         status: "failed",
         message: "",
         assertionResults: [
-          { fullName: "a fails", status: "failed" },
+          {
+            fullName: "a fails",
+            status: "failed",
+            failureMessages: ["AssertionError: expected 1 to be 2 // Object.is equality"],
+          },
           { fullName: "a passes", status: "passed" },
         ],
       },

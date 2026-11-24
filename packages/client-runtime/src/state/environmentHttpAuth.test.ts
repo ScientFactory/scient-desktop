@@ -32,9 +32,7 @@ import * as TestClock from "effect/testing/TestClock";
 import type { HttpClient } from "effect/http";
 import { AsyncResult } from "effect/reactivity";
 
-// SCIENT-FORK:START
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-// SCIENT-FORK:END
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   ConnectionTransientError,
   RelayConnectionTarget,
@@ -55,9 +53,9 @@ import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
-// SCIENT-FORK:START
-import { v2Projection, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
-// SCIENT-FORK:END
+import { v2Projection } from "./orchestrationV2TestFixtures.ts";
+// SCIENT-FORK: Scient's shell snapshot cases.
+import { v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
@@ -156,12 +154,12 @@ function credentialRejectedResponse(reason = "invalid_credential") {
 function makeHarness(reply: (requestNumber: number) => Response | Promise<Response>) {
   const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
   const authorizations: Array<
-    // SCIENT-FORK:START
-    Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]>[0]
+    Parameters<
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]
+    >[0]
   > = [];
   const proofs: Array<ManagedRelay.ManagedRelayDpopProofInput> = [];
-  const remoteAuthorization = RemoteEnvironmentAuthorization.of({
-    // SCIENT-FORK:END
+  const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
     authorizeBearer: () => Effect.die("Unexpected bearer connection preparation."),
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
     authorizeDirectDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
@@ -247,7 +245,7 @@ const LOADERS: ReadonlyArray<{
       }).pipe(
         Effect.provideService(ManagedRelayDpopSigner, Option.getOrThrow(input.signer)),
         Effect.provideService(
-          RemoteEnvironmentAuthorization,
+          RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
           Option.getOrThrow(input.remoteAuthorization),
         ),
       ),
@@ -268,7 +266,7 @@ const LOADERS: ReadonlyArray<{
       }).pipe(
         Effect.provideService(ManagedRelayDpopSigner, Option.getOrThrow(input.signer)),
         Effect.provideService(
-          RemoteEnvironmentAuthorization,
+          RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
           Option.getOrThrow(input.remoteAuthorization),
         ),
       ),
@@ -587,9 +585,10 @@ describe("authenticated environment HTTP requests", () => {
               ManagedRelay.ManagedRelayDpopSigner,
               Option.getOrThrow(harness.input.signer),
             ),
-            // SCIENT-FORK:START
-            Layer.succeed(RemoteEnvironmentAuthorization, harness.remoteAuthorization),
-            // SCIENT-FORK:END
+            Layer.succeed(
+              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+              harness.remoteAuthorization,
+            ),
           ),
         ),
       );
@@ -625,7 +624,10 @@ describe("authenticated environment HTTP requests", () => {
               ManagedRelay.ManagedRelayDpopSigner,
               Option.getOrThrow(harness.input.signer),
             ),
-            Layer.succeed(RemoteEnvironmentAuthorization, harness.remoteAuthorization),
+            Layer.succeed(
+              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+              harness.remoteAuthorization,
+            ),
           ),
         ),
       );
@@ -833,7 +835,7 @@ describe("authenticated environment HTTP requests", () => {
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(SESSION));
       const authorizing = yield* Deferred.make<void>();
-      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
         ...harness.remoteAuthorization,
         authorizeDpopHttp: () =>
           Deferred.succeed(authorizing, undefined).pipe(Effect.andThen(Effect.never)),
@@ -865,7 +867,7 @@ describe("authenticated environment HTTP requests", () => {
       });
       const authorizing = yield* Deferred.make<void>();
       const authorize = yield* Deferred.make<void>();
-      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
         ...harness.remoteAuthorization,
         authorizeDpopHttp: (input) =>
           Deferred.succeed(authorizing, undefined).pipe(
@@ -903,9 +905,7 @@ describe("authenticated environment HTTP requests", () => {
         reason: "transport",
         detail: "Relay unavailable",
       });
-      // SCIENT-FORK:START
-      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
-        // SCIENT-FORK:END
+      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
         ...harness.remoteAuthorization,
         authorizeDpopHttp: () => Effect.fail(failure),
       });

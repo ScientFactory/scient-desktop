@@ -113,7 +113,7 @@ describe("connection routes", () => {
     expect(isNearbyAddress("not a url")).toBe(false);
   });
 
-  it("places a new route after faster kinds and ahead of Scient Connect", () => {
+  it("places a new route after faster kinds and ahead of T3 Connect", () => {
     expect(insertRoute([RELAY], LAN)).toEqual([LAN, RELAY]);
     expect(insertRoute([LAN, RELAY], TAILNET)).toEqual([LAN, TAILNET, RELAY]);
     expect(insertRoute([TAILNET], LAN)).toEqual([LAN, TAILNET]);
@@ -155,7 +155,7 @@ describe("learned routes", () => {
     routes?.map((route) => connectionRouteId(route.target)) ?? null;
   const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
 
-  it("learns a LAN address over Scient Connect, ahead of it, using the Scient Connect credential", () => {
+  it("learns a LAN address over T3 Connect, ahead of it, using the T3 Connect credential", () => {
     const routes = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
@@ -391,7 +391,7 @@ describe("learned routes", () => {
     expect(ids(routesAfterRemoving(overLan, "relay"))).toHaveLength(2);
   });
 
-  it("counts an environment reached only through Scient Connect as removed with it", () => {
+  it("counts an environment reached only through T3 Connect as removed with it", () => {
     const learned = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
@@ -421,7 +421,7 @@ describe("learned routes", () => {
     );
   });
 
-  it("keeps the Scient Connect credential when learning over a learned Scient Connect route", () => {
+  it("keeps the T3 Connect credential when learning over a learned T3 Connect route", () => {
     const first = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,

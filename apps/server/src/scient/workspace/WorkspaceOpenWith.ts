@@ -13,6 +13,7 @@ import {
   type WorkspaceOpenWithTarget,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import * as Effect from "effect/Effect";
 
 import type { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
@@ -131,7 +132,10 @@ export const openWith = Effect.fn("WorkspaceOpenWith.open")(function* (
     });
   if (input.app._tag === "chooser") {
     if (platform !== "win32") return yield* failure("This computer has no app chooser.");
-    yield* run("rundll32.exe", ["shell32.dll,OpenAs_RunDLL", target.absolutePath]);
+    yield* run(windowsSystem32Path(yield* HostProcess.Environment, "rundll32.exe"), [
+      "shell32.dll,OpenAs_RunDLL",
+      target.absolutePath,
+    ]);
     return {};
   }
   if (platform !== "darwin") return yield* failure("Open With lists apps only on macOS.");

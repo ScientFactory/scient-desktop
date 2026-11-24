@@ -44,6 +44,7 @@ import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { customModelSecretName } from "./customModels.ts";
+import { ScientServerSettings } from "./scientServerSettings.ts";
 import * as Stream from "effect/Stream";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -330,9 +331,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       );
       yield* Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
+        const scient = yield* ScientServerSettings;
         const config = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
-        const saved = yield* service.saveCustomModel({
+        const saved = yield* scient.saveCustomModel({
           revision: 0,
           connection: modelConnection,
           apiKey: Redacted.make("fixture-key"),
@@ -345,7 +347,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         for (let n = 0; n < 3; n++) {
           assert.deepEqual((yield* service.getSettings).customModels, saved);
-          const resolved = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+          const resolved = yield* scient.resolveCustomModels(ProviderInstanceId.make("pi"));
           assert.deepEqual(resolved[0]?.models, saved.connections[0]?.models);
         }
         const persisted = yield* decodeSettingsJson(yield* fs.readFileString(config.settingsPath));
@@ -396,8 +398,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             Layer.provide(Layer.fresh(SqlitePersistence.layerMemory)),
           );
         let saved = yield* Effect.gen(function* () {
-          const service = yield* ServerSettingsModule.ServerSettingsService;
-          return yield* service.saveCustomModel({
+          const scient = yield* ScientServerSettings;
+          return yield* scient.saveCustomModel({
             revision: 0,
             connection: {
               ...modelConnection,
@@ -450,8 +452,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         yield* Effect.gen(function* () {
           const service = yield* ServerSettingsModule.ServerSettingsService;
+          const scient = yield* ScientServerSettings;
           assert.deepEqual((yield* service.getSettings).customModels, saved);
-          const resolved = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+          const resolved = yield* scient.resolveCustomModels(ProviderInstanceId.make("pi"));
           assert.equal(resolved.length, 1);
           assert.deepEqual(resolved[0]!.models, saved.connections[0]!.models);
           assert.equal(fetch.mock.calls.length, lookupCount);
@@ -475,8 +478,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           (spy) => Effect.sync(() => spy.mockRestore()),
         );
         yield* Effect.gen(function* () {
-          const service = yield* ServerSettingsModule.ServerSettingsService;
-          const saved = yield* service.saveCustomModel({
+          const scient = yield* ScientServerSettings;
+          const saved = yield* scient.saveCustomModel({
             revision: 0,
             connection: {
               ...modelConnection,
@@ -493,7 +496,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             apiKey: Redacted.make("fixture-recheck-key"),
           });
           const original = saved.connections[0]!;
-          const rechecked = yield* service.saveCustomModel({
+          const rechecked = yield* scient.saveCustomModel({
             revision: saved.revision,
             connection: original,
             refreshModelId: "model",
@@ -508,14 +511,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           assert.equal(refreshedEvidence?.contextWindow, originalEvidence?.contextWindow);
           assert.equal(
             Redacted.value(
-              (yield* service.resolveCustomModels(ProviderInstanceId.make("pi")))[0]!.apiKey!,
+              (yield* scient.resolveCustomModels(ProviderInstanceId.make("pi")))[0]!.apiKey!,
             ),
             "fixture-recheck-key",
           );
           fetch.mockImplementation(async () => {
             throw new Error("Synthetic unavailable endpoint");
           });
-          const retained = yield* service.saveCustomModel({
+          const retained = yield* scient.saveCustomModel({
             revision: rechecked.revision,
             connection: rechecked.connections[0]!,
             refreshModelId: "model",
@@ -561,27 +564,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         }),
       ).pipe(Layer.provide(ServerSecretStore.layer));
       yield* Effect.gen(function* () {
-        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const scient = yield* ScientServerSettings;
         const connection = { ...modelConnection, baseUrl: "https://example.test/v1" };
-        const saved = yield* service.saveCustomModel({
+        const saved = yield* scient.saveCustomModel({
           revision: 0,
           connection,
           apiKey: Redacted.make("first-synthetic-key"),
         });
         blockNextRead = true;
-        const reading = yield* service
+        const reading = yield* scient
           .resolveCustomModels(ProviderInstanceId.make("pi"))
           .pipe(Effect.forkChild);
         yield* Deferred.await(entered);
         const writing = yield* Deferred.succeed(writeStarted, undefined).pipe(
           Effect.andThen(
             action === "rotate"
-              ? service.saveCustomModel({
+              ? scient.saveCustomModel({
                   revision: saved.revision,
                   connection,
                   apiKey: Redacted.make("second-synthetic-key"),
                 })
-              : service.removeCustomModel({
+              : scient.removeCustomModel({
                   revision: saved.revision,
                   connectionId: connection.id,
                 }),
@@ -594,7 +597,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(original.credentialError, undefined);
         assert.equal(Redacted.value(original.apiKey!), "first-synthetic-key");
         yield* Fiber.join(writing);
-        const next = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+        const next = yield* scient.resolveCustomModels(ProviderInstanceId.make("pi"));
         if (action === "remove") assert.isEmpty(next);
         else assert.equal(Redacted.value(next[0]!.apiKey!), "second-synthetic-key");
       }).pipe(Effect.provide(makeServerSettingsLayer(secretLayer)));
@@ -622,9 +625,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         );
         yield* Effect.gen(function* () {
           const service = yield* ServerSettingsModule.ServerSettingsService;
+          const scient = yield* ScientServerSettings;
           const config = yield* ServerConfig.ServerConfig;
           const fs = yield* FileSystem.FileSystem;
-          const saving = yield* service
+          const saving = yield* scient
             .saveCustomModel({
               revision: 0,
               connection: modelConnection,
@@ -633,7 +637,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             .pipe(Effect.result, Effect.forkChild);
           yield* Effect.promise(() => requested.promise);
           assert.equal((yield* service.getSettings).customModels.revision, 0);
-          yield* service.saveCustomModel({
+          yield* scient.saveCustomModel({
             revision: 0,
             connection: { ...modelConnection, id: "other", models: [] },
           });
@@ -656,6 +660,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
   it.effect("serializes concurrent custom-model edits and persists credentials separately", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
+      const scient = yield* ScientServerSettings;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const connection = {
@@ -667,10 +672,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       };
       const outcomes = yield* Effect.all(
         [
-          service
+          scient
             .saveCustomModel({ revision: 0, connection, apiKey: Redacted.make("first-secret") })
             .pipe(Effect.exit),
-          service
+          scient
             .saveCustomModel({ revision: 0, connection, apiKey: Redacted.make("second-secret") })
             .pipe(Effect.exit),
         ],
@@ -691,7 +696,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       if ((yield* HostProcess.Platform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
       yield* service.updateSettings({ enableProviderUpdateChecks: false });
       assert.deepEqual((yield* service.getSettings).customModels, saved);
-      yield* service.removeCustomModel({ revision: 1, connectionId: "fixture" });
+      yield* scient.removeCustomModel({
+        revision: 1,
+        connectionId: "fixture",
+      });
       assert.equal(yield* fs.exists(keyFile), false);
       assert.deepEqual((yield* service.getSettings).customModels, { revision: 2, connections: [] });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -5031,7 +5039,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         },
       });
 
-      yield* serverSettings.removeProjectSettingsOverrides([deletedProject]);
+      yield* (yield* ScientServerSettings).removeProjectSettingsOverrides([deletedProject]);
 
       const persisted = yield* decodeServerSettings(
         JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath)),

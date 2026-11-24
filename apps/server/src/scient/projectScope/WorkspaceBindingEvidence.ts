@@ -135,14 +135,6 @@ const make = Effect.gen(function* () {
           kind: "repository-inspection-failed",
         });
       }
-      const parts = detected.stdout.trim().split(/\r?\n/u);
-      if (parts.length !== 2 || !parts[0] || !parts[1])
-        return yield* new WorkspaceBindingResolutionError({
-          operation: "inspect-repository-paths",
-          kind: "repository-inspection-failed",
-        });
-      const rootPath = yield* fileSystem.realPath(path.resolve(parts[0]));
-      const metadataPath = yield* fileSystem.realPath(path.resolve(parts[1]));
       const readGit = Effect.fn("WorkspaceBindingEvidence.readGit")(function* (
         operation: string,
         args: ReadonlyArray<string>,
@@ -168,6 +160,39 @@ const make = Effect.gen(function* () {
           });
         return result;
       });
+      const lines = detected.stdout.replace(/\n$/u, "").split("\n");
+      let [rootOutput, metadataOutput] = lines;
+      // A newline inside a path breaks the line framing; ask for each path on its own.
+      if (lines.length !== 2) {
+        const separate = yield* Effect.all(
+          [
+            readGit("ScientWorkspace.inspectRepositoryRoot", [
+              "rev-parse",
+              "--path-format=absolute",
+              "--show-toplevel",
+            ]),
+            readGit("ScientWorkspace.inspectRepositoryMetadata", [
+              "rev-parse",
+              "--path-format=absolute",
+              "--git-common-dir",
+            ]),
+          ],
+          { concurrency: "unbounded" },
+        );
+        if (separate.some((result) => result.exitCode !== 0))
+          return yield* new WorkspaceBindingResolutionError({
+            operation: "inspect-repository",
+            kind: "repository-inspection-failed",
+          });
+        [rootOutput, metadataOutput] = separate.map((result) => result.stdout.replace(/\n$/u, ""));
+      }
+      if (!rootOutput || !metadataOutput)
+        return yield* new WorkspaceBindingResolutionError({
+          operation: "inspect-repository-paths",
+          kind: "repository-inspection-failed",
+        });
+      const rootPath = yield* fileSystem.realPath(path.resolve(rootOutput));
+      const metadataPath = yield* fileSystem.realPath(path.resolve(metadataOutput));
       const [remotes, remoteConfig] = yield* Effect.all(
         [
           readGit("ScientWorkspace.inspectRemotes", ["remote", "-v"]),

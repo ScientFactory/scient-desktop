@@ -1139,6 +1139,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version,
         status: "error",
         auth: { status: "unknown" },
+        // SCIENT-FORK: report the typed probe failure without its message.
+        checkFailure: installed ? "command_failed" : "start_failed",
         message: installed
           ? `Codex app-server provider probe failed: ${error.message}.`
           : `Could not start Codex CLI (\`${codexSettings.binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
@@ -1161,6 +1163,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "error",
         auth: { status: "unknown" },
+        // SCIENT-FORK: the app-server check expired before it returned a snapshot.
+        checkFailure: "command_timeout",
         message: "Timed out while checking Codex app-server provider status.",
       },
     });

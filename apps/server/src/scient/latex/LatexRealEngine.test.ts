@@ -12,6 +12,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as ServerConfig from "../../config.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { LatexBuildService, type LatexBuildInput } from "./LatexBuildService.ts";
@@ -24,6 +25,7 @@ import {
   popplerHas,
   rebuildsEditedSource,
 } from "./latexRealEngine.testkit.ts";
+import * as SyncTexRuntime from "./SyncTexRuntime.ts";
 
 /** A whole-command string keeps this off `shell:true`'s argument-splicing path. */
 const resolvesOnPath = (command: string): boolean => {
@@ -41,11 +43,35 @@ const ENGINE_ON_PATH = resolvesOnPath("latexmk -v") || resolvesOnPath("tectonic 
 const COMPILE_TIMEOUT_MS = 25_000;
 // The Linux TinyTeX smoke runs the nested-root and edit/rebuild scenarios against its verified
 // payload (TinyTexAssetSmoke.test.ts). Here they run against an engine already on PATH; the
-// round trip also needs Poppler's pdftotext, and SyncTeX finds the helper set below or the
-// bundled lookup.
+// round trip also needs Poppler's pdftotext and a SyncTeX helper: the one set below or a
+// bundled one.
 const SYNCTEX_NAVIGATOR_PATH = process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH;
 const engine =
   SYNCTEX_NAVIGATOR_PATH === undefined ? {} : { syncTexNavigatorPath: SYNCTEX_NAVIGATOR_PATH };
+// Ask SyncTexRuntime itself, as the round trip will. Only a helper it reports missing (with none
+// set above) or unsupported on this host skips; a damaged helper or a bad explicit path fails.
+const SYNCTEX_HELPER_ABSENT = await Effect.gen(function* () {
+  const runtime = yield* SyncTexRuntime.SyncTexRuntime;
+  return yield* runtime.resolve;
+}).pipe(
+  Effect.as(false),
+  Effect.catchTags({
+    SyncTexRuntimeError: (error) =>
+      Effect.succeed(
+        error.reason === "unsupported" ||
+          (error.reason === "missing" && SYNCTEX_NAVIGATOR_PATH === undefined),
+      ),
+  }),
+  Effect.provide(
+    SyncTexRuntime.layer.pipe(
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "latex-synctex-probe-" }, engine),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  ),
+  Effect.runPromise,
+);
 
 describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine", () => {
   it.live(
@@ -94,7 +120,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
   );
 });
 
-describe.skipIf(!ENGINE_ON_PATH || !popplerHas("pdftotext"))(
+describe.skipIf(!ENGINE_ON_PATH || !popplerHas("pdftotext") || SYNCTEX_HELPER_ABSENT)(
   "edited-source real-engine round trip",
   () => {
     it.live("rebuilds edited prose, preserves math and recovers from a failed compile", () =>
