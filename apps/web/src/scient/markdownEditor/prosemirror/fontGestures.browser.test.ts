@@ -144,11 +144,23 @@ describe("font gestures in a real browser", () => {
     /** Put the caret at `from`, then extend the selection to `to` with Shift+ArrowRight. */
     async function selectByKeys(view: ReturnType<typeof open>["view"], from: number, to: number) {
       select(view, from);
-      await userEvent.keyboard(`{Shift>}${"{ArrowRight}".repeat(to - from)}{/Shift}`);
-      // The editor reads the browser selection asynchronously; wait until it has.
-      await vi.waitFor(() => {
-        expect([view.state.selection.from, view.state.selection.to]).toEqual([1 + from, 1 + to]);
-      });
+      // The editor reads the browser selection asynchronously, and on a slow machine it can
+      // restore its last selection over a key press it hasn't read yet. Press one key at a
+      // time and press again only if the selection did not move.
+      const selected = () => [view.state.selection.from, view.state.selection.to];
+      for (let end = from + 1; end <= to; end += 1) {
+        for (let attempt = 1; ; attempt += 1) {
+          await userEvent.keyboard("{Shift>}{ArrowRight}{/Shift}");
+          try {
+            await vi.waitFor(() => expect(selected()).toEqual([1 + from, 1 + end]), {
+              timeout: 1_000,
+            });
+            break;
+          } catch (error) {
+            if (attempt === 3 || selected()[1] !== end) throw error;
+          }
+        }
+      }
     }
 
     it("a space typed between a sized word and the next word is accepted", async () => {
