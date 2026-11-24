@@ -6,12 +6,14 @@ microphone permission before Chromium capture. The local route sends audio to
 the speech service on the desktop environment. The speech service shares its
 native worker and installed model catalog with recordings.
 
-The Transcription settings page manages engine choices, models, microphone
+The Voice & Transcription settings page manages engine choices, models, microphone
 input, and cleanup. Words supply recognition hints and spelling preferences.
-Cloud dictation uses a configured account-bound engine. ChatGPT dictation
-uses the selected eligible Codex connection.
+Cloud dictation uses a configured account-bound engine. Automatic ChatGPT
+dictation uses the active provider instance when it supports dictation and is
+signed in. It then prefers a signed-in Codex instance, followed by Scient
+Agent. An explicit connection selection takes precedence.
 
-After a successful catalog dictation, Transcription settings can offer to
+After a successful catalog dictation, Voice & Transcription settings can offer to
 remove previous local model files from the desktop profile. Removal requires
 an explicit action on that card.
 

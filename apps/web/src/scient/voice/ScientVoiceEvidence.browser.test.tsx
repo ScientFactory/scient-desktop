@@ -58,18 +58,6 @@ vi.mock("../../state/primaryEnvironment", async (original) => {
     localEnvironmentIdAtom: Atom.make(EnvironmentId.make(fixture.environmentId)),
   };
 });
-vi.mock("../../state/entities", async (original) => ({
-  ...(await original<typeof import("../../state/entities")>()),
-  useThreadShells: () => [
-    {
-      environmentId: fixture.environmentId,
-      providerInstanceId: "fixture-codex",
-      latestUserMessageAt: "2026-11-22T12:00:00Z",
-      archivedAt: null,
-    },
-  ],
-}));
-
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   useEnvironmentProviders: () =>
@@ -317,8 +305,15 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
       .element(screen.getByRole("heading", { name: "Recordings", level: 2 }))
       .toBeVisible();
     await expect
-      .element(screen.getByText("Follows your active chat, currently Codex (ChatGPT)"))
+      .element(
+        screen.getByText(
+          "Dictation uses your chat’s connection when available. Otherwise uses Codex (ChatGPT).",
+        ),
+      )
       .toBeVisible();
+    await expect
+      .element(screen.getByRole("combobox", { name: "ChatGPT connection" }))
+      .toHaveTextContent("Automatic");
     await expect.element(screen.getByRole("button", { name: "Choose a saved key…" })).toBeVisible();
     await expect.element(screen.getByText("25 languages")).toBeVisible();
     await expect.element(screen.getByText("for dictation", { exact: true })).toBeVisible();

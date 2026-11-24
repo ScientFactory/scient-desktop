@@ -1,7 +1,4 @@
 import { TranscriptionSelect } from "./TranscriptionSelect";
-import { useThreadShells } from "../../state/entities";
-import { useEnvironmentProviders } from "../../state/environments";
-import { resolveThreadActivityTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import { CloudDictationSettings } from "./cloudDictation";
 import { DictationChoices } from "./DictationChoices";
 import { DictationInputSettings } from "../../components/settings/DictationInputSettings";
@@ -254,26 +251,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   const prepared = Option.getOrNull(usePreparedConnection(localEnvironmentId));
   const catalog = useVoiceModels(prepared);
   const environmentId = usePrimaryEnvironmentId();
-  const threads = useThreadShells();
-  const providersByEnvironment = useEnvironmentProviders();
-  const providers = environmentId ? providersByEnvironment.get(environmentId) : undefined;
-  const recentChat = threads
-    .filter((thread) => thread.environmentId === environmentId && !thread.archivedAt)
-    .reduce<(typeof threads)[number] | undefined>(
-      (latest, thread) =>
-        !latest ||
-        (resolveThreadActivityTimestamp(thread) ?? "") >
-          (resolveThreadActivityTimestamp(latest) ?? "")
-          ? thread
-          : latest,
-      undefined,
-    );
-  const recentProvider = recentChat?.modelSelection?.instanceId ?? recentChat?.providerInstanceId;
-  const activeCodex = providers?.find(
-    (provider) =>
-      provider.instanceId === recentProvider && provider.driver === "codex" && provider.enabled,
-  )?.instanceId;
-  const chatGpt = useChatGptDictation(environmentId ?? undefined, activeCodex);
+  const chatGpt = useChatGptDictation(environmentId ?? undefined);
   const chatGptSignedIn = chatGpt.transcriber !== null;
   const catalogDictated = useClientSettings((settings) => settings.voiceCatalogDictated);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -433,10 +411,15 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             title="ChatGPT"
             alignControl="start"
             description={
-              !chatGpt.pinned && activeCodex && chatGpt.connection.selected
-                ? gt("Follows your active chat, currently {connection}", {
-                    connection: chatGpt.connection.selected.displayName,
-                  })
+              !chatGpt.pinned && chatGpt.connection.ready && chatGpt.connection.selected
+                ? gt(
+                    "Dictation uses your chat’s connection when available. Otherwise uses {connection}.",
+                    {
+                      connection:
+                        chatGpt.connection.selected.displayName ??
+                        chatGpt.connection.selected.driver,
+                    },
+                  )
                 : chatGpt.connection.selected
                   ? chatGpt.connection.ready
                     ? gt("Signed in with {connection}", {
@@ -445,9 +428,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                     : gt("Sign in again with {connection}", {
                         connection: chatGpt.connection.selected.displayName,
                       })
-                  : chatGpt.connection.ambiguous
-                    ? gt("Choose a connection to use for ChatGPT.")
-                    : gt("Use your ChatGPT sign-in.")
+                  : gt("Use your ChatGPT sign-in.")
             }
             control={
               <div className="flex min-w-0 flex-wrap items-start gap-2 @min-[32rem]/settings-row:justify-end">
@@ -456,7 +437,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                     label={gt("ChatGPT connection")}
                     value={chatGpt.pinned ?? ""}
                     options={[
-                      { value: "", label: gt("Follow the active chat connection") },
+                      { value: "", label: gt("Automatic") },
                       ...chatGpt.connection.choices.map((provider) => ({
                         value: provider.instanceId,
                         label: provider.displayName ?? provider.instanceId,

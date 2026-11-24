@@ -34,10 +34,12 @@ works the same on any computer, however old. Each recording is uploaded with
 your ChatGPT sign-in to ChatGPT's own dictation service, the one the ChatGPT and
 Codex apps use, and the text comes back to your draft.
 
-Nothing is sent until you choose ChatGPT. Dictation with ChatGPT needs an
-internet connection, and through Scient Agent it needs version 0.1.9 or newer.
-If the sign-in ends, Scient asks you to sign in again rather than switching to
-a local model.
+Nothing is sent until you choose ChatGPT. With **Automatic** selected under
+**Cloud engines → ChatGPT**, Scient uses the chat’s ChatGPT connection when it
+can. Otherwise it uses a signed-in Codex connection, or Scient Agent if Codex
+is unavailable. You can also select a specific connection. Dictation with
+ChatGPT needs an internet connection, and through Scient Agent it needs
+version 0.1.9 or newer.
 
 **Clean up** in **Settings → Voice & Transcription** is off by default.
 When it remains off, a local model's transcript stays on your computer. When

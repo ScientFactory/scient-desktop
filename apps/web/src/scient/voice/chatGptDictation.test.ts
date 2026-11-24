@@ -11,7 +11,6 @@ import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  chatGptDictationInstance,
   resolveChatGptConnection,
   chatGptDictationUnavailableMessage,
   makeChatGptDictationTranscriber,
@@ -59,10 +58,15 @@ const codex = (id: string, authType: string | undefined, enabled = true): Server
       : { status: "authenticated", type: authType },
 });
 
-describe("chatGptDictationInstance", () => {
+const automaticInstance = (providers: readonly ServerProvider[]) => {
+  const { ready, selected } = resolveChatGptConnection(providers);
+  return ready ? (selected?.instanceId ?? null) : null;
+};
+
+describe("automatic ChatGPT dictation", () => {
   it("picks the enabled Scient Agent signed in to ChatGPT", () => {
     expect(
-      chatGptDictationInstance([
+      automaticInstance([
         scientAgent("off", [{ id: "openai-codex", connected: true }], false),
         scientAgent("claude-only", [{ id: "anthropic", connected: true }]),
         scientAgent("chatgpt", [{ id: "openai-codex", connected: true }]),
@@ -72,7 +76,7 @@ describe("chatGptDictationInstance", () => {
 
   it("counts a sign-in to the same ChatGPT account under another entry", () => {
     expect(
-      chatGptDictationInstance([
+      automaticInstance([
         scientAgent("scient", [
           { id: "openai-codex-alt", connected: true, sameAccountAs: "openai-codex" },
         ]),
@@ -82,30 +86,22 @@ describe("chatGptDictationInstance", () => {
 
   it("finds none without a ChatGPT sign-in", () => {
     expect(
-      chatGptDictationInstance([
+      automaticInstance([
         scientAgent("scient", [{ id: "openai-codex" }]),
         codex("codex-key", "apiKey"),
         codex("codex-signed-out", undefined),
         codex("codex-off", "chatgpt", false),
       ]),
     ).toBeNull();
-    expect(chatGptDictationInstance(undefined)).toBeNull();
+    expect(automaticInstance([])).toBeNull();
   });
 
   it("dictates through Codex's ChatGPT sign-in when no Scient Agent is signed in", () => {
     expect(
-      chatGptDictationInstance([
+      automaticInstance([
         scientAgent("scient", [{ id: "openai-codex" }]),
         codex("codex", "chatgpt"),
       ]),
-    ).toBe("codex");
-  });
-
-  it("prefers a signed-in Scient Agent to Codex, unless the agent is too old to dictate", () => {
-    const agent = scientAgent("scient", [{ id: "openai-codex", connected: true }]);
-    expect(chatGptDictationInstance([codex("codex", "chatgpt"), agent])).toBe("scient");
-    expect(
-      chatGptDictationInstance([{ ...agent, version: "0.1.8" }, codex("codex", "chatgpt")]),
     ).toBe("codex");
   });
 
@@ -114,7 +110,11 @@ describe("chatGptDictationInstance", () => {
       ...scientAgent("scient", [{ id: "openai-codex", connected: true }]),
       version: "0.1.8",
     };
-    expect(chatGptDictationInstance([outdated])).toBeNull();
+    expect(automaticInstance([outdated])).toBeNull();
+    const fallback = codex("codex", "chatgpt");
+    expect(resolveChatGptConnection([outdated, fallback], null, outdated.instanceId).selected).toBe(
+      fallback,
+    );
     expect(chatGptDictationUnavailableMessage([outdated])).toBe(
       "Update Scient Agent to dictate with ChatGPT.",
     );
@@ -164,14 +164,29 @@ describe("makeChatGptDictationTranscriber", () => {
   });
 });
 
-it("follows the active Codex connection, requires a choice if ambiguous and keeps a signed-out pin", () => {
+it("uses the active chat's eligible connection, with Codex as the automatic default", () => {
+  const agent = scientAgent("scient", [{ id: "openai-codex", connected: true }]);
+  const first = codex("codex", "chatgpt");
+  const second = codex("second-codex", "chatgpt");
+  const providers = [agent, second, first];
+  expect(resolveChatGptConnection(providers).selected).toBe(first);
+  expect(resolveChatGptConnection(providers, null, agent.instanceId).selected).toBe(agent);
+  expect(resolveChatGptConnection(providers, null, second.instanceId).selected).toBe(second);
+  expect(
+    resolveChatGptConnection(providers, null, ProviderInstanceId.make("claude")).selected,
+  ).toBe(first);
+  const reauth = codex("second-codex", undefined);
+  expect(resolveChatGptConnection([agent, first, reauth], null, reauth.instanceId).selected).toBe(
+    first,
+  );
+  expect(resolveChatGptConnection([agent, reauth], null, reauth.instanceId).selected).toBe(agent);
+});
+
+it("keeps a connection the user selected explicitly, even if it needs a new sign-in", () => {
   const first = codex("first", "chatgpt");
-  const second = codex("second", "chatgpt");
-  expect(resolveChatGptConnection([first, second]).ambiguous).toBe(true);
-  expect(resolveChatGptConnection([first, second], null, first.instanceId).selected).toEqual(first);
   const reauth = codex("second", undefined);
   expect(
-    resolveChatGptConnection([first, reauth], second.instanceId, first.instanceId),
+    resolveChatGptConnection([first, reauth], reauth.instanceId, first.instanceId),
   ).toMatchObject({
     ready: false,
     selected: reauth,
