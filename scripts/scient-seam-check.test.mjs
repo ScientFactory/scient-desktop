@@ -627,6 +627,8 @@ describe("Scient tests placed in T3's test files", () => {
     ['it.effect(\n  "a Scient case wrapped onto its own line",\n  () => Effect.void,\n);'],
     ['it.skipIf(isWindows)("a Scient case", () => {});'],
     ['test.each([1, 2])("a Scient case %s", () => {});'],
+    ['it.for([\n  { input: 1 },\n  { input: 2 },\n])("a Scient case $input", () => {});'],
+    ['it.prop({ x: fc.integer() })("a Scient case", () => {});'],
   ])("asks for the sibling when a new test lands unmarked in a T3 file: %s", (test) => {
     const f = placementFixture();
     f.writeTests(test);
@@ -646,6 +648,30 @@ describe("Scient tests placed in T3's test files", () => {
       "// SCIENT-FORK:END",
     );
     expect(f.inspect().checks[0]).toMatchObject({ status: "passed", findings: [] });
+  });
+
+  it.each([
+    ["an unclosed region", ["// SCIENT-FORK:START — never closed"]],
+    ["a marker inside a string", ['const note = "SCIENT-FORK:START";']],
+    ["a region closed on its own line", ["// SCIENT-FORK:START a // SCIENT-FORK:END"]],
+    [
+      "two regions closed on one line",
+      ["// SCIENT-FORK:START", "// SCIENT-FORK:START", "// SCIENT-FORK:END // SCIENT-FORK:END"],
+    ],
+  ])("marks nothing after %s", (_, before) => {
+    const f = placementFixture();
+    f.writeTests(...before, 'it("a Scient case", () => {});', 'const after = "SCIENT-FORK:END";');
+    expect(f.inspect().checks[0].status).toBe("review-needed");
+  });
+
+  it("accepts a region written as JSX comments", () => {
+    const f = placementFixture();
+    f.writeTests(
+      "{/* SCIENT-FORK:START — needs this file's harness */}",
+      'it("a Scient case", () => {});',
+      "{/* SCIENT-FORK:END */}",
+    );
+    expect(f.inspect().checks[0].status).toBe("passed");
   });
 
   it("counts a marker comment on one line as no region", () => {
@@ -677,6 +703,18 @@ describe("Scient tests placed in T3's test files", () => {
     // The same line without the newer upstream is a Scient addition.
     f.write("upstream-state.json", JSON.stringify({ integrationBase: f.upstream }));
     expect(f.inspect(["--base", main]).checks[0].status).toBe("review-needed");
+  });
+
+  it("does not let a test T3 deleted hide a Scient test added beside it", () => {
+    const f = placementFixture();
+    const withoutT3Case = t3Tests.filter((line) => !line.includes("keeps the T3 case"));
+    f.git("checkout", "--quiet", f.upstream);
+    f.write(t3File, `${withoutT3Case.join("\n")}\n`);
+    const nextUpstream = f.commit();
+    f.git("checkout", "--quiet", f.base);
+    f.write(t3File, `${[...withoutT3Case, 'it("a Scient case", () => {});'].join("\n")}\n`);
+    f.write("upstream-state.json", JSON.stringify({ integrationBase: nextUpstream }));
+    expect(f.inspect().checks[0].status).toBe("review-needed");
   });
 
   it("counts a second test with a T3 test's title as new", () => {

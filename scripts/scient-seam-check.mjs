@@ -410,28 +410,41 @@ function check(name, ctx) {
   };
 }
 
-// A test declaration's title: `it(`, `test(`, modifiers such as `it.effect(` or
-// `it.skipIf(cond)(`, and a title on the next line as the formatter wraps it.
+// A test declaration's literal title: `it(`, `test(`, modifiers such as `it.effect(`,
+// `it.skipIf(cond)(` or a multiline `it.for([...])(`, and a title the formatter wraps
+// onto the next line. A title held in a variable, or new cases added to an existing
+// `.each` table, are out of reach of this text scan; review catches those.
 const testDeclaration =
-  /^[ \t]*(?:it|test)(?:\.\w+(?:\([^()\n]*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
-const upstreamTestFile = (path) =>
-  /(^|\/)(__tests__\/|[^/]+\.(test|spec)\.[cm]?[jt]sx?$)/u.test(path) &&
-  !NodePath.posix.basename(path).includes(".scient.");
+  /^[ \t]*(?:it|test)(?:\.\w+(?:\((?:[^()]|\([^()]*\))*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
+const t3TestFile = (path) => /(^|\/)(__tests__\/.+|[^/]+\.(test|spec))\.[cm]?[jt]sx?$/u.test(path);
+// A marker counts only in a comment, and only as a START…END pair: an unclosed
+// START marks nothing.
+const forkMarker = /(?:\/\/|\/\*|^[ \t]*\*)[^\n]*/u;
+
+function markedLines(lines) {
+  const open = [];
+  const marked = new Set();
+  for (const [index, text] of lines.entries()) {
+    const comment = forkMarker.exec(text)?.[0] ?? "";
+    for (const [, type] of comment.matchAll(/SCIENT-FORK:(START|END)\b/gu)) {
+      if (type === "START") open.push(index);
+      else if (open.length) {
+        const from = open.pop();
+        for (let line = from; line <= index; line += 1) marked.add(line);
+      }
+    }
+  }
+  return marked;
+}
 
 function testTitles(source) {
+  const marked = markedLines(source.split("\n"));
   const titles = [];
-  let line = 1;
+  let line = 0;
   let scanned = 0;
-  let depth = 0;
-  const regions = [];
-  for (const [index, text] of source.split("\n").entries()) {
-    if (text.includes("SCIENT-FORK:START")) depth += 1;
-    regions[index + 1] = depth > 0;
-    if (text.includes("SCIENT-FORK:END")) depth = Math.max(0, depth - 1);
-  }
   for (const match of source.matchAll(testDeclaration)) {
     for (; scanned < match.index; scanned += 1) if (source[scanned] === "\n") line += 1;
-    titles.push({ title: match[2], marked: regions[line] === true });
+    titles.push({ title: match[2], marked: marked.has(line) });
   }
   return titles;
 }
@@ -442,37 +455,41 @@ const countTitles = (titles) => {
   return counts;
 };
 
-// A Scient test belongs in the file's `.scient.` sibling, which T3 never edits.
-// One that needs the T3 file's private helpers stays in a SCIENT-FORK region.
-// Counted per file, so retitling a test (one title out, one in) is not a new test,
-// and tests an alignment brings from T3 are known from the frozen upstream.
+// A Scient test goes in the `.scient.` sibling, or in a SCIENT-FORK region when it
+// needs the file's private helpers. Titles are counted per file against the base and
+// upstream; a T3 test dropped while T3 still has it is a retitle and offsets one.
 function testPlacement(ctx) {
   const findings = [];
   if (!ctx.base) return { name: "test-placement", status: "passed", findings };
   for (const path of ctx.changed) {
     if (
       path.startsWith(".repos/") ||
-      !upstreamTestFile(path) ||
+      !t3TestFile(path) ||
       !ctx.upstreamPaths.has(path) ||
       !ctx.paths.has(path)
     )
       continue;
-    const headAll = testTitles(read(ctx.run, ctx.tree, path));
-    const base = ctx.basePaths.has(path) ? testTitles(read(ctx.run, ctx.base, path)) : [];
-    const known = countTitles(base);
-    for (const [title, count] of countTitles(testTitles(read(ctx.run, ctx.upstream, path))))
-      known.set(title, Math.max(count, known.get(title) ?? 0));
-    const remaining = new Map(known);
+    const head = testTitles(read(ctx.run, ctx.tree, path));
+    const base = countTitles(
+      ctx.basePaths.has(path) ? testTitles(read(ctx.run, ctx.base, path)) : [],
+    );
+    const upstream = countTitles(testTitles(read(ctx.run, ctx.upstream, path)));
+    const remaining = new Map(base);
+    for (const [title, count] of upstream)
+      remaining.set(title, Math.max(count, remaining.get(title) ?? 0));
     const added = [];
-    for (const { title } of headAll.filter(({ marked }) => !marked)) {
+    for (const { title } of head.filter(({ marked }) => !marked)) {
       const left = remaining.get(title) ?? 0;
       if (left > 0) remaining.set(title, left - 1);
       else added.push(title);
     }
-    const headTitles = countTitles(headAll);
+    const headCounts = countTitles(head);
     let retitled = 0;
-    for (const [title, count] of countTitles(base))
-      retitled += Math.max(0, count - (headTitles.get(title) ?? 0));
+    for (const [title, count] of base)
+      retitled += Math.max(
+        0,
+        Math.min(count, upstream.get(title) ?? 0) - (headCounts.get(title) ?? 0),
+      );
     if (added.length > retitled) {
       findings.push({
         kind: "review-needed",

@@ -517,10 +517,12 @@ add `--snapshot index` for staged content or `--head <candidate-sha>` for an exa
 Without `--base`, the result checks current locators only and explicitly does **not** audit a
 changed-file diff. The local snapshot uses private temporary Git index/objects and includes
 deletions and non-ignored untracked files. Reference snapshots under `.repos/` are counted but
-not scanned as product code. It also checks test placement: a test whose title neither the base
-nor the frozen upstream has, added to a T3 test file outside a `SCIENT-FORK:START`/`END`
-region, is `review-needed`. Retitling a test counts as an edit, and tests an alignment brings
-from T3 are known from the upstream. The command reports `passed`, `review-needed`, `failed`, or
+not scanned as product code. It also checks test placement: in a T3 test file, a test declaration
+with a literal title (`it(`, `test(` and their modifiers) beyond the count of that title in the
+base and the frozen upstream, outside a paired `SCIENT-FORK:START`/`END` comment region, is
+`review-needed`. Tests an alignment brings from T3 are known from the upstream. Dropping a T3
+test that T3 still has offsets one new title, as a retitle; a test T3 deleted offsets nothing.
+A title held in a variable, or new rows in an existing `.each` table, are left to review. The command reports `passed`, `review-needed`, `failed`, or
 `unavailable`; it proves neither behavior nor ancestry. A moved locator is a review signal:
 trace the new implementation and callers, update the manifest only after establishing the same
 behavior, then rerun the behavioral tests. Never remove an assertion just to turn the gate green.
