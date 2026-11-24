@@ -66,7 +66,7 @@ function fixture() {
     isDestroyed: () => false,
     getType: () => "webview",
     getURL: () => url,
-    executeJavaScript: async () => true,
+    executeJavaScriptInIsolatedWorld: async (worldId: number) => worldId === 999,
   } as unknown as Electron.WebContents;
   let failCookies = false;
   let registered = true;

@@ -136,8 +136,14 @@ export interface LoginDocumentState {
   readonly filled: WeakSet<EventTarget>;
 }
 
+/**
+ * The world Electron's context isolation runs preview preloads in. The preload keeps the login
+ * state there, so the report and fill scripts run in that world too, not the page's own.
+ */
+export const PRELOAD_WORLD_ID = 999;
+
 export function loginDocumentState() {
-  // Preview webviews disable context isolation, so the preload, report and fill share the page's world.
+  // The preload, report and fill share the preload's isolated world (PRELOAD_WORLD_ID).
   return (globalThis as typeof globalThis & { __scientAccountsLogin?: LoginDocumentState })
     .__scientAccountsLogin;
 }
