@@ -653,14 +653,19 @@ describe("Scient tests placed in T3's test files", () => {
   it.each([
     ["an unclosed region", ["// SCIENT-FORK:START — never closed"]],
     ["a marker inside a string", ['const note = "SCIENT-FORK:START";']],
-    ["a region closed on its own line", ["// SCIENT-FORK:START a // SCIENT-FORK:END"]],
+    ["a START and END on one line", ["// SCIENT-FORK:START a // SCIENT-FORK:END"]],
+    ["a marker quoted in a string", ['const open = "// SCIENT-FORK:START";']],
     [
       "two regions closed on one line",
       ["// SCIENT-FORK:START", "// SCIENT-FORK:START", "// SCIENT-FORK:END // SCIENT-FORK:END"],
     ],
   ])("marks nothing after %s", (_, before) => {
     const f = placementFixture();
-    f.writeTests(...before, 'it("a Scient case", () => {});', 'const after = "SCIENT-FORK:END";');
+    f.writeTests(
+      ...before,
+      'it("a Scient case", () => {});',
+      'const after = "// SCIENT-FORK:END";',
+    );
     expect(f.inspect().checks[0].status).toBe("review-needed");
   });
 
@@ -715,6 +720,25 @@ describe("Scient tests placed in T3's test files", () => {
     f.write(t3File, `${[...withoutT3Case, 'it("a Scient case", () => {});'].join("\n")}\n`);
     f.write("upstream-state.json", JSON.stringify({ integrationBase: nextUpstream }));
     expect(f.inspect().checks[0].status).toBe("review-needed");
+    // Keeping the test T3 deleted adds nothing new.
+    f.write(t3File, `${t3Tests.join("\n")}\n`);
+    expect(f.inspect().checks[0].status).toBe("passed");
+  });
+
+  it("treats retitling a test an alignment brings, or a Scient test already in the file, as an edit", () => {
+    const f = placementFixture();
+    f.writeTests('it("an older Scient case", () => {});');
+    const main = f.commit();
+    f.git("checkout", "--quiet", f.upstream);
+    f.writeTests('it("a new T3 case for this T3 home", () => {});');
+    const nextUpstream = f.commit();
+    f.git("checkout", "--quiet", main);
+    f.writeTests(
+      'it("the older Scient case, retitled", () => {});',
+      'it("a new T3 case for this Scient home", () => {});',
+    );
+    f.write("upstream-state.json", JSON.stringify({ integrationBase: nextUpstream }));
+    expect(f.inspect(["--base", main]).checks[0].status).toBe("passed");
   });
 
   it("counts a second test with a T3 test's title as new", () => {

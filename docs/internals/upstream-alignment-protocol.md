@@ -518,12 +518,14 @@ Without `--base`, the result checks current locators only and explicitly does **
 changed-file diff. The local snapshot uses private temporary Git index/objects and includes
 deletions and non-ignored untracked files. Reference snapshots under `.repos/` are counted but
 not scanned as product code. It also checks test placement: in a T3 test file, a test declaration
-with a literal title (`it(`, `test(` and their modifiers) beyond the count of that title in the
-base and the frozen upstream, outside a paired `SCIENT-FORK:START`/`END` comment region, is
-`review-needed`. Tests an alignment brings from T3 are known from the upstream. Dropping a T3
-test that T3 still has offsets one new title, as a retitle; a test T3 deleted offsets nothing.
-A title held in a variable, or new rows in an existing `.each` table, are left to review. The command reports `passed`, `review-needed`, `failed`, or
-`unavailable`; it proves neither behavior nor ancestry. A moved locator is a review signal:
+with a literal title (`it(`, `test(` and their modifiers) that neither the base nor the frozen
+upstream has as often, and that sits outside a `SCIENT-FORK:START`/`END` pair (each marker a
+comment line that starts with it), is `review-needed`. Tests an alignment brings from T3 are
+known from the upstream. Each expected test the head drops, T3's current one or Scient's own,
+offsets one new title as a retitle; a test T3 deleted offsets nothing. A title held in a
+variable, or new rows in an existing `.each` table, are left to review. The
+command reports `passed`, `review-needed`, `failed`, or `unavailable`; it proves neither
+behavior nor ancestry. A moved locator is a review signal:
 trace the new implementation and callers, update the manifest only after establishing the same
 behavior, then rerun the behavioral tests. Never remove an assertion just to turn the gate green.
 The existing per-feature commands, including CI entry points, now use this same implementation;

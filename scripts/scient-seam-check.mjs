@@ -417,21 +417,19 @@ function check(name, ctx) {
 const testDeclaration =
   /^[ \t]*(?:it|test)(?:\.\w+(?:\((?:[^()]|\([^()]*\))*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
 const t3TestFile = (path) => /(^|\/)(__tests__\/.+|[^/]+\.(test|spec))\.[cm]?[jt]sx?$/u.test(path);
-// A marker counts only in a comment, and only as a START…END pair: an unclosed
-// START marks nothing.
-const forkMarker = /(?:\/\/|\/\*|^[ \t]*\*)[^\n]*/u;
+// A marker is a comment line that starts with it, as every region in T3's test files
+// is written, and counts only as a START…END pair: an unclosed START marks nothing.
+const forkMarker = /^[ \t]*(?:\/\/|\/\*|\{\/\*|\*)[ \t]*SCIENT-FORK:(START|END)\b/u;
 
 function markedLines(lines) {
   const open = [];
   const marked = new Set();
   for (const [index, text] of lines.entries()) {
-    const comment = forkMarker.exec(text)?.[0] ?? "";
-    for (const [, type] of comment.matchAll(/SCIENT-FORK:(START|END)\b/gu)) {
-      if (type === "START") open.push(index);
-      else if (open.length) {
-        const from = open.pop();
-        for (let line = from; line <= index; line += 1) marked.add(line);
-      }
+    const type = forkMarker.exec(text)?.[1];
+    if (type === "START") open.push(index);
+    else if (type === "END" && open.length) {
+      const from = open.pop();
+      for (let line = from; line <= index; line += 1) marked.add(line);
     }
   }
   return marked;
@@ -456,11 +454,19 @@ const countTitles = (titles) => {
 };
 
 // A Scient test goes in the `.scient.` sibling, or in a SCIENT-FORK region when it
-// needs the file's private helpers. Titles are counted per file against the base and
-// upstream; a T3 test dropped while T3 still has it is a retitle and offsets one.
+// needs the file's private helpers. A title the base or T3 has is not new. Each
+// expected test (T3's now, or Scient's own) the head drops offsets one new title.
 function testPlacement(ctx) {
   const findings = [];
   if (!ctx.base) return { name: "test-placement", status: "passed", findings };
+  const titlesAt = (tree, paths, path) =>
+    countTitles(paths.has(path) ? testTitles(read(ctx.run, tree, path)) : []);
+  // The base's own upstream tells Scient's tests in the base from T3's.
+  const baseUpstream = ctx.basePaths.has("upstream-state.json")
+    ? commit(ctx.run, JSON.parse(read(ctx.run, ctx.base, "upstream-state.json")).integrationBase)
+    : ctx.upstream;
+  const baseUpstreamPaths =
+    baseUpstream === ctx.upstream ? ctx.upstreamPaths : treePaths(ctx.run, baseUpstream);
   for (const path of ctx.changed) {
     if (
       path.startsWith(".repos/") ||
@@ -470,12 +476,16 @@ function testPlacement(ctx) {
     )
       continue;
     const head = testTitles(read(ctx.run, ctx.tree, path));
-    const base = countTitles(
-      ctx.basePaths.has(path) ? testTitles(read(ctx.run, ctx.base, path)) : [],
-    );
-    const upstream = countTitles(testTitles(read(ctx.run, ctx.upstream, path)));
+    const base = titlesAt(ctx.base, ctx.basePaths, path);
+    const previous = titlesAt(baseUpstream, baseUpstreamPaths, path);
+    const expected = titlesAt(ctx.upstream, ctx.upstreamPaths, path);
+    for (const [title, count] of base) {
+      const scient = count - (previous.get(title) ?? 0);
+      if (scient > 0) expected.set(title, (expected.get(title) ?? 0) + scient);
+    }
+    // Anything the base or T3 has is not new; only the expected tests offset a drop.
     const remaining = new Map(base);
-    for (const [title, count] of upstream)
+    for (const [title, count] of expected)
       remaining.set(title, Math.max(count, remaining.get(title) ?? 0));
     const added = [];
     for (const { title } of head.filter(({ marked }) => !marked)) {
@@ -484,13 +494,10 @@ function testPlacement(ctx) {
       else added.push(title);
     }
     const headCounts = countTitles(head);
-    let retitled = 0;
-    for (const [title, count] of base)
-      retitled += Math.max(
-        0,
-        Math.min(count, upstream.get(title) ?? 0) - (headCounts.get(title) ?? 0),
-      );
-    if (added.length > retitled) {
+    let dropped = 0;
+    for (const [title, count] of expected)
+      dropped += Math.max(0, count - (headCounts.get(title) ?? 0));
+    if (added.length > dropped) {
       findings.push({
         kind: "review-needed",
         message: `New test in T3's test file outside a SCIENT-FORK:START/END region; put it in the .scient. sibling: ${path}: ${added.map((title) => JSON.stringify(title)).join(", ")}`,
