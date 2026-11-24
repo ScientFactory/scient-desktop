@@ -1150,7 +1150,7 @@ effectIt.effect(
             run: (input) => {
               spawnedArgs.push(input.args);
               const isIpv6 = input.args.includes("tcpv6");
-              const isTasklist = input.command === "tasklist.exe";
+              const isTasklist = input.command.endsWith(String.raw`\System32\tasklist.exe`);
               const failTasklist = isTasklist && tasklistCalls++ === 0;
               return Effect.succeed({
                 stdout: isTasklist
