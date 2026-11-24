@@ -667,6 +667,8 @@ describe("resolveRestoredRetry", () => {
     updatesProviders: false,
     server: null,
     handedOffVersion: "0.1.12",
+    // SCIENT-FORK: a restored Retry needs the confirmed mechanism, which Scient saves.
+    handedOffSelfUpdate: "boot-service",
     startedAt: 0,
     result: "failed",
     failure: "Not back after 32 minutes",

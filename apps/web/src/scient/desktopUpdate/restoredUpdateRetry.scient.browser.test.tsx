@@ -154,66 +154,84 @@ const serverUpdate: OtherServerUpdate = {
   target: serverTarget,
 };
 
-function environment(serverVersion: string) {
+type Mechanism = NonNullable<ServerUpdateTarget["selfUpdate"]>;
+
+function environment(serverVersion: string, selfUpdate: Mechanism = "boot-service") {
   return {
     environmentId: lab,
     label: "lab-gpu",
     platform: { os: "linux" as const, arch: "x64" as const },
     serverVersion,
-    capabilities: { repositoryIdentity: true, serverSelfUpdate: "boot-service" as const },
+    capabilities: { repositoryIdentity: true, serverSelfUpdate: selfUpdate },
   };
 }
 
 /** The server as this app sees it: connected and behind the version the pass handed it. */
-const current: ReadonlyArray<UpdateEverythingMachine> = [
-  {
-    environmentId: lab,
-    label: "lab-gpu",
-    serverConfig: {
-      environment: environment("0.6.20"),
-      settings: { continueThreadsAfterServerUpdate: false },
-    },
-    connected: true,
-    hostedByThisApp: false,
-    canMaintain: true,
-    updateState: { status: "idle" },
-  },
-];
-
-/** The row a relaunched app rebuilds from its saved handoff: only the version, no target. */
-const restoredRun: UpdateEverythingRun = {
-  localVersion: null,
-  phase: "servers",
-  restartAt: null,
-  machines: [
+function currentServers(selfUpdate: Mechanism): ReadonlyArray<UpdateEverythingMachine> {
+  return [
     {
       environmentId: lab,
       label: "lab-gpu",
-      updatesProviders: false,
-      server: null,
-      handedOffVersion: "0.6.21",
-      startedAt: 0,
-      result: "failed",
-      failure: "Not back after 10 minutes",
-      providerFailure: null,
+      serverConfig: {
+        environment: environment("0.6.20", selfUpdate),
+        settings: { continueThreadsAfterServerUpdate: false },
+      },
+      connected: true,
+      hostedByThisApp: false,
+      canMaintain: true,
+      updateState: { status: "idle" },
     },
-  ],
-};
+  ];
+}
 
-async function renderRestoredFailure() {
+/**
+ * The row a relaunched app rebuilds from its saved handoff: the version and the mechanism the
+ * user confirmed, no target. `null` is a record saved before Scient kept the mechanism.
+ */
+function restoredRun(confirmed: Mechanism | null): UpdateEverythingRun {
+  return {
+    localVersion: null,
+    phase: "servers",
+    restartAt: null,
+    machines: [
+      {
+        environmentId: lab,
+        label: "lab-gpu",
+        updatesProviders: false,
+        server: null,
+        handedOffVersion: "0.6.21",
+        ...(confirmed === null ? {} : { handedOffSelfUpdate: confirmed }),
+        startedAt: 0,
+        result: "failed",
+        failure: "Not back after 10 minutes",
+        providerFailure: null,
+      },
+    ],
+  };
+}
+
+/** Renders the circle after a relaunch, with the server now offering `offered`. */
+async function renderRestored({
+  confirmed = "boot-service",
+  offered = "boot-service",
+}: { readonly confirmed?: Mechanism | null; readonly offered?: Mechanism } = {}) {
   const registry = Registry.make();
   testState.readRegistry = () => registry;
   testState.configs = new Map();
   testState.updateServer.mockReset().mockResolvedValue({ status: "updated" } as never);
-  testState.qualified = [serverTarget];
-  testState.run = restoredRun;
-  registry.set(configAtom(lab), { environment: environment("0.6.20") });
+  const target = { ...serverTarget, selfUpdate: offered };
+  testState.qualified = [target];
+  testState.run = restoredRun(confirmed);
+  registry.set(configAtom(lab), { environment: environment("0.6.20", offered) });
   const screen = await render(
-    <SidebarOtherUpdates current={current} servers={[serverUpdate]} updateAll={vi.fn()} />,
+    <SidebarOtherUpdates
+      current={currentServers(offered)}
+      servers={[{ ...serverUpdate, target }]}
+      updateAll={vi.fn()}
+    />,
   );
-  await screen.getByRole("button", { name: "Other update failed", exact: true }).click();
-  await expect.element(page.getByText("Not back after 10 minutes")).toBeVisible();
   return {
+    screen,
     registry,
     [Symbol.asyncDispose]: async () => {
       await screen[Symbol.asyncDispose]();
@@ -221,6 +239,27 @@ async function renderRestoredFailure() {
       testState.readRegistry = () => undefined;
     },
   };
+}
+
+async function renderRestoredFailure() {
+  const fixture = await renderRestored();
+  await fixture.screen.getByRole("button", { name: "Other update failed", exact: true }).click();
+  await expect.element(page.getByText("Not back after 10 minutes")).toBeVisible();
+  return fixture;
+}
+
+/** The row offers the ordinary Update, which asks again, and no Retry that would skip that. */
+async function expectFreshUpdateOnly(fixture: Awaited<ReturnType<typeof renderRestored>>) {
+  // Opens the circle in whatever state it shows; a kept failure would label it "failed".
+  await fixture.screen.getByRole("button", { name: /^Other update/ }).click();
+  await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Retry", exact: true }))
+    .not.toBeInTheDocument();
+  expect(testState.updateServer).not.toHaveBeenCalled();
+  await expect
+    .element(page.getByRole("button", { name: "Other updates available", exact: true }))
+    .toBeVisible();
 }
 
 it("retries a failed server update restored after this app relaunched", async () => {
@@ -238,4 +277,15 @@ it("settles a restored server already on its target without updating it", async 
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   expect(testState.updateServer).not.toHaveBeenCalled();
   expect(testState.run).toBeNull();
+});
+
+it("offers a fresh Update, not Retry, when the same server and version now use another mechanism", async () => {
+  // The user confirmed a service update; the server now offers its own app's update instead.
+  await using fixture = await renderRestored({ confirmed: "boot-service", offered: "respawn" });
+  await expectFreshUpdateOnly(fixture);
+});
+
+it("offers a fresh Update, not Retry, for a row saved without its mechanism", async () => {
+  await using fixture = await renderRestored({ confirmed: null });
+  await expectFreshUpdateOnly(fixture);
 });

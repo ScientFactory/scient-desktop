@@ -561,6 +561,10 @@ export interface UpdateRunMachine {
   readonly updatesProviders: boolean;
   readonly server: ServerUpdateTarget | null;
   readonly handedOffVersion: string | null;
+  // SCIENT-FORK:START — a restored row keeps the update mechanism its user confirmed, so its
+  // Retry cannot substitute another one; absent on rows saved before Scient recorded it.
+  readonly handedOffSelfUpdate?: ServerSelfUpdateCapability;
+  // SCIENT-FORK:END
   readonly startedAt: number;
   readonly result: "done" | "failed" | null;
   readonly failure: string | null;
@@ -611,7 +615,13 @@ export function resolveRestoredRetry(
   ) {
     return "current";
   }
-  return collectServerUpdateTargets([current], targetVersion).targets[0] ?? null;
+  // SCIENT-FORK:START — Retry repeats the confirmed mechanism only; another one (or a row saved
+  // without one) is a new update, which the row offers with its own confirmation.
+  const rebuilt = collectServerUpdateTargets([current], targetVersion).targets[0];
+  return rebuilt !== undefined && rebuilt.selfUpdate === machine.handedOffSelfUpdate
+    ? rebuilt
+    : null;
+  // SCIENT-FORK:END
 }
 
 export function isServerUpdateHandedOff(state: ServerUpdateState): boolean {

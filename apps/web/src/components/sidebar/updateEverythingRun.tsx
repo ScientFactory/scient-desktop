@@ -7,6 +7,8 @@ import {
   serverUpdateStateAtom,
 } from "@t3tools/client-runtime/state/server";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+// SCIENT-FORK: the handoff record keeps the confirmed update mechanism.
+import { ServerSelfUpdateCapability } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -265,6 +267,8 @@ const HandedOffServer = Schema.Struct({
   targetVersion: Schema.String,
   startedAt: Schema.Number,
   updateId: Schema.optionalKey(Schema.String),
+  // SCIENT-FORK: the confirmed update mechanism; optional so records saved without it decode.
+  selfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
 });
 type HandedOffServer = typeof HandedOffServer.Type;
 
@@ -291,6 +295,8 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
       (state.status === "running" ? state.targetVersion : machine.server?.targetVersion);
     if (targetVersion === undefined) return [];
     const updateId = state.status === "running" ? state.updateId : undefined;
+    // SCIENT-FORK: a restored Retry may repeat only the mechanism the user confirmed.
+    const selfUpdate = machine.server?.selfUpdate ?? machine.handedOffSelfUpdate ?? undefined;
     return [
       {
         environmentId: machine.environmentId,
@@ -298,6 +304,7 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
         targetVersion,
         startedAt: machine.startedAt,
         ...(updateId === undefined ? {} : { updateId }),
+        ...(selfUpdate === undefined ? {} : { selfUpdate }), // SCIENT-FORK: confirmed mechanism
       },
     ];
   });
@@ -369,6 +376,8 @@ function followHandedOffServers(
       updatesProviders: false,
       server: null,
       handedOffVersion: server.targetVersion,
+      // SCIENT-FORK: the confirmed mechanism, which a restored Retry must match.
+      ...(server.selfUpdate === undefined ? {} : { handedOffSelfUpdate: server.selfUpdate }),
       startedAt: server.startedAt,
       result: null,
       failure: null,
