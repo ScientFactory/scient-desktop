@@ -102,7 +102,6 @@ function timelineProps() {
     runningRunId: null,
     turnDiffSummaries: [],
     routeThreadKey: "environment-local:thread-1",
-    onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
     providerStatuses: [],

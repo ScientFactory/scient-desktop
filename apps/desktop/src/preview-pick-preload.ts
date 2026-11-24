@@ -14,6 +14,7 @@ if (process.argv.includes(PRIMARY_PASTE_DISABLED_ARGUMENT)) {
 }
 
 // SCIENT-FORK:START — Scient Accounts: capture submitted sign-ins from preview guests.
+import { ipcRenderer } from "electron";
 import { installSignInCapture } from "./scient/accounts/capture.ts";
 import { installLoginFormDetection } from "./scient/accounts/autofill.ts";
 import { CAPTURE, CAPTURE_ALLOWED, LOGIN_FORM_REPORT } from "./scient/accounts/protocol.ts";

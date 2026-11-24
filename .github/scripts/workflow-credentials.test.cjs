@@ -195,7 +195,10 @@ test("no mobile production job mints a release app token", () => {
   const { version, production } = jobs("workflows/mobile-eas-production.yml");
   assert.equal(version, undefined);
   assert.doesNotMatch(production, /RELEASE_APP|create-github-app-token/);
-  assert.doesNotMatch(read("workflows/mobile-eas-production.yml"), /RELEASE_APP|create-github-app-token/);
+  assert.doesNotMatch(
+    read("workflows/mobile-eas-production.yml"),
+    /RELEASE_APP|create-github-app-token/,
+  );
 });
 // SCIENT-FORK:END
 
