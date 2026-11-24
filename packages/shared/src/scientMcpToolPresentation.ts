@@ -164,6 +164,10 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_pdf_build: tool(["Build", "Building", "Built", "a PDF"], "scient-documents"),
   t3_latex_build: tool(["Build", "Building", "Built", "a LaTeX document"], "scient-documents"),
   t3_document_export: tool(["Export", "Exporting", "Exported", "a document"], "scient-documents"),
+  t3_document_runtime: tool(
+    ["Find", "Finding", "Found", "the Document Lab runtime"],
+    "scient-documents",
+  ),
   t3_overleaf_status: tool(["Check", "Checking", "Checked", "Overleaf links"], "scient-overleaf"),
   t3_overleaf_preview: tool(
     ["Preview", "Previewing", "Previewed", "an Overleaf sync"],
