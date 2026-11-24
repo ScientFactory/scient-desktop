@@ -5,6 +5,7 @@
 import * as NodeFS from "node:fs";
 
 const FINISHED = new Set(["passed", "failed", "skipped"]);
+const firstLine = (error) => String(error?.message ?? error).split("\n")[0];
 
 export default class RunOutcomeReporter {
   onTestRunEnd(testModules, unhandledErrors, reason) {
@@ -16,8 +17,12 @@ export default class RunOutcomeReporter {
       unfinished: testModules
         .filter((module) => !FINISHED.has(module.state()))
         .map((module) => module.moduleId),
-      unhandledErrors: unhandledErrors.map(
-        (error) => String(error?.message ?? error).split("\n")[0],
+      unhandledErrors: unhandledErrors.map(firstLine),
+      // A file's or a suite's own errors: collection, beforeAll and afterAll.
+      suiteErrors: testModules.flatMap((module) =>
+        [module, ...module.children.allSuites()].flatMap((suite) =>
+          suite.errors().map((error) => ({ file: module.moduleId, message: firstLine(error) })),
+        ),
       ),
     };
     NodeFS.writeFileSync(file, `${JSON.stringify(outcome)}\n`);

@@ -203,16 +203,18 @@ with a baseline of the same machine on main:
 - **New failures** block. Their files run once more, alone, as evidence: "failed again alone",
   or "passed when rerun alone (load, or a race with other files)". Either way the gate fails, as
   a race this branch added also passes alone.
-- **Failures main also has here** are listed with the main commit and do not block.
+- **Failures main also has here**, the same test failing the same way (a timeout, or the same
+  error name), are listed with the main commit and do not block.
 - **Baseline failures absent from this run's failures** are listed, so a fix shows (they may also
   have been skipped, renamed or deleted).
 - **Never waived:** a package failure (a package name is too coarse to match), a server file that
-  failed to load, an error outside any test, an interrupted run and files that never finished.
-  `scripts/vitest-run-outcome-reporter.mjs` reports the last three, which Vitest's JSON report
-  leaves out.
+  failed to load, an error in a file or suite hook, an error outside any test, an interrupted
+  run, files that never finished, an empty report, and a failed exit the report does not account
+  for. `scripts/vitest-run-outcome-reporter.mjs` reports what Vitest's JSON report leaves out.
 
 Record the baseline from a clean checkout of `origin/main` (fetch it first) with
-`pnpm alignment:gates --only test --record-baseline`. It keeps every server failure of that run,
+`pnpm alignment:gates --only test --record-baseline` (add `--tests` on Windows); it works once main
+has the recorder. It keeps every server failure of that run,
 in `<git common dir>/scient-test-baseline/<platform>-<arch>-node<N>.json`, shared by every
 worktree. A baseline is used only while it is at most seven days old and its main commit is in
 the candidate's history; otherwise, or without one, every failure blocks, and up to 20 failed

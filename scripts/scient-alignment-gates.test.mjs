@@ -63,20 +63,25 @@ if (args.includes("test") && filter === "t3") {
     ? list("FAKE_SERVER_FAILS_IN_PARALLEL")
     : list("FAKE_SERVER_FAILS_ALONE").filter((file) => requested.includes(file));
   const loadErrors = list("FAKE_SERVER_FILE_ERRORS");
-  const testResults = [...new Set([...requested, ...failing, ...loadErrors])].map((file) => ({
+  // A full run always reports at least one file; a targeted one, the files it was given.
+  const files = requested.length ? requested : ["src/passing.test.ts"];
+  const testResults = [...new Set([...files, ...failing, ...loadErrors])].map((file) => ({
     name: NodePath.resolve("apps/server", file),
     status: failing.includes(file) || loadErrors.includes(file) ? "failed" : "passed",
-    assertionResults: failing.includes(file) ? [{ status: "failed", fullName: "fails" }] : [],
+    assertionResults: failing.includes(file)
+      ? [{ status: "failed", fullName: "fails", failureMessages: [process.env.FAKE_FAILURE ?? "AssertionError: expected"] }]
+      : [],
     ...(loadErrors.includes(file) ? { message: "Failed to load the file" } : {}),
   }));
-  NodeFS.writeFileSync(report, JSON.stringify({ testResults }));
+  NodeFS.writeFileSync(report, JSON.stringify({ testResults: process.env.FAKE_EMPTY_REPORT ? [] : testResults }));
   const outcome = process.env.SCIENT_VITEST_RUN_OUTCOME;
   const unhandled = list("FAKE_UNHANDLED_ERRORS");
   if (outcome && !process.env.FAKE_NO_OUTCOME) {
     const failed = failing.length || loadErrors.length || unhandled.length;
-    NodeFS.writeFileSync(outcome, JSON.stringify({ reason: failed ? "failed" : "passed", unfinished: [], unhandledErrors: unhandled }));
+    const suiteErrors = list("FAKE_SUITE_ERRORS").map((file) => ({ file: NodePath.resolve("apps/server", file), message: "afterAll failed" }));
+    NodeFS.writeFileSync(outcome, JSON.stringify({ reason: failed ? "failed" : "passed", unfinished: [], unhandledErrors: unhandled, suiteErrors }));
   }
-  if (failing.length || loadErrors.length || unhandled.length) process.exit(1);
+  if (failing.length || loadErrors.length || unhandled.length || process.env.FAKE_EXIT_1) process.exit(1);
 }
 `;
 
@@ -182,7 +187,10 @@ test.each([
   (_name, extra, expectedFilters, rerun, failedPackages) => {
     const gates = fixture();
     const env = { FAKE_FAILING_PACKAGES: "b", FAKE_CALLS: NodePath.join(gates.bin, "calls.jsonl") };
-    const result = run(gates, ["--only", "test", "--server-workers", "3"], { ...env, ...extra });
+    const result = run(gates, ["--only", "test", "--tests", "--server-workers", "3"], {
+      ...env,
+      ...extra,
+    });
     NodeAssert.equal(result.status, 1, result.stderr);
     NodeAssert.deepEqual(result.record.gates[0].tests.packagesFailed, failedPackages);
     NodeAssert.deepEqual(result.record.gates[0].tests.packagesRerun, rerun);
@@ -195,7 +203,7 @@ test.each([
 );
 
 test("a failed server file runs once more alone, and the gate fails either way", () => {
-  const result = run(fixture(), ["--only", "test", "--server-workers", "4"], {
+  const result = run(fixture(), ["--only", "test", "--tests", "--server-workers", "4"], {
     FAKE_SERVER_FAILS_IN_PARALLEL: "src/flaky.test.ts,src/broken.test.ts",
     FAKE_SERVER_FAILS_ALONE: "src/broken.test.ts",
   });
@@ -210,7 +218,7 @@ test("a failed server file runs once more alone, and the gate fails either way",
 });
 
 const baselineOf = ({ cwd }) => baselinePath(NodePath.join(cwd, ".git"));
-const id = (file) => `${file} > fails`;
+const id = (file, kind = "AssertionError") => `${file} > fails :: ${kind}`;
 const writeBaseline = (gates, failures, change = {}) => {
   NodeFS.mkdirSync(NodePath.dirname(baselineOf(gates)), { recursive: true });
   NodeFS.writeFileSync(
@@ -306,19 +314,40 @@ test.each([
   ["an error outside any test", { FAKE_UNHANDLED_ERRORS: "boom" }, /error outside any test: boom/u],
   ["a missing run outcome", { FAKE_NO_OUTCOME: "1" }, /Vitest wrote no run outcome/u],
   [
+    "a suite hook error",
+    { FAKE_SUITE_ERRORS: "src/known.test.ts" },
+    /error in a file or suite hook: src\/known\.test\.ts: afterAll failed/u,
+  ],
+  [
+    "a known test failing another way",
+    { FAKE_FAILURE: "Error: Test timed out in 5000ms." },
+    /new failures: src\/known\.test\.ts > fails :: timeout/u,
+  ],
+  ["an empty report", { FAKE_EMPTY_REPORT: "1" }, /no readable report of any test file/u],
+  [
     "a file that failed to load",
     { FAKE_SERVER_FILE_ERRORS: "src/known.test.ts" },
     /new failures: src\/known\.test\.ts > \(file error\)/u,
   ],
 ])("%s blocks the gate even when every failed test is known on main", (_name, env, message) => {
   const gates = fixture();
-  writeBaseline(gates, [id("src/known.test.ts"), "src/known.test.ts > (file error)"]);
+  writeBaseline(gates, [id("src/known.test.ts"), "src/known.test.ts > (file error) :: file"]);
   const result = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
     FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts",
     ...env,
   });
   NodeAssert.equal(result.status, 1, result.stdout);
   NodeAssert.match(result.stdout, message);
+});
+
+test("a failed exit that the report does not account for blocks, baseline or not", () => {
+  const gates = fixture();
+  writeBaseline(gates, [id("src/known.test.ts")]);
+  const result = run(gates, ["--only", "test", "--tests", "--server-workers", "4"], {
+    FAKE_EXIT_1: "1",
+  });
+  NodeAssert.equal(result.status, 1, result.stdout);
+  NodeAssert.match(result.stdout, /the server suite exited 1 without a failure in its report/u);
 });
 
 test.each([

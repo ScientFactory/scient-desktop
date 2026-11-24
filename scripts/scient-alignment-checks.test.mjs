@@ -471,7 +471,19 @@ test("Vitest failures are named by test and file error; only a clean, non-empty 
   NodeAssert.deepEqual(failing, {
     files: 3,
     failures: ["src/a.test.ts > a fails", "src/broken.test.ts > (file error)"],
+    signatures: [
+      "src/a.test.ts > a fails :: AssertionError",
+      "src/broken.test.ts > (file error) :: file",
+    ],
   });
+  // How a test failed, without the message: a timeout, an error's name, or neither.
+  const kinds = fakeVitestReport(cwd);
+  kinds.testResults[0].assertionResults[0].failureMessages = [
+    "Error: Test timed out in 120000ms.\nIf this is a long-running test...",
+  ];
+  NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: timeout");
+  kinds.testResults[0].assertionResults[0].failureMessages = ["boom at /tmp/x:12"];
+  NodeAssert.equal(read(kinds).signatures[0], "src/a.test.ts > a fails :: error");
   // A file error of its own is labeled beside the file's failed assertions.
   const hooked = fakeVitestReport(cwd);
   hooked.testResults[0].message = "Error: afterAll cleanup failed";
@@ -511,7 +523,11 @@ function fakeVitestReport(cwd) {
         status: "failed",
         message: "",
         assertionResults: [
-          { fullName: "a fails", status: "failed" },
+          {
+            fullName: "a fails",
+            status: "failed",
+            failureMessages: ["AssertionError: expected 1 to be 2 // Object.is equality"],
+          },
           { fullName: "a passes", status: "passed" },
         ],
       },

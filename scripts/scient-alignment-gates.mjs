@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import {
   compareFailures,
+  failureId,
   makeCheckHome,
   readVitestReport,
   runTool,
@@ -313,18 +314,23 @@ function runTests({ root, home, out, log, workers, baseline, recording }) {
   const parallelRun = serverRun([], report, workers > 1, outcome);
   const server = { workers, report };
   const serverPassed = parallelRun.status === 0 && !parallelRun.error;
-  // Test IDs, `<file> > <full test name>`, relative to the server package.
-  const failures = readVitestReport(report, serverCwd)?.failures ?? null;
+  // Failure signatures, `<file> > <full test name> :: <kind>`, relative to the server package:
+  // a test main fails by timing out does not waive the same test failing an assertion.
+  const serverReport = readVitestReport(report, serverCwd);
+  const failures = serverReport?.signatures ?? null;
   // Errors outside any test, an interrupted run and unfinished files: never known on main.
   server.runErrors = runErrors(parallelRun, outcome, serverCwd);
-  if (failures === null) server.reason = "no readable report from the server suite";
-  else if (!serverPassed) server.timedOut = timedOut(report, serverCwd);
+  if (failures === null || serverReport.files === 0)
+    server.reason = "no readable report of any test file from the server suite";
+  else if (!serverPassed && failures.length === 0 && server.runErrors.length === 0)
+    server.reason = `the server suite exited ${parallelRun.status} without a failure in its report`;
+  if (!serverPassed && failures !== null) server.timedOut = timedOut(report, serverCwd);
   // A file that failed to load is never waived either.
   const labels =
     baseline && failures !== null
       ? compareFailures(
           failures,
-          baseline.failures.filter((id) => !id.endsWith(FILE_ERROR)),
+          baseline.failures.filter((signature) => !failureId(signature).endsWith(FILE_ERROR)),
         )
       : null;
   const blocking = labels ? labels.new : (failures ?? []);
@@ -351,7 +357,7 @@ function runTests({ root, home, out, log, workers, baseline, recording }) {
   server.seconds = Math.round((performance.now() - serverStarted) / 1000);
   const details = { packagesSeconds, packagesFailed, packagesRerun, server };
   if (failures !== null) details.failures = failures;
-  const complete = failures !== null && server.runErrors.length === 0;
+  const complete = !server.reason && server.runErrors.length === 0;
   if (recording) {
     if (complete) details.recorded = { failures };
     return { status: complete && packagesFailed.length === 0 ? 0 : 1, details };
@@ -387,6 +393,9 @@ function runErrors(run, outcomePath, cwd) {
     ...(outcome.reason === "interrupted" ? ["the run was interrupted"] : []),
     ...(outcome.unfinished ?? []).map((file) => `unfinished: ${relative(file)}`),
     ...(outcome.unhandledErrors ?? []).map((message) => `error outside any test: ${message}`),
+    ...(outcome.suiteErrors ?? []).map(
+      (error) => `error in a file or suite hook: ${relative(error.file)}: ${error.message}`,
+    ),
   ];
 }
 
