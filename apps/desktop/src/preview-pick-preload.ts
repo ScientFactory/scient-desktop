@@ -27,3 +27,8 @@ installLoginFormDetection(
   (form) => ipcRenderer.send(LOGIN_FORM_REPORT, form),
 );
 // SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Browser: a trackpad pinch zooms the preview tab.
+import { PINCH_ZOOM_CHANNEL, reportPinchWheel } from "./scient/browser/pinchZoom.ts";
+reportPinchWheel(window, (deltaY) => ipcRenderer.send(PINCH_ZOOM_CHANNEL, deltaY));
+// SCIENT-FORK:END

@@ -488,3 +488,67 @@ describe("PreviewManager and Google's sign-in", () => {
     ),
   );
 });
+
+describe("PreviewManager and trackpad pinch", () => {
+  /** A guest whose `on` and `ipc.on` listeners the test can fire. */
+  const makePinchableGuest = (id: number, hostWebContents: unknown) => {
+    const { guest, emit } = makeListeningGuest(id, hostWebContents, ["https://example.com/"]);
+    const ipcListeners = new Map<string, (...args: unknown[]) => void>();
+    Object.assign(guest, {
+      ipc: {
+        on: (channel: string, listener: (...args: unknown[]) => void) =>
+          ipcListeners.set(channel, listener),
+        off: vi.fn(),
+      },
+    });
+    const pinch = (scale: number) => {
+      emit("input-event", {}, { type: "gesturePinchBegin" });
+      ipcListeners.get("preview:pinch-zoom")?.({}, -100 * Math.log(scale));
+      emit("input-event", {}, { type: "gesturePinchEnd" });
+    };
+    return { guest, emit, pinch };
+  };
+
+  effectIt.effect(
+    "zooms the tab continuously, steps and resets from there, and keeps it on a new guest",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const window = makeAppWindow(7);
+          const first = makePinchableGuest(41, window.webContents);
+          const second = makePinchableGuest(42, window.webContents);
+          fromId.mockImplementation((id) =>
+            id === 41 ? first.guest : id === 42 ? second.guest : null,
+          );
+          const zooms = yield* Queue.unbounded<number>();
+          let lastZoom = 1;
+          yield* manager.subscribeStateChanges((_tabId, state) => {
+            if (Math.abs(state.zoomFactor - lastZoom) < 1e-9) return Effect.void;
+            lastZoom = state.zoomFactor;
+            return Queue.offer(zooms, state.zoomFactor);
+          });
+          yield* manager.setMainWindow(window.window);
+          yield* manager.createTab("tab_1");
+          yield* manager.registerWebview("tab_1", 41);
+
+          first.pinch(1.6);
+          expect(yield* Queue.take(zooms)).toBeCloseTo(1.6);
+          expect(first.guest.setZoomFactor).toHaveBeenLastCalledWith(expect.closeTo(1.6));
+          // The pinch never leaves the tab's zoom range.
+          first.pinch(10);
+          expect(yield* Queue.take(zooms)).toBe(5);
+          first.pinch(1 / 3);
+          expect(yield* Queue.take(zooms)).toBeCloseTo(5 / 3);
+
+          // A replacement guest paints at the pinched zoom, not a snapped step.
+          yield* manager.registerWebview("tab_1", 42);
+          expect(second.guest.setZoomFactor).toHaveBeenLastCalledWith(expect.closeTo(5 / 3));
+
+          yield* manager.zoomIn("tab_1");
+          expect(yield* Queue.take(zooms)).toBe(1.75);
+          yield* manager.resetZoom("tab_1");
+          expect(yield* Queue.take(zooms)).toBe(1);
+        }),
+      ),
+  );
+});
