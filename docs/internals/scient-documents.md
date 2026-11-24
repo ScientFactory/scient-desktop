@@ -3,7 +3,7 @@
 Status: Draft
 Owner: Yaacov
 Created: 2026-10-22
-Last updated: 2026-11-10
+Last updated: 2026-11-24
 Purpose: Routes document workflows to their Help and implementation owners and explains shared authority boundaries.
 Doc type: Current implementation
 
@@ -133,3 +133,102 @@ actual mounted paths, including negative cases. Broader product priorities and
 proposed editor changes belong in Scient's product/planning repository; they
 must not be presented as implementation merely because this map links the
 relevant source.
+
+## Document Lab desktop preview
+
+The macOS development candidate can offer built-in skills for Word, Excel,
+PowerPoint, existing PDFs, Google Workspace, document review and reusable
+templates. From the candidate worktree, run `node scripts/setup-document-lab.mjs`
+with the repository's Node version and `uv`, LibreOffice, Pandoc, Poppler, qpdf
+and FriBidi available. The setup installs the locked Python and Node
+dependencies into a separate generation inside the candidate's
+`.scient-next/document-lab` folder and publishes it after the capability
+probe. Start the candidate afterwards so the skill catalog picks up the
+generation. When the preview catalog is available in a turn, its note tells
+agents to load the matching Scient skill before choosing a workflow. The
+note names the Scient loader so agents can distinguish it from a provider's
+own loader when skill names or coverage overlap.
+
+Agents use `scient_document_runtime` to locate the staged tools on the
+candidate's server. The server advertises it when the preview runtime is ready.
+Use the preview with trusted fixtures. The native tools come from the host, and the
+runtime does not isolate their filesystem or network access. Shipping requires
+patched, pinned native tools and isolation for document jobs. Google writes
+use the active Drive connector and require its edit scopes.
+
+When updating files under the seven preview skill directories, regenerate and
+format the embedded payload with `node scripts/sync-document-lab-skills.mjs`
+and `pnpm exec vp fmt apps/server/src/scient/skills/BuiltInDocumentLabSkillSources.ts`,
+then run `BuiltInSkillReleases.test.ts`. Setup retains older runtime folders so
+in-flight jobs can keep using their paths. Remove unused generations only after
+the candidate and its document jobs stop, preserving the generation named in
+`active.json`.
+
+### Word tracked-replacement job
+
+`scient_docx_tracked_replace` is the first server-owned document job. It makes one
+tracked replacement in a new copy of a project `.docx` and saves the copy and its
+PDF. Unlike the preview runtime, the server owns the whole operation: it reads the
+source, enforces the revision, stages private copies, runs LibreOffice, checks the
+results and publishes them. Only that tool is new; the preview runtime and skills
+are unchanged.
+
+- **Opt-in tool setup.** Run
+  `node scripts/document-lab-office.mjs setup` in a candidate checkout. It
+  downloads the LibreOffice build pinned in
+  `apps/server/src/scient/documents/docxJob/officeToolchainManifest.ts`, rejects
+  any other size or digest and unpacks it without a system install. On macOS it
+  copies the app out of the DMG, on Windows it uses an administrative MSI unpack,
+  and on Linux it requires `dpkg-deb` and the LibreOffice runtime libraries.
+  `--use-installed` records an existing install
+  that prints the pinned version, marked `host-install` because its bytes were not
+  digest-checked. At start the server registers the tool only in a desktop dev
+  candidate with a valid receipt, and only after the engine prints the pinned
+  version and build. Other targets, including Arm Windows and Arm Linux, never
+  see it.
+- **Input identity.** Callers pass `sourceRevision` (`sha256:` and the source's
+  bytes). On macOS and Linux the server reads through the handle-bound reader in
+  `documentExport/verifiedWorkspaceRead.ts`. Windows has no handle-bound read, so
+  the existing rule for unbound reads applies: only bytes equal to the revision
+  the caller already holds are used. The source is re-read and compared under the
+  publication fence. The Word copy is published only to a new path.
+- **Accepted inputs and edits.** Plain `.docx` only. The job refuses macros,
+  external relationships other than hyperlinks, fields that include or link
+  outside content, and `altChunk`/`subDoc`. The text must occur exactly once in
+  the main document and in the source PDF. Choose text within one plain run in
+  a paragraph outside fields and existing revisions. PDF verification supports
+  up to 200 pages. The exported PDF shows both the tracked deletion and insertion.
+- **Worker boundary.** LibreOffice converts only the staged source and candidate
+  copies. It runs in a private job folder under the server state, with a
+  throwaway profile, an environment built from nothing (no `LD_*`/`DYLD_*`, dead
+  proxies), a deadline and owned-tree kill, one job at a time. It does not use the
+  imported `office/soffice.py` or its shared-temporary `LD_PRELOAD` socket shim,
+  and a launch that names either is refused. This is a process boundary, not an
+  OS sandbox: soffice still runs with the user's rights. Results therefore say
+  `inputPolicy: trusted-fixtures` and `osSandbox: false`. Accepting arbitrary
+  uploaded files or production use needs qualified per-job isolation first.
+- **Checks before saving.** Every part except `word/document.xml`, and every
+  byte outside one paragraph, must be unchanged. Rejecting the new revisions must
+  restore that paragraph exactly, and accepting them must equal the source with
+  the one replacement. Comment anchors, equations, tables, RTL markers, breaks and
+  revisions are counted before and after. The candidate's PDF is compared with
+  LibreOffice's render of the source: same page count, the deletion where the
+  original text was, the insertion beside it, earlier pages identical, the same
+  text sequence plus the insertion, and all fonts embedded. If any check fails,
+  nothing is published. Inspect paragraph alignment and the displayed reading
+  order in the exported PDF. The `bidi-neutral-at-edge` warning highlights
+  edits near punctuation, symbols or numbers in an RTL paragraph, including
+  direction inherited through paragraph styles or document defaults. Fonts come
+  from the host, so renders differ between platforms; each render is compared
+  only with the source rendered on the same host.
+- **Qualification.** `DocxTrackedReplacement.integration.test.ts` runs the
+  bilingual fixture against the real engine when `SCIENT_DOCUMENT_LAB_SOFFICE`
+  is set. The fixture includes comments, an equation, tracked edits, a
+  multipage RTL table with a repeated header, and deliberately preserved
+  layout defects in the Hebrew paragraph alignment and signed range. A
+  corrected control verifies that the edited Hebrew line stays at the right
+  margin and produces a PDF for visual inspection. The
+  qualification workflow covers Apple Silicon and Intel macOS, Windows x64,
+  and Ubuntu x64. `node
+  scripts/document-lab-office.mjs qualify --soffice <path> --evidence <dir>`
+  reproduces it locally.

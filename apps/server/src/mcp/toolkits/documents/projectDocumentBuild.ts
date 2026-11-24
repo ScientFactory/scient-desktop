@@ -244,84 +244,113 @@ export const assertCurrentDocumentBuildProject = Effect.fn(
     );
 });
 
-export const resolveProjectPdfOutput = Effect.fn("ProjectDocumentBuild.resolvePdfOutput")(
-  function* (root: string, outputPathInput: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const canonicalRoot = yield* fileSystem
-      .realPath(root)
-      .pipe(
-        Effect.mapError(() =>
-          boundaryError("project-changed", "The current project workspace is unavailable."),
-        ),
-      );
-    const requestedPath = yield* projectRelativePath([root, canonicalRoot], outputPathInput);
-    if (requestedPath === undefined) {
-      return yield* boundaryError(
-        "invalid-output-path",
-        `outputPath ${outputPathInput} is not inside this project (${canonicalRoot}). Pass a path inside it, relative to it or absolute.`,
-      );
-    }
-    const segments = requestedPath.split(/[\\/]/u);
-    if (
-      segments.some((segment) => segment === "..") ||
-      path.extname(requestedPath).toLowerCase() !== ".pdf"
-    ) {
-      return yield* boundaryError(
-        "invalid-output-path",
-        "outputPath must identify a project .pdf file.",
-      );
-    }
+/** A file path inside the project for a document build's output, with its current revision.
+ * Untraced: each caller below names the span for its own output kind. */
+const resolveProjectOutputFile = Effect.fnUntraced(function* (
+  root: string,
+  outputPathInput: string,
+  output: { readonly extension: string; readonly label: string },
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const canonicalRoot = yield* fileSystem
+    .realPath(root)
+    .pipe(
+      Effect.mapError(() =>
+        boundaryError("project-changed", "The current project workspace is unavailable."),
+      ),
+    );
+  const requestedPath = yield* projectRelativePath([root, canonicalRoot], outputPathInput);
+  if (requestedPath === undefined) {
+    return yield* boundaryError(
+      "invalid-output-path",
+      `outputPath ${outputPathInput} is not inside this project (${canonicalRoot}). Pass a path inside it, relative to it or absolute.`,
+    );
+  }
+  const segments = requestedPath.split(/[\\/]/u);
+  if (
+    segments.some((segment) => segment === "..") ||
+    path.extname(requestedPath).toLowerCase() !== output.extension
+  ) {
+    return yield* boundaryError(
+      "invalid-output-path",
+      `outputPath must identify a project ${output.extension} file.`,
+    );
+  }
 
-    const absolutePath = path.resolve(canonicalRoot, requestedPath);
-    if (!isInsideRoot(canonicalRoot, absolutePath, path) || absolutePath === canonicalRoot) {
-      return yield* boundaryError(
-        "invalid-output-path",
-        "The PDF output must remain inside the current project workspace.",
-      );
-    }
+  const absolutePath = path.resolve(canonicalRoot, requestedPath);
+  if (!isInsideRoot(canonicalRoot, absolutePath, path) || absolutePath === canonicalRoot) {
+    return yield* boundaryError(
+      "invalid-output-path",
+      `The ${output.label} output must remain inside the current project workspace.`,
+    );
+  }
 
-    const existingOutput = yield* fileSystem.stat(absolutePath).pipe(Effect.option);
-    if (Option.isSome(existingOutput) && existingOutput.value.type !== "File") {
-      return yield* boundaryError(
-        "invalid-output-path",
-        "The PDF output path must identify a file, not an existing directory or special entry.",
-      );
-    }
+  const existingOutput = yield* fileSystem.stat(absolutePath).pipe(Effect.option);
+  if (Option.isSome(existingOutput) && existingOutput.value.type !== "File") {
+    return yield* boundaryError(
+      "invalid-output-path",
+      `The ${output.label} output path must identify a file, not an existing directory or special entry.`,
+    );
+  }
 
-    let existingAncestor = path.dirname(absolutePath);
-    while (true) {
-      const canonicalAncestor = yield* fileSystem.realPath(existingAncestor).pipe(Effect.option);
-      if (Option.isSome(canonicalAncestor)) {
-        if (!isInsideRoot(canonicalRoot, canonicalAncestor.value, path)) {
-          return yield* boundaryError(
-            "invalid-output-path",
-            "The PDF output must remain inside the current project workspace.",
-          );
-        }
-        break;
-      }
-      const parent = path.dirname(existingAncestor);
-      if (parent === existingAncestor) {
+  let existingAncestor = path.dirname(absolutePath);
+  while (true) {
+    const canonicalAncestor = yield* fileSystem.realPath(existingAncestor).pipe(Effect.option);
+    if (Option.isSome(canonicalAncestor)) {
+      if (!isInsideRoot(canonicalRoot, canonicalAncestor.value, path)) {
         return yield* boundaryError(
           "invalid-output-path",
-          "Scient could not resolve the PDF output directory inside this project.",
+          `The ${output.label} output must remain inside the current project workspace.`,
         );
       }
-      existingAncestor = parent;
+      break;
     }
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) {
+      return yield* boundaryError(
+        "invalid-output-path",
+        `Scient could not resolve the ${output.label} output directory inside this project.`,
+      );
+    }
+    existingAncestor = parent;
+  }
 
-    const observed = yield* Effect.tryPromise({
-      try: () => inspectGuardedFile(absolutePath),
-      catch: () =>
-        boundaryError("invalid-output-path", "Scient could not inspect the current PDF output."),
+  const observed = yield* Effect.tryPromise({
+    try: () => inspectGuardedFile(absolutePath),
+    catch: () =>
+      boundaryError(
+        "invalid-output-path",
+        `Scient could not inspect the current ${output.label} output.`,
+      ),
+  });
+  return {
+    absolutePath,
+    canonicalRoot,
+    expectedRevision: observed?.revision ?? null,
+    outputPath: path.relative(canonicalRoot, absolutePath).split(path.sep).join("/"),
+  } satisfies ResolvedPdfOutput;
+});
+
+export const resolveProjectPdfOutput = Effect.fn("ProjectDocumentBuild.resolvePdfOutput")(
+  function* (root: string, outputPathInput: string) {
+    return yield* resolveProjectOutputFile(root, outputPathInput, {
+      extension: ".pdf",
+      label: "PDF",
     });
-    return {
-      absolutePath,
-      canonicalRoot,
-      expectedRevision: observed?.revision ?? null,
-      outputPath: path.relative(canonicalRoot, absolutePath).split(path.sep).join("/"),
-    } satisfies ResolvedPdfOutput;
+  },
+);
+
+export const resolveProjectDocxOutput = Effect.fn("ProjectDocumentBuild.resolveDocxOutput")(
+  function* (root: string, outputPathInput: string) {
+    const output = yield* resolveProjectOutputFile(root, outputPathInput, {
+      extension: ".docx",
+      label: "Word",
+    });
+    if (output.expectedRevision !== null) {
+      return yield* boundaryError("invalid-output-path", "Choose a new path for the Word copy.");
+    }
+    return { ...output, expectedRevision: null };
   },
 );
 

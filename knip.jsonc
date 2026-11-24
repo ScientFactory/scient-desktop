@@ -56,6 +56,9 @@
         "scient-divergence-inventory.node-test.mjs",
         // Documented manual TeX-to-SVG math-symbol atlas generator.
         "generate-math-symbol-glyphs.mjs",
+        "setup-document-lab.mjs",
+        "sync-document-lab-skills.mjs",
+        "document-lab-office.mjs",
         // Documented manual refresh of the claude.ai connectors Scient links to.
         "generate-claude-connectors.mjs",
       ],
@@ -70,6 +73,7 @@
       "entry": [
         "src/bin.ts!",
         "src/overleaf-packaging-probe.ts!",
+        "src/scient/documents/document-lab/tools/ooxml/apply_theme.cjs",
         "src/service-launcher.ts!",
         "src/analytics-worker.ts!",
         "src/pdf-validation-worker.ts!",

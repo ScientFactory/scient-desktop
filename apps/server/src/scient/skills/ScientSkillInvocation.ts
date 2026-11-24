@@ -7,6 +7,7 @@ import type {
   AgentSkillDescriptor,
   AgentSkillScope,
 } from "../operations/AgentInvocationContext.ts";
+import { BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES } from "./BuiltInSkillReleases.ts";
 
 /**
  * Builds the exact skill visibility and authority for one provider turn.
@@ -44,6 +45,8 @@ export interface ScientSkillTurnProjection {
  * never a silently truncated list. Today's built-ins take about 6.5 KB.
  */
 export const SCIENT_SKILL_INDEX_MAX_BYTES = 16_384;
+
+const documentLabSkillIds = new Set(BUILT_IN_DOCUMENT_LAB_SKILL_RELEASES.map(({ id }) => id));
 
 const oneLine = (text: string): string => text.replace(/\s+/gu, " ").trim();
 
@@ -169,8 +172,15 @@ export function prepareScientSkillTurn(
       : `[Scient skill scope for this turn: complete; ${skillCount}; digest ${catalogDigest} (freshness only). Reuse visible summaries only from a full result (\`scope.includesAllSkills\`) with the same digest if sufficient; otherwise call \`${listTool}\`. Provider-native skills are separate.]`;
   };
 
+  const catalogMarker = markerText();
+  const documentLabNote =
+    catalogMarker &&
+    skills.some(({ origin, id }) => origin === "scient" && documentLabSkillIds.has(id))
+      ? `[When a listed Document Lab skill fits the request, first load it with \`${loadTool}\`. This is the Scient loader for the listed skill, including when provider skills overlap. If the matching skill is absent, continue with the tools and skills available to you.]`
+      : undefined;
   const runtimeInstruction = [
-    markerText(),
+    documentLabNote,
+    catalogMarker,
     instructions.length > 0
       ? `[Scient selected skills for this turn:\n${instructions.join("\n")}\n]`
       : undefined,

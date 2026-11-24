@@ -18,3 +18,6 @@ packages/source-control-github/schema/** linguist-generated
 packages/issue-tracker-linear/schema/** linguist-generated
 apps/server/schema/** linguist-generated
 **/*.graphql.ts linguist-generated
+
+# Word fixtures are packages; never normalize their bytes.
+*.docx binary
