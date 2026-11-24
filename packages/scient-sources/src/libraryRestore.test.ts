@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterAll, afterEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
 import {
@@ -42,6 +42,7 @@ import {
   libraryOf,
   recoverScenario,
   runStep,
+  scenarioAt,
   type Scenario,
 } from "./testing/librarySteps.ts";
 import { sourceCandidate } from "./testing/sourceFixtures.ts";
@@ -93,8 +94,39 @@ const STEPS: ReadonlyArray<Step> = [
   { op: "resolveProject", project: 2 },
 ];
 
+/** Built once by the steps below; each case restores in its own copy of the folders. */
+let template: Promise<{ readonly root: string; readonly model: Model }> | undefined;
+
+afterAll(async () => {
+  const built = await template;
+  if (built) await NodeFSP.rm(built.root, { recursive: true, force: true });
+});
+
 async function build(): Promise<{ readonly scenario: Scenario; readonly model: Model }> {
-  const scenario = await createScenario(await temporaryRoot());
+  template ??= (async () => {
+    const root = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-library-restore-template-")),
+    );
+    return { root, model: (await buildAt(root)).model };
+  })();
+  const built = await template;
+  const root = await temporaryRoot();
+  await NodeFSP.cp(built.root, root, { recursive: true });
+  // The Library knows each project by its canonical path, which is the copy's now.
+  const scenario = scenarioAt(root);
+  const instances = NodePath.join(scenario.libraryRoot, "instances.json");
+  const escaped = (path: string) => JSON.stringify(path).slice(1, -1);
+  await NodeFSP.writeFile(
+    instances,
+    (await NodeFSP.readFile(instances, "utf8")).replaceAll(escaped(built.root), escaped(root)),
+  );
+  return { scenario, model: structuredClone(built.model) };
+}
+
+async function buildAt(
+  root: string,
+): Promise<{ readonly scenario: Scenario; readonly model: Model }> {
+  const scenario = await createScenario(root);
   let model = EMPTY_MODEL;
   for (const step of STEPS) model = applyStep(model, step, await runStep(scenario, model, step));
   // What the steps do not cover: a collection, a saved search, a bulk edit, a "not duplicates"
