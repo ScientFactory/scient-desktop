@@ -404,6 +404,8 @@ const cleanupFixture = (
     // SCIENT-FORK:END retiring-session-worktree-retention
     let sessionLiveChecks = 0;
     let onLiveCheck: Effect.Effect<void> = Effect.void;
+    let onSnapshotRead: Effect.Effect<void> = Effect.void;
+    let onGitExecute: (operation: string) => Effect.Effect<void> = () => Effect.void;
     let outboxStatus: string | null = null;
     let scheduledThreadIds: string[] = [];
     let branchPullRequests: Record<string, GitManager.GitBranchPullRequest> = {};
@@ -425,6 +427,7 @@ const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
+            yield* onGitExecute(input.operation);
             gitInspections++;
             if (input.args[0] === "status") statusCommands++;
             if (
@@ -480,22 +483,25 @@ const cleanupFixture = (
       } as unknown as ProjectStore.ProjectStoreV2["Service"]),
       Effect.provideService(ProjectionStore.ProjectionStoreV2, {
         getShellSnapshot: (input?: { location?: string }) =>
-          Effect.sync(() => {
-            snapshotReads++;
-            const visible = [...threads, ...archivedThreads].filter(
-              (thread) => thread.deletedAt === null,
-            );
-            return {
-              threads:
-                input?.location === "archive"
-                  ? []
-                  : visible.filter((thread) => thread.archivedAt === null),
-              archivedThreads:
-                input?.location === "active"
-                  ? []
-                  : visible.filter((thread) => thread.archivedAt !== null),
-            };
-          }),
+          Effect.andThen(
+            Effect.suspend(() => onSnapshotRead),
+            Effect.sync(() => {
+              snapshotReads++;
+              const visible = [...threads, ...archivedThreads].filter(
+                (thread) => thread.deletedAt === null,
+              );
+              return {
+                threads:
+                  input?.location === "archive"
+                    ? []
+                    : visible.filter((thread) => thread.archivedAt === null),
+                archivedThreads:
+                  input?.location === "active"
+                    ? []
+                    : visible.filter((thread) => thread.archivedAt !== null),
+              };
+            }),
+          ),
         getThreadWorktreePaths: (input?: { includeArchived?: boolean }) =>
           Effect.sync(() =>
             [...threads, ...archivedThreads].flatMap((thread) =>
@@ -708,6 +714,12 @@ const cleanupFixture = (
         branchPullRequests = next;
       },
       threadBranches: () => threads.map((thread) => thread.branch),
+      setOnSnapshotRead: (hook: Effect.Effect<void>) => {
+        onSnapshotRead = hook;
+      },
+      setOnGitExecute: (hook: (operation: string) => Effect.Effect<void>) => {
+        onGitExecute = hook;
+      },
       setOnLiveCheck: (hook: Effect.Effect<void>) => {
         onLiveCheck = hook;
       },
@@ -998,6 +1010,58 @@ describe("checkpoint ref cleanup", () => {
         yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
         yield* Queue.offer(completions, undefined);
         yield* Effect.yieldNow;
+        yield* service.drain;
+        expect(yield* listRefs()).toEqual([]);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+  it.live("sweeps once more when a deleted thread's effect completes during a sweep", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* checkpointCleanupFixture();
+        const { service, sql, addThread, listRefs } = fixture;
+        const refs = yield* addThread("capturing", { deleted: true });
+        yield* sql`INSERT INTO orchestration_v2_effect_outbox ${sql.insert({
+          effect_id: "capture",
+          command_id: "capture",
+          thread_id: "capturing",
+          effect_type: "checkpoint.capture",
+          payload_json: "{}",
+          status: "running",
+          available_at: "2026-01-01T00:00:00Z",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        })}`;
+        const completions = yield* Queue.unbounded<void>();
+        yield* fixture.activate(Stream.empty, Stream.fromQueue(completions));
+        yield* service.reports.pipe(
+          Stream.filter((report) => report !== null),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* service.drain;
+        expect(yield* listRefs()).toEqual(refs.toSorted());
+        // Another deleted thread's refs give the next sweep git work after the refs were judged;
+        // during it, the pending effect completes.
+        const otherRefs = yield* addThread("finished", { deleted: true });
+        let completed = false;
+        fixture.setOnGitExecute((operation) =>
+          Effect.suspend(() => {
+            if (completed || operation !== "StorageCleanup.checkpointRepository")
+              return Effect.void;
+            completed = true;
+            return sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`.pipe(
+              Effect.andThen(Queue.offer(completions, undefined)),
+              Effect.andThen(Effect.yieldNow),
+              Effect.orDie,
+            );
+          }),
+        );
+        yield* service.runNow;
+        expect(yield* listRefs(), "the manual sweep judged the refs before completion").toEqual(
+          refs.toSorted(),
+        );
+        expect(otherRefs.length).toBeGreaterThan(0);
         yield* service.drain;
         expect(yield* listRefs()).toEqual([]);
       }).pipe(Effect.provide(Sqlite.layerMemory)),
@@ -2524,6 +2588,38 @@ describe("deleted thread worktrees", () => {
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
   // SCIENT-FORK:END
+
+  it.effect("does not chain sweeps for unrelated completions that arrive during one", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      const completions = yield* Queue.unbounded<void>();
+      // Each sweep reads the thread snapshot once; a completion arrives during each read.
+      fixture.setOnSnapshotRead(
+        Queue.offer(completions, undefined).pipe(Effect.andThen(Effect.yieldNow)),
+      );
+      let sweeps = 0;
+      yield* fixture.service.reports.pipe(
+        Stream.filter((report) => report !== null),
+        Stream.runForEach(() =>
+          Effect.sync(() => {
+            sweeps++;
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* fixture.activate(Stream.empty, Stream.fromQueue(completions));
+      yield* fixture.service.reports.pipe(
+        Stream.filter((report) => report !== null),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      yield* fixture.service.drain;
+      yield* Effect.yieldNow;
+      yield* fixture.service.drain;
+      expect(sweeps, "a completion during the sweep chained another").toBe(1);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
 
   it.effect("removes a deleted thread's worktree once its session stops", () =>
     Effect.gen(function* () {
