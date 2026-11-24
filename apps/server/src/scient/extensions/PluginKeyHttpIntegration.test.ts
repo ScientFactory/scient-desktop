@@ -57,7 +57,7 @@ vi.mock("./connectors/ConnectorOutbound.ts", async (original) => {
 });
 
 it.effect.each(["json", "sse", "401", "401-challenge", "401-open"] as const)(
-  "completes Claude plugin-key MCP initialization/tools or auth refusal: %s",
+  "completes Claude plugin-key MCP initialization/tools, or an empty server on auth refusal: %s",
   (mode) =>
     Effect.gen(function* () {
       const seen: Array<{ method: string; authorization: string | undefined }> = [];
@@ -291,13 +291,11 @@ it.effect.each(["json", "sse", "401", "401-challenge", "401-open"] as const)(
         requestInit: config.headers ? { headers: config.headers } : {},
       });
       if (mode.startsWith("401")) {
-        const outcome = yield* Effect.tryPromise({
-          try: () => client.connect(transport as Transport),
-          catch: (error) => String(error),
-        }).pipe(Effect.result);
-        expect(outcome._tag).toBe("Failure");
-        if (outcome._tag === "Failure")
-          expect(String(outcome.failure)).toContain("rejected the key bound in Scient Accounts");
+        // The refused key meets an empty server that says why; the vendor is not asked again.
+        yield* Effect.promise(() => client.connect(transport as Transport));
+        expect(client.getInstructions()).toContain("rejected the key bound in Scient Accounts");
+        const tools = yield* Effect.promise(() => client.listTools());
+        expect(tools.tools).toEqual([]);
         expect(seen.filter((request) => request.method === "initialize")).toHaveLength(1);
         expect(seen).toHaveLength(1);
       } else {

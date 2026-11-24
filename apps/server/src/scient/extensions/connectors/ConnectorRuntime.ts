@@ -3,6 +3,8 @@
  * refresh/sign-in/disconnect under one lifecycle lock so in-flight work cannot send, persist, or
  * retain grants afterward; revoke grants obtained across the fence.
  */
+// @effect-diagnostics nodeBuiltinImport:off -- Hash-only credential fingerprints never expose secrets.
+import * as NodeCrypto from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -211,6 +213,8 @@ type SendOutcome =
       readonly secrets: ReadonlyArray<string | undefined>;
       /** The current credentials, for an exchange that can gain some while it streams. */
       readonly live?: () => CredentialSet;
+      /** What a 403 to a request that carried a credential said about it, read once. */
+      readonly forbidden?: ForbiddenClassification;
     }
   | { readonly type: "lost"; readonly message: string }
   | { readonly type: "failed"; readonly message: string }
@@ -298,7 +302,16 @@ const eligibleOf = (record: ConnectorRecord): EligibleConnector => ({
   connectorId: record.connectorId,
   serverName: record.serverName,
   displayName: record.displayName,
+  authRevision: record.authRevision,
 });
+
+const secretFingerprint = (secrets: ReadonlyArray<string | undefined>): string =>
+  NodeCrypto.createHash("sha256")
+    .update(secrets.filter((secret): secret is string => secret !== undefined).join("\0"))
+    .digest("hex");
+
+const pluginKeyRefusalMessage = (record: Pick<ConnectorRecord, "displayName">) =>
+  `${record.displayName} rejected the key bound in Scient Accounts. Ask the user to update that account, then retry.`;
 
 /** Unique `[a-z0-9][a-z0-9_-]{0,47}` name; reserved and taken names get `_2`, `_3`, … */
 const uniqueServerName = (displayName: string, taken: ReadonlySet<string>): string => {
@@ -415,6 +428,16 @@ const errorMessageFor = (body: Uint8Array | undefined, message: string): string 
 
 const jsonBody = (value: unknown) => Stream.make(new TextEncoder().encode(JSON.stringify(value)));
 
+/** Standard MCP CallToolResult with isError: true for valid tool calls hitting an unavailable connector. */
+const toolCallErrorJson = (body: Uint8Array | undefined, message: string): string | undefined => {
+  const parsed = discoveryRequestOf(body);
+  if (parsed?.method !== "tools/call" || parsed.idToken === undefined) return undefined;
+  return `{"jsonrpc":"2.0","id":${parsed.idToken},"result":${JSON.stringify({
+    content: [{ type: "text", text: message }],
+    isError: true,
+  })}}`;
+};
+
 /**
  * A server-owned refusal, never HTTP 401 (it would start OAuth against Scient): POST gets a
  * JSON-RPC error, GET/DELETE `status` with JSON. Discovery meets an empty server instead, so one
@@ -443,22 +466,37 @@ const refusal = (
   };
 };
 
-/** The vendor refused the credential: every request fails, discovery too. */
+/**
+ * Confirmed vendor credential or scope refusal: discovery completes quietly with an empty server
+ * (live status is published to Extensions and the thread indicator), valid `tools/call` requests
+ * receive an actionable MCP `CallToolResult` with `isError: true`, and other methods receive a
+ * JSON-RPC error.
+ */
 const credentialRefusal = (
   request: Pick<ConnectorForwardRequest, "method" | "body">,
   message: string,
-): ConnectorForwardResponse =>
-  request.method === "POST"
-    ? {
-        status: 200,
-        headers: { "content-type": "application/json" },
-        body: Stream.make(new TextEncoder().encode(errorMessageFor(request.body, message))),
-      }
-    : {
-        status: 403,
-        headers: { "content-type": "application/json" },
-        body: jsonBody({ error: "connector_unavailable", message }),
-      };
+): ConnectorForwardResponse => {
+  if (request.method !== "POST") {
+    return {
+      status: 403,
+      headers: { "content-type": "application/json" },
+      body: jsonBody({ error: "connector_unavailable", message }),
+    };
+  }
+  const discovery = unavailableDiscoveryAnswer(discoveryRequestOf(request.body), message);
+  if (discovery?.status === 202) return { status: 202, headers: {}, body: Stream.empty };
+  return {
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: Stream.make(
+      new TextEncoder().encode(
+        discovery?.json ??
+          toolCallErrorJson(request.body, message) ??
+          errorMessageFor(request.body, message),
+      ),
+    ),
+  };
+};
 
 export const connectorUnavailableResponse = (
   request: Pick<ConnectorForwardRequest, "method" | "body">,
@@ -494,32 +532,78 @@ const fieldOf = (value: unknown, key: string): unknown =>
     ? (value as Record<string, unknown>)[key]
     : undefined;
 
-/** `{"error":"invalid_token"}`, `{"error":{"code":"invalid_api_key"}}`, `{"code":"unauthorized"}` and kin. */
-const namesCredentialError = (parsed: unknown): boolean => {
+type ForbiddenClassification = "none" | "insufficient-scope" | "bad-credential";
+
+/**
+ * The `error` auth-param of the Bearer challenge in a `WWW-Authenticate` value (RFC 9110 §11.6.1):
+ * read token by token, so a quoted value or another scheme's parameters never count.
+ */
+export const bearerChallengeError = (header: string | null): string | undefined => {
+  if (header === null) return undefined;
+  const token = /[!#$%&'*+.^_`|~0-9A-Za-z-]+/y;
+  const quoted = /"((?:[^"\\]|\\.)*)"/y;
+  let index = 0;
+  let scheme: string | undefined;
+  const skip = (pattern: RegExp) => {
+    pattern.lastIndex = index;
+    const match = pattern.exec(header);
+    if (match !== null) index = pattern.lastIndex;
+    return match;
+  };
+  while (index < header.length) {
+    skip(/[\s,]*/y);
+    const name = skip(token)?.[0];
+    if (name === undefined) return undefined;
+    skip(/[ \t]*/y);
+    if (header[index] !== "=") {
+      // A new challenge: its scheme, then token68 (consumed up to the next comma) or parameters.
+      scheme = name.toLowerCase();
+      skip(/[ \t]*/y);
+      skip(/[A-Za-z0-9\-._~+/]+=*(?=[ \t]*(?:,|$))/y);
+      continue;
+    }
+    index += 1;
+    skip(/[ \t]*/y);
+    const value =
+      header[index] === '"' ? skip(quoted)?.[1]?.replace(/\\(.)/gu, "$1") : skip(token)?.[0];
+    if (value === undefined) return undefined;
+    if (scheme === "bearer" && name.toLowerCase() === "error") return value.toLowerCase();
+  }
+  return undefined;
+};
+
+const classifyCredentialCode = (parsed: unknown): ForbiddenClassification => {
   const error = fieldOf(parsed, "error");
-  return [
+  const candidates = [
     error,
     fieldOf(parsed, "code"),
     fieldOf(parsed, "error_code"),
     fieldOf(error, "code"),
     fieldOf(error, "type"),
     fieldOf(error, "status"),
-  ].some((code) => typeof code === "string" && CREDENTIAL_ERROR_CODES.has(code.toLowerCase()));
+  ]
+    .filter((code): code is string => typeof code === "string")
+    .map((code) => code.toLowerCase());
+  if (candidates.includes("insufficient_scope")) return "insufficient-scope";
+  if (candidates.some((code) => CREDENTIAL_ERROR_CODES.has(code))) return "bad-credential";
+  return "none";
 };
 
 /**
- * Whether a 403 refused the credential: a `WWW-Authenticate` challenge, or a JSON body naming an
- * authentication error. An HTML edge-policy page or an unexplained 403 is no such evidence. Reads
- * at most 16 KiB of the body and gives up when `signal` (the exchange) aborts.
+ * Classifies an HTTP 403 using bounded header/JSON inspection: distinguishes revoked/invalid
+ * credentials from insufficient OAuth scopes and ordinary access-policy denials.
  */
-const forbidsCredential = (response: Response, signal: AbortSignal) =>
-  Effect.promise(async (interrupted) => {
-    if (response.headers.get("www-authenticate") !== null) return true;
+const classifyForbiddenResponse = (response: Response, signal: AbortSignal) =>
+  Effect.promise(async (interrupted): Promise<ForbiddenClassification> => {
+    // RFC 6750: only the challenge's error code says why; a bare realm is a policy answer.
+    const challengeError = bearerChallengeError(response.headers.get("www-authenticate"));
+    if (challengeError === "insufficient_scope") return "insufficient-scope";
+    if (challengeError === "invalid_token") return "bad-credential";
     const body = response.body;
     if (!(response.headers.get("content-type")?.toLowerCase() ?? "").includes("json")) {
-      return false;
+      return "none";
     }
-    if (body === null) return false;
+    if (body === null) return "none";
     const reader = body.getReader();
     const stop = () => void reader.cancel().catch(() => undefined);
     interrupted.addEventListener("abort", stop, { once: true });
@@ -534,15 +618,16 @@ const forbidsCredential = (response: Response, signal: AbortSignal) =>
         size += value.byteLength;
       }
     } catch {
-      return false;
+      return "none";
     } finally {
       stop();
       interrupted.removeEventListener("abort", stop);
       signal.removeEventListener("abort", stop);
     }
-    if (size >= CREDENTIAL_EVIDENCE_MAX_BYTES) return false;
+    if (size >= CREDENTIAL_EVIDENCE_MAX_BYTES) return "none";
     return decodeJsonText(Buffer.concat(chunks).toString("utf8")).pipe(
-      Option.exists(namesCredentialError),
+      Option.map(classifyCredentialCode),
+      Option.getOrElse((): ForbiddenClassification => "none"),
     );
   });
 
@@ -654,6 +739,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     string,
     { readonly authRevision: number; readonly message: string }
   >();
+  /** SHA-256 fingerprints of rejected non-OAuth secrets so unchanged bad keys stay blocked until updated. */
+  const rejectedCredentialFingerprints = new Map<string, string>();
+  /** Accounts' binding revision when a plugin key was refused; a later revision may hold a new key. */
+  const pluginRefusalBindingRevisions = new Map<string, number | undefined>();
+  /** Raised when a plugin key's refusal starts or ends, so its next delivery reloads the tools. */
+  const pluginKeyRevisions = new Map<string, number>();
+  const accountsBindingRevision =
+    Option.isSome(accounts) && accounts.value.bindingRevision !== undefined
+      ? accounts.value.bindingRevision
+      : Effect.undefined;
+  const bumpPluginKeyRevision = (connectorId: string) =>
+    pluginKeyRevisions.set(connectorId, (pluginKeyRevisions.get(connectorId) ?? 0) + 1);
   const standingRefusal = (record: ConnectorRecord): string | undefined => {
     const refused = refusedSignIns.get(record.connectorId);
     if (refused === undefined) return undefined;
@@ -692,6 +789,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   });
 
   /** Best-effort revocation outside the connector's lifetime (it may already be aborted). */
+  /** What the agent hears when a service refused this connector's key. */
+  const refusedKeyMessage = (record: ConnectorRecord) =>
+    pluginHttp.has(record.connectorId)
+      ? pluginKeyRefusalMessage(record)
+      : record.auth.type === "source-control"
+        ? `GitHub refused Source Control's credential for ${record.auth.account}. Check the sign-in in Settings → Source Control.`
+        : `${record.displayName} rejected the credential stored in Scient. Ask the user to update it in Scient Settings → Extensions.`;
   const revokeLater = (record: ConnectorRecord, session: ConnectorOAuthSession) =>
     Effect.promise(() => revokeConnectorSession(session, controlFetch(policyOf(record)))).pipe(
       Effect.forkDetach,
@@ -1031,13 +1135,22 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }),
     );
 
-  /** A borrowed credential is back: the connector works again under the same revision. */
+  /** A borrowed or updated credential is back: bump authRevision so providers refresh stale catalogs. */
   const markConnected = (record: ConnectorRecord) =>
     updateRecord(record.connectorId, (current, updatedAt) =>
       current.authRevision !== record.authRevision || current.status === "connected"
         ? current
-        : { ...current, status: "connected", lastError: undefined, updatedAt },
-    ).pipe(Effect.ignore);
+        : {
+            ...current,
+            status: "connected",
+            authRevision: current.authRevision + 1,
+            lastError: undefined,
+            updatedAt,
+          },
+    ).pipe(
+      Effect.tap(() => Effect.sync(() => sessions.dropConnector(record.connectorId))),
+      Effect.ignore,
+    );
 
   const isGitHubDestination = (url: string) =>
     Option.isSome(github) && isCredentialDestination(url, github.value.mcpUrl);
@@ -1323,6 +1436,14 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const entry = yield* loadOAuth(record).pipe(Effect.orElseSucceed(() => undefined));
         let session = entry?.material.session;
         if (session === undefined) {
+          if (record.status === "connected") {
+            yield* markStatus(
+              record,
+              "needs-auth",
+              "The saved sign-in is missing. Sign in again.",
+              lostGrantMessage(record),
+            );
+          }
           return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
         }
         const held = oauthSecrets(entry?.material);
@@ -1363,11 +1484,19 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     send: (
       headers: Readonly<Record<string, string>>,
     ) => Effect.Effect<Exit.Exit<Response, ConnectorUpstreamError>>,
+    refusedCredential: (
+      response: Response,
+      secrets: ReadonlyArray<string | undefined>,
+    ) => Effect.Effect<{
+      readonly refused: boolean;
+      readonly forbidden: ForbiddenClassification | undefined;
+    }>,
     scope?: McpInvocationScope,
   ) {
-    const message = `GitHub refused Source Control's credential for ${auth.account}. Check the sign-in in Settings → Source Control.`;
+    const message = refusedKeyMessage(record);
     const rejected = Effect.gen(function* () {
-      yield* markStatus(record, "connected", message);
+      rejectedCredentialFingerprints.set(record.connectorId, secretFingerprint(refused.secrets));
+      yield* markStatus(record, "needs-credential", message, message);
       return { type: "rejected", message } satisfies SendOutcome;
     });
     if (Option.isNone(github) || refused.borrowed === undefined) return yield* rejected;
@@ -1375,6 +1504,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     const next: Credential = yield* credentialFor(record, scope);
     // Source Control has no other token for the account (and has said so): the refusal stands.
     if (next.type === "lost" && isLive(record.connectorId)) {
+      rejectedCredentialFingerprints.set(record.connectorId, secretFingerprint(refused.secrets));
+      const latest = (yield* findRecord(record.connectorId)) ?? record;
+      yield* markStatus(latest, "needs-credential", message, message);
       return { type: "rejected", message } satisfies SendOutcome;
     }
     if (next.type !== "ok") return next satisfies SendOutcome;
@@ -1394,7 +1526,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         message: describeEgressFailure(Option.getOrUndefined(Exit.findErrorOption(replay))?.cause),
       } satisfies SendOutcome;
     }
-    if (replay.value.status === 401) {
+    const verdict = yield* refusedCredential(replay.value, next.secrets);
+    if (verdict.refused) {
       yield* cancelBody(replay.value);
       yield* github.value.invalidate(auth.host, next.borrowed);
       return yield* rejected;
@@ -1403,6 +1536,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       type: "response",
       response: replay.value,
       secrets: [...refused.secrets, ...next.secrets],
+      ...(verdict.forbidden === undefined ? {} : { forbidden: verdict.forbidden }),
     } satisfies SendOutcome;
   });
 
@@ -1421,6 +1555,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     },
     fetch: (url: string, init: RequestInit) => Promise<Response>,
     scope?: McpInvocationScope,
+    /** The person asked to check it: a key refused before is tried once more. */
+    recheck = false,
   ) {
     const lifetime = lifetimeOf(record.connectorId);
     const signal =
@@ -1447,10 +1583,43 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         Effect.exit,
       );
     const gone = { type: "lost", message: lostGrantMessage(record) } satisfies SendOutcome;
+    // What a 403 said about the credential it carried; none was sent, nothing was refused.
+    const forbiddenVerdict = (response: Response, secrets: ReadonlyArray<string | undefined>) =>
+      response.status === 403 &&
+      record.local === undefined &&
+      secrets.some((secret) => secret !== undefined)
+        ? Effect.suspend(() => {
+            const evidence = response.clone();
+            return classifyForbiddenResponse(evidence, signal).pipe(
+              // An unread copy would hold the original body back.
+              Effect.ensuring(
+                Effect.sync(() => void evidence.body?.cancel().catch(() => undefined)),
+              ),
+            );
+          })
+        : Effect.succeed<ForbiddenClassification | undefined>(undefined);
+    // A 401, or a 403 whose challenge or body names the credential it carried as the reason.
+    const refusedCredential = (response: Response, secrets: ReadonlyArray<string | undefined>) =>
+      response.status === 401
+        ? Effect.succeed({ refused: true, forbidden: undefined })
+        : forbiddenVerdict(response, secrets).pipe(
+            Effect.map((forbidden) => ({ refused: forbidden === "bad-credential", forbidden })),
+          );
 
     const credential: Credential = yield* credentialFor(record, scope);
     if (credential.type !== "ok") return credential satisfies SendOutcome;
     if (!isLive(record.connectorId)) return gone;
+    const currentFingerprint =
+      credential.secrets.length > 0 ? secretFingerprint(credential.secrets) : undefined;
+    // The same key the service refused is not sent again until it changes or the person checks.
+    if (
+      !recheck &&
+      record.auth.type !== "oauth" &&
+      currentFingerprint !== undefined &&
+      rejectedCredentialFingerprints.get(record.connectorId) === currentFingerprint
+    ) {
+      return { type: "rejected", message: refusedKeyMessage(record) } satisfies SendOutcome;
+    }
     const first = yield* send(credential.headers);
     if (Exit.isFailure(first)) {
       if (!isLive(record.connectorId)) return gone;
@@ -1459,31 +1628,58 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         message: describeEgressFailure(Option.getOrUndefined(Exit.findErrorOption(first))?.cause),
       } satisfies SendOutcome;
     }
-    if (first.value.status !== 401) {
+    const firstVerdict = yield* refusedCredential(first.value, credential.secrets);
+    if (!firstVerdict.refused) {
+      if (first.value.ok && rejectedCredentialFingerprints.delete(record.connectorId)) {
+        if (pluginHttp.has(record.connectorId)) {
+          pluginRefusalBindingRevisions.delete(record.connectorId);
+          bumpPluginKeyRevision(record.connectorId);
+          yield* publishChange;
+        }
+      }
       return {
         type: "response",
         response: first.value,
         secrets: credential.secrets,
+        ...(firstVerdict.forbidden === undefined ? {} : { forbidden: firstVerdict.forbidden }),
       } satisfies SendOutcome;
     }
     if (pluginHttp.has(record.connectorId)) {
+      if (
+        currentFingerprint !== undefined &&
+        rejectedCredentialFingerprints.get(record.connectorId) !== currentFingerprint
+      ) {
+        rejectedCredentialFingerprints.set(record.connectorId, currentFingerprint);
+        pluginRefusalBindingRevisions.set(record.connectorId, yield* accountsBindingRevision);
+        bumpPluginKeyRevision(record.connectorId);
+        yield* publishChange;
+      }
       // This transient registration has no persisted connector status and no OAuth grant.
       // Hand the rejected exchange back without awaiting an untrusted response body's cancel.
       return {
         type: "rejected",
         response: first.value,
-        message: `${record.displayName} rejected the key bound in Scient Accounts. Ask the user to update that account, then retry.`,
+        message: pluginKeyRefusalMessage(record),
       } satisfies SendOutcome;
     }
     yield* cancelBody(first.value);
     if (record.auth.type === "source-control" && credential.borrowed !== undefined) {
-      return yield* replayBorrowed(record, record.auth, credential, send, scope);
+      return yield* replayBorrowed(record, record.auth, credential, send, refusedCredential, scope);
     }
     if (record.auth.type !== "oauth") {
-      yield* markStatus(record, "connected", "The service rejected the stored credential.");
+      if (currentFingerprint !== undefined) {
+        rejectedCredentialFingerprints.set(record.connectorId, currentFingerprint);
+      }
+      const rejectedMessage = refusedKeyMessage(record);
+      yield* markStatus(
+        record,
+        "needs-credential",
+        "The service rejected the stored credential.",
+        rejectedMessage,
+      );
       return {
         type: "rejected",
-        message: `${record.displayName} rejected the credential stored in Scient. Ask the user to update it in Scient Settings → Extensions.`,
+        message: rejectedMessage,
       } satisfies SendOutcome;
     }
     const refreshed = yield* refreshSession(record, credential.accessToken);
@@ -1505,7 +1701,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         message: describeEgressFailure(Option.getOrUndefined(Exit.findErrorOption(replay))?.cause),
       } satisfies SendOutcome;
     }
-    if (replay.value.status === 401) {
+    const replaySecrets = [...credential.secrets, ...sessionSecrets(refreshed.session)];
+    const replayVerdict = yield* refusedCredential(replay.value, replaySecrets);
+    if (replayVerdict.refused) {
       yield* cancelBody(replay.value);
       // Only if the refused grant still owns the connector: a sign-in may have
       // committed while this replay was in flight.
@@ -1520,7 +1718,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     return {
       type: "response",
       response: replay.value,
-      secrets: [...credential.secrets, ...sessionSecrets(refreshed.session)],
+      secrets: replaySecrets,
+      ...(replayVerdict.forbidden === undefined ? {} : { forbidden: replayVerdict.forbidden }),
     } satisfies SendOutcome;
   });
 
@@ -2227,7 +2426,16 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           status: "connected",
           lastError: undefined,
           updatedAt,
-        })).pipe(Effect.exit);
+        })).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              sessions.dropConnector(record.connectorId);
+              refusedSignIns.delete(record.connectorId);
+              rejectedCredentialFingerprints.delete(record.connectorId);
+            }),
+          ),
+          Effect.exit,
+        );
         if (Exit.isFailure(updated)) {
           yield* revokeLater(record, session);
           // Only a credential created by this sign-in is discarded; an existing one keeps its client.
@@ -2391,10 +2599,21 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             signal: init?.signal ?? undefined,
           },
           (_url, requestInit) => fetch(url, requestInit),
+          undefined,
+          true,
         ),
       );
       if (outcome.type === "response") {
         applied.push(...outcome.secrets);
+        {
+          const classified = outcome.forbidden;
+          if (classified === "insufficient-scope") {
+            void outcome.response.body?.cancel().catch(() => undefined);
+            const scopeMessage = `${record.displayName} needs additional permissions (insufficient scope). Check the account or reconnect in Settings → Extensions.`;
+            await run(markStatus(record, record.status, scopeMessage));
+            throw new ConnectorUnavailableError({ kind: "failed", message: scopeMessage });
+          }
+        }
         return outcome.response;
       }
       if (outcome.type === "rejected") {
@@ -2461,7 +2680,14 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       return result("error", "The service did not complete the MCP handshake and tool listing.");
     }
-    if (record.lastError !== undefined) {
+    // The person checked a refused key and the service took it: deliver it again.
+    if (
+      record.status === "needs-credential" &&
+      (record.auth.type === "credential" || record.auth.type === "source-control")
+    ) {
+      rejectedCredentialFingerprints.delete(record.connectorId);
+      yield* markConnected(record);
+    } else if (record.lastError !== undefined) {
       yield* updateRecord(record.connectorId, (current, updatedAt) => ({
         ...current,
         lastError: undefined,
@@ -2528,7 +2754,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       // Source Control could not answer just now: leave the status as it is.
       if (Option.isNone(lent)) continue;
       if (Option.isSome(lent.value)) {
-        if (record.status !== "connected") yield* markConnected(record);
+        const borrowedFp = secretFingerprint([Redacted.value(lent.value.value.token)]);
+        const rejectedFp = rejectedCredentialFingerprints.get(record.connectorId);
+        if (rejectedFp === undefined || rejectedFp !== borrowedFp) {
+          rejectedCredentialFingerprints.delete(record.connectorId);
+          if (record.status !== "connected") yield* markConnected(record);
+        }
       } else if (record.status === "connected") {
         yield* markStatus(record, "needs-credential", accountGone(record.auth.account));
       }
@@ -2791,18 +3022,21 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const message = response.ok
           ? `${record.displayName} did not answer like an MCP server.`
           : `${record.displayName} answered with HTTP ${response.status}.`;
-        // A hosted service said it forbade the credential Scient sent: discovery must hear it
-        // fail. A 403 without that evidence (an edge or policy block) meets the empty server.
-        const refused =
-          response.status === 403 &&
-          record.local === undefined &&
-          outcome.secrets.some((secret) => secret !== undefined) &&
-          (yield* forbidsCredential(response, exchange.signal));
-        return yield* settle(
-          refused
-            ? credentialRefusal(request, message)
-            : refusal(request, message, 502, "connector_error"),
-        );
+        // Insufficient scope reports permissions and keeps the grant; any other 403 is the
+        // service's answer.
+        if (outcome.forbidden === "insufficient-scope") {
+          const scopeMessage = `${record.displayName} needs additional permissions (insufficient scope). Check the account or permissions in Settings → Extensions.`;
+          const discovery = discoveryRequestOf(request.body);
+          if (
+            discovery !== undefined &&
+            discovery.method !== "tools/call" &&
+            !pluginHttp.has(record.connectorId)
+          ) {
+            yield* markStatus(record, record.status, scopeMessage);
+          }
+          return yield* settle(credentialRefusal(request, scopeMessage));
+        }
+        return yield* settle(refusal(request, message, 502, "connector_error"));
       }
       const headers: Record<string, string> = {
         "content-type": streamed ? "text/event-stream" : "application/json",
@@ -2863,6 +3097,22 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   );
 
   return ConnectorRuntime.of({
+    pluginKeyRefusals: Effect.fn("ConnectorRuntime.pluginKeyRefusals")(() =>
+      Effect.sync(() =>
+        [...pluginHttp.values()].flatMap(({ record }) =>
+          rejectedCredentialFingerprints.has(record.connectorId)
+            ? [
+                {
+                  connectorId: record.connectorId,
+                  serverName: record.serverName,
+                  displayName: record.displayName,
+                  message: pluginKeyRefusalMessage(record),
+                },
+              ]
+            : [],
+        ),
+      ),
+    ),
     registerPluginKeyHttp: Effect.fn("ConnectorRuntime.registerPluginKeyHttp")(function* (input) {
       if (!pluginHttp.has(input.connectorId) && pluginHttp.size >= 1000)
         return yield* new ExtensionsError({
@@ -2871,6 +3121,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             "Plugin server registrations reached their session limit. Restart Scient to release unused registrations.",
         });
       const url = yield* checkUrl(input.url, STRICT_EGRESS_POLICY);
+      // Accounts changed since a key was refused: the provider reloads the tools so its next
+      // request compares the bound value; the same refused value still never leaves.
+      if (rejectedCredentialFingerprints.has(input.connectorId)) {
+        const bindingRevision = yield* accountsBindingRevision;
+        if (
+          bindingRevision === undefined ||
+          bindingRevision !== pluginRefusalBindingRevisions.get(input.connectorId)
+        ) {
+          pluginRefusalBindingRevisions.set(input.connectorId, bindingRevision);
+          bumpPluginKeyRevision(input.connectorId);
+        }
+      }
       const createdAt = yield* isoNow;
       const record: ConnectorRecord = {
         connectorId: input.connectorId,
@@ -2881,7 +3143,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         auth: { type: "none" },
         status: "connected",
         enabled: true,
-        authRevision: 0,
+        authRevision: pluginKeyRevisions.get(input.connectorId) ?? 0,
         availability: input.projectId
           ? { type: "projects", projectIds: [input.projectId] }
           : { type: "all-projects" },
@@ -3004,7 +3266,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       // publishes its refusal under that lock) settles first and cannot bring the refusal back.
       if (input.enabled === false) {
         yield* lifecycle(input.connectorId).withPermits(1)(
-          Effect.sync(() => refusedSignIns.delete(input.connectorId)),
+          Effect.sync(() => {
+            refusedSignIns.delete(input.connectorId);
+            rejectedCredentialFingerprints.delete(input.connectorId);
+          }),
         );
       }
       // Turned off, set up again or restarted: running copies stop; the next request starts anew.
@@ -3063,6 +3328,25 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }),
     resolveDelivery: Effect.fn("ConnectorRuntime.resolveDelivery")(function* (input) {
       yield* followSourceControlNow;
+      const initial = yield* store.read;
+      // A key refused in this process that changed since under the same reference is delivered
+      // again; an unchanged one waits for the person to update or check it.
+      for (const record of initial.connectors) {
+        if (
+          record.status === "needs-credential" &&
+          record.auth.type === "credential" &&
+          rejectedCredentialFingerprints.has(record.connectorId)
+        ) {
+          const resolved = yield* credentialFor(record);
+          if (resolved.type === "ok") {
+            const fp = secretFingerprint(resolved.secrets);
+            if (fp !== rejectedCredentialFingerprints.get(record.connectorId)) {
+              rejectedCredentialFingerprints.delete(record.connectorId);
+              yield* markConnected(record);
+            }
+          }
+        }
+      }
       const state = yield* store.read;
       const eligible: EligibleConnector[] = [];
       const skipped: Array<EligibleConnector & { readonly reason: ExtensionDeliverySkipReason }> =

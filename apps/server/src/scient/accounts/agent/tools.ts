@@ -342,6 +342,10 @@ const connectorList = metadata(
       query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
         description: "e.g. slack.",
       }),
+      connector: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
+        description:
+          "Exact connector name for a read-only status check without searching Discover or probing the server.",
+      }),
     }),
     success: Schema.Struct({
       connectors: Schema.Array(

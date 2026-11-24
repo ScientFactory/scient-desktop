@@ -91,7 +91,11 @@ import {
 import { probeConnector } from "./ConnectorProbe.ts";
 import { GitHubSourceControlCredential } from "./GitHubSourceControlCredential.ts";
 import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
-import { makeConnectorRuntime, MAX_IN_FLIGHT_PER_CONNECTOR } from "./ConnectorRuntime.ts";
+import {
+  bearerChallengeError,
+  makeConnectorRuntime,
+  MAX_IN_FLIGHT_PER_CONNECTOR,
+} from "./ConnectorRuntime.ts";
 import { CONNECTOR_STATE_FILE } from "./ConnectorStateStore.ts";
 import type { RunTool } from "./PackageSource.ts";
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
@@ -130,7 +134,12 @@ interface FakeVendor {
    * Tokens answered with HTTP 403: naming an auth error in JSON, with a `WWW-Authenticate`
    * challenge, or as an edge-policy HTML page that says nothing about the credential.
    */
-  forbiddenTokens: Map<string, "json" | "challenge" | "edge">;
+  forbiddenTokens: Map<
+    string,
+    "json" | "challenge" | "invalid-token" | "realm" | "described" | "edge"
+  >;
+  /** The open endpoint answers 403 naming a key error, though nobody sent one. */
+  openForbidden: boolean;
   refusing: Gate;
   refreshCount: number;
   registrations: Array<Record<string, unknown>>;
@@ -231,7 +240,13 @@ const handleMcp = async (
         "content-type": "text/html",
         ...(forbidden === "challenge"
           ? { "www-authenticate": 'Bearer error="insufficient_scope"' }
-          : {}),
+          : forbidden === "invalid-token"
+            ? { "www-authenticate": 'Bearer error="invalid_token"' }
+            : forbidden === "realm"
+              ? { "www-authenticate": 'Bearer realm="vendor"' }
+              : forbidden === "described"
+                ? { "www-authenticate": 'Bearer realm="vendor", error_description="invalid_token"' }
+                : {}),
       });
       response.end("<html><body>Access denied</body></html>");
       return;
@@ -242,6 +257,9 @@ const handleMcp = async (
       authorization,
       session,
     });
+  }
+  if (challenge === undefined && vendor.openForbidden) {
+    return json(response, 403, { error: { code: "invalid_api_key", message: "Key revoked." } });
   }
   if (session !== undefined && vendor.expiredSessions.has(session)) {
     response.writeHead(404);
@@ -478,6 +496,7 @@ const resetVendor = (base: string): FakeVendor => ({
   exchange: { gate: undefined, arrived: undefined },
   refusedTokens: new Set(),
   forbiddenTokens: new Map(),
+  openForbidden: false,
   refusing: { gate: undefined, arrived: undefined },
   refreshCount: 0,
   registrations: [],
@@ -2136,10 +2155,20 @@ describe("connector token lifecycle", () => {
         released.resolve();
 
         // The request refreshes B (the current grant), which is lost.
-        expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject({
-          id: 1,
-          error: { code: -32001 },
-        });
+        expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject(
+          loss === "invalid_grant"
+            ? {
+                id: 1,
+                result: {
+                  content: [{ type: "text", text: expect.stringContaining("reconnect") }],
+                  isError: true,
+                },
+              }
+            : {
+                id: 1,
+                error: { code: -32001 },
+              },
+        );
         expect(vendor.refreshCount).toBe(1);
         expect(yield* current).toMatchObject({ status: "needs-auth", authRevision: 3 });
 
@@ -2192,7 +2221,10 @@ describe("connector token lifecycle", () => {
         refusing.release();
         expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject({
           id: 1,
-          error: { code: -32001 },
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("reconnect") }],
+            isError: true,
+          },
         });
 
         // The newer sign-in is untouched and keeps working.
@@ -2203,7 +2235,13 @@ describe("connector token lifecycle", () => {
         // The same refusal of the grant that owns the connector still counts.
         refuseNextReplay();
         const refused = yield* harness.proxy(connectorId, toolCall(3));
-        expect(yield* readJson(refused)).toMatchObject({ id: 3, error: { code: -32001 } });
+        expect(yield* readJson(refused)).toMatchObject({
+          id: 3,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("reconnect") }],
+            isError: true,
+          },
+        });
         expect(yield* current).toMatchObject({ status: "needs-auth", authRevision: 3 });
       }).pipe(Effect.provide(testLayer)),
   );
@@ -2281,7 +2319,7 @@ describe("connector token lifecycle", () => {
   );
 
   it.live(
-    "marks needs-auth on invalid_grant and answers the agent with a JSON-RPC error, not 401",
+    "marks needs-auth on invalid_grant and answers the agent with an MCP tool error, not 401",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness();
@@ -2295,8 +2333,14 @@ describe("connector token lifecycle", () => {
         expect(response.headers.get("www-authenticate")).toBeNull();
         expect(yield* readJson(response)).toMatchObject({
           id: 4,
-          error: {
-            message: expect.stringContaining("reconnect it in Scient Settings → Extensions"),
+          result: {
+            content: [
+              {
+                type: "text",
+                text: expect.stringContaining("reconnect it in Scient Settings → Extensions"),
+              },
+            ],
+            isError: true,
           },
         });
 
@@ -2309,7 +2353,18 @@ describe("connector token lifecycle", () => {
         expect(delivery.skipped).toMatchObject([{ connectorId, reason: "needs-auth" }]);
 
         const next = yield* harness.proxy(connectorId, toolCall(5));
-        expect(yield* readJson(next)).toMatchObject({ id: 5, error: { code: -32001 } });
+        expect(yield* readJson(next)).toMatchObject({
+          id: 5,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: expect.stringContaining("reconnect it in Scient Settings → Extensions"),
+              },
+            ],
+            isError: true,
+          },
+        });
         // Further refusals while already needs-auth are not new generations.
         expect((yield* harness.runtime.list()).connectors[0]?.authRevision).toBe(signedIn + 1);
       }).pipe(Effect.provide(testLayer)),
@@ -2431,12 +2486,27 @@ describe("connector disconnect", () => {
   );
 
   it.live.each([
-    { status: 401, forbidden: undefined, says: "rejected the credential stored in Scient" },
-    { status: 403, forbidden: "json", says: "answered with HTTP 403" },
-    { status: 403, forbidden: "challenge", says: "answered with HTTP 403" },
+    {
+      status: 401,
+      forbidden: undefined,
+      expectedStatus: "needs-credential",
+      says: "rejected the credential stored in Scient",
+    },
+    {
+      status: 403,
+      forbidden: "json",
+      expectedStatus: "needs-credential",
+      says: "rejected the credential stored in Scient",
+    },
+    {
+      status: 403,
+      forbidden: "challenge",
+      expectedStatus: "connected",
+      says: "additional permissions",
+    },
   ] as const)(
-    "keeps discovery failing when the service refuses a key it accepted before ($status $forbidden)",
-    ({ forbidden, says }) =>
+    "completes discovery quietly, updates status, and returns MCP isError when the service refuses a key ($status $forbidden)",
+    ({ forbidden, expectedStatus, says }) =>
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         vendor.validTokens.add("entered-secret-value");
@@ -2454,23 +2524,39 @@ describe("connector disconnect", () => {
 
         if (forbidden === undefined) vendor.validTokens.delete("entered-secret-value");
         else vendor.forbiddenTokens.set("entered-secret-value", forbidden);
-        // regression: a refused stored key met the empty server, so discovery reported success.
-        const refused = { code: -32001, message: expect.stringContaining(says) };
-        expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toEqual({
+        expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toMatchObject({
           jsonrpc: "2.0",
           id: 2,
-          error: refused,
+          result: { instructions: expect.stringContaining("offers no tools") },
         });
+        expect((yield* harness.runtime.list()).connectors[0]?.status).toBe(expectedStatus);
         expect(
           yield* readJson(
             yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 3, method: "tools/list" }),
           ),
-        ).toEqual({ jsonrpc: "2.0", id: 3, error: refused });
+        ).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [] } });
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, {
+              jsonrpc: "2.0",
+              id: 4,
+              method: "tools/call",
+              params: { name: "search", arguments: {} },
+            }),
+          ),
+        ).toEqual({
+          jsonrpc: "2.0",
+          id: 4,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining(says) }],
+            isError: true,
+          },
+        });
       }).pipe(Effect.provide(testLayer)),
   );
 
   it.live.each(["refresh refused", "replay refused"] as const)(
-    "fails discovery when the service refuses the sign-in (%s)",
+    "marks needs-auth, completes discovery quietly, and returns MCP isError on tool calls (%s)",
     (refusal) =>
       Effect.gen(function* () {
         const harness = yield* makeHarness();
@@ -2478,32 +2564,46 @@ describe("connector disconnect", () => {
         vendor.validTokens.delete("vendor-access-token-1");
         if (refusal === "refresh refused") vendor.refreshMode = "invalid_grant";
         else vendor.refusedTokens.add("vendor-access-token-2");
-        const refused = { code: -32001, message: expect.stringContaining("no longer connected") };
         expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toMatchObject({
           id: 2,
-          error: refused,
+          result: { instructions: expect.stringContaining("offers no tools") },
         });
         expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-auth");
-        // regression: only the request that saw the refusal failed; later discovery met the
-        // empty server and reported success with no tools.
         expect(yield* readJson(yield* harness.proxy(connectorId, initialize(3)))).toMatchObject({
           id: 3,
-          error: refused,
+          result: { instructions: expect.stringContaining("offers no tools") },
         });
         expect(
           yield* readJson(
             yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 4, method: "tools/list" }),
           ),
-        ).toMatchObject({ id: 4, error: refused });
+        ).toEqual({ jsonrpc: "2.0", id: 4, result: { tools: [] } });
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, {
+              jsonrpc: "2.0",
+              id: 5,
+              method: "tools/call",
+              params: { name: "search", arguments: {} },
+            }),
+          ),
+        ).toEqual({
+          jsonrpc: "2.0",
+          id: 5,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("no longer connected") }],
+            isError: true,
+          },
+        });
 
-        // Turning it off is the person dealing with it: from then on it is merely unavailable.
+        // Turning it off and back on keeps discovery empty while still needs-auth.
         yield* harness.runtime.update({ connectorId, enabled: false });
         yield* harness.runtime.update({ connectorId, enabled: true });
         expect(
           yield* readJson(
-            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 5, method: "tools/list" }),
+            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 6, method: "tools/list" }),
           ),
-        ).toEqual({ jsonrpc: "2.0", id: 5, result: { tools: [] } });
+        ).toEqual({ jsonrpc: "2.0", id: 6, result: { tools: [] } });
       }).pipe(Effect.provide(testLayer)),
   );
 
@@ -2529,6 +2629,101 @@ describe("connector disconnect", () => {
           yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 3, method: "tools/list" }),
         ),
       ).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [] } });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps a key whose 403 challenge names no credential error", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.validTokens.add("entered-secret-value");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      // A policy answer with a bare realm says nothing about the key.
+      vendor.forbiddenTokens.set("entered-secret-value", "realm");
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+      vendor.forbiddenTokens.delete("entered-secret-value");
+      expect(
+        yield* readJson(
+          yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 2, method: "tools/list" }),
+        ),
+      ).toMatchObject({ id: 2, result: { tools: [{ name: "search" }] } });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never takes a 403 as a refused key when no key was sent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/open/mcp` },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      vendor.openForbidden = true;
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("reads only the challenge's own error code, not text in other parameters", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.validTokens.add("entered-secret-value");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      vendor.forbiddenTokens.set("entered-secret-value", "described");
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never resends a refused key until the person checks it, and recovers on check", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.validTokens.add("entered-secret-value");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      vendor.forbiddenTokens.set("entered-secret-value", "invalid-token");
+      yield* readJson(yield* harness.proxy(connectorId, initialize(1)));
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-credential");
+      const reached = vendor.upstream.length;
+      // The refused key stays home, whatever asks for it.
+      const call = yield* readJson(yield* harness.proxy(connectorId, toolCall(2)));
+      expect(call).toMatchObject({ id: 2, result: { isError: true } });
+      expect(vendor.upstream.length).toBe(reached);
+
+      // The service accepts it again; the person's check finds out and delivers it again.
+      vendor.forbiddenTokens.delete("entered-secret-value");
+      const checked = yield* harness.runtime.test({ connectorId });
+      expect(checked.outcome).toBe("ok");
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("refreshes a sign-in whose 403 names the token, instead of dropping the grant", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.accessTokenTtlSeconds = 3600;
+      const connectorId = yield* harness.connectSecure();
+      vendor.forbiddenTokens.set("vendor-access-token-1", "invalid-token");
+      expect(yield* readJson(yield* harness.proxy(connectorId, toolCall(1)))).toMatchObject({
+        id: 1,
+        result: { content: [{ type: "text", text: "found" }] },
+      });
+      expect(vendor.refreshCount).toBe(1);
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("connected");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -3019,21 +3214,32 @@ describe("GitHub with Source Control's account", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.live("fails discovery when GitHub refuses every token Source Control has", () =>
-    Effect.gen(function* () {
-      vendor.validTokens.add(OCTO_TOKEN);
-      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
-      const harness = yield* makeHarness({ github: github.service });
-      const connector = yield* connectGitHub(harness);
-      vendor.refusedTokens.add(OCTO_TOKEN);
-      expect(
-        yield* readJson(yield* harness.proxy(connector.connectorId, initialize(1))),
-      ).toMatchObject({
-        id: 1,
-        error: { code: -32001, message: expect.stringContaining("refused Source Control") },
-      });
-      expect(github.state.invalidated).toEqual([OCTO_TOKEN]);
-    }).pipe(Effect.provide(testLayer)),
+  it.live(
+    "marks needs-credential, completes discovery quietly, and returns MCP isError when GitHub refuses every Source Control token",
+    () =>
+      Effect.gen(function* () {
+        vendor.validTokens.add(OCTO_TOKEN);
+        const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+        const harness = yield* makeHarness({ github: github.service });
+        const connector = yield* connectGitHub(harness);
+        vendor.refusedTokens.add(OCTO_TOKEN);
+        expect(
+          yield* readJson(yield* harness.proxy(connector.connectorId, initialize(1))),
+        ).toMatchObject({
+          id: 1,
+          result: { instructions: expect.stringContaining("offers no tools") },
+        });
+        expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-credential");
+        expect(yield* readJson(yield* harness.proxy(connector.connectorId, toolCall(2)))).toEqual({
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            content: [{ type: "text", text: expect.stringContaining("refused Source Control") }],
+            isError: true,
+          },
+        });
+        expect(github.state.invalidated).toEqual([OCTO_TOKEN]);
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("sends the credential only to GitHub's own MCP server", () =>
@@ -4998,3 +5204,22 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
 });
 `;
+
+describe("Bearer challenge error", () => {
+  it.each([
+    ['Bearer error="invalid_token"', "invalid_token"],
+    ['Bearer realm="api", error=insufficient_scope, scope="read"', "insufficient_scope"],
+    ['Basic realm="x", Bearer error="invalid_token"', "invalid_token"],
+    // Text inside another parameter's quoted value is not the error.
+    ['Bearer vendor.detail="Access denied, error=invalid_token please retry"', undefined],
+    ['Bearer realm="vendor", error_description="invalid_token"', undefined],
+    // Another scheme's error is not Bearer's.
+    ['Basic error="invalid_token"', undefined],
+    ['Negotiate abc123==, Bearer realm="x"', undefined],
+    // A token68 credential before Bearer does not end the reading.
+    ["Negotiate abc123==, Bearer error=insufficient_scope", "insufficient_scope"],
+    ["Negotiate abc123, Bearer error=invalid_token", "invalid_token"],
+  ] as const)("reads %s", (header, expected) => {
+    expect(bearerChallengeError(header)).toBe(expected);
+  });
+});

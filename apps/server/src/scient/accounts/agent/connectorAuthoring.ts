@@ -128,9 +128,15 @@ export const listConnectors = Effect.fn("AccountsAgent.connectorList")(function*
   input: Input<"scient_connector_list">,
 ) {
   const scope = yield* AgentInvocationContext;
-  return yield* listFor({ query: input.query, providerInstanceId: scope.providerInstanceId }).pipe(
-    Effect.mapError(toAccountsError),
-  );
+  const session = yield* accountSessionScope().pipe(Effect.option);
+  return yield* listFor({
+    query: input.query,
+    connector: input.connector,
+    providerInstanceId: scope.providerInstanceId,
+    projectId: Option.isSome(session)
+      ? session.value.projectId
+      : scope.workspace?.binding.hostProjectId,
+  }).pipe(Effect.mapError(toAccountsError));
 });
 
 /** A key or sign-in app asked in the private card; what went wrong in the user's words. */

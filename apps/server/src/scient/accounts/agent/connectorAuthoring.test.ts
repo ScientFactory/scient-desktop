@@ -35,6 +35,8 @@ describe("connector tools' inputs", () => {
     );
     // regression: agents sent {"query": ""} and were refused ("Expected a non-blank string").
     expect(decode({ query: "" })._tag).toBe("Success");
+    expect(decode({ connector: "cloudflare" })._tag).toBe("Success");
+    expect(decode({ connector: "" })._tag).toBe("Success");
   });
 });
 

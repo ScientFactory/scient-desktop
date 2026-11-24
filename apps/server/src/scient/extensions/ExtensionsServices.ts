@@ -64,6 +64,8 @@ export interface EligibleConnector {
   readonly connectorId: ConnectorId;
   readonly serverName: string;
   readonly displayName: string;
+  /** Credential generation: reconnect bumps it so providers refresh stale empty tool catalogs. */
+  readonly authRevision?: number;
 }
 
 export interface ConnectorDeliveryResolution {
@@ -130,6 +132,15 @@ export interface ConnectorRuntimeShape {
       ExtensionsError
     >;
   }) => Effect.Effect<EligibleConnector, ExtensionsError>;
+  /** Plugin-key registrations whose bound key the service refused; they have no stored status. */
+  readonly pluginKeyRefusals?: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly connectorId: ConnectorId;
+      readonly serverName: string;
+      readonly displayName: string;
+      readonly message: string;
+    }>
+  >;
   readonly list: () => Effect.Effect<{
     readonly revision: number;
     readonly connectors: ReadonlyArray<ConnectorSummary>;

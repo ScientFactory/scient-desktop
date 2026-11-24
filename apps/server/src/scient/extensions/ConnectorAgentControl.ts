@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 import {
   type ConnectorAddInput,
   type ConnectorSummary,
+  type ProjectId,
   type ProviderInstanceId,
   type DiscoverEntry,
   ExtensionsError,
@@ -243,17 +244,46 @@ const missedName = Effect.fn("ConnectorAgentControl.missedName")(function* (
 /** The user's connectors and, for a query, ones Scient can add (its own picks, then the Registry). */
 export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* (input: {
   readonly query?: string | undefined;
+  readonly connector?: string | undefined;
   readonly providerInstanceId?: ProviderInstanceId | undefined;
+  readonly projectId?: ProjectId | undefined;
 }) {
   const { runtime, discover, observed } = yield* services;
-  // A blank query is no query.
-  const query = input.query?.trim() || undefined;
+  // A blank query or connector name is absent.
+  const connectorName = input.connector?.trim() || undefined;
+  const query = connectorName !== undefined ? undefined : input.query?.trim() || undefined;
   return yield* observed("connectors.agent.list", { searched: query !== undefined })(
     Effect.gen(function* () {
       const { connectors } = yield* runtime.list();
       const mine = connectors.filter((connector) =>
         forThisAgent(connector, input.providerInstanceId),
       );
+      if (connectorName !== undefined) {
+        const needle = connectorName.toLowerCase();
+        const match =
+          mine.find((item) => item.serverName.toLowerCase() === needle) ??
+          mine.find((item) => item.displayName.toLowerCase() === needle);
+        if (match === undefined) {
+          return {
+            connectors: [],
+            message: `No connector named ${connectorName} is available to this agent.`,
+          };
+        }
+        const projectAllowed =
+          match.availability.type === "all-projects" ||
+          (input.projectId !== undefined &&
+            match.availability.projectIds.includes(input.projectId));
+        if (!projectAllowed) {
+          return {
+            connectors: [rowOf(match)],
+            message: `${match.displayName} is not enabled for this project. The user can enable it in Settings → Extensions.`,
+          };
+        }
+        return {
+          connectors: [rowOf(match)],
+          message: nextStep(match, agentStatusOf(match)),
+        };
+      }
       const elsewhere = new Set(
         connectors.filter((item) => !mine.includes(item)).map((item) => item.connectorId),
       );

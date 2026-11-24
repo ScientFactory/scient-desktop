@@ -93,6 +93,7 @@ export const sameDeliveredConnectors = (
       issued[index]?.connectorId === connector.connectorId &&
       issued[index]?.serverName === connector.serverName &&
       issued[index]?.displayName === connector.displayName &&
+      issued[index]?.authRevision === connector.authRevision &&
       scopeConnectorIds?.has(connector.connectorId) === true,
   );
 
