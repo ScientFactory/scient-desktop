@@ -247,6 +247,8 @@ test("checks replace the desktop host's variables with a synthetic home and keep
         ELECTRON_RUN_AS_NODE: "1",
         T3CODE_HOME: "live",
         T3CODE_CLI_PATH: "live",
+        T3CODE_THREAD_ID: "host-thread",
+        T3CODE_DESKTOP_HOST_SCOPE: "host",
         Scient_Next_Home: "live",
         SCIENT_NEXT_SAFETY_ENVELOPE: "true",
         SCIENT_ANALYTICS_ENABLED: "true",

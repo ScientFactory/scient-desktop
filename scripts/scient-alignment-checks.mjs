@@ -22,7 +22,14 @@ export function checkEnvironment(env, home) {
   const hostOwned = (name) => {
     const upper = name.toUpperCase();
     return (
-      ["ELECTRON_RUN_AS_NODE", "T3CODE_HOME", "T3CODE_CLI_PATH"].includes(upper) ||
+      [
+        "ELECTRON_RUN_AS_NODE",
+        "T3CODE_HOME",
+        "T3CODE_CLI_PATH",
+        // The host thread's agent marker: test processes would look like that thread's agents.
+        "T3CODE_THREAD_ID",
+        "T3CODE_DESKTOP_HOST_SCOPE",
+      ].includes(upper) ||
       upper.startsWith("SCIENT_NEXT_") ||
       upper.startsWith("SCIENT_ANALYTICS_")
     );
