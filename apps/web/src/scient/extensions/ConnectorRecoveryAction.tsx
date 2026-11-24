@@ -1,15 +1,20 @@
-import type { ConnectorId, EnvironmentId } from "@t3tools/contracts";
+import type { ConnectorId, EnvironmentId, ProviderThreadId, ThreadId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { useState, type KeyboardEvent } from "react";
 
+import { McpSignInAction } from "../../components/chat/McpSignInAction";
 import { InlineButton } from "../../components/ui/button";
 import { toastManager } from "../../components/ui/toast";
 import { useEnvironmentHttpBaseUrl } from "../../state/environments";
-import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
+import {
+  formatEnvironmentQueryError,
+  useEnvironmentQuery,
+  useEnvironmentSubscription,
+} from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { extensionsInventory, startConnectorSignIn } from "./extensionsState";
+import { extensionsInventory, startConnectorSignIn, threadMcpStatus } from "./extensionsState";
 import { callbackOriginOf } from "./extensionsView";
 import { openAuthorizationPage } from "./openAuthorizationPage";
 
@@ -25,6 +30,64 @@ export function connectorRecoveryTarget(toolName: string | null, input: unknown)
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+const CONNECTOR_CONTROL_TOOL = /(?:^|[_.\s·/])scient_connector_control$/u;
+
+/** The server an agent's sign-in request named, under every provider's tool spelling. */
+export function signInRequestTarget(toolName: string | null, input: unknown): string | null {
+  if (toolName === null || !CONNECTOR_CONTROL_TOOL.test(toolName)) return null;
+  if (typeof input !== "object" || input === null) return null;
+  const { action, connector } = input as {
+    readonly action?: unknown;
+    readonly connector?: unknown;
+  };
+  if (action !== "sign-in" || typeof connector !== "string") return null;
+  const trimmed = connector.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * The Sign in button for an agent's own MCP server that it asked the user to sign in to, while
+ * the chat still reports that server needs one; a Scient connector's recovery otherwise.
+ */
+export function SignInRequestAction({
+  environmentId,
+  threadId,
+  serverName,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly serverName: string;
+}) {
+  const live = useEnvironmentSubscription(
+    threadMcpStatus({ environmentId, input: { threadId } }),
+  ).data;
+  const needle = serverName.toLowerCase();
+  const server = live?.servers.find(
+    (candidate) =>
+      candidate.source !== "managed" &&
+      (candidate.name.toLowerCase() === needle || candidate.displayName.toLowerCase() === needle),
+  );
+  if (server === undefined)
+    return <ConnectorRecoveryAction environmentId={environmentId} connectorName={serverName} />;
+  const providerThreadId: ProviderThreadId | undefined = server.providerThreadId;
+  if (
+    server.status !== "needs-sign-in" ||
+    server.source === "claudeai" ||
+    !server.sessionActive ||
+    providerThreadId === undefined
+  )
+    return null;
+  return (
+    <McpSignInAction
+      environmentId={environmentId}
+      threadId={threadId}
+      providerThreadId={providerThreadId}
+      server={server.name}
+      noticeAt={Date.parse(server.observedAt) || 0}
+    />
+  );
 }
 
 /** Starts a Scient connector's own sign-in and opens its page; falls back to Settings when blocked. */

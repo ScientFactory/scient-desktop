@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
+import { ThreadMcpStatusRegistry } from "../../../mcpApps/ThreadMcpStatusRegistry.ts";
 import { PreviewManager } from "../../../preview/Manager.ts";
 import {
   type AddAsks,
@@ -231,9 +232,42 @@ export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url
     );
 });
 
+/**
+ * A sign-in for one of the agent's own MCP servers (not a Scient connector) that this chat
+ * reports needs one: the chat shows the user a Sign in button on the request that names it.
+ */
+export const agentServerSignIn = Effect.fn("AccountsAgent.agentServerSignIn")(function* (
+  name: string,
+) {
+  const registry = yield* Effect.serviceOption(ThreadMcpStatusRegistry);
+  if (Option.isNone(registry)) return undefined;
+  const invocation = yield* AgentInvocationContext;
+  const { servers } = yield* registry.value.snapshot(invocation.threadId);
+  const needle = name.trim().toLowerCase();
+  const server = servers.find(
+    (candidate) =>
+      candidate.source !== "managed" &&
+      candidate.status === "needs-sign-in" &&
+      (candidate.name.toLowerCase() === needle || candidate.displayName.toLowerCase() === needle),
+  );
+  if (server === undefined) return undefined;
+  return {
+    connector: server.name,
+    status: "needs-sign-in" as const,
+    message:
+      server.source === "claudeai"
+        ? `${server.displayName} is a claude.ai connector: the user signs in to it in their claude.ai connector settings. Tell them in one short sentence and carry on with whatever does not need it.`
+        : `The user now sees a Sign in button for ${server.displayName} on this request. Tell them in one short sentence, carry on with whatever does not need it, and do not ask again until they send another message. Its tools come once they finish.`,
+  };
+});
+
 export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(function* (
   input: Input<"scient_connector_control">,
 ) {
+  if (input.action === "sign-in") {
+    const agentServer = yield* agentServerSignIn(input.connector);
+    if (agentServer !== undefined) return agentServer;
+  }
   const context = yield* Effect.context<AgentInvocationContext>();
   return yield* controlFor(
     input,

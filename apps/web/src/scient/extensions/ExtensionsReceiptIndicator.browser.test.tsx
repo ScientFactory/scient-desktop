@@ -47,6 +47,7 @@ vi.mock("./extensionsState", () => ({
   testConnector: { permissionAtom: () => Atom.make(true) },
 }));
 
+import { SignInRequestAction } from "./ConnectorRecoveryAction";
 import { ExtensionsReceiptIndicator } from "./ExtensionsReceiptIndicator";
 
 const environmentId = EnvironmentId.make("local");
@@ -153,7 +154,7 @@ describe("ExtensionsReceiptIndicator", () => {
     expect(document.querySelector('[aria-label="Skipped"]')).toBeNull();
   });
 
-  it("shows live native MCP issues on native-only threads without counting ambient plugin servers in the badge", async () => {
+  it("counts a broken native server, and keeps servers that only need a sign-in in the quiet list", async () => {
     setup();
     state.mcpStatus = {
       threadId,
@@ -163,13 +164,22 @@ describe("ExtensionsReceiptIndicator", () => {
       sessionActive: true,
       servers: [
         {
+          id: "native:zotero",
+          name: "zotero",
+          displayName: "zotero",
+          source: "native",
+          status: "unreachable",
+          observedAt: IsoDateTime.make("2026-11-23T00:00:00.000Z"),
+          detail: "It did not start.",
+          sessionActive: true,
+        },
+        {
           id: "native:linear",
           name: "linear",
           displayName: "linear",
           source: "native",
           status: "needs-sign-in",
           observedAt: IsoDateTime.make("2026-11-23T00:00:00.000Z"),
-          detail: "Sign in required.",
           action: "sign-in",
           providerThreadId: ProviderThreadId.make("pt-1"),
           sessionActive: true,
@@ -195,16 +205,75 @@ describe("ExtensionsReceiptIndicator", () => {
       "Connected services: 0 ready, 1 need attention",
     );
     await userEvent.click(trigger);
-    expect(document.querySelector('[aria-label="Needs attention"]')?.textContent).toContain(
-      "linear",
-    );
-    expect(document.querySelector('[data-native-sign-in="linear"]')).not.toBeNull();
-    // Unconnected plugin and claude.ai servers are counted once, not listed one by one.
+    const attention = document.querySelector('[aria-label="Needs attention"]')?.textContent;
+    expect(attention).toContain("zotero");
+    expect(attention).not.toContain("linear");
     expect(document.querySelector('[aria-label="Agent MCP servers"]')).toBeNull();
+    // Servers that only need a sign-in are counted once, not listed one by one.
     const ambient = document.querySelector<HTMLElement>("[data-ambient-mcp-issues]");
-    expect(ambient?.textContent).toContain("1");
-    // Opening the list names the server and offers its sign-in.
+    expect(ambient?.textContent).toContain("2");
+    // Opening the list names each server and offers its sign-in.
     await userEvent.click(ambient!.querySelector("button")!);
+    expect(document.querySelector('[data-native-sign-in="linear"]')).not.toBeNull();
     expect(document.querySelector('[data-native-sign-in="plugin:design:figma"]')).not.toBeNull();
+  });
+});
+
+describe("SignInRequestAction", () => {
+  const server = (overrides: Partial<ThreadMcpStatusSnapshot["servers"][number]> = {}) => ({
+    id: "native:guru",
+    name: "guru",
+    displayName: "guru",
+    source: "native" as const,
+    status: "needs-sign-in" as const,
+    observedAt: IsoDateTime.make("2026-11-24T00:00:00.000Z"),
+    action: "sign-in" as const,
+    providerThreadId: ProviderThreadId.make("pt-1"),
+    sessionActive: true,
+    ...overrides,
+  });
+  const snapshot = (servers: ThreadMcpStatusSnapshot["servers"]): ThreadMcpStatusSnapshot => ({
+    threadId,
+    revision: NonNegativeInt.make(1),
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    providerThreadId: ProviderThreadId.make("pt-1"),
+    sessionActive: true,
+    servers,
+  });
+
+  it("offers the sign-in the agent asked for while the chat still reports it is needed", async () => {
+    setup();
+    state.mcpStatus = snapshot([server()]);
+    await using screen = await render(
+      <SignInRequestAction environmentId={environmentId} threadId={threadId} serverName="Guru" />,
+    );
+    expect(screen.container.querySelector('[data-native-sign-in="guru"]')).not.toBeNull();
+    expect(state.mcpStatusAtom).toHaveBeenCalledWith({ environmentId, input: { threadId } });
+
+    // Once signed in, the request row keeps no button.
+    state.mcpStatus = snapshot([server({ status: "ready" })]);
+    await screen.rerender(
+      <SignInRequestAction environmentId={environmentId} threadId={threadId} serverName="Guru" />,
+    );
+    expect(screen.container.querySelector("[data-native-sign-in]")).toBeNull();
+  });
+
+  it("offers no agent sign-in for claude.ai connectors or a session that ended", async () => {
+    setup();
+    state.mcpStatus = snapshot([
+      server({ id: "claudeai:claude.ai Gmail", name: "claude.ai Gmail", source: "claudeai" }),
+      server({ sessionActive: false }),
+    ]);
+    await using screen = await render(
+      <>
+        <SignInRequestAction
+          environmentId={environmentId}
+          threadId={threadId}
+          serverName="claude.ai Gmail"
+        />
+        <SignInRequestAction environmentId={environmentId} threadId={threadId} serverName="guru" />
+      </>,
+    );
+    expect(screen.container.querySelector("[data-native-sign-in]")).toBeNull();
   });
 });

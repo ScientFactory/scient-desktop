@@ -48,6 +48,8 @@ import { PluginSignInAction } from "~/scient/antigravity/PluginSignInAction";
 import {
   ConnectorRecoveryAction,
   connectorRecoveryTarget,
+  SignInRequestAction,
+  signInRequestTarget,
 } from "~/scient/extensions/ConnectorRecoveryAction";
 // SCIENT-FORK:END
 import * as DateTime from "effect/DateTime";
@@ -468,6 +470,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     payload?.type === "dynamic_tool"
       ? connectorRecoveryTarget(payload.toolName, payload.input)
       : null;
+  // SCIENT-FORK: an agent's request to sign in to a server it needs offers the Sign in button.
+  const signInTarget =
+    payload?.type === "dynamic_tool" ? signInRequestTarget(payload.toolName, payload.input) : null;
   const mcpSignIn =
     payload?.type === "system_notice" &&
     payload.mcpSignIn !== undefined &&
@@ -488,6 +493,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         threadId={payload.threadId}
         providerThreadId={payload.providerThreadId}
         pluginSignIn={payload.pluginSignIn}
+      />
+    ) : signInTarget !== null && threadRef ? (
+      <SignInRequestAction
+        environmentId={ctx.activeThreadEnvironmentId}
+        threadId={threadRef.threadId}
+        serverName={signInTarget}
       />
     ) : connectorTarget !== null ? (
       <ConnectorRecoveryAction

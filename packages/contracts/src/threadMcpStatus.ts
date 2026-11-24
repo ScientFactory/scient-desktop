@@ -78,10 +78,15 @@ export const isActionableThreadMcpStatus = (status: ThreadMcpServerStatusKind): 
   status === "unreachable" ||
   status === "unavailable";
 
-/** User-configured native and host-managed servers earn badge prominence; ambient plugins/claude.ai stay inspectable. */
+/**
+ * Host-managed servers, and user-configured native ones that broke, earn badge prominence. A
+ * missing sign-in stays quiet until the agent asks for it in the chat; plugins and claude.ai stay
+ * inspectable.
+ */
 export const isProminentThreadMcpIssue = (server: ThreadMcpServerObservation): boolean =>
   isActionableThreadMcpStatus(server.status) &&
-  (server.source === "managed" || server.source === "native");
+  (server.source === "managed" ||
+    (server.source === "native" && server.status !== "needs-sign-in"));
 
 const LEGACY_MCP_STARTUP_NATIVE_PREFIXES = ["mcp-startup-failed:", "mcp-sign-in:"] as const;
 
