@@ -254,7 +254,6 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           />
         </SettingsSection>
       ) : null}
-      <DictationInputSettings />
       {prepared || environmentId ? (
         <SettingsSection id="voice-cloud" title={gt("Cloud engines")}>
           <SettingsRow
@@ -352,6 +351,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           ) : null}
         </SettingsSection>
       ) : null}
+      <DictationInputSettings />
       <WordsSettingsSection />
       {environmentId ? (
         <SettingsSection id="voice-agents" title={gt("Agents")}>
