@@ -333,7 +333,7 @@ it("lists every key in one API keys card and keeps an agent's own key in Account
   await expect.element(page.getByRole("button", { name: "Edit OpenAI" })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Show api keys" }).click();
   const dialog = page.getByRole("dialog");
-  await expect.element(dialog.getByText("OPENAI_API_KEY · Codex")).toBeVisible();
+  await expect.element(dialog.getByText("Used by Codex", { exact: true })).toBeVisible();
   await expect.element(dialog.getByText("Only in Work settings")).toBeVisible();
   await dialog.getByRole("button", { name: "Keep in Accounts" }).click();
   await vi.waitFor(() =>
@@ -341,7 +341,7 @@ it("lists every key in one API keys card and keeps an agent's own key in Account
   );
   // Kept: the variable now follows its own row in Accounts, and nothing is left to keep.
   await expect.element(dialog.getByText("Only in Work settings")).not.toBeInTheDocument();
-  await expect.element(dialog.getByText("OPENAI_API_KEY · Work")).toBeVisible();
+  await expect.element(dialog.getByText("Used by Work", { exact: true })).toBeVisible();
   await expect
     .element(dialog.getByRole("button", { name: "Keep in Accounts" }))
     .not.toBeInTheDocument();

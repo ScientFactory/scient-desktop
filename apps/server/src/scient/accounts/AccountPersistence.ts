@@ -1,5 +1,9 @@
 import {
   AccountCodeSources,
+  AccountSite,
+  AccountId,
+  CustomModelId,
+  CustomModelProtocol,
   AccountKeyLink,
   BrowserProfileChoices,
   AccountsError,
@@ -37,10 +41,23 @@ export const RemoteSender = Schema.Struct({
   seenAt: IsoDateTime,
 });
 export type RemoteSender = typeof RemoteSender.Type;
+const CustomModelEscrow = Schema.Struct({
+  accountId: AccountId,
+  connectionId: CustomModelId,
+  legacyId: CustomModelId,
+  baseUrl: Schema.String,
+  protocol: CustomModelProtocol,
+  tokenRef: Schema.String.check(Schema.isPattern(/^accounts-value-[a-f0-9-]{36}$/)),
+});
+
 export const AccountsState = Schema.Struct({
   format: Schema.Literal(1),
   agentAccess: Schema.Boolean,
   accounts: Schema.Array(StoredAccount),
+  migratedModelAccounts: Schema.optional(Schema.Record(CustomModelId, AccountId)),
+  detachedKeyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
+  customModelEscrows: Schema.optional(Schema.Array(CustomModelEscrow)),
+  pendingCustomModelKeys: Schema.optional(Schema.Record(Schema.String, StoredAccount)),
   profiles: Schema.Array(BrowserProfileRecord),
   profileChoices: Schema.optional(BrowserProfileChoices),
   codeSources: Schema.optional(AccountCodeSources),
@@ -82,6 +99,7 @@ export class AccountPersistence extends Context.Service<
       name: string,
       value: Redacted.Redacted<Uint8Array>,
     ) => Effect.Effect<void, AccountsError>;
+    readonly listModelEscrows: Effect.Effect<readonly string[], AccountsError>;
     readonly remove: (name: string) => Effect.Effect<void, AccountsError>;
     /** Whether a record was ever stored, without opening the vault. */
     readonly exists: (name: string) => Effect.Effect<boolean, AccountsError>;
@@ -110,6 +128,12 @@ export const layer = Layer.effect(
           .set(name, yield* vault.encrypt(name, value))
           .pipe(Effect.mapError(unavailable));
       }),
+      listModelEscrows: (store.listNames ?? Effect.succeed([])).pipe(
+        Effect.map((names) =>
+          names.filter((name) => /^accounts-model-escrow-v1-[a-zA-Z0-9_-]{1,80}$/.test(name)),
+        ),
+        Effect.mapError(unavailable),
+      ),
       remove: Effect.fn("AccountPersistence.remove")((name) =>
         store.remove(name).pipe(Effect.mapError(unavailable)),
       ),
@@ -205,6 +229,37 @@ const foldMainFields = (profile: unknown) => {
   };
 };
 
+const oldAccountSite = Schema.is(AccountSite);
+
+function foldModelOrigins(summary: Record<string, unknown>) {
+  const details = summary["details"];
+  if (
+    typeof details !== "object" ||
+    details === null ||
+    !("purpose" in details) ||
+    details.purpose !== "custom-models" ||
+    !("modelOrigins" in details) ||
+    !Array.isArray(details.modelOrigins)
+  )
+    return summary;
+  return { ...summary, details: { ...details, sites: details.modelOrigins } };
+}
+
+function encodeModelOrigins(account: StoredAccount): StoredAccount {
+  const { summary } = account;
+  const details = summary.details;
+  if (details.kind !== "api-key" || details.purpose !== "custom-models") return account;
+  // An older reader ignores this field and validates only the site spellings it understands.
+  const compatible = {
+    ...details,
+    sites: details.sites.filter(oldAccountSite),
+    modelOrigins: details.sites,
+  };
+  return { ...account, summary: { ...summary, details: compatible } };
+}
+
+export const customModelEscrowName = (legacyId: string) => `accounts-model-escrow-v1-${legacyId}`;
+
 /** Older stored shapes, read as today's before decoding. */
 export const foldStoredAccounts = (state: unknown): unknown => {
   if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
@@ -219,7 +274,7 @@ export const foldStoredAccounts = (state: unknown): unknown => {
       if (typeof summary !== "object" || summary === null) return account;
       return {
         ...account,
-        summary: foldSignInOrigin(foldSignInFields(foldLibraryDetails(summary))),
+        summary: foldModelOrigins(foldSignInOrigin(foldSignInFields(foldLibraryDetails(summary)))),
       };
     }),
   };
@@ -261,5 +316,20 @@ export const encodePrivateJson = <A, E>(schema: Schema.Codec<A, E>, value: A) =>
           reason: "unavailable",
           message: "Scient Accounts data could not be encoded.",
         }),
+    ),
+  );
+
+// Validate the live shape first. Its on-disk representation also admits the previous release.
+export const encodeAccountsState = (state: AccountsState) =>
+  encodePrivateJson(AccountsState, state).pipe(
+    Effect.map(() =>
+      Redacted.make(
+        new TextEncoder().encode(
+          JSON.stringify({
+            ...state,
+            accounts: state.accounts.map(encodeModelOrigins),
+          }),
+        ),
+      ),
     ),
   );

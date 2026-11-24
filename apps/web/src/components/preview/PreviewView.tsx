@@ -1,3 +1,4 @@
+import { isElectron } from "~/env";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
@@ -912,13 +913,15 @@ export function PreviewView({
     let submitted = false;
     pickActiveRef.current = pickRequest;
     setPickActive(true);
-    // The guest learns only the dictation chords, never the whole keybinding config.
-    const voice: DesktopPreviewAnnotationVoiceConfig = {
-      sessionId: randomUUID(),
-      shortcuts: effectiveShortcutsForCommand(keybindings, "composer.dictation", {
-        context: { previewFocus: true, previewOpen: true, editableFocus: true },
-      }),
-    };
+    // Scient owns desktop dictation. The web preview forwards only its dictation chords.
+    const voice: DesktopPreviewAnnotationVoiceConfig | null = isElectron
+      ? null
+      : {
+          sessionId: randomUUID(),
+          shortcuts: effectiveShortcutsForCommand(keybindings, "composer.dictation", {
+            context: { previewFocus: true, previewOpen: true, editableFocus: true },
+          }),
+        };
     setAnnotationVoice(voice);
     const finishPick = () => {
       const isCurrentPick = pickActiveRef.current === pickRequest;
@@ -949,7 +952,7 @@ export function PreviewView({
       // Main's WebContents.focus() cannot move the embedder's DOM focus into a guest, so key
       // presses would stay in the app; only focusing the <webview> element hands them to the page.
       focusPreviewWebview(runtimeTabId);
-      const result = await bridge.pickElement(runtimeTabId, voice);
+      const result = await bridge.pickElement(runtimeTabId, voice ?? undefined);
       if (!result || pickRequest.cancelled) return;
       // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
       if (pickActiveRef.current === pickRequest) {
@@ -1080,7 +1083,7 @@ export function PreviewView({
       data-thread-key={scopedThreadKey(threadRef)}
       data-preview-view
     >
-      {pickActive && runtimeTabId && annotationVoice ? (
+      {!isElectron && pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech
           key={annotationVoice.sessionId}
           threadRef={threadRef}

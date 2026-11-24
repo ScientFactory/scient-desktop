@@ -26,11 +26,9 @@ export function CustomModelRowActions({
   busy,
   testing,
   statuses,
-  keyMissing,
   testAgents,
   notice,
   onCheckAgain,
-  onReenterKey,
   onTest,
 }: {
   busy: boolean;
@@ -38,13 +36,10 @@ export function CustomModelRowActions({
   testing: boolean;
   /** Each attached agent's status label, when it has one. */
   statuses: ReadonlyArray<ModelConnectionStatusKind | undefined>;
-  /** An agent reports the connection's saved key missing (see `connectionKeyMissing`). */
-  keyMissing: boolean;
   /** Agents the model can be tested through (see `modelTestAgents`). */
   testAgents: ReadonlyArray<{ readonly id: ProviderInstanceId; readonly name: string }>;
   notice: CustomModelTestNotice | null;
   onCheckAgain: () => void;
-  onReenterKey: () => void;
   onTest: (agent: ProviderInstanceId) => void;
 }) {
   const gt = useGT();
@@ -53,12 +48,6 @@ export function CustomModelRowActions({
       {statuses.some((kind) => kind === "needs-setup" || kind === "check-agent") ? (
         <Button size="xs" variant="ghost" disabled={busy} onClick={onCheckAgain}>
           <T>Check again</T>
-        </Button>
-      ) : null}
-      {/* The key belongs to the connection: whatever any agent's status says, only this restores it. */}
-      {keyMissing ? (
-        <Button size="xs" variant="ghost" disabled={busy} onClick={onReenterKey}>
-          <T>Re-enter key</T>
         </Button>
       ) : null}
       {testAgents.length > 0 && notice && !notice.error ? (

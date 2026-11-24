@@ -61,7 +61,11 @@ const makeAntigravityVoiceTranscriptCorrectionEffect = Effect.fn(
         const toolAttempted = yield* Ref.make(false);
         const result = yield* session
           .prompt({
-            text: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
+            text: buildVoiceTranscriptCorrectionPrompt(
+              input.transcript,
+              input.language,
+              input.hints,
+            ),
             onEvent: (event) =>
               event._tag === "ToolCall"
                 ? Ref.set(toolAttempted, true).pipe(Effect.andThen(session.cancel))

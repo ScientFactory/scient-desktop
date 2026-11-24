@@ -614,6 +614,43 @@ jobs:
         if: steps.chromium_cache.outputs.cache-hit != 'true'
         run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
 
+      # SCIENT-FORK:START — transcription decodes audio with the host's ffmpeg, as the server
+      # does. A pinned static build, checked and cached: apt on these runners took up to
+      # five minutes and sometimes longer.
+      - name: Cache ffmpeg
+        id: ffmpeg_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/scient-ffmpeg
+          key: ffmpeg-6.0.1-amd64-static-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install ffmpeg
+        env:
+          FFMPEG_URL: https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-6.0.1-amd64-static.tar.xz
+          FFMPEG_SHA256: 28268bf402f1083833ea269331587f60a242848880073be8016501d864bd07a5
+        run: |
+          dir="$HOME/.cache/scient-ffmpeg"
+          if [ ! -x "$dir/ffmpeg" ] || [ ! -x "$dir/ffprobe" ]; then
+            archive="$RUNNER_TEMP/ffmpeg.tar.xz"
+            for attempt in 1 2 3; do
+              url="$FFMPEG_URL"
+              if (( attempt > 1 )); then
+                url="$url?retry=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$attempt"
+              fi
+              if curl -fsSL --max-time 80 -o "$archive" "$url" &&
+                echo "$FFMPEG_SHA256  $archive" | sha256sum -c -; then
+                break
+              fi
+            done
+            echo "$FFMPEG_SHA256  $archive" | sha256sum -c - >/dev/null
+            mkdir -p "$dir"
+            tar -xJf "$archive" -C "$dir" --strip-components=1 \
+              ffmpeg-6.0.1-amd64-static/ffmpeg ffmpeg-6.0.1-amd64-static/ffprobe
+          fi
+          "$dir/ffmpeg" -hide_banner -version | head -n 1
+          echo "$dir" >> "$GITHUB_PATH"
+      # SCIENT-FORK:END
+
       - name: Install missing Chromium system dependencies
         run: |
           browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)

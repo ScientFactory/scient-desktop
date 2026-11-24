@@ -61,6 +61,23 @@ describe("connection management", () => {
     );
     return { onSave, onClose };
   }
+  it("warns that redirects can forward a dedicated Anthropic key", async () => {
+    await using _screen = await _fixtureRender(
+      <CustomModelConnectionDialog
+        connection={{ ...connection, protocol: "anthropic-messages" }}
+        revision={7}
+        dedicatedKey
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+      { router: false },
+    );
+    expect(document.body.textContent).toContain(
+      "A redirect can send even a dedicated key to another server.",
+    );
+  });
+
   async function change(selector: string, value: string) {
     const input = document.querySelector<HTMLInputElement>(selector)!;
     await act(() => {
@@ -139,7 +156,7 @@ describe("connection management", () => {
     await _setupFixture0(_fixture);
 
     await render(_fixture, false, true);
-    expect(document.body.textContent).toContain("Saved key missing. Re-enter it");
+    expect(document.body.textContent).toContain("Saved key unavailable");
     expect(document.body.textContent).not.toContain("Key ending in");
   });
 });

@@ -8,6 +8,7 @@ import {
   type TextGeneratorModel,
   textGeneratorForSelection,
 } from "@t3tools/contracts";
+import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Context from "effect/Context";
@@ -91,7 +92,14 @@ export const make = Effect.gen(function* () {
       const label = generatorLabel(config);
       return connect(config).pipe(
         Effect.flatMap((connection) =>
-          driver.generate(connection, request.modelSelection.model, request.prompt),
+          driver.generate(
+            connection,
+            request.modelSelection.model,
+            request.prompt,
+            request.structuredCorrection === "initial"
+              ? toJsonSchemaObject(request.outputSchema)
+              : undefined,
+          ),
         ),
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.mapError(

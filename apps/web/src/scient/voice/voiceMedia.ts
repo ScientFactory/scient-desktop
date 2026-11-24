@@ -5,10 +5,20 @@
 export async function acquireCurrentMicrophone(
   mediaDevices: Pick<MediaDevices, "getUserMedia">,
   isCurrent: () => boolean,
+  microphoneId = "",
 ): Promise<MediaStream | null> {
-  const stream = await mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-  });
+  const audio = { channelCount: 1, echoCancellation: true, noiseSuppression: true };
+  let stream: MediaStream;
+  try {
+    stream = await mediaDevices.getUserMedia({
+      audio: microphoneId ? { ...audio, deviceId: { exact: microphoneId } } : audio,
+    });
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    if (!microphoneId || (name !== "OverconstrainedError" && name !== "NotFoundError")) throw error;
+    if (!isCurrent()) return null;
+    stream = await mediaDevices.getUserMedia({ audio });
+  }
   if (isCurrent()) return stream;
   for (const track of stream.getTracks()) track.stop();
   return null;

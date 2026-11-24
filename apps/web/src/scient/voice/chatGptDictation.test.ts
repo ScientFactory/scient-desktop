@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   chatGptDictationInstance,
+  resolveChatGptConnection,
   chatGptDictationUnavailableMessage,
   makeChatGptDictationTranscriber,
 } from "./chatGptDictation.ts";
@@ -142,7 +143,11 @@ describe("makeChatGptDictationTranscriber", () => {
     await expect(transcriber.transcribe(request)).resolves.toEqual({ text: "שלום" });
     expect(run).toHaveBeenCalledWith({
       environmentId,
-      input: { instanceId: "scient", audioBase64: "UklGRg==", language: "he" },
+      input: {
+        selection: { kind: "chatgpt", instanceId: "scient" },
+        audioBase64: "UklGRg==",
+        language: "he",
+      },
     });
   });
 
@@ -156,5 +161,19 @@ describe("makeChatGptDictationTranscriber", () => {
     await expect(transcriber.transcribe(request)).rejects.toThrow(
       "Sign in to ChatGPT in Scient Agent or Codex to dictate with ChatGPT.",
     );
+  });
+});
+
+it("follows the active Codex connection, requires a choice if ambiguous and keeps a signed-out pin", () => {
+  const first = codex("first", "chatgpt");
+  const second = codex("second", "chatgpt");
+  expect(resolveChatGptConnection([first, second]).ambiguous).toBe(true);
+  expect(resolveChatGptConnection([first, second], null, first.instanceId).selected).toEqual(first);
+  const reauth = codex("second", undefined);
+  expect(
+    resolveChatGptConnection([first, reauth], second.instanceId, first.instanceId),
+  ).toMatchObject({
+    ready: false,
+    selected: reauth,
   });
 });

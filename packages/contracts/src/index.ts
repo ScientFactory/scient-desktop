@@ -205,3 +205,4 @@ export * from "./scient/workspaceEntryChanges.ts";
 // SCIENT-FORK:START — Scient chat-only rewind without a file snapshot (new file, no upstream edits).
 export * from "./scient/checkpointRewind.ts";
 // SCIENT-FORK:END
+export * from "./transcriptionWords.ts";

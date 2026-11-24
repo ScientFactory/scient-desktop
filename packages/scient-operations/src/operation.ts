@@ -6,6 +6,7 @@ export type OperationCapability =
   | "preview"
   | "documents:build"
   | "compute"
+  | "transcription"
   | "skills:read"
   /** Save and read the user's own (personal) skills. */
   | "skills:write"

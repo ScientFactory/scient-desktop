@@ -49,7 +49,6 @@ const workspaceFiles = [
   "packages/scient-conversation/package.json",
   "packages/scient-skills/package.json",
   "packages/scient-sources/package.json",
-  "packages/scient-voice/package.json",
   "packages/shared/package.json",
   "packages/ssh/package.json",
   "packages/tailscale/package.json",

@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import * as NodeCrypto from "node:crypto";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -286,7 +288,8 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const download: SpeechModelStore["Service"]["download"] = Effect.fn("SpeechModelStore.download")(
+  const scope = yield* Effect.scope;
+  const install: SpeechModelStore["Service"]["download"] = Effect.fn("SpeechModelStore.download")(
     function* (model, progress = {}) {
       yield* Effect.annotateCurrentSpan({ modelId: model.id });
       const finalPath = modelPath(model);
@@ -337,6 +340,66 @@ const make = Effect.gen(function* () {
         ),
       );
     },
+  );
+
+  type Transfer = Effect.Success<ReturnType<typeof install>>;
+  type TransferError = Effect.Error<ReturnType<typeof install>>;
+  type TransferFiber = Fiber.Fiber<Transfer, TransferError>;
+  type TransferEntry = {
+    listeners: Set<SpeechModelDownloadProgress>;
+    downloaded?: number;
+    verifying?: boolean;
+    fiber: Deferred.Deferred<TransferFiber>;
+  };
+  const transfers = new Map<string, TransferEntry>();
+  const download: SpeechModelStore["Service"]["download"] = Effect.fn("SpeechModelStore.download")(
+    (model, progress) =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const key = [modelPath(model), model.revision, model.sha256].join("\0");
+          const listener = { ...progress };
+          let entry = transfers.get(key);
+          if (!entry) {
+            const transfer: TransferEntry = {
+              listeners: new Set([listener]),
+              fiber: Deferred.makeUnsafe<TransferFiber>(),
+            };
+            transfers.set(key, transfer);
+            const fiber = yield* install(model, {
+              onProgress: (downloaded) => {
+                transfer.downloaded = downloaded;
+                transfer.verifying = false;
+                for (const waiter of transfer.listeners) waiter.onProgress?.(downloaded);
+              },
+              onVerificationStart: () => {
+                transfer.verifying = true;
+                for (const waiter of transfer.listeners) waiter.onVerificationStart?.();
+              },
+            }).pipe(Effect.interruptible, Effect.forkIn(scope));
+            fiber.addObserver(() => {
+              if (transfers.get(key) === transfer) transfers.delete(key);
+            });
+            yield* Deferred.succeed(transfer.fiber, fiber);
+            entry = transfer;
+          } else {
+            entry.listeners.add(listener);
+            if (entry.downloaded !== undefined) listener.onProgress?.(entry.downloaded);
+            if (entry.verifying) listener.onVerificationStart?.();
+          }
+          const transfer = entry;
+          const fiber = yield* Deferred.await(transfer.fiber);
+          return yield* restore(Fiber.join(fiber)).pipe(
+            Effect.ensuring(
+              Effect.suspend(() => {
+                transfer.listeners.delete(listener);
+                if (transfer.listeners.size > 0) return Effect.void;
+                if (transfers.get(key) === transfer) transfers.delete(key);
+                return Fiber.interrupt(fiber);
+              }),
+            ),
+          );
+        }),
+      ),
   );
 
   return SpeechModelStore.of({

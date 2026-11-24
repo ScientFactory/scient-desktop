@@ -98,8 +98,8 @@ jobs:
           const stage = path.join(process.env.STAGE_PARENT, roots[0], 'app');
           const manifest = path.join(stage, 'package.json');
           const pkg = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-          const filters = new Set(['whisper-runtime', 'resource-monitor', 'synctex-runtime', 'kde-capture', 'hyprland-capture'].flatMap(name => ['!apps/desktop/prod-resources/' + name, '!apps/desktop/prod-resources/' + name + '/**/*']));
-          assert.equal(pkg.build.files.filter(file => filters.has(file)).length, 10);
+          const filters = new Set(['resource-monitor', 'synctex-runtime', 'kde-capture', 'hyprland-capture'].flatMap(name => ['!apps/desktop/prod-resources/' + name, '!apps/desktop/prod-resources/' + name + '/**/*']));
+          assert.equal(pkg.build.files.filter(file => filters.has(file)).length, filters.size);
           pkg.build.files = pkg.build.files.filter(file => !filters.has(file));
           const config = path.join(process.env.STAGE_PARENT, 'baseline-config.json');
           // Keep the production output directory: electron-builder excludes it
@@ -124,8 +124,14 @@ jobs:
           mkdir -p "${{ runner.temp }}/linux-clean-extracted" "${{ runner.temp }}/linux-baseline-extracted"
           (cd "${{ runner.temp }}/linux-clean-extracted" && "${{ runner.temp }}"/linux-clean/*.AppImage --appimage-extract > /dev/null)
           (cd "${{ runner.temp }}/linux-baseline-extracted" && "${{ runner.temp }}"/linux-baseline/*.AppImage --appimage-extract > /dev/null)
+      - name: Cache verified speech probe inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/scient-speech-probe
+          key: speech-probe-v1-${{ hashFiles('apps/server/src/speech/catalog.json', 'apps/server/src/speech-packaging-probe.ts') }}
       - name: Qualify extracted package, native helpers and registration; measure compressed saving
         env:
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
           QUALIFICATION_PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           dbus-run-session -- xvfb-run --auto-servernum node scripts/qualify-linux-packaged-runtime.mjs \

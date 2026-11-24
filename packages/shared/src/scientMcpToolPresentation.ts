@@ -10,7 +10,8 @@ export type ScientMcpToolSummaryAction =
   | "scient-documents"
   | "scient-overleaf"
   | "scient-custom-models"
-  | "scient-compute";
+  | "scient-compute"
+  | "scient-transcription";
 
 function tool(
   labels: T3McpToolDefinition["labels"],
@@ -234,6 +235,26 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_results_markdown: tool(["Link", "Linking", "Linked", "a result"], "scient-compute"),
   t3_results_check: tool(["Check", "Checking", "Checked", "linked results"], "scient-compute"),
   t3_compute_sessions: tool(["List", "Listing", "Listed", "compute sessions"], "scient-compute"),
+  t3_transcription_engines: tool(
+    ["List", "Listing", "Listed", "transcription engines"],
+    "scient-transcription",
+  ),
+  t3_transcription_start: tool(
+    ["Start", "Starting", "Started", "a transcription"],
+    "scient-transcription",
+  ),
+  t3_transcription_status: tool(
+    ["Check", "Checking", "Checked", "a transcription"],
+    "scient-transcription",
+  ),
+  t3_transcription_cancel: tool(
+    ["Cancel", "Canceling", "Canceled", "a transcription"],
+    "scient-transcription",
+  ),
+  t3_transcription_list: tool(
+    ["List", "Listing", "Listed", "transcriptions"],
+    "scient-transcription",
+  ),
   t3_compute_variables: tool(["Read", "Reading", "Read", "session variables"], "scient-compute"),
   t3_compute_control: tool(["Control", "Controlling", "Controlled", "a session"], "scient-compute"),
   t3_compute_setup: tool(["Set up", "Setting up", "Set up", "Scientific Python"], "scient-compute"),

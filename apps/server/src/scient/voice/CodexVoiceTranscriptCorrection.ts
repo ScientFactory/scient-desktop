@@ -108,7 +108,11 @@ const makeCodexVoiceTranscriptCorrectionEffect = Effect.fn(
           }),
           cwd: tempDirectory,
           environment: providerEnvironment,
-          prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
+          prompt: buildVoiceTranscriptCorrectionPrompt(
+            input.transcript,
+            input.language,
+            input.hints,
+          ),
         });
 
         const outputInfo = yield* fileSystem.stat(outputPath).pipe(

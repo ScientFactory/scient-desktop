@@ -1,281 +1,36 @@
-# Scient local voice architecture
+# Scient dictation
 
-Status: Scient-owned desktop feature. It is not an upstream T3 subsystem and
-does not change T3 provider, thread, project, persistence, cloud, or mobile
-contracts.
+The Scient composer and citation controls capture audio and deliver text to the
+draft that started the request. The desktop bridge requests operating-system
+microphone permission before Chromium capture. The local route sends audio to
+the speech service on the desktop environment. The speech service shares its
+native worker and installed model catalog with recordings.
 
-## Boundaries
+The Transcription settings page manages engine choices, models, microphone
+input, and cleanup. Words supply recognition hints and spelling preferences.
+Cloud dictation uses a configured account-bound engine. ChatGPT dictation
+uses the selected eligible Codex connection.
 
-- `packages/scient-voice` owns the pinned model manifest, model verification,
-  WAV validation, the whisper.cpp loopback runtime, serialization,
-  cancellation, timeouts, and lifecycle tests. Its engine API is explicitly
-  model-aware and imports neither React nor Electron.
-- `apps/desktop/src/app/DesktopVoice.ts` owns model selection and lifecycle
-  orchestration over one manager per manifest entry and one shared native
-  runtime. IPC projects internal paths out of model state before returning it
-  to the renderer. The selected model is persisted in desktop settings.
-- `apps/web/src/scient/voice` owns capture, the Electron-client adapter,
-  operation guards, and small composer presentation components. The UI depends
-  on `VoiceTranscriptionClient`, not directly on whisper.cpp.
-- `packages/contracts/src/voice.ts` is the bounded serializable IPC contract.
-  The main-process IPC decoder rejects oversized base64 before the core
-  allocates its decoded audio buffer, and the core independently enforces the
-  10 MiB decoded-audio limit.
-- `apps/server/src/scient/voice/` owns optional provider transcript correction.
-  It resolves the selected server provider, requires an enabled, installed,
-  ready, authenticated instance with an advertised correction capability, and
-  applies a bounded provider-specific adapter. `packages/contracts/src/voice.ts`
-  also owns the correction request/result/failure contract; client settings
-  keep correction disabled by default.
-- Dictation with ChatGPT runs on the server through a provider instance's
-  `voiceDictation` seam (`voice.dictateWithChatGpt`). Scient Agent runs
-  `scient-agent dictate` with its own ChatGPT sign-in
-  (`provider/scient/ScientAgentDictation.ts`). Codex is asked for its ChatGPT
-  access token over a one-shot app-server connection (`getAuthStatus`), and
-  the server uploads the WAV to ChatGPT's transcription service with it,
-  refreshing once after a 401 (`scient/voice/CodexChatGptDictation.ts`). The
-  token is never stored or sent to the client.
+After a successful catalog dictation, Transcription settings can offer to
+remove previous local model files from the desktop profile. Removal requires
+an explicit action on that card.
 
-The direct inherited-host changes are deliberately narrow: one composer mount,
-one ready-model-only citation-comment mount, footer busy-state layout, one
-IPC method-group loop, one preload-adapter mount, and one call from the desktop
-artifact builder into the Scient-owned runtime staging adapter. Voice behavior
-does not live in `ChatComposer.tsx`, the inherited preload, or the artifact
-orchestrator.
+See [Transcription](./transcription.md) for the worker and recording job lifecycle.
 
-Voice uses the host footer's surface and normal layout. While busy, the composer
-retains the provider icon, hides and inerts ordinary toolbar actions, and stays
-expanded. The citation microphone shares the idle card's right-side actions.
-Both hosts keep the voice control mounted as its presentation changes. Recording
-uses a centered lane beside a reserved action rail. Permission, transcription
-and correction labels align with the waveform's left edge inside that lane,
-using softer placeholder-colored, regular-weight text.
+## Capture and delivery
 
-The waveform retains 112 recent levels in fixed-width bars with fixed gaps.
-The lane reserves its full width, but bars appear progressively from left to
-right as audio arrives. The worklet emits 20 measurements per second at the
-actual sample rate, rounding chunks to whole samples. The full-width waveform
-fills in about 5.6 seconds. Narrow viewports fill sooner and clip the oldest bars from the left
-as soon as their visible width is filled; new speech stays visible at the right.
-Audio capture retains all frames independently of the display history.
-Waveform updates follow incoming worklet messages rather than a continuous
-animation loop. Inline errors have a bounded width and ellipsis with the full
-human-readable message available on hover. Presentation strips internal error
-names and uses concise copy for recording-duration validation.
+Each recording owns its microphone stream and audio graph. Cancelling
+discards the clip. Stopping flushes the AudioWorklet's final partial frame
+before closing the graph. A cancelled permission prompt or setup operation
+cannot start a recording when it finishes later.
 
-## Dictation engines
+Insert and Send commit the recorder's final flush, the language and correction
+settings, and the environment-scoped draft target. The window-level processing
+job keeps running after navigation and can deliver only to the draft that
+started it. Send submits through that draft's still-mounted composer. If the
+composer is gone, the transcript is saved to the draft for review. Citation
+comments and question answers end their dictation when the control unmounts.
 
-The client setting `voiceDictationEngine` is `auto` (the default), `local` or
-`chatgpt`. `auto` means nothing has been chosen yet:
-
-- When an enabled Scient Agent (0.1.9 or newer) or Codex in the environment is
-  signed in to ChatGPT, the microphone opens the setup picker with ChatGPT
-  first and its OpenAI retention notice, then the local models. A model already
-  downloaded is listed as ready and is only selected, not downloaded again.
-  No audio leaves the computer until ChatGPT is chosen; choosing it saves
-  `chatgpt`, and a local model that becomes ready from that picker saves
-  `local`. This includes people who set up Whisper before ChatGPT dictation
-  existed: they never chose local over ChatGPT, so they are asked once.
-- Without such a sign-in, `auto` behaves as `local` did: a ready model
-  dictates, otherwise the picker offers the local models.
-
-An explicit `chatgpt` never falls back to Whisper: a missing sign-in asks for
-one, and an outdated Scient Agent asks for an update rather than being offered.
-The web client prefers a signed-in Scient Agent new enough to dictate, then a
-Codex signed in with ChatGPT. Client settings are saved whole, so reset
-revision 2 (`scientClientSettingsResets.ts`) turns a saved `local` from before
-`auto` existed back into `auto`. Settings → Voice shows a ready model as in use
-under `auto` only while ChatGPT is not on offer, and the citation-comment
-microphone stays hidden until the choice is made in the composer.
-
-## Reliability invariants
-
-- A generation token invalidates permission prompts, model setup and recording
-  that complete after cancel, dismiss, unmount, or a newer operation. Leaving a
-  thread while recording or awaiting microphone access cancels and releases the
-  microphone; a model download keeps going but cannot start recording for a
-  composer that is gone.
-- Pressing Insert or Send commits the dictation. The stop click captures, in the
-  same task, the recorder's final flush, the language and correction settings,
-  and the origin: the composer draft's environment-scoped target. A window-level
-  job (`scient/voice/voiceProcessing.ts`) then owns flush, transcription and
-  correction, so navigating away does not cancel it. The composer for that
-  draft shows the job again when it returns; another thread's composer,
-  including the same thread id in another environment, never does.
-- Committed dictation lands only in its origin draft
-  (`scient/voice/voiceDraftDelivery.ts`), never in whichever composer is
-  visible. If the origin's composer is mounted and shows its ordinary draft, the
-  text is inserted through it; Send then submits through that same composer in
-  the next frame, after re-checking it is still mounted and not showing a
-  question or approval. Otherwise the text is appended to the stored draft,
-  including anything typed there meanwhile, and a notice says so: "Transcript
-  added to …", or for Send "Transcript saved to …; Message not sent". Send never
-  completes in the background. A closed new-thread draft is not recreated; the
-  notice offers to copy the transcript.
-- Citation comments and question answers keep a local lifecycle: their
-  dictation ends with the control, as before, and is never committed to a draft.
-- Each new renderer transcription carries an immutable request ID through IPC.
-  Cancellation only aborts the matching active request; stale and unknown IDs
-  are harmless. Legacy cancellation can only affect an identity-less request.
-  New renderers on older hosts invalidate local results without issuing global
-  cancellation; already-running host inference may finish in the background.
-- Automatic-stop completion is bound to the recording generation. Cancel or
-  unmount during the final audio flush suppresses delivery of that clip. An
-  explicit stop's flush is not cut short by unmount.
-- The Whisper adapter requests segment text and concatenates it verbatim,
-  omitting the server's synthetic separator newlines. Whitespace inside segment
-  text is preserved; optional correction runs after this normalization. Appending
-  dictation preserves the existing draft, including intentional trailing spacing.
-- Every recorder start owns its microphone stream and audio graph, so cleanup
-  from an older start cannot stop a newer recording.
-- A normal stop flushes the AudioWorklet's final partial frame before the graph
-  is closed. Cancel intentionally discards it.
-- The recorder requests a 24 kHz AudioContext. If the platform chooses another
-  hardware rate, the encoder uses area-filtered downsampling rather than
-  alias-prone point sampling.
-- The shared native runtime serializes inference, while the desktop allows one
-  catalog download at a time. Transcriptions queue in arrival order: a newer
-  request, from any window, waits instead of cancelling the one in progress, and
-  cancelling a queued request removes it before it reaches the engine. Model
-  removal rejects conflicting model mutations, cancels active
-  inference, and stops the helper that may hold the model open before deleting
-  files.
-- The helper binds to loopback on a random port and a cryptographically random
-  request path. It receives only an allowlist of OS environment variables, not
-  provider or cloud credentials.
-- Recorded audio never enters provider correction. Correction receives only the
-  bounded local transcript text and optional language preference. The request
-  is limited to 20,000 characters and a 12-second server window, and requires
-  the selected provider to be ready and authenticated.
-- Transcript correction is fail-open: the exact local transcript remains
-  visible and usable while correction is pending, and every unsupported,
-  unauthenticated, unavailable, timed-out, malformed, or provider-error path
-  falls back to it.
-- A model is trusted only after size, GGML header, and SHA-256 verification.
-  The first status check in each app process re-hashes the installed model;
-  later checks reuse a size/mtime cache for that process.
-- Model downloads are cancellable and resumable. App shutdown aborts an active
-  download and waits for the native helper to exit. The desktop performs a
-  free-space preflight before downloading and returns a safe error when the
-  device cannot accommodate the model plus working room.
-
-## Model management
-
-The catalog currently contains three local multilingual Whisper artifacts:
-
-- `Multilingual Small` (`q5_1`, about 181 MiB): the migration-safe default,
-  faster and lighter.
-- `Multilingual Medium` (`q5_0`, about 514 MiB): higher expected accuracy with
-  higher memory and compute requirements.
-- `Multilingual Turbo` (Large-v3 Turbo `q5_0`, about 547 MiB): the most capable
-  option, reserved by the recommendation heuristic for powerful computers.
-
-The desktop recommends Turbo on a native machine with at least ten available
-logical CPUs, 24 GiB RAM, and enough free space. It recommends Medium with at
-least eight available logical CPUs and 16 GiB RAM; otherwise it recommends
-Small. This is a conservative heuristic, not a benchmark. The recommendation
-is advisory and can be changed in Settings → Voice.
-
-Settings exposes each model's download, resumable progress, active selection,
-and removal actions. Removing the selected model first switches to another
-verified installed model when one exists; otherwise voice returns to setup.
-Existing installations retain any valid saved selection. If that selection is
-missing, the sole verified installed model is selected without downloading it
-again; multiple installed models remain an explicit user choice.
-
-Citation comments consume this existing setup rather than providing another
-model-management surface. Their microphone is absent until the desktop reports
-a selected, verified, ready model. The comment control revalidates readiness
-before recording and disappears without a placeholder if setup is missing or
-cannot be verified; first-use choice, downloads, repair, and removal remain in
-the composer and Settings → Voice.
-
-## Runtime provenance and packaging
-
-Signed macOS builds include `NSMicrophoneUsageDescription` and the hardened
-runtime `com.apple.security.device.audio-input` entitlement on both the main
-app and its Electron helpers. The main app retains its additional passkey
-entitlements when configured; helpers use the shared baseline entitlement file.
-Before capture, the desktop voice bridge requests native macOS consent if it is
-not determined. A denial offers System Settings recovery; a restriction reports
-that the Mac's policy must be changed. Cancellation or unmount while the native
-prompt is open must prevent recording when that prompt later resolves. Other
-platforms and older desktop bridges retain the renderer permission flow.
-
-Packaging and mocked permission tests do not prove the macOS consent dialog.
-Release validation requires a signed app with fresh microphone permission state,
-covering approval and recording, denial and recovery, and an existing grant.
-
-`scripts/stage-whisper-runtime.ts` stages whisper.cpp `v1.9.1` from commit
-`f049fff95a089aa9969deb009cdd4892b3e74916`. Source and supported prebuilt
-archives have pinned SHA-256 values. The script asserts the private
-`--request-path` behavior from source, preserves the upstream MIT license, and
-writes a per-file provenance receipt.
-
-macOS is built from pinned source with Accelerate and embedded Metal support,
-with macOS 12 as the explicit helper deployment target. On macOS 11 the voice
-runtime fails closed before launch rather than invoking unavailable Metal APIs.
-Linux arm64/x64 use verified upstream archives. There is no verified Windows
-arm64 runtime, so that artifact fails closed instead of silently shipping voice
-without a helper. Desktop packaging stages the runtime as an external resource;
-native executables are never stored in Git.
-
-Windows x64 is built from pinned source with MSVC so that it needs nothing
-Windows lacks. The upstream Windows archive needed the Visual C++
-Redistributable, including its OpenMP library (`vcomp140.dll`), which many
-machines do not have; voice then failed to start. The build uses ggml's own
-thread pool instead of OpenMP, links the C and C++ runtime into each file, and
-keeps one CPU backend per instruction-set level so each machine loads the
-fastest one it supports. Staging reads every staged executable and DLL and
-fails if one needs a library that is neither part of Windows nor staged beside
-it. Windows packaging CI then transcribes a reference recording with the
-installed runtime through the app's own runtime owner
-(`scripts/qualify-whisper-runtime.mjs`).
-
-For a development checkout, run:
-
-```text
-pnpm voice:runtime:stage
-```
-
-On Windows this needs Visual Studio 2022 or later with the C++ desktop workload
-(Build Tools are enough). Without them, staging stops with that message; a
-runtime another checkout on the machine has staged is still used.
-
-### Development apps on one machine
-
-Every development app has its own state, so each one would otherwise build the
-helper and download its models again. Development apps share both through
-`~/.scient-next/dev-shared/voice/`; a released app never reads or writes it.
-
-- **Helper.** `pnpm voice:runtime:stage` copies the helper from
-  `whisper-runtime/<version>-<commit>-<platform>-<arch>/` when another checkout
-  has already staged this exact pinned build, and adds what it builds. The dev
-  launcher does the same copy before each start and never builds. An entry is
-  used only if its receipt names this version, commit, platform and
-  architecture and every file matches the recorded size and checksum.
-  Packaging does not use this folder.
-- **Models.** A model found in `models/` is copied into the app's own model
-  folder and verified exactly like a download before it is installed; a model
-  an app installs is copied there. Models are never used in place, so removing
-  or repairing one in a dev app affects only that app. A removed model stays
-  removed until that app is restarted or the model is requested again.
-- **Choice.** A dev app with several models and no choice of its own starts
-  from the model last chosen in another dev app (`selected-model.json`).
-
-Microphone permission is granted by macOS to each app identity and cannot be
-shared: a new development app asks once.
-
-## Deliberate exclusions
-
-M1 does not run speculative background benchmarks, continuous partial
-transcriptions, cloud audio transcription, or a mobile voice adapter. Those
-would add different privacy, runtime, and stale-draft failure boundaries. The
-only provider path is the explicit, default-off correction of already-local
-transcript text described above.
-
-The default multilingual Small quantized model keeps setup bounded, but model
-accuracy remains a separate product-quality gate. The manifest-driven model
-boundary allows additional local models without changing capture, IPC,
-composer, or runtime lifecycle code; no larger-model accuracy claim is implied
-by this implementation.
+Provider correction receives transcript text and an optional language
+preference. The original transcript remains available while correction runs
+and is delivered if correction fails.

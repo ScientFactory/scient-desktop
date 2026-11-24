@@ -512,6 +512,12 @@ const RPC_AGGREGATES = {
   // SCIENT-FORK:START — Scient Agent voice RPCs: live calls and ChatGPT dictation.
   [WS_METHODS.liveVoiceCall]: "liveVoice",
   [WS_METHODS.liveVoiceMute]: "liveVoice",
+  [WS_METHODS.voiceDictate]: "voice",
+  [WS_METHODS.voiceCloudChoices]: "voice",
+  [WS_METHODS.voiceSavedKeys]: "voice",
+  [WS_METHODS.voiceConfigureCloud]: "voice",
+  [WS_METHODS.voiceChooseCloud]: "voice",
+  [WS_METHODS.voiceDictationWait]: "voice",
   [WS_METHODS.voiceDictateWithChatGpt]: "voice",
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
@@ -533,6 +539,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverSaveCustomModel]: "server",
   [WS_METHODS.serverRemoveCustomModel]: "server",
   [WS_METHODS.serverTestCustomModel]: "server",
+  [WS_METHODS.voiceManageWords]: "voice",
+  [WS_METHODS.voiceReadWords]: "voice",
   [WS_METHODS.voiceCorrectTranscript]: "voice",
   [WS_METHODS.subscribeAnalysisRuns]: "subscribe",
   [WS_METHODS.subscribeDocumentBindingChanges]: "documents",

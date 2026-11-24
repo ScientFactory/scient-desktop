@@ -269,16 +269,18 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("persists and reloads the selected voice model", () =>
+  it.effect("reads the legacy selected voice model for migration", () =>
     withSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setVoiceSelectedModelId("whisper-large-v3-turbo-multilingual-q5_0");
+        yield* writeSettingsPatch({
+          voiceSelectedModelId: "whisper-large-v3-turbo-multilingual-q5_0",
+        });
         assert.equal(
-          (yield* settings.get).voiceSelectedModelId,
+          (yield* settings.load).voiceSelectedModelId,
           "whisper-large-v3-turbo-multilingual-q5_0",
         );
         assert.include(

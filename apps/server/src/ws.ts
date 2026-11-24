@@ -1,3 +1,4 @@
+import { TranscriptionJobs } from "./transcription/TranscriptionJobs.ts";
 import {
   GitCommandError,
   WsWorkspaceRpcGroup,
@@ -52,6 +53,8 @@ import {
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
   ProviderDriverKind,
@@ -355,6 +358,9 @@ import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcH
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
 // SCIENT-FORK: voice calls with a thread's Scient Agent, and dictation with its ChatGPT sign-in.
 import { makeLiveVoiceRpcHandlers } from "./scient/liveVoice/LiveVoiceRpcHandlers.ts";
+import { makeDictationRpcHandlers } from "./speech/DictationRpcHandlers.ts";
+import * as Speech from "./speech/SpeechService.ts";
+import * as SpeechCloud from "./transcription/CloudEngines.ts";
 import { makeChatGptDictationRpcHandlers } from "./scient/voice/ChatGptDictationRpcHandlers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
@@ -1613,6 +1619,10 @@ export const layerWsRpc = (
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: { readonly secretReferences: boolean },
+  speechEngines?: {
+    speech: Speech.SpeechService["Service"];
+    cloud: SpeechCloud.CloudEngines["Service"];
+  },
 ) =>
   Layer.unwrap(
     Effect.gen(function* () {
@@ -2086,6 +2096,7 @@ export const layerWsRpc = (
       const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
       const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
       const scientSettings = yield* ScientServerSettings;
+      const transcriptionJobs = yield* TranscriptionJobs;
       const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
         registry: providerRegistry,
         serverSettings,
@@ -2314,6 +2325,13 @@ export const layerWsRpc = (
           observeRpcStream,
           threadManagement,
           providerSessions: providerSessionsV2,
+          providerInstances,
+        }),
+        ...makeDictationRpcHandlers({
+          observeRpcEffect,
+          speech: speechEngines?.speech,
+          cloud: speechEngines?.cloud,
+          cloudChoices: speechEngines?.cloud,
           providerInstances,
         }),
         ...makeChatGptDictationRpcHandlers({ observeRpcEffect, providerInstances }),
@@ -3381,6 +3399,26 @@ export const layerWsRpc = (
                 Effect.forkScoped,
               ),
           ),
+        [WS_METHODS.voiceManageWords]: (input) => {
+          const operation = transcriptionJobs.manageWords(input);
+          return observeRpcEffect(
+            WS_METHODS.voiceManageWords,
+            input.projectId === undefined
+              ? operation
+              : authorizeEffect(
+                  AuthOrchestrationOperateScope,
+                  authorizeEffect(
+                    AuthFilesystemReadScope,
+                    authorizeEffect(AuthFilesystemWriteScope, operation),
+                  ),
+                ),
+            { "rpc.aggregate": "voice" },
+          );
+        },
+        [WS_METHODS.voiceReadWords]: (input) =>
+          observeRpcEffect(WS_METHODS.voiceReadWords, transcriptionJobs.readDictationWords(input), {
+            "rpc.aggregate": "voice",
+          }),
         [WS_METHODS.voiceCorrectTranscript]: (input) =>
           observeRpcEffect(
             WS_METHODS.voiceCorrectTranscript,
@@ -4502,6 +4540,34 @@ export const layerWsRpc = (
             papers: accountUserRuns.papers,
             plainKeys: accountPlainKeys,
             linkKey: linkAccountKey,
+            ...(speechEngines
+              ? {
+                  speechConsumers: Effect.gen(function* () {
+                    const configs = yield* speechEngines.cloud.execute({ action: "list" });
+                    const settings = yield* serverSettings.getSettings;
+                    const legacy = Object.entries(settings.legacySpeechAccountIds ?? {}).flatMap(
+                      ([provider, accountId]) =>
+                        accountId ? [{ accountId, label: `Legacy speech · ${provider}` }] : [],
+                    );
+                    return [
+                      ...legacy,
+                      ...(Array.isArray(configs)
+                        ? configs.flatMap((config) =>
+                            config.accountId
+                              ? [
+                                  {
+                                    accountId: config.accountId,
+                                    label: config.model,
+                                    engineId: config.id,
+                                  },
+                                ]
+                              : [],
+                          )
+                        : []),
+                    ];
+                  }).pipe(Effect.orElseSucceed(() => [])),
+                }
+              : {}),
             restoreKeptKeys: restoreKeptAgentKeys,
           }),
         ),
@@ -4519,6 +4585,8 @@ export const WS_RPC_SERVER_OPTIONS = {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const speech = yield* Speech.SpeechService;
+    const cloud = yield* SpeechCloud.CloudEngines;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
@@ -4608,6 +4676,7 @@ export const layer = Layer.unwrap(
               serverBrowser,
               reportProfiles,
               readSettingsClient(url.value),
+              { speech, cloud },
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.

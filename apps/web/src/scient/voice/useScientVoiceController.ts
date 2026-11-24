@@ -1,11 +1,9 @@
+import type { DictationVocabulary } from "@t3tools/contracts";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { msg } from "gt-react";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type {
   EnvironmentId,
-  VoiceModelDownloadProgress,
-  VoiceModelId,
-  VoiceModelsSnapshot,
   VoiceDictationEngine,
   VoiceLanguagePreference,
 } from "@t3tools/contracts";
@@ -15,7 +13,7 @@ import { randomUUID } from "../../lib/utils.ts";
 
 import { type VoiceRecorderErrorKind, useVoiceRecorder } from "./useVoiceRecorder.ts";
 import { SIGN_IN_TO_DICTATE_MESSAGE } from "./chatGptDictation.ts";
-import type { VoiceTranscriptionClient } from "./voiceClient.ts";
+import type { VoiceSetupClient, VoiceSetupSnapshot } from "./voiceClient.ts";
 import {
   deliverVoiceTranscriptToDraft,
   reportVoiceDraftFailure,
@@ -50,7 +48,8 @@ const modelSetupFailedMessage = () => m(msg("Voice setup didn't finish. Try agai
 const ARM_DELAY_MS = 250;
 
 interface VoiceControllerOptions {
-  readonly client: VoiceTranscriptionClient | null;
+  readonly client: VoiceSetupClient | null;
+  readonly requestMicrophoneAccess?: VoiceSetupClient["requestMicrophoneAccess"];
   readonly correctionClient?: VoiceTranscriptCorrectionClient | null;
   readonly correctionEnabled?: boolean;
   readonly languagePreference?: VoiceLanguagePreference;
@@ -59,6 +58,8 @@ interface VoiceControllerOptions {
    * ChatGPT beside the local models when a sign-in exists, and otherwise dictates locally.
    */
   readonly engine?: VoiceDictationEngine;
+  readonly loadVocabulary?: () => Promise<DictationVocabulary>;
+  readonly cloud?: VoiceJobTranscriber | null;
   readonly chatGpt?: VoiceJobTranscriber | null;
   /** Why ChatGPT can't dictate while `chatGpt` is null: a missing sign-in, or an old agent. */
   readonly chatGptUnavailableMessage?: string;
@@ -106,18 +107,19 @@ export function routeCompletedVoiceTranscription(
 
 export interface ScientVoiceController {
   readonly phase: VoicePhase;
+  readonly waitingForWorker: boolean;
   readonly levels: readonly number[];
   readonly elapsedMs: number;
   readonly errorMessage: string | null;
   readonly microphonePermissionDenied: boolean;
   readonly downloadPercent: number;
-  readonly modelSnapshot: VoiceModelsSnapshot | null;
+  readonly modelSnapshot: VoiceSetupSnapshot | null;
   /** The setup prompt offers ChatGPT beside the local models. */
   readonly chatGptOffered: boolean;
   activate: () => Promise<void>;
   /** Dictates with ChatGPT from the setup prompt, and keeps it as the engine. */
   chooseChatGpt: () => Promise<void>;
-  setupModel: (modelId?: VoiceModelId) => Promise<void>;
+  setupModel: (modelId?: string) => Promise<void>;
   dismissSetup: () => void;
   stop: (send: boolean) => Promise<void>;
   cancel: () => Promise<void>;
@@ -166,23 +168,26 @@ export function describeMicrophoneAccessRefusal(
     : m(msg("Microphone access is off. Enable Scient in System Settings, then restart Scient."));
 }
 
-function percent(progress: VoiceModelDownloadProgress | null): number {
+function percent(progress: { downloadedBytes: number; totalBytes: number } | null): number {
   if (!progress || progress.totalBytes <= 0) return 0;
   return Math.min(100, Math.round((progress.downloadedBytes / progress.totalBytes) * 100));
 }
 
-type RecordingEngine = "local" | "chatgpt";
+type RecordingEngine = "local" | "cloud" | "chatgpt";
 
 const engineClassOf = (engine: RecordingEngine) =>
-  engine === "chatgpt" ? ("chatgpt" as const) : ("local-whisper" as const);
+  engine === "chatgpt" ? "chatgpt" : engine === "cloud" ? "other" : "local-whisper";
 
 export function useScientVoiceController({
   client,
+  requestMicrophoneAccess: requestMicrophoneAccessOption,
   correctionClient = null,
   correctionEnabled = false,
   languagePreference = "auto",
   engine = "local",
+  loadVocabulary,
   chatGpt = null,
+  cloud = null,
   chatGptUnavailableMessage = SIGN_IN_TO_DICTATE_MESSAGE,
   onEngineChosen,
   environmentId,
@@ -191,8 +196,11 @@ export function useScientVoiceController({
   onTranscript,
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
+  // Not a parameter default: React Compiler cannot reorder a default that reads another parameter.
+  const requestMicrophoneAccess = requestMicrophoneAccessOption ?? client?.requestMicrophoneAccess;
   const recordAnalytics = useStableCallback(useRecordScientAnalytics());
   // The engine of the recording in progress, fixed when it starts.
+  const recordingTranscriberRef = useRef<VoiceJobTranscriber | null>(null);
   const recordingEngineRef = useRef<RecordingEngine>("local");
   const [chatGptOfferedState, setChatGptOffered] = useState(false);
   const beginVoiceAnalytics = useBeginVoiceAnalytics(environmentId);
@@ -240,13 +248,16 @@ export function useScientVoiceController({
     dispatchController({ type: "error", message });
   const setMicrophonePermissionDenied = (denied: boolean) =>
     dispatchController({ type: "permission", denied });
-  const [downloadProgress, setDownloadProgress] = useState<VoiceModelDownloadProgress | null>(null);
-  const [modelSnapshot, setModelSnapshot] = useState<VoiceModelsSnapshot | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<{
+    downloadedBytes: number;
+    totalBytes: number;
+  } | null>(null);
+  const [modelSnapshot, setModelSnapshot] = useState<VoiceSetupSnapshot | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const phaseRef = useRef<VoicePhase>("idle");
   const operationRef = useRef(0);
   const recordingStartedAtRef = useRef(0);
-  const downloadModelIdRef = useRef<VoiceModelId | null>(null);
+  const downloadModelIdRef = useRef<string | null>(null);
   const autoStopRef = useRef<(clip: VoiceWavClip | null) => void>(() => undefined);
   const completionCallbacksRef = useRef<VoiceCompletionCallbacks>({
     onTranscript,
@@ -316,7 +327,8 @@ export function useScientVoiceController({
    * needs, including where its text goes, is captured here, synchronously.
    */
   const commit = (clip: Promise<VoiceWavClip | null>, send: boolean): Promise<void> => {
-    if (!client) return Promise.resolve();
+    const transcriber = recordingTranscriberRef.current;
+    if (!transcriber) return Promise.resolve();
     setPhase("idle");
     setErrorMessage(null);
     const origin = draftOriginRef.current;
@@ -329,14 +341,9 @@ export function useScientVoiceController({
       ownerKey,
       clip,
       send,
-      // ChatGPT whose sign-in ended while recording fails instead of going local.
-      voiceBridge:
-        recordingEngine === "chatgpt"
-          ? (chatGpt ?? {
-              transcribe: () => Promise.reject(new Error(chatGptUnavailableMessage)),
-            })
-          : client,
+      voiceBridge: transcriber,
       engineClass: engineClassOf(recordingEngine),
+      loadVocabulary,
       correction: correctionRequested ? { corrector: correctionClient, environmentId } : null,
       language: languagePreference === "auto" ? undefined : languagePreference,
       recordAnalytics: beginVoiceAnalytics(),
@@ -358,15 +365,26 @@ export function useScientVoiceController({
     if (job?.phase === "correcting") finishVoiceJobWithOriginal(job.id);
   };
 
-  const beginRecording = async (recordingEngine: RecordingEngine): Promise<void> => {
+  const beginRecording = async (
+    recordingEngine: RecordingEngine,
+    modelId?: string,
+  ): Promise<void> => {
     const operation = (operationRef.current += 1);
     recordingDestinationRef.current = destinationKeyRef.current;
     recordingEngineRef.current = recordingEngine;
+    recordingTranscriberRef.current =
+      recordingEngine === "chatgpt"
+        ? chatGpt
+        : recordingEngine === "cloud"
+          ? cloud
+          : modelId
+            ? (client?.forModel?.(modelId) ?? client)
+            : client;
     clearErrors();
     setElapsedMs(0);
     setPhase("requesting-permission");
-    if (client?.requestMicrophoneAccess) {
-      const access = await client.requestMicrophoneAccess().catch(() => "unavailable" as const);
+    if (requestMicrophoneAccess) {
+      const access = await requestMicrophoneAccess().catch(() => "unavailable" as const);
       if (operation !== operationRef.current) return;
       if (access === "denied" || access === "restricted") {
         setPhase("idle");
@@ -397,12 +415,22 @@ export function useScientVoiceController({
   };
 
   const activate = async (): Promise<void> => {
-    if (!client) return;
+    if (engine === "off") return;
+    if (engine === "cloud") {
+      clearErrors();
+      if (cloud) await beginRecording("cloud");
+      else setErrorMessage(m(msg("The selected cloud speech engine is unavailable.")));
+      return;
+    }
     // ChatGPT needs no model on this computer, only a provider's ChatGPT sign-in.
     if (engine === "chatgpt") {
       clearErrors();
       if (chatGpt) await beginRecording("chatgpt");
       else setErrorMessage(chatGptUnavailableMessage);
+      return;
+    }
+    if (!client) {
+      setErrorMessage(m(msg("The local speech engine is unavailable on this computer.")));
       return;
     }
     const operation = (operationRef.current += 1);
@@ -412,7 +440,7 @@ export function useScientVoiceController({
     // Without one, this computer dictates as it always has.
     const offerChatGpt = engine === "auto" && chatGpt !== null;
     setChatGptOffered(offerChatGpt);
-    let state: VoiceModelsSnapshot | null;
+    let state: VoiceSetupSnapshot | null;
     try {
       state = await client.getModelsState();
       setModelSnapshot(state);
@@ -429,7 +457,8 @@ export function useScientVoiceController({
     const selectedModelId = state?.selectedModelId;
     const selectedModel = state?.models.find((model) => model.id === selectedModelId);
     if (offerChatGpt) setPhase("setup-prompt");
-    else if (selectedModel?.state.state === "ready") await beginRecording("local");
+    else if (selectedModel?.state.state === "ready")
+      await beginRecording("local", selectedModel.id);
     else if (state && !state.runtimeAvailable) {
       setErrorMessage(state.runtimeMessage ?? m(msg("Offline voice is unavailable.")));
     } else {
@@ -450,7 +479,7 @@ export function useScientVoiceController({
     setErrorMessage(chatGptUnavailableMessage);
   };
 
-  const setupModel = async (requestedModelId?: VoiceModelId): Promise<void> => {
+  const setupModel = async (requestedModelId?: string): Promise<void> => {
     if (!client) return;
     // Picking a local model where ChatGPT was offered chooses this computer, once it is set up.
     const choosesLocal = phaseRef.current === "setup-prompt" && chatGptOfferedState;
@@ -472,14 +501,14 @@ export function useScientVoiceController({
       }
       if (operation !== operationRef.current) return;
       if (choosesLocal) onEngineChosen?.("local");
-      await beginRecording("local");
+      await beginRecording("local", requestedModelId);
       return;
     }
     const operation = (operationRef.current += 1);
     clearErrors();
     setDownloadProgress(null);
     setPhase("downloading");
-    let modelId: VoiceModelId | null = null;
+    let modelId: string | null = null;
     let unsubscribe: () => void = () => undefined;
     let operationFailure: { error: unknown } | null = null;
     try {
@@ -503,7 +532,7 @@ export function useScientVoiceController({
           const state = nextSnapshot.models.find((model) => model.id === modelId)?.state;
           if (state?.state === "ready") {
             if (choosesLocal) onEngineChosen?.("local");
-            await beginRecording("local");
+            await beginRecording("local", modelId);
           } else {
             setPhase("idle");
             setErrorMessage(
@@ -547,11 +576,12 @@ export function useScientVoiceController({
   const cancel = async (): Promise<void> => {
     const cancelledPhase = phaseRef.current;
     const operation = (operationRef.current += 1);
+    const downloadingModelId = downloadModelIdRef.current;
     const cancelDownload =
-      phaseRef.current === "downloading"
+      phaseRef.current === "downloading" && downloadingModelId !== null
         ? client
             ?.cancelModelDownload({
-              modelId: downloadModelIdRef.current ?? "whisper-small-multilingual-q5_1",
+              modelId: downloadingModelId,
             })
             .catch(() => undefined)
         : undefined;
@@ -664,6 +694,7 @@ export function useScientVoiceController({
 
   return {
     phase,
+    waitingForWorker: job?.waiting ?? false,
     levels: recorderLevels,
     elapsedMs,
     errorMessage: errorMessage ?? localJobError ?? draftJobError,

@@ -42,7 +42,6 @@ artifacts/mobile-behavior/
 scripts/.e2e/
 .github/pr-assets/
 native/**/target/
-native/whisper-runtime/
 native/synctex-runtime/
 node_modules/
 .alchemy/

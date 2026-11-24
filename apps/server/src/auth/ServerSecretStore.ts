@@ -155,6 +155,7 @@ export class ServerSecretStore extends Context.Service<
   ServerSecretStore,
   {
     readonly directory?: string;
+    readonly listNames?: Effect.Effect<readonly string[], SecretStoreError>;
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
     readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
@@ -413,6 +414,12 @@ export const make = Effect.gen(function* () {
 
   return ServerSecretStore.of({
     directory: serverConfig.secretsDir,
+    listNames: fileSystem.readDirectory(serverConfig.secretsDir).pipe(
+      Effect.map((entries) =>
+        entries.flatMap((entry) => (entry.endsWith(".bin") ? [entry.slice(0, -4)] : [])),
+      ),
+      Effect.mapError((cause) => new SecretStoreReadError({ resource: "secret names", cause })),
+    ),
     get,
     set,
     create,

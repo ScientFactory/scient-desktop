@@ -1,3 +1,7 @@
+import {
+  ScientTranscriptionToolkit,
+  ScientTranscriptionToolkitHandlersLive,
+} from "./toolkits/transcription/tools.ts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -2045,6 +2049,9 @@ export const layerTools = Layer.mergeAll(
   ScientOverleafToolkitRegistrationLive,
   // SCIENT-FORK:END
   ScientComputeToolkitRegistrationLive,
+  registerScientToolkit(ScientTranscriptionToolkit).pipe(
+    Layer.provide(ScientTranscriptionToolkitHandlersLive),
+  ),
   ScientThreadsToolkitRegistrationLive,
   // SCIENT-FORK:START — request details for agents studying a site.
   ScientBrowserNetworkToolkitRegistrationLive,

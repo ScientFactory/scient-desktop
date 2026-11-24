@@ -1,3 +1,4 @@
+import { TranscriptionJobs } from "../transcription/TranscriptionJobs.ts";
 /**
  * The server-lifetime Scient services that every WebSocket connection's RPC
  * layer is built with. ws.ts captures them once for the route and provides
@@ -39,6 +40,7 @@ export const captureScientWsServices = Effect.gen(function* () {
   // the route's layer, so shutdown interrupts the sweep and waits for its finalizers.
   yield* remoteSessions.watch.pipe(Effect.forkScoped);
   // SCIENT-FORK:END
+  const transcriptionJobs = yield* TranscriptionJobs;
   const analysis = yield* AnalysisService.AnalysisService;
   const browserHistory = yield* BrowserHistory;
   const compute = yield* ComputeSessionService.ComputeSessionService;
@@ -67,6 +69,7 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(ProviderRuntimeManager.ProviderRuntimeManager, providerRuntimeManager),
     Layer.succeed(ScientAgentBackgroundRuntime, scientAgentBackground),
     Layer.succeed(ProviderModelFreshness, providerModelFreshness),
+    Layer.succeed(TranscriptionJobs, transcriptionJobs),
     Layer.succeed(AnalysisService.AnalysisService, analysis),
     Layer.succeed(BrowserHistory, browserHistory),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),

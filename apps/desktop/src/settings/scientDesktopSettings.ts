@@ -1,12 +1,17 @@
 // SCIENT-OWNED: Scient's desktop settings transitions. DesktopAppSettings.ts calls
 // these from short marked lines; they are pure functions of the settings value.
-import { VoiceModelId as VoiceModelIdSchema, type VoiceModelId } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Schema from "effect/Schema";
 
 import type { DesktopSettings, DesktopWindowBounds } from "./DesktopAppSettings.ts";
 
-const isVoiceModelId = Schema.is(VoiceModelIdSchema);
+const LegacyVoiceModelId = Schema.Literals([
+  "whisper-small-multilingual-q5_1",
+  "whisper-medium-multilingual-q5_0",
+  "whisper-large-v3-turbo-multilingual-q5_0",
+]);
+export type LegacyVoiceModelId = typeof LegacyVoiceModelId.Type;
+const isVoiceModelId = Schema.is(LegacyVoiceModelId);
 
 export function applyMainWindowSizeIncrease(
   settings: DesktopSettings,
@@ -71,18 +76,6 @@ export function stableOnlyUpdateChannel(settings: DesktopSettings): DesktopSetti
 
 export function normalizeVoiceSelectedModelId(
   value: string | null | undefined,
-): VoiceModelId | null {
+): LegacyVoiceModelId | null {
   return isVoiceModelId(value) ? value : null;
-}
-
-export function setVoiceSelectedModelId(
-  settings: DesktopSettings,
-  modelId: VoiceModelId | null,
-): DesktopSettings {
-  return settings.voiceSelectedModelId === modelId
-    ? settings
-    : {
-        ...settings,
-        voiceSelectedModelId: modelId,
-      };
 }

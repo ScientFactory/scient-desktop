@@ -62,11 +62,7 @@ import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
-import {
-  analyzeWindowsPayloadInventory,
-  windowsNativeIgnoreGlobs,
-  WINDOWS_VOICE_FILES,
-} from "./lib/windows-payload.ts";
+import { analyzeWindowsPayloadInventory, windowsNativeIgnoreGlobs } from "./lib/windows-payload.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import {
   buildConversationPreview,
@@ -78,7 +74,6 @@ import {
 } from "./lib/conversation-preview-build.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
-import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
 import { resolveParcelWatcherNativeDependencies } from "./lib/scient-parcel-watcher-build.ts";
 import { validatePackagedFilePublication } from "./lib/scient-file-publication-build.ts";
@@ -235,7 +230,6 @@ interface BuildCliInput {
   readonly wslPrebuild: Option.Option<string>;
   readonly syncTexRuntime: Option.Option<string>;
   readonly wslSyncTexRuntime: Option.Option<string>;
-  readonly voiceRuntime: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -1069,7 +1063,6 @@ interface ResolvedBuildOptions {
   readonly wslPrebuild: string | undefined;
   readonly syncTexRuntime: string | undefined;
   readonly wslSyncTexRuntime: string | undefined;
-  readonly voiceRuntime: string | undefined;
 }
 
 interface StagePackageJson {
@@ -1095,7 +1088,6 @@ interface StagePackageJson {
 export const WINDOWS_NATIVE_RESOURCE_FILES = [
   "file-exchange/scient-file-publication.exe",
   "file-exchange/publication-artifact.json",
-  ...WINDOWS_VOICE_FILES.map((file) => `whisper-runtime/${file}`),
 ] as const;
 
 class WindowsNativeResourceError extends Schema.TaggedError<WindowsNativeResourceError>()(
@@ -1186,7 +1178,7 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
       }
     }
     // Stale host helpers cannot leak into the target's exact loose inventories.
-    for (const directory of ["file-exchange", "whisper-runtime"]) {
+    for (const directory of ["file-exchange"]) {
       const destination = path.join(input.stageResourcesDir, directory);
       yield* fs.remove(destination, { recursive: true, force: true });
       yield* fs.makeDirectory(destination, { recursive: true });
@@ -1237,8 +1229,6 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // individual exclusions so prod-resources/icon.png remains available.
   "!apps/desktop/prod-resources/resource-monitor",
   "!apps/desktop/prod-resources/resource-monitor/**/*",
-  "!apps/desktop/prod-resources/whisper-runtime",
-  "!apps/desktop/prod-resources/whisper-runtime/**/*",
   "!apps/desktop/prod-resources/synctex-runtime",
   "!apps/desktop/prod-resources/synctex-runtime/**/*",
   // The installed Claude CLI is supplied explicitly; exclude optional bundled executables, retaining SDK JavaScript.
@@ -1286,14 +1276,10 @@ export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/file-exchange/**/*",
   "!apps/desktop/resources/resource-monitor",
   "!apps/desktop/resources/resource-monitor/**/*",
-  "!apps/desktop/resources/whisper-runtime",
-  "!apps/desktop/resources/whisper-runtime/**/*",
   "!apps/desktop/resources/synctex-runtime",
   "!apps/desktop/resources/synctex-runtime/**/*",
   "!apps/desktop/prod-resources/resource-monitor",
   "!apps/desktop/prod-resources/resource-monitor/**/*",
-  "!apps/desktop/prod-resources/whisper-runtime",
-  "!apps/desktop/prod-resources/whisper-runtime/**/*",
   "!apps/desktop/prod-resources/synctex-runtime",
   "!apps/desktop/prod-resources/synctex-runtime/**/*",
   "!apps/desktop/resources/cursor-sdk",
@@ -1427,10 +1413,6 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/file-exchange",
     to: "file-exchange",
-  },
-  {
-    from: "apps/desktop/prod-resources/whisper-runtime",
-    to: "whisper-runtime",
   },
   {
     from: "apps/desktop/prod-resources/synctex-runtime",
@@ -2066,7 +2048,6 @@ const BuildEnvConfig = Config.all({
   wslPrebuild: Config.String("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
   syncTexRuntime: Config.String("SCIENT_SYNCTEX_RUNTIME").pipe(Config.option),
   wslSyncTexRuntime: Config.String("SCIENT_WSL_SYNCTEX_RUNTIME").pipe(Config.option),
-  voiceRuntime: Config.String("SCIENT_VOICE_RUNTIME").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -2163,8 +2144,6 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     Option.getOrUndefined(input.syncTexRuntime) ?? Option.getOrUndefined(env.syncTexRuntime);
   const wslSyncTexRuntime =
     Option.getOrUndefined(input.wslSyncTexRuntime) ?? Option.getOrUndefined(env.wslSyncTexRuntime);
-  const voiceRuntime =
-    Option.getOrUndefined(input.voiceRuntime) ?? Option.getOrUndefined(env.voiceRuntime);
 
   return {
     platform,
@@ -2181,7 +2160,6 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     wslPrebuild,
     syncTexRuntime,
     wslSyncTexRuntime,
-    voiceRuntime,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -3872,7 +3850,6 @@ export const validatePackagedDesktopRuntimeResources = Effect.fn(
     try: async () => {
       const runtimeTrees = [
         "resource-monitor",
-        "whisper-runtime",
         "synctex-runtime",
         ...(input.platform === "linux" ? ["kde-capture", "hyprland-capture"] : []),
       ];
@@ -3909,7 +3886,6 @@ export const validatePackagedDesktopRuntimeResources = Effect.fn(
       }
       const requiredExecutables = [
         `resource-monitor/${resourceMonitorExecutableName(input.platform)}`,
-        `whisper-runtime/whisper-server${input.platform === "win" ? ".exe" : ""}`,
         `synctex-runtime/synctex${input.platform === "win" ? ".exe" : ""}`,
         ...(input.platform === "linux"
           ? ["kde-capture/scient-kde-snap-shot", "hyprland-capture/scient-hyprland-snap-shot"]
@@ -4666,23 +4642,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       ),
       { label: "stage native file publication", verbose: options.verbose },
     );
-    yield* Effect.tryPromise({
-      try: () =>
-        stageScientVoiceRuntimeForDesktopBuild({
-          repoRoot,
-          stageResourcesDir,
-          platform: options.platform,
-          arch: options.arch,
-          sourceDirectory: options.voiceRuntime,
-          verbose: options.verbose,
-        }),
-      catch: (cause) =>
-        new BuildCommandFailedError({
-          command: `stage whisper.cpp (${options.platform}/${options.arch})`,
-          exitCode: 1,
-          stderrTail: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
   }
   yield* Effect.tryPromise({
     try: () =>
@@ -5223,6 +5182,21 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
             "Resources",
           )
         : path.join(stageDistDir, directory, "resources");
+    if (
+      options.platform === "mac" &&
+      hostPlatform === "darwin" &&
+      hostArch === options.arch &&
+      env.SCIENT_QUALIFY_PACKAGED_SPEECH === "1"
+    ) {
+      yield* runCommand(
+        ChildProcess.make("node", [
+          path.join(repoRoot, "scripts", "qualify-packaged-speech.mjs"),
+          path.join(resources, "../MacOS", resolveDesktopProductName(appVersion)),
+          resources,
+        ]),
+        { label: "qualify packaged speech", verbose: options.verbose },
+      );
+    }
     yield* validatePackagedComputeBridges(
       path.join(resources, options.platform === "win" ? WINDOWS_SERVER_ASAR_RESOURCE : "app.asar"),
     );
@@ -5371,12 +5345,6 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslSyncTexRuntime: Flag.String("wsl-synctex-runtime").pipe(
     Flag.withDescription(
       "Path to the verified Linux x64 SyncTeX runtime directory staged into the WSL sidecar (env: SCIENT_WSL_SYNCTEX_RUNTIME).",
-    ),
-    Flag.optional,
-  ),
-  voiceRuntime: Flag.String("voice-runtime").pipe(
-    Flag.withDescription(
-      "Path to a verified whisper.cpp runtime directory staged for the desktop target (env: SCIENT_VOICE_RUNTIME).",
     ),
     Flag.optional,
   ),

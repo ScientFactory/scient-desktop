@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Opaque record ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
+import * as Equal from "effect/Equal";
 import {
   ACCOUNTS_PROTOCOL,
   GOOGLE_SITE,
@@ -7,6 +8,8 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
   AccountId,
+  acceptsCustomModelKey,
+  type CustomModelProtocol,
   AccountSaveInput,
   AccountMatchSignInInput,
   AccountsError,
@@ -21,6 +24,8 @@ import {
   type AccountSecretSummary,
   type AccountsSnapshot,
   type AccountSummary,
+  isCustomModelAccountOrigin,
+  isSpeechAccountOrigin,
   type AccountTarget,
   type BrowserProfileId,
   type BrowserProfileRecord,
@@ -47,6 +52,7 @@ import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSo
 import {
   AccountsService,
   fail,
+  SPEECH_KEY_OUTSIDE_PROJECT,
   type AccountKeyConsumer,
   type AccountSessionScope,
   type AccountAuthorization,
@@ -67,6 +73,8 @@ import {
   Activity,
   decodePrivateJson,
   withStoredAccountsFolded,
+  encodeAccountsState,
+  customModelEscrowName,
   emptyState,
   encodePrivateJson,
   type StoredAccount,
@@ -119,11 +127,15 @@ const safeDetail = (detail: string | undefined) => {
   try {
     return new URL(detail).origin;
   } catch {
-    return /^[A-Z]{3,7} [a-z0-9.-]+(?::\d+)?$/.test(detail) || pluginKeyDetail.test(detail)
+    return /^[A-Z]{3,7} [a-z0-9.-]+(?::\d+)?$/.test(detail) ||
+      pluginKeyDetail.test(detail) ||
+      speechKeyDetail.test(detail)
       ? detail.slice(0, 200)
       : undefined;
   }
 };
+const speechKeyDetail =
+  /^Speech (?:compatible|openai|xai|openrouter) [\p{L}\p{N}\p{M}[\]-]{1,160}$/u;
 const pluginKeyDetail = /^plugin [\w@./:-]{1,100} [A-Za-z_]\w{0,63} on [\w.-]{1,24}$/;
 /** Plugin keys name the plugin, variable and agent; connectors name the site. */
 const consumerActivity = (consumer: AccountKeyConsumer) =>
@@ -208,8 +220,33 @@ export const layer = Layer.effect(
       }),
       "1 minute",
     );
+    const readModelConsumers = sources.modelCatalog?.connections ?? Effect.succeed([]);
+    const readTranscriptionConsumers = sources.transcriptionKeyConsumers ?? Effect.succeed([]);
     const snapshotNow = Effect.gen(function* () {
       const customModelKeys = yield* sources.customModelKeys.pipe(Effect.orElseSucceed(() => []));
+      const connections = yield* readModelConsumers.pipe(Effect.result);
+      const transcription = yield* readTranscriptionConsumers.pipe(Effect.result);
+      const modelConsumers =
+        connections._tag === "Success"
+          ? connections.success.flatMap(({ accountId, id, name }) =>
+              accountId ? [{ accountId, id, name, kind: "custom-model" as const }] : [],
+            )
+          : [];
+      const unavailableCustomModelKeyIds: string[] = [];
+      for (const connection of connections._tag === "Success" ? connections.success : []) {
+        if (!connection.accountId) continue;
+        const origin = URL.canParse(connection.baseUrl) ? new URL(connection.baseUrl).origin : "";
+        const readable = yield* modelAccountKey(
+          connection.accountId,
+          origin,
+          connection.protocol,
+        ).pipe(Effect.option);
+        if (Option.isNone(readable)) unavailableCustomModelKeyIds.push(connection.id);
+      }
+      const transcriptionConsumers = transcription._tag === "Success" ? transcription.success : [];
+      const keyConsumersIncomplete =
+        connections._tag === "Failure" || transcription._tag === "Failure";
+      const migratedIds = new Set(modelConsumers.map(({ id }) => id));
       const githubAccounts = yield* githubSignIns;
       // Source Control's own choice first, as GitHub names it; then gh's other logins.
       const effective = Option.isSome(githubCredential)
@@ -246,13 +283,15 @@ export const layer = Layer.effect(
           href: "/settings/source-control" as const,
           via: account.via,
         })),
-        ...customModelKeys.map((connection) => ({
-          kind: "custom-model" as const,
-          id: connection.connectionId,
-          name: connection.name,
-          detail: connection.origin,
-          href: "/settings/custom-models" as const,
-        })),
+        ...customModelKeys
+          .filter(({ connectionId }) => !migratedIds.has(connectionId))
+          .map((connection) => ({
+            kind: "custom-model" as const,
+            id: connection.connectionId,
+            name: connection.name,
+            detail: connection.origin,
+            href: "/settings/custom-models" as const,
+          })),
       ];
       return {
         agentAccess: state.agentAccess,
@@ -261,6 +300,7 @@ export const layer = Layer.effect(
         ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
         ...(state.codeSources ? { codeSources: state.codeSources } : {}),
         ...(state.keyLinks ? { keyLinks: state.keyLinks } : {}),
+        ...(state.detachedKeyLinks ? { detachedKeyLinks: state.detachedKeyLinks } : {}),
         stores: {
           scient: { protection },
           keychain: { available: protection === "keychain", platform: sources.platform },
@@ -273,6 +313,9 @@ export const layer = Layer.effect(
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
         customModelKeys,
+        unavailableCustomModelKeyIds,
+        keyConsumers: [...modelConsumers, ...transcriptionConsumers],
+        ...(keyConsumersIncomplete ? { keyConsumersIncomplete: true } : {}),
         managedElsewhere,
         accountsProtocol: ACCOUNTS_PROTOCOL,
       } satisfies AccountsSnapshot;
@@ -307,37 +350,92 @@ export const layer = Layer.effect(
     const commit = Effect.fn("AccountsService.commit")(function* (
       proposed: AccountsState,
       usageOnly = false,
+      previousAccounts: readonly StoredAccount[] = state.accounts,
     ) {
       // Every path that records a sign-in passes here, in the same locked write.
-      const next = withSendLog(state, withMainSignOutsCleared(state, proposed));
+      const candidate = withSendLog(state, withMainSignOutsCleared(state, proposed));
+      const expiredEscrows = (candidate.customModelEscrows ?? []).filter(
+        (row) =>
+          !candidate.accounts.some(
+            ({ summary, values }) =>
+              summary.accountId === row.accountId && values.token === row.tokenRef,
+          ),
+      );
+      const next = expiredEscrows.length
+        ? {
+            ...candidate,
+            customModelEscrows:
+              candidate.customModelEscrows?.filter((row) => !expiredEscrows.includes(row)) ?? [],
+          }
+        : candidate;
       // Invalidate before the first write: cache hits must not bypass an in-flight revocation.
       if (!usageOnly) bindingRevision++;
       if (batch) {
-        state = next;
+        state = candidate;
         batch.dirty = true;
         return;
       }
-      yield* persistence
-        .write("accounts-state", yield* encodePrivateJson(AccountsState, next))
-        .pipe(
-          Effect.onError(() =>
-            Effect.sync(() => {
-              initialized = false;
-            }),
-          ),
-        );
+      yield* persistence.write("accounts-state", yield* encodeAccountsState(next)).pipe(
+        Effect.onError(() =>
+          Effect.sync(() => {
+            initialized = false;
+          }),
+        ),
+      );
       state = next;
+      for (const escrow of expiredEscrows) {
+        yield* persistence
+          .remove(customModelEscrowName(escrow.legacyId))
+          .pipe(
+            Effect.catch(() =>
+              Effect.logWarning(
+                "Could not remove an expired Custom models escrow. Cleanup will retry.",
+              ),
+            ),
+          );
+        yield* (
+          sources.modelCatalog
+            ?.removeLegacy(escrow.legacyId)
+            .pipe(
+              Effect.catch(() =>
+                Effect.logWarning("Could not remove a restored Custom models slot."),
+              ),
+            ) ?? Effect.void
+        );
+      }
+      const invalidate = sources.modelCatalog?.invalidate;
+      if (invalidate && !usageOnly) {
+        const current = new Map(next.accounts.map((row) => [row.summary.accountId, row]));
+        const changed = new Set(
+          previousAccounts.flatMap((before) => {
+            const id = before.summary.accountId;
+            if (before.summary.details.kind !== "api-key") return [];
+            const after = current.get(id);
+            return !after ||
+              before.values.token !== after.values.token ||
+              !Equal.equals(before.summary.details, after.summary.details) ||
+              !Equal.equals(
+                before.summary.secrets.token?.source,
+                after.summary.secrets.token?.source,
+              )
+              ? [id]
+              : [];
+          }),
+        );
+        if (changed.size) yield* invalidate(changed, NodeCrypto.randomUUID());
+      }
       yield* publish(!usageOnly);
     });
     // One write for hundreds of imported passwords; each commit rebuilt and sent the whole snapshot.
     const batched = Effect.fn("AccountsService.batched")(function* <A, E, R>(
       effect: Effect.Effect<A, E, R>,
     ) {
+      const previousAccounts = state.accounts;
       const current = { dirty: false, removals: new Array<string>() };
       batch = current;
       const exit = yield* Effect.exit(effect);
       batch = undefined;
-      if (current.dirty) yield* commit(state);
+      if (current.dirty) yield* commit(state, false, previousAccounts);
       yield* removeValues(current.removals);
       return yield* exit;
     });
@@ -356,8 +454,18 @@ export const layer = Layer.effect(
     });
     const findAccount = (accountId: AccountId) =>
       state.accounts.find((account) => account.summary.accountId === accountId);
+    const speechOnly = (account: Pick<AccountSummary, "details">) =>
+      account.details.kind === "api-key" && account.details.speechOnly === true;
+    const privateModelKey = ({ details, controls }: AccountSummary) =>
+      details.kind === "api-key" &&
+      details.purpose === "custom-models" &&
+      controls.access === "off";
+
     const targetControls = (target: AccountTarget) => {
-      if (target.type === "account") return findAccount(target.accountId)?.summary.controls;
+      if (target.type === "account") {
+        const summary = findAccount(target.accountId)?.summary;
+        return summary && !speechOnly(summary) ? summary.controls : undefined;
+      }
       const record = effectiveProfile(state.profiles, target.profileId);
       // Merged into Main: no agent uses it, whatever its controls were.
       return record.retired ? { ...record, access: "off" as const } : record;
@@ -463,6 +571,248 @@ export const layer = Layer.effect(
       onePasswordClient = yield* sources.onePassword(Redacted.make(input));
       return onePasswordClient;
     });
+    const modelAccountKey = Effect.fn("AccountsService.modelAccountKey")(function* (
+      accountId: AccountId,
+      origin: string,
+      protocol: CustomModelProtocol = "openai-completions",
+      staged = false,
+    ) {
+      const account =
+        findAccount(accountId) ?? (staged ? state.pendingCustomModelKeys?.[accountId] : undefined);
+      if (!account) return yield* missing();
+      if (!acceptsCustomModelKey(account.summary, origin, protocol))
+        return yield* fail("denied", "Choose a saved API key for this exact endpoint.");
+      const value = yield* readValue(account.values.token);
+      const key = Redacted.value(value).trim();
+      if (!key || key.length > 16384 || /[\r\n\0]/u.test(key))
+        return yield* fail("unavailable", "The saved API key is unavailable.");
+      return { name: account.summary.name, token: Redacted.make(key) };
+    });
+    const legacyModelKey = (connectionId: string) => sources.customModel(connectionId);
+
+    const migrateModelKeys = locked(
+      Effect.gen(function* () {
+        const catalog = sources.modelCatalog;
+        if (!catalog) return;
+        const setPending = (id: AccountId, row: StoredAccount | undefined, promote = false) => {
+          const pending = { ...state.pendingCustomModelKeys };
+          const staged = pending[id];
+          if (row) pending[id] = row;
+          else delete pending[id];
+          return commit({
+            ...state,
+            pendingCustomModelKeys: pending,
+            accounts: promote && staged ? [...state.accounts, staged] : state.accounts,
+          });
+        };
+        const retireModelAliases = Effect.fn("AccountsService.retireModelAliases")(function* (
+          connectionId: string,
+          targetId?: AccountId,
+        ) {
+          const retired = state.accounts.filter(({ summary }) => {
+            const token = summary.secrets.token;
+            return (
+              summary.details.kind === "api-key" &&
+              token?.source.type === "custom-model" &&
+              token.source.connectionId === connectionId &&
+              !token.copies?.length
+            );
+          });
+          if (retired.length) {
+            const retiredIds = new Set(retired.map(({ summary }) => summary.accountId));
+            const detached = targetId
+              ? []
+              : (state.keyLinks ?? []).filter(({ accountId }) => retiredIds.has(accountId));
+            yield* commit({
+              ...state,
+              accounts: state.accounts.filter(({ summary }) => !retiredIds.has(summary.accountId)),
+              ...(state.keyLinks
+                ? {
+                    keyLinks: state.keyLinks.flatMap((link) =>
+                      !retiredIds.has(link.accountId)
+                        ? [link]
+                        : targetId
+                          ? [{ ...link, accountId: targetId }]
+                          : [],
+                    ),
+                  }
+                : {}),
+              ...(detached.length
+                ? { detachedKeyLinks: [...(state.detachedKeyLinks ?? []), ...detached].slice(-100) }
+                : {}),
+            });
+          }
+        });
+        const connections = yield* catalog.connections;
+        const migrationHashFor = (id: string, legacyId: string) =>
+          NodeCrypto.createHash("sha256")
+            .update(id + ":" + legacyId)
+            .digest("hex");
+        const migrationAccountId = (hash: string) =>
+          AccountId.make(`acc_model_${hash.slice(0, 48)}`);
+        const pendingIds = new Set(
+          connections.flatMap(({ id, accountId, credentialId }) =>
+            credentialId
+              ? [accountId ?? migrationAccountId(migrationHashFor(id, credentialId))]
+              : [],
+          ),
+        );
+        const pending = state.pendingCustomModelKeys ?? {};
+        const discarded = Object.entries(pending).filter(
+          ([id]) => !pendingIds.has(AccountId.make(id)) || findAccount(AccountId.make(id)),
+        );
+        if (discarded.length) {
+          const unused = { ...pending };
+          for (const [id] of discarded) delete unused[id];
+          const live = new Set(state.accounts.flatMap(({ values }) => Object.values(values)));
+          yield* commit({ ...state, pendingCustomModelKeys: unused });
+          yield* removeValues(
+            discarded.flatMap(([, row]) =>
+              Object.values(row.values).filter((ref) => !live.has(ref)),
+            ),
+          );
+        }
+        const migrateConnection = Effect.fn("AccountsService.migrateModelKey")(function* (
+          connection: (typeof connections)[number],
+        ) {
+          const legacyId = connection.credentialId;
+          if (!legacyId) {
+            if (connection.accountId) {
+              const original =
+                state.migratedModelAccounts?.[connection.id] ??
+                state.customModelEscrows?.find(({ connectionId }) => connectionId === connection.id)
+                  ?.accountId;
+              yield* retireModelAliases(
+                connection.id,
+                original === connection.accountId && findAccount(original) ? original : undefined,
+              );
+            }
+            return;
+          }
+          if (yield* catalog.requiresDedicated?.(connection) ?? Effect.succeed(false)) return;
+          const origin = URL.canParse(connection.baseUrl) ? new URL(connection.baseUrl).origin : "";
+          if (!isCustomModelAccountOrigin(origin)) return;
+          const migrationHash = migrationHashFor(connection.id, legacyId);
+          const accountId = connection.accountId ?? migrationAccountId(migrationHash);
+          if (!connection.accountId) {
+            if (!findAccount(accountId) && !state.pendingCustomModelKeys?.[accountId]) {
+              const key = yield* catalog.readLegacy(connection);
+              if (!key) return;
+              const valueRef = `accounts-value-${migrationHash.slice(0, 8)}-${migrationHash.slice(8, 12)}-${migrationHash.slice(12, 16)}-${migrationHash.slice(16, 20)}-${migrationHash.slice(20, 32)}`;
+              yield* persistence.write(
+                valueRef,
+                Redacted.make(new TextEncoder().encode(Redacted.value(key))),
+              );
+              const written = yield* readValue(valueRef);
+              if (Redacted.value(written) !== Redacted.value(key))
+                return yield* fail("unavailable", "Could not verify the migrated key.");
+              const timestamp = yield* now;
+              yield* setPending(accountId, {
+                summary: {
+                  accountId,
+                  name: connection.name,
+                  details: {
+                    kind: "api-key",
+                    purpose: "custom-models",
+                    sites: [origin],
+                    auth:
+                      connection.protocol === "anthropic-messages"
+                        ? { type: "header", name: "x-api-key" }
+                        : { type: "bearer" },
+                  },
+                  secrets: { token: { source: { type: "scient" } } },
+                  status: "ready",
+                  controls: { ...defaultAccountControls("api-key"), access: "off" },
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                },
+                values: { token: valueRef },
+              });
+            }
+            yield* modelAccountKey(accountId, origin, connection.protocol, true);
+            if (!(yield* catalog.setBinding(connection, { accountId, credentialId: legacyId }))) {
+              const staged = state.pendingCustomModelKeys?.[accountId];
+              yield* setPending(accountId, undefined);
+              if (staged) yield* removeValues(Object.values(staged.values));
+              return;
+            }
+          }
+          if (state.pendingCustomModelKeys?.[accountId]) {
+            yield* modelAccountKey(accountId, origin, connection.protocol, true);
+            yield* setPending(accountId, undefined, true);
+          }
+          const migrated = findAccount(accountId);
+          const sameLineage =
+            accountId === migrationAccountId(migrationHash) && migrated !== undefined;
+          if (sameLineage && state.migratedModelAccounts?.[connection.id] !== accountId)
+            yield* commit({
+              ...state,
+              migratedModelAccounts: { ...state.migratedModelAccounts, [connection.id]: accountId },
+            });
+          yield* retireModelAliases(connection.id, sameLineage ? accountId : undefined);
+          const tokenRef = migrated?.values.token;
+          if (tokenRef && !state.customModelEscrows?.some((row) => row.legacyId === legacyId)) {
+            const legacy = yield* catalog.readLegacy({ ...connection, credentialId: legacyId });
+            const current = yield* readValue(tokenRef);
+            if (legacy && Redacted.value(legacy) === Redacted.value(current)) {
+              yield* persistence.write(
+                customModelEscrowName(legacyId),
+                Redacted.make(new TextEncoder().encode(Redacted.value(legacy))),
+              );
+              yield* commit({
+                ...state,
+                customModelEscrows: [
+                  ...(state.customModelEscrows ?? []),
+                  {
+                    accountId,
+                    connectionId: connection.id,
+                    legacyId,
+                    baseUrl: connection.baseUrl,
+                    protocol: connection.protocol,
+                    tokenRef,
+                  },
+                ],
+              });
+            }
+          }
+          yield* catalog.removeLegacy(legacyId);
+          yield* catalog.setBinding(
+            { ...connection, accountId },
+            { accountId, credentialId: null },
+          );
+        });
+        for (const connection of connections)
+          yield* migrateConnection(connection).pipe(
+            Effect.catch(() =>
+              Effect.logWarning(
+                "A Custom models key migration could not be completed. It will be retried.",
+              ),
+            ),
+          );
+        const liveEscrows = new Set(
+          (state.customModelEscrows ?? []).map(({ legacyId }) => customModelEscrowName(legacyId)),
+        );
+        const onDisk = yield* persistence.listModelEscrows.pipe(
+          Effect.catch(() =>
+            Effect.logWarning("Could not list Custom models escrows for cleanup.").pipe(
+              Effect.as([]),
+            ),
+          ),
+        );
+        for (const name of onDisk) {
+          if (!liveEscrows.has(name))
+            yield* persistence
+              .remove(name)
+              .pipe(
+                Effect.catch(() =>
+                  Effect.logWarning(
+                    "Could not remove an orphaned Custom models escrow. Cleanup will retry.",
+                  ),
+                ),
+              );
+        }
+      }),
+    );
     const resolve = Effect.fn("AccountsService.resolveSecrets")(function* (
       accountId: AccountId,
       fields: ReadonlyArray<string>,
@@ -488,7 +838,7 @@ export const layer = Layer.effect(
             result[field] = yield* sources.keychain(source);
             break;
           case "custom-model":
-            result[field] = yield* sources.customModel(source.connectionId);
+            result[field] = yield* legacyModelKey(source.connectionId);
             break;
           case "1password": {
             if (
@@ -517,9 +867,27 @@ export const layer = Layer.effect(
       }
       return result;
     });
-    const save = Effect.fn("AccountsService.save")(function* (input: AccountSaveInput) {
+    const save = Effect.fn("AccountsService.save")(function* (
+      input: AccountSaveInput,
+      migrationId?: AccountId,
+    ) {
       const existing = input.accountId ? findAccount(input.accountId) : undefined;
       if (input.accountId && !existing) return yield* missing();
+      const isSpeech = speechOnly(input);
+      const tokenInput = input.secrets.token;
+      if (
+        (existing && speechOnly(existing.summary) !== isSpeech) ||
+        (isSpeech &&
+          input.details.kind === "api-key" &&
+          (!input.details.sites.every(isSpeechAccountOrigin) ||
+            input.details.auth.type !== "bearer" ||
+            input.details.envName ||
+            input.details.keptFrom ||
+            (tokenInput &&
+              tokenInput.type !== "clear" &&
+              (tokenInput.type !== "scient" || tokenInput.saveTo?.length))))
+      )
+        return yield* fail("invalid-input", "Speech accounts use only the Scient sealed vault.");
       const permitted =
         input.details.kind === "cli-login"
           ? input.details.variables
@@ -530,7 +898,9 @@ export const layer = Layer.effect(
         return yield* fail("invalid-input", "This secret field is not valid for the account kind.");
       const timestamp = yield* now;
       const accountId =
-        existing?.summary.accountId ?? AccountId.make(`acc_${NodeCrypto.randomUUID()}`);
+        existing?.summary.accountId ??
+        migrationId ??
+        AccountId.make(`acc_${NodeCrypto.randomUUID()}`);
       const values: Record<string, string> = Object.create(null);
       const secrets: Record<string, AccountSecretSummary> = Object.create(null);
       for (const field of permitted) {
@@ -558,6 +928,14 @@ export const layer = Layer.effect(
         primary?: AccountValueSource;
       }> = [];
       for (const [field, change] of Object.entries(input.secrets)) {
+        if (
+          change.type === "custom-model" &&
+          sources.modelCatalog &&
+          !(yield* sources.customModelKeys).some(
+            ({ connectionId }) => connectionId === change.connectionId,
+          )
+        )
+          return yield* fail("invalid-input", "Choose the saved API key directly in Accounts.");
         delete values[field];
         const previousPending = pendingCopies[field];
         delete pendingCopies[field];
@@ -573,7 +951,7 @@ export const layer = Layer.effect(
           : change.type === "keychain"
             ? yield* sources.keychain(change)
             : change.type === "custom-model"
-              ? yield* sources.customModel(change.connectionId)
+              ? yield* legacyModelKey(change.connectionId)
               : change.type === "1password"
                 ? yield* (yield* getOnePasswordClient).resolve(change.reference)
                 : undefined;
@@ -616,7 +994,7 @@ export const layer = Layer.effect(
           secrets[field] = {
             source: { type: "scient" },
             copies: actual.filter((source) => source.type !== "scient"),
-            ...(input.details.kind === "api-key" && Redacted.value(value).length > 4
+            ...(input.details.kind === "api-key" && !isSpeech && Redacted.value(value).length > 4
               ? { hint: Redacted.value(value).slice(-4) }
               : {}),
             ...(change.type === "scient" && change.changedAt
@@ -639,7 +1017,10 @@ export const layer = Layer.effect(
         controls:
           input.controls ??
           existing?.summary.controls ??
-          defaultAccountControls(input.details.kind),
+          (input.details.kind === "api-key" &&
+          (input.details.purpose === "custom-models" || isSpeech)
+            ? { ...defaultAccountControls("api-key"), access: "off" as const }
+            : defaultAccountControls(input.details.kind)),
         status:
           warnings.length || Object.values(pendingCopies).some((targets) => targets.length)
             ? "needs-attention"
@@ -799,7 +1180,9 @@ export const layer = Layer.effect(
       };
     });
 
+    const migrateOnUse = migrateModelKeys.pipe(Effect.ignore);
     const service = AccountsService.of({
+      migrateCustomModelKeys: migrateOnUse,
       redactionValues: Effect.gen(function* () {
         const values: Array<Redacted.Redacted<string>> = [];
         for (const account of state.accounts) {
@@ -809,7 +1192,7 @@ export const layer = Layer.effect(
               source.type === "scient"
                 ? readValue(account.values[field])
                 : source.type === "custom-model"
-                  ? sources.customModel(source.connectionId)
+                  ? legacyModelKey(source.connectionId)
                   : undefined;
             if (value === undefined) continue;
             const read = yield* value.pipe(Effect.option);
@@ -912,6 +1295,16 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const existing = findAccount(accountId);
             if (!existing) return yield* missing();
+            if (existing.summary.details.kind === "api-key")
+              yield* readModelConsumers.pipe(
+                Effect.andThen(readTranscriptionConsumers),
+                Effect.mapError(() =>
+                  fail(
+                    "unavailable",
+                    "Could not check what uses this key. Try again before removing it.",
+                  ),
+                ),
+              );
             yield* commit({
               ...state,
               accounts: state.accounts.filter((account) => account !== existing),
@@ -1512,6 +1905,15 @@ export const layer = Layer.effect(
             commit(
               {
                 ...state,
+                ...(state.detachedKeyLinks
+                  ? {
+                      detachedKeyLinks: state.detachedKeyLinks.filter(
+                        (link) =>
+                          link.instanceId !== target.instanceId ||
+                          link.variable !== target.variable,
+                      ),
+                    }
+                  : {}),
                 keyLinks: [
                   ...(state.keyLinks ?? []).filter(
                     (link) =>
@@ -1862,7 +2264,12 @@ export const layer = Layer.effect(
               accounts: state.agentAccess
                 ? state.accounts
                     .map((account) => account.summary)
-                    .filter((account) => inScope(account.controls.scope, scope.projectId))
+                    .filter(
+                      (account) =>
+                        !speechOnly(account) &&
+                        !privateModelKey(account) &&
+                        inScope(account.controls.scope, scope.projectId),
+                    )
                 : [],
               profiles: state.agentAccess
                 ? profiles
@@ -1965,6 +2372,8 @@ export const layer = Layer.effect(
           Effect.sync(() =>
             state.accounts.flatMap(({ summary }) =>
               summary.details.kind === "api-key" &&
+              !speechOnly(summary) &&
+              !privateModelKey(summary) &&
               (origin === undefined || siteMatches(summary.details.sites, origin))
                 ? [{ ref: accountTokenRef(summary.accountId), name: summary.name }]
                 : [],
@@ -1984,6 +2393,7 @@ export const layer = Layer.effect(
             const { details, controls } = account.summary;
             if (
               details.kind !== "api-key" ||
+              speechOnly(account.summary) ||
               (origin !== undefined && !siteMatches(details.sites, origin)) ||
               agentAccessOff(state.agentAccess, controls.access) ||
               (consumer.kind !== "connector" && !inScope(controls.scope, consumer.projectId))
@@ -2020,8 +2430,83 @@ export const layer = Layer.effect(
           }),
         ),
       ),
+      saveLegacySpeechKey: Effect.fn("AccountsService.saveLegacySpeechKey")(
+        (accountId: AccountId, origin: string, name: string, token: Redacted.Redacted<string>) =>
+          locked(
+            Effect.gen(function* () {
+              const existing = findAccount(accountId);
+              const prior = existing?.summary.details;
+              if (
+                prior &&
+                (prior.kind !== "api-key" || !prior.speechOnly || !prior.sites.includes(origin))
+              ) {
+                return yield* fail("denied", "The legacy speech binding is unavailable.");
+              }
+              yield* save(
+                {
+                  ...(existing ? { accountId } : {}),
+                  name: existing?.summary.name ?? name,
+                  details: {
+                    kind: "api-key",
+                    sites: [origin],
+                    auth: { type: "bearer" },
+                    speechOnly: true,
+                  },
+                  secrets: { token: { type: "scient", value: Redacted.value(token) } },
+                },
+                accountId,
+              );
+            }),
+          ),
+      ),
+      resolveCustomModelAccountKey: Effect.fn("AccountsService.resolveCustomModelAccountKey")(
+        (accountId, origin, protocol) => locked(modelAccountKey(accountId, origin, protocol)),
+      ),
+      resolveSpeechKey: Effect.fn("AccountsService.resolveSpeechKey")(
+        (accountId, origin, usage, projectId) =>
+          locked(
+            Effect.gen(function* () {
+              const account = findAccount(accountId);
+              if (!account) return yield* missing();
+              const details = account.summary.details;
+              if (
+                details?.kind !== "api-key" ||
+                details.auth.type !== "bearer" ||
+                !isSpeechAccountOrigin(origin) ||
+                !details.sites.includes(origin) ||
+                account.summary.secrets.token?.source.type !== "scient"
+              )
+                return yield* fail(
+                  "denied",
+                  "Choose a saved API key for this exact speech endpoint.",
+                );
+              if (!inScope(account.summary.controls.scope, projectId))
+                return yield* fail("denied", SPEECH_KEY_OUTSIDE_PROJECT);
+              const { token } = yield* resolve(accountId, ["token"]);
+              if (!token) return yield* missing();
+              if (usage)
+                yield* appendActivity({
+                  target: { type: "account", accountId },
+                  action: "request",
+                  decision: "allowed",
+                  detail:
+                    "Speech " +
+                    usage.provider +
+                    " " +
+                    usage.jobId.replaceAll(Redacted.value(token), "[redacted]"),
+                });
+              return { name: account.summary.name, token };
+            }),
+          ),
+      ),
       resolveSecrets: Effect.fn("AccountsService.resolveSecretsInput")((accountId, fields) =>
-        locked(resolve(accountId, fields)),
+        locked(
+          Effect.gen(function* () {
+            const account = findAccount(accountId);
+            if (account && speechOnly(account.summary)) return yield* missing();
+            return yield* resolve(accountId, fields);
+          }),
+        ),
       ),
       recordCheck: Effect.fn("AccountsService.recordCheck")((accountId, { username, ...check }) =>
         locked(
@@ -2095,6 +2580,10 @@ export const layer = Layer.effect(
           ),
       ),
     });
+    if (sources.modelCatalog) {
+      const migrate = migrateModelKeys.pipe(Effect.ignore);
+      yield* sources.modelCatalog.installResolver(service.resolveCustomModelAccountKey, migrate);
+    }
     return service;
   }),
 );

@@ -97,7 +97,6 @@ describe("Scient release machinery", () => {
     assert.include(saveStep, "github.ref == 'refs/heads/main'");
     assert(saveStep.length > 0);
     // The packer verifies each supplied runtime's receipt and every file before staging it.
-    assert.include(workflow, '--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime"');
     assert.include(
       workflow,
       '--synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime"',

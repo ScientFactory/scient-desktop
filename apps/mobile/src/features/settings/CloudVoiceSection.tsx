@@ -59,13 +59,18 @@ export function CloudVoiceChoice({
 }: Props & { open: boolean; onOpenChange: (open: boolean) => void }) {
   const gt = useGT();
   const usable = useAtomValue(cloudVoiceConnectionAtom(environment.environmentId)) !== null;
+  const keys = useAtomValue(cloudVoiceKeysAtom(environment.environmentId));
+  const reconnect =
+    active && AsyncResult.isSuccess(keys) && keys.value?.[active.provider] === false;
   return (
     <>
       <ListChoiceRow
         label={gt("Cloud provider")}
         description={
           active
-            ? `${CLOUD_SPEECH_LABELS[active.provider]}${active.provider === "openrouter" ? ` · ${active.model}` : ""}`
+            ? reconnect
+              ? gt("{provider} · Reconnect", { provider: CLOUD_SPEECH_LABELS[active.provider] })
+              : `${CLOUD_SPEECH_LABELS[active.provider]}${active.provider === "openrouter" ? ` · ${active.model}` : ""}`
             : usable
               ? gt("Use your own API key")
               : gt("Not connected")
@@ -316,19 +321,25 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 description={
                   key === undefined
                     ? gt("Update the environment to use this provider")
-                    : isActive && routed
+                    : isActive && !key
                       ? canManage
-                        ? gt("{model} · Tap to change model or key", { model: activeModel })
-                        : gt("{model} · Tap to change model", { model: activeModel })
-                      : isActive && key && canManage
-                        ? gt("Tap to manage key")
-                        : key
-                          ? routed
-                            ? gt("API key saved · choose a model to use it")
-                            : gt("API key saved")
-                          : canManage
-                            ? gt("Add an API key to use this provider")
-                            : gt("Ask an environment administrator to add an API key")
+                        ? gt("Reconnect · API key required")
+                        : gt("Ask the person who manages {environment} to add a key", {
+                            environment: environment.label,
+                          })
+                      : isActive && routed
+                        ? canManage
+                          ? gt("{model} · Tap to change model or key", { model: activeModel })
+                          : gt("{model} · Tap to change model", { model: activeModel })
+                        : isActive && key && canManage
+                          ? gt("Tap to manage key")
+                          : key
+                            ? routed
+                              ? gt("API key saved · choose a model to use it")
+                              : gt("API key saved")
+                            : canManage
+                              ? gt("Add an API key to use this provider")
+                              : gt("Ask an environment administrator to add an API key")
                 }
                 onPress={() => {
                   if (routed) return edit(provider, !isActive);

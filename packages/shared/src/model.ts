@@ -12,7 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { copySorted } from "./Array.ts";
 // SCIENT-FORK:START — agent model order, reasoning default and automatic model choice
-import { preferredReasoningLevel } from "./scientModel.ts";
+import { preferredReasoningLevel, resolveAutomaticModel } from "./scientModel.ts";
 export {
   applyAutomaticModelDefaults,
   getDefaultHiddenAgentModels,
@@ -519,6 +519,19 @@ export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelS
       ? { capabilities: createModelCapabilities({ optionDescriptors: descriptors }) }
       : {}),
   };
+}
+
+/** Resolve a saved chat model against the current catalog, then use its automatic default. */
+export function resolveChatModelFromOptions(
+  driver: ProviderDriverKind,
+  selected: string | null | undefined,
+  options: Parameters<typeof resolveAutomaticModel>[1],
+): string | null {
+  return (
+    resolveSelectableModel(driver, selected, options) ??
+    resolveAutomaticModel(driver, options) ??
+    null
+  );
 }
 
 export function resolveSelectableModel(

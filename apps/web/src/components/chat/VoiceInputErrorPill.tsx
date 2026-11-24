@@ -100,7 +100,7 @@ export function VoiceInputErrorPill(props: {
           onClick={() => {
             if (openSettings) {
               props.onDismiss();
-              void navigate({ to: "/settings/voice" });
+              void navigate({ to: "/settings/transcription" });
             } else {
               props.onRetry();
             }

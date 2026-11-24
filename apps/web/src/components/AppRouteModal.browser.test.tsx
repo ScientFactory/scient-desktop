@@ -7,8 +7,6 @@ import { useCommitOnBlur } from "../hooks/useCommitOnBlur";
 import { AppRouteModal } from "./AppRouteModal";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 
-vi.mock("./chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
-
 function CommitOnBlurField({ onCommit }: { onCommit: (next: string) => void }) {
   return <input aria-label="Instructions" {...useCommitOnBlur("", onCommit)} />;
 }

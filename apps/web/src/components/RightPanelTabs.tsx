@@ -51,6 +51,7 @@ import {
   FileText,
   Files,
   Globe,
+  AudioLines,
   Library,
   MessagesSquare,
   Plus,
@@ -195,6 +196,7 @@ export interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddRecordings?: (() => void) | undefined;
   onAddDocuments?: ((format: NewDocumentChoice) => void) | undefined;
   onAddCompute: () => void;
 
@@ -474,6 +476,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddRecordings?: (() => void) | undefined;
   onAddDocuments?: ((format: NewDocumentChoice) => void) | undefined;
   onAddCompute: () => void;
 
@@ -501,6 +504,19 @@ function RightPanelEmptyState(props: {
   const [documentsMenuOpen, setDocumentsMenuOpen] = useState(false);
 
   const actions = [
+    ...(props.onAddRecordings
+      ? [
+          {
+            label: msg("Recordings"),
+            icon: AudioLines,
+            shortcut: "",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddRecordings,
+            badgeCount: 0,
+          },
+        ]
+      : []),
     {
       label: msg("Library"),
       description: msg("Import and read research sources."),
@@ -1508,6 +1524,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   };
 
   const addSurfaceActions = [
+    ...(props.onAddRecordings
+      ? [
+          {
+            label: msg("Recordings"),
+            icon: AudioLines,
+            shortcut: "",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddRecordings,
+            badgeCount: 0,
+          },
+        ]
+      : []),
     {
       label: msg("Library"),
       icon: Library,
@@ -2150,6 +2179,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddAgents={props.onAddAgents}
             onAddSources={props.onAddSources}
+            onAddRecordings={props.onAddRecordings}
             onAddDocuments={props.onAddDocuments}
             onAddCompute={props.onAddCompute}
 

@@ -33,6 +33,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // SCIENT-FORK:START — linked results: placing, updating and undoing write project files, as
   // any file write does; re-run starts a run.
   [WS_METHODS.computeResultsPlaceFigure]: AuthFilesystemWriteScope,
+  [WS_METHODS.voiceManageWords]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceDictate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.voiceDictationWait]: AuthOrchestrationOperateScope,
+  [WS_METHODS.voiceCloudChoices]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceSavedKeys]: AuthAccessWriteScope,
+  [WS_METHODS.voiceConfigureCloud]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceChooseCloud]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceReadWords]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeResultsPlaceLatex]: AuthFilesystemWriteScope,
   [WS_METHODS.computeResultsUpdateFiles]: AuthFilesystemWriteScope,
@@ -233,6 +241,10 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.voiceSavedKeys)
+    return [AuthAccessWriteScope, AuthSettingsWriteScope, AuthProvidersManageScope];
+  if (method === WS_METHODS.voiceConfigureCloud)
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
   if (method === WS_METHODS.documentsExportServerBrowserPdf)
     return [AuthPreviewOperateScope, AuthOrchestrationOperateScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
