@@ -69,10 +69,12 @@ describe("ScientFileRevisionBoundary", () => {
   it("keeps a preview open while a check of its file fails", async () => {
     setup(success("r1"));
     await using screen = await render(boundary("a"));
+    const preview = screen.getByText("Report").element();
     // The file went missing: the panel says so, and the document stays where it was read.
     assets.state = failure;
     await screen.rerender(boundary("b"));
     expect(assets.mounts).toHaveBeenCalledTimes(1);
+    expect(preview.isConnected).toBe(true);
   });
 
   it("retries a preview that opened before its file could be read", async () => {
