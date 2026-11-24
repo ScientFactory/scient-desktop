@@ -690,7 +690,7 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
   ) {
     console.log(
       `\nNo test baseline for this machine (${baselineFile}): every failure counts. ` +
-        "Record one from a clean checkout of origin/main with `pnpm alignment:gates --only test --record-baseline`.",
+        `Record one from a clean checkout of origin/main with \`pnpm alignment:gates --only test${platform === "win32" ? " --tests" : ""} --record-baseline\`.`,
     );
   }
   console.log(`\nResults: ${NodePath.join(out, "results.json")}\n\n${formatTable(record)}`);

@@ -366,13 +366,18 @@ const SIGNATURE = " :: ";
 export const failureId = (signature) => signature.split(SIGNATURE)[0];
 
 /**
- * How a test failed, stable across runs: a timeout, or the error's name (`AssertionError`,
- * `TypeError`); never the message, which carries paths, ports and durations.
+ * How a test failed, stable across runs: each reported error's kind, sorted, duplicates kept
+ * (a cleanup error after an assertion adds one). A kind is `timeout` for Vitest's own
+ * "Test/Hook timed out" error, else the error's name (`AssertionError`, `TypeError`, `Error`),
+ * else `error`; never the message, which carries paths, ports and durations.
  */
 function failureKind(messages) {
-  const first = String(messages?.[0] ?? "").trimStart();
-  if (/timed out in \d+ms/u.test(first)) return "timeout";
-  return /^([A-Z]\w*(?:Error|Exception))\b/u.exec(first)?.[1] ?? "error";
+  const kinds = (messages?.length ? messages : [""]).map((message) => {
+    const first = String(message).trimStart();
+    if (/^(?:\w*Error: )?(?:Test|Hook) timed out in \d+ms/u.test(first)) return "timeout";
+    return /^((?:[A-Z]\w*)?(?:Error|Exception))(?::|\s|$)/u.exec(first)?.[1] ?? "error";
+  });
+  return kinds.sort().join("+");
 }
 
 /**
