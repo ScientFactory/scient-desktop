@@ -59,7 +59,13 @@ import type {
   ScheduledTaskId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  idleCompactionOf,
+  isCompactionCommandMessage,
+  isLegacyMcpStartupNotice,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -676,7 +682,11 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "room_message")
     return item.deletedAt ? resolve(msg("Message deleted")) : resolve(msg("To people"));
-  if (item.type === "system_notice") return item.message;
+  if (item.type === "system_notice") {
+    const noticeTitle = item.title?.trim();
+    const isMcpStartupNotice = isLegacyMcpStartupNotice(item);
+    return isMcpStartupNotice && noticeTitle ? noticeTitle : item.message;
+  }
   if (item.type === "compaction") return contextCompactionLabel(item, resolve);
   const title =
     (item.type === "dynamic_tool"

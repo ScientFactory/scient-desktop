@@ -68,6 +68,10 @@ export function createExtensionsAtoms<R, E>(
   return {
     changes,
     inventory,
+    threadMcpStatus: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:thread:mcp-status",
+      tag: WS_METHODS.threadMcpStatusSubscribe,
+    }),
     deliveryReceipt: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:delivery-receipt",
       tag: WS_METHODS.extensionsDeliveryReceipt,
@@ -264,6 +268,7 @@ const extensionsAtoms = createExtensionsAtoms(connectionAtomRuntime);
 
 export const extensionsChanges = extensionsAtoms.changes;
 export const extensionsInventory = extensionsAtoms.inventory;
+export const threadMcpStatus = extensionsAtoms.threadMcpStatus;
 export const extensionsDeliveryReceipt = extensionsAtoms.deliveryReceipt;
 export const extensionsDiscoverCatalog = extensionsAtoms.discoverCatalog;
 export const extensionsDiscoverEntry = extensionsAtoms.discoverEntry;

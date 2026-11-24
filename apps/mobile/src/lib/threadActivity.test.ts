@@ -2211,3 +2211,30 @@ it("caps live thought previews while preserving reasoning detail", () => {
   expect(JSON.parse(activity.getFullDetail()!).item).toMatchObject({ text });
   expect(activity.getCopyText()).toContain(text);
 });
+
+it("labels an older MCP startup notice by its title and keeps the raw error as detail", () => {
+  const item = {
+    ...base("mcp-startup-notice", "2026-06-20T00:00:02.000Z", 1),
+    type: "system_notice" as const,
+    level: "warning" as const,
+    title: "MCP server cloudflare failed to start",
+    message:
+      "MCP client for `cloudflare` failed to start: MCP startup failed: handshaking with MCP server failed: Auth required",
+    nativeItemRef: {
+      driver: ProviderDriverKind.make("codex"),
+      nativeId: "mcp-startup-failed:turn-1:cloudflare",
+      strength: "weak" as const,
+    },
+  };
+  const generic = {
+    ...base("generic-notice", "2026-06-20T00:00:03.000Z", 2),
+    type: "system_notice" as const,
+    title: "Steer delivery not confirmed",
+    message: "Your steer could not be confirmed before the turn ended.",
+  };
+  const [startup, other] = buildThreadFeed([projected(item, 0), projected(generic, 1)]).flatMap(
+    (entry) => (entry.type === "activity-group" ? entry.activities : []),
+  );
+  expect(startup?.summary).toBe("MCP server cloudflare failed to start");
+  expect(other?.summary).toBe(generic.message);
+});

@@ -24,6 +24,7 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
+  isLegacyMcpStartupNotice,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
@@ -481,12 +482,15 @@ function projectedWorkEntry(
         changedFiles: item.files.map((file) => file.path),
         toolData: item,
       };
-    case "system_notice":
+    case "system_notice": {
+      const noticeTitle = item.title?.trim();
+      const isMcpStartupNotice = isLegacyMcpStartupNotice(item);
       return {
         ...common,
-        label: item.message,
+        label: isMcpStartupNotice && noticeTitle ? noticeTitle : item.message,
         ...(item.level === "info" ? {} : { sourceActivityKind: "runtime.warning" }),
       };
+    }
     case "error": {
       const presentation = providerErrorPresentation(item, resolve);
       return {

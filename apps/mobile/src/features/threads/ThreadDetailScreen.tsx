@@ -214,6 +214,7 @@ import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 // SCIENT-FORK:START — Scient Accounts: sign-ins waiting for the user reach the phone.
 import { ThreadAccountRequests } from "./ThreadAccountRequests";
+import { ThreadMcpStatusRequests } from "./ThreadMcpStatusRequests";
 // SCIENT-FORK:END
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
@@ -1934,6 +1935,11 @@ function ThreadDetailBody(
                     <>
                       {/* SCIENT-FORK:START — Scient Accounts: sign-ins reach the phone. */}
                       <ThreadAccountRequests
+                        environmentId={props.environmentId}
+                        threadId={props.selectedThread.id}
+                      />
+                      {/* MCP servers that need a sign-in, outside the transcript. */}
+                      <ThreadMcpStatusRequests
                         environmentId={props.environmentId}
                         threadId={props.selectedThread.id}
                       />
