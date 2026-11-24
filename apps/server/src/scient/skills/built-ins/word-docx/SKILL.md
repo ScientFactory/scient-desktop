@@ -14,6 +14,7 @@ PY='<pythonPath>'
 TOOLS='<toolsPath>'
 DOC="$TOOLS/doc.py"
 export PATH='<nativePathPrefix>':"$PATH"
+export PYTHONPATH="$TOOLS"
 ```
 
 1. **Decide whether to open the input.** Before inspect, text extraction, conversion, rendering or other parsing, establish where each input came from and whether it is trusted. Run untrusted inputs in a disposable, network-denied worker with resource limits and access only to job files. The preview tools do not provide that isolation. If a worker is unavailable, report which checks or deliverables are blocked. Apply the [package preflight](references/edit-ooxml.md#preflight-and-unpack) to OOXML before using direct helpers.
@@ -33,7 +34,7 @@ export PATH='<nativePathPrefix>':"$PATH"
 
    **Done when** the route and required tools are confirmed. For read-only requests, stop once the answer is grounded in the inspected content and any extraction gaps are reported.
 
-For Hebrew or mixed right-to-left and left-to-right text, read [Bidirectional Word documents](references/bidirectional.md) before writing.
+For Hebrew or mixed right-to-left and left-to-right text, read [Bidirectional Word documents](references/bidirectional.md) before writing. In the baseline and output renders, check the reading edge and inline order separately. For ordinary Hebrew prose, verify that the text starts at the right edge. Look at signed ranges, dates and identifiers within the line. Report inherited defects when the task calls for preserving layout.
 
 3. **Preserve the baseline.** Keep the original for validation and render comparison. On edits, inventory its features with `"$PY" "$TOOLS/ooxml/docx_feature_inventory.py" ORIGINAL.docx` and record the intended count changes. When a document has headings and the outline looks incomplete, check the paragraphs and their styles for `w:outlineLvl`. Preserve sections, page size, margins, and named fonts. For a new file, use the requested or template layout, or choose A4 or US Letter for the audience and report the choice. Read [scientific-documents.md](references/scientific-documents.md) for equations, citation fields, numbered captions, journal templates, or coauthor redlines.
 
