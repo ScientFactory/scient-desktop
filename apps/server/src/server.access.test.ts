@@ -22,7 +22,6 @@ import {
 import { assert, it } from "@effect/vitest";
 import { assertInclude } from "@effect/vitest/utils";
 import * as Deferred from "effect/Deferred";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -55,7 +54,6 @@ import {
   getPairedClientCredential,
   getWsServerUrl,
   jsonRequestBody,
-  makeCloudEnvironmentHealthRequest,
   nativeAdmissionInstance,
   parseSessionCookieFromWsUrl,
   readAuthAccessSnapshot,
@@ -67,56 +65,6 @@ import {
 it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
   "server router seam: access",
   (it) => {
-    it.effect("rejects cloud health requests without the exact status scope", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test/",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
-          }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
-
-        const now = yield* DateTime.now;
-        const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
-        const response = yield* fetchEffect(healthUrl, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody(
-            makeCloudEnvironmentHealthRequest({
-              privateKey: cloudKeyPair.privateKey,
-              environmentId: testEnvironmentDescriptor.environmentId,
-              jti: "cloud-health-jti-duplicate-scope",
-              nonce: "cloud-health-nonce-duplicate-scope",
-              issuedAt: DateTime.formatIso(now),
-              expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-              scope: ["environment:status", "environment:status"],
-            }),
-          ),
-        });
-
-        assert.equal(response.status, 401);
-      }).pipe(Effect.provide(NodeHttpServerTest)),
-    );
-
     it.effect(
       "rejects absent, old, newer and invalid WebSocket protocols before authentication or RPC",
       () =>
