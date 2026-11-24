@@ -55,31 +55,42 @@ import { planNotebookRun } from "./notebookRunPlan.ts";
 
 const isComputeResultsError = Schema.is(ComputeResultsError);
 
-async function mergedReads(
+export async function mergedReads(
   executions: ReadonlyArray<ComputeExecutionRecord>,
 ): Promise<SettledScriptRun["reads"]> {
   type Reads = NonNullable<SettledScriptRun["reads"]>;
   const files = new Map<string, Reads["files"][number]>();
-  const inputWrites = new Set(executions.flatMap(({ result }) => result?.reads?.inputWrites ?? []));
+  // A file an earlier cell wrote is the run's own; one read before any cell wrote it is an input.
+  const writtenEarlier = new Set<string>();
   const directories = new Map<string, NonNullable<Reads["directories"]>[number]>();
   let directoriesObserved = false;
   let readsOutsideProject: number | undefined;
   let outsideDataPaths: Set<string> | undefined;
   let tracked = false;
+  let untracked = false;
   let truncated = false;
   for (const execution of executions) {
     const reads = execution.result?.reads;
-    if (reads === undefined) continue;
+    if (reads === undefined) {
+      untracked = true;
+      continue;
+    }
     tracked = true;
     truncated ||= reads.truncated;
     for (const file of reads.files) {
-      if (files.has(file.path) || inputWrites.has(file.path)) continue;
+      if (files.has(file.path) || writtenEarlier.has(file.path)) continue;
+      if (
+        writtenEarlier.size > 0 &&
+        writtenEarlier.has(await NodeFSP.realpath(file.path).catch(() => file.path))
+      )
+        continue;
       if (files.size >= 2_000) {
         truncated = true;
         break;
       }
       files.set(file.path, file);
     }
+    for (const path of reads.inputWrites ?? []) writtenEarlier.add(path);
     if (reads.directories !== undefined) {
       directoriesObserved = true;
       for (const directory of reads.directories) {
@@ -102,12 +113,8 @@ async function mergedReads(
       readsOutsideProject = (readsOutsideProject ?? 0) + reads.readsOutsideProject;
     }
   }
-  if (inputWrites.size > 0) {
-    for (const path of files.keys()) {
-      const resolved = await NodeFSP.realpath(path).catch(() => path);
-      if (inputWrites.has(resolved)) files.delete(path);
-    }
-  }
+  // A cell without a read record leaves the run's inputs incomplete.
+  truncated ||= tracked && untracked;
   return tracked
     ? {
         files: [...files.values()],

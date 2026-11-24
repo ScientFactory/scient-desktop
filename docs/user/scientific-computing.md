@@ -532,8 +532,9 @@ Use **Insert ▸ Result** in a manuscript to link to that revision.
   declared, how many Scient saw the runtime read, and when the check covered only some inputs.
   In R, Julia, SQL and MATLAB, **Suggested from the code** shows existing project files named in the
   saved script. Choose **Add** beside a suggestion to declare it for this run.
-- Open **Run details** to see which inputs Scient checked. Python can record directory listings
-  and name data files read outside the project. Freshness for those outside files is unknown.
+- Open **Run details** to see which inputs Scient checked. A file the run read and then
+  changed stays an input and shows as changed during the run. Python can record directory
+  listings and name data files read outside the project. Freshness for those outside files is unknown.
   Declare datasets read by native readers such as DuckDB, PyArrow or Polars.
 - **Run fresh** and **Re-run** reuse the latest saved setup. Remove all parameters or all
   declared files in setup to clear that list for the next run.
@@ -596,10 +597,12 @@ package lists help you choose the environment.
 Scient compares tables, text and other files byte for byte. It compares JSON numbers with
 absolute tolerance `1e-12` and relative tolerance `1e-9` by default. You can change both.
 Strings, booleans, nulls and pairs of integer values must match exactly. Figures are compared by
-hash and shown alongside the verdict. If values and other files match but the original inputs
-changed or their coverage is incomplete, Scient reports **Outputs matched · original inputs
-unconfirmed**. Recorded directory listings and saved-view glob membership also leave the
-original inputs unconfirmed.
+hash and shown alongside the verdict. **Verified** means the checked outputs matched and every
+input Scient recorded or you declared had the same content. Scient records files Python opens;
+data read by a separate program or a native reader is covered only when you declare it. If values
+and other files match but a recorded input changed or coverage is incomplete, Scient reports
+**Outputs matched · original inputs unconfirmed**. Recorded directory listings and saved-view glob
+membership also leave the original inputs unconfirmed.
 
 Agents can use `scient_results_export` and `scient_results_verify` with folders inside the
 current project. For export, pass a script or notebook path for the newest revision, or an exact

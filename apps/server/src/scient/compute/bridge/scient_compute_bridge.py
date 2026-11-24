@@ -347,7 +347,7 @@ def _scient_install_write_recorder():
     def empty_record():
         return {
             "cells": [], "paths": {}, "reads": {}, "outside": {}, "directories": {},
-            "writes": set(), "input_writes": set(), "read_aliases": {}, "venv_dirs": {},
+            "writes": set(), "input_writes": set(), "venv_dirs": {},
             "reads_truncated": False, "writes_truncated": False, "invalid": False,
         }
 
@@ -411,16 +411,13 @@ def _scient_install_write_recorder():
             record["reads_truncated"] = True
         elif inside:
             reads[key] = [path, status.st_size, str(status.st_mtime_ns), str(status.st_ctime_ns)]
-            record["read_aliases"].setdefault(identity, set()).add(key)
         else:
             reads[key] = outside_name
 
     def note_write(path, identity):
+        # A file read before the run changed it stays an input; only later reads are the run's own.
         writes = record["writes"]
         if not ignored(identity):
-            for key in record["read_aliases"].pop(identity, ()):
-                record["reads"].pop(key, None)
-            record["outside"].pop(identity, None)
             if identity in writes or len(writes) < 4096:
                 writes.add(identity)
             else:
@@ -524,6 +521,13 @@ def _scient_install_write_recorder():
                     isinstance(mode, str) and any(c in mode for c in "wax+")
                 )
                 if writes:
+                    updates = (isinstance(mode, str) and "r" in mode and "+" in mode) or (
+                        isinstance(flags, int)
+                        and flags & (os.O_WRONLY | os.O_RDWR) == os.O_RDWR
+                        and not flags & os.O_TRUNC
+                    )
+                    if updates:
+                        note_read(*target)
                     note_write(*target)
                 else:
                     path, identity = target

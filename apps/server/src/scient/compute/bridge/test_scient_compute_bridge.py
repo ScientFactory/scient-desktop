@@ -895,8 +895,6 @@ class TestWriteRecorder(unittest.TestCase):
         with open(self.path("cohort.csv"), "w") as file:
             file.write("id\n1\n")
         opened = os.stat(self.path("cohort.csv"))
-        with open(self.path("generated.txt"), "w") as file:
-            file.write("before")
         with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as outside:
             outside.write("not in the project")
         self.addCleanup(os.remove, outside.name)
@@ -912,10 +910,9 @@ class TestWriteRecorder(unittest.TestCase):
                     file.read()
             with open(outside.name) as file:
                 file.read()
-            with open(self.path("generated.txt")) as file:
-                file.read()
-            with open(self.path("generated.txt"), "a") as file:
-                file.write("after")
+            # A file the run writes first is its own output, not an input.
+            with open(self.path("generated.txt"), "w") as file:
+                file.write("made here")
             with open(self.path("generated.txt")) as file:
                 file.read()
 
@@ -972,7 +969,7 @@ class TestWriteRecorder(unittest.TestCase):
                 stream.read()
         self.assertTrue(self.cell(read_unidentified_file)["readsTruncated"])
 
-    def test_output_overflow_keeps_reads_and_evicts_files_written_after_reading(self):
+    def test_output_overflow_keeps_reads_including_files_updated_after_reading(self):
         import pathlib
 
         early, late, generated = map(lambda name: pathlib.Path(self.path(name)), (
@@ -994,7 +991,9 @@ class TestWriteRecorder(unittest.TestCase):
 
         result = self.cell(body)
         self.assertTrue(result["readsTruncated"])
-        self.assertEqual([row[0] for row in result["reads"]], [str(early), str(late)])
+        self.assertEqual(
+            [row[0] for row in result["reads"]], [str(early), str(generated), str(late)]
+        )
 
     def test_records_linked_dataset_by_the_path_the_script_read(self):
         with tempfile.TemporaryDirectory() as external:
