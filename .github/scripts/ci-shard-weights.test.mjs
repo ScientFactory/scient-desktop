@@ -2,7 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
-import { RUNS_PER_SUITE, SHARDS, recentWeights } from "./ci-shard-weights.mjs";
+import { RUNS_PER_SUITE, SHARDS, matrixShards, recentWeights } from "./ci-shard-weights.mjs";
 
 const single = (suite, name, seconds, success = true, shard = 1, attempt = 1) => ({
   suite,
@@ -21,6 +21,8 @@ const single = (suite, name, seconds, success = true, shard = 1, attempt = 1) =>
   },
 });
 // One report per shard: `name` on shard 1, a placeholder file on each other shard.
+// A run whose own ci.yml had today's matrices.
+const ran = (runId, reports, shards = SHARDS) => ({ runId, shards, reports });
 const report = (suite, name, seconds, success = true) =>
   Array.from({ length: SHARDS[suite] }, (_, index) =>
     index === 0
@@ -30,20 +32,13 @@ const report = (suite, name, seconds, success = true) =>
 
 NodeTest.test("uses the newest successful reports per suite, ignoring failed ones", () => {
   const runs = [
-    {
-      runId: 4,
-      reports: [
-        ...report("web", "src/a.test.ts", 50, false),
-        ...report("server", "src/s.test.ts", 4),
-      ],
-    },
-    ...Array.from({ length: RUNS_PER_SUITE }, (_, index) => ({
-      runId: 3 - index,
-      reports: [
+    ran(4, [...report("web", "src/a.test.ts", 50, false), ...report("server", "src/s.test.ts", 4)]),
+    ...Array.from({ length: RUNS_PER_SUITE }, (_, index) =>
+      ran(3 - index, [
         ...report("web", "src/a.test.ts", 10 + index),
         ...report("server", "src/s.test.ts", 1),
-      ],
-    })),
+      ]),
+    ),
   ];
   const weights = recentWeights(runs);
   // The failed web report is ignored; the median comes from the next three runs.
@@ -54,10 +49,7 @@ NodeTest.test("uses the newest successful reports per suite, ignoring failed one
 
 NodeTest.test("a suite without a usable report falls back to the checked-in weights", () => {
   const weights = recentWeights([
-    {
-      runId: 1,
-      reports: [...report("web", "src/a.test.ts", 1, false), ...report("server", "bad/path.ts", 1)],
-    },
+    ran(1, [...report("web", "src/a.test.ts", 1, false), ...report("server", "bad/path.ts", 1)]),
   ]);
   NodeAssert.deepEqual(weights, { web: null, server: null });
 });
@@ -65,27 +57,18 @@ NodeTest.test("a suite without a usable report falls back to the checked-in weig
 NodeTest.test(
   "a run counts for a suite only with every shard, from each shard's latest attempt",
   () => {
-    const complete = (seconds, runId) => ({
-      runId,
-      reports: report("web", "src/a.test.ts", seconds),
-    });
-    const missingShard = { runId: 9, reports: report("web", "src/a.test.ts", 90).slice(1) };
+    const complete = (seconds, runId) => ran(runId, report("web", "src/a.test.ts", seconds));
+    const missingShard = ran(9, report("web", "src/a.test.ts", 90).slice(1));
     // Shard 1 failed on attempt 1 and passed on attempt 2: only the passing retry is read.
-    const retried = {
-      runId: 8,
-      reports: [
-        ...report("web", "src/a.test.ts", 80),
-        single("web", "src/a.test.ts", 30, true, 1, 2),
-      ],
-    };
+    const retried = ran(8, [
+      ...report("web", "src/a.test.ts", 80),
+      single("web", "src/a.test.ts", 30, true, 1, 2),
+    ]);
     // One report per shard, but shard 13 instead of shard 1: not the matrix's shards.
-    const wrongShard = {
-      runId: 10,
-      reports: [
-        ...report("web", "src/a.test.ts", 70).slice(1),
-        single("web", "src/a.test.ts", 70, true, 13),
-      ],
-    };
+    const wrongShard = ran(10, [
+      ...report("web", "src/a.test.ts", 70).slice(1),
+      single("web", "src/a.test.ts", 70, true, 13),
+    ]);
     const weights = recentWeights([
       wrongShard,
       missingShard,
@@ -98,28 +81,60 @@ NodeTest.test(
   },
 );
 
-NodeTest.test("a run from a wider matrix, before the shard count fell, is not used", () => {
-  const wider = (suite, runId, seconds) => ({
+// Before the shard counts fell, ci.yml ran 12 web and 16 server shards.
+const OLD = { web: 12, server: 16 };
+const old = (suite, runId, seconds, passed = OLD[suite]) =>
+  ran(
     runId,
-    reports: Array.from({ length: SHARDS[suite] + 4 }, (_, index) =>
+    Array.from({ length: OLD[suite] }, (_, index) =>
       single(
         suite,
         index === 0 ? "src/a.test.ts" : `src/shard-${index + 1}.test.ts`,
         seconds,
-        true,
+        index < passed,
         index + 1,
       ),
     ),
-  });
-  NodeAssert.deepEqual(recentWeights([wider("web", 2, 40), wider("server", 1, 40)]), {
+    OLD,
+  );
+
+NodeTest.test("a run from a wider matrix, before the shard count fell, is not used", () => {
+  NodeAssert.deepEqual(recentWeights([old("web", 2, 40), old("server", 1, 40)]), {
     web: null,
     server: null,
   });
+  const weights = recentWeights([old("web", 3, 40), ran(2, report("web", "src/a.test.ts", 5))]);
+  NodeAssert.equal(weights.web["src/a.test.ts"], 5);
+});
+
+NodeTest.test("a partial run from the wider matrix is not taken for a complete new one", () => {
+  // Shards 1-8 passed and 9-12 failed: exactly today's eight reports, from another matrix.
+  NodeAssert.deepEqual(recentWeights([old("web", 2, 40, SHARDS.web)]).web, null);
+  // The same eight reports, with the higher-numbered artifacts missing or unreadable.
+  const missing = old("web", 2, 40);
+  missing.reports = missing.reports.slice(0, SHARDS.web);
+  NodeAssert.deepEqual(recentWeights([missing]).web, null);
+  // A run whose workflow could not be read is not used either.
+  NodeAssert.deepEqual(recentWeights([ran(1, report("web", "src/a.test.ts", 5), null)]).web, null);
   const weights = recentWeights([
-    wider("web", 3, 40),
-    { runId: 2, reports: report("web", "src/a.test.ts", 5) },
+    old("web", 3, 40, SHARDS.web),
+    ran(2, report("web", "src/a.test.ts", 5)),
   ]);
   NodeAssert.equal(weights.web["src/a.test.ts"], 5);
+});
+
+NodeTest.test("reads each suite's shard count from a run's own workflow", () => {
+  const matrix = (shards) =>
+    `    strategy:\n      matrix:\n        shard: [${shards.join(", ")}]\n`;
+  const range = (count) => Array.from({ length: count }, (_, index) => index + 1);
+  const workflow = (web, server) =>
+    `jobs:\n  test_web:\n${matrix(web)}  # between\n  test_server:\n${matrix(server)}  check:\n    needs: [test_web]\n`;
+  NodeAssert.deepEqual(matrixShards(workflow(range(12), range(16))), OLD);
+  NodeAssert.deepEqual(matrixShards(workflow(range(8), [1, 2, 4])), { web: 8, server: null });
+  NodeAssert.deepEqual(matrixShards("jobs:\n  test:\n" + matrix(range(6))), {
+    web: null,
+    server: null,
+  });
 });
 
 NodeTest.test("the shard counts match the CI matrices", () => {
@@ -127,12 +142,5 @@ NodeTest.test("the shard counts match the CI matrices", () => {
     NodeURL.fileURLToPath(new URL("../workflows/ci.yml", import.meta.url)),
     "utf8",
   );
-  for (const [suite, job] of [
-    ["web", "test_web"],
-    ["server", "test_server"],
-  ]) {
-    const block = workflow.slice(workflow.indexOf(`\n  ${job}:\n`));
-    const shards = /shard: \[([\d, ]+)\]/.exec(block)?.[1].split(",").length;
-    NodeAssert.equal(shards, SHARDS[suite], job);
-  }
+  NodeAssert.deepEqual(matrixShards(workflow), SHARDS);
 });

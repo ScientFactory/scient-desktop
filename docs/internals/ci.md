@@ -200,9 +200,10 @@ cp "$out/server.json" apps/server/src/testUtils/shardWeights.json
 node .github/scripts/verify-ci-shards.mjs
 ```
 
-A suite takes a main run only when that run has a successful report from every shard, using each
-shard's latest attempt, and from no other shard, so a run from before a shard-count change is not
-used; otherwise its file is not written and its `cp` fails, so the checked-in weights stay. The verifier loads the actual Vitest configurations, discovers every test
+A suite takes a main run only when the `ci.yml` that run ran, read at its commit, had today's
+shard count for the suite, and the run has a successful report from every shard, using each shard's
+latest attempt, and from no other shard. A run from before a shard-count change is therefore not
+used, even when only its lower-numbered shards passed; otherwise its file is not written and its `cp` fails, so the checked-in weights stay. The verifier loads the actual Vitest configurations, discovers every test
 specification, and checks that the configured partitions cover each exactly once. Vitest's
 `list --filesOnly --shard` does not apply the sequencer.
 

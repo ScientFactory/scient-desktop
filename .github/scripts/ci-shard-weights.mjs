@@ -1,6 +1,7 @@
 // SCIENT-FORK:START — refresh the checked-in shard weights from the newest main timings.
-// docs/internals/ci.md has the command. Each suite takes a run only when that run has
-// a successful report from every one of its shards, so a partial run cannot skew the split.
+// docs/internals/ci.md has the command. Each suite takes a run only when the run's own ci.yml
+// gave it today's shard count and the run has a successful report from every one of those shards,
+// so a partial run, or one from another matrix, cannot skew the split.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -13,18 +14,39 @@ import { weightsFromReports } from "./shard-weights.mjs";
 const SUITES = ["web", "server"];
 // The shard matrices of test_web and test_server in ci.yml; a test keeps them equal.
 export const SHARDS = { web: 8, server: 12 };
+const JOBS = { web: "test_web", server: "test_server" };
 // Medians over a few runs keep one slow run from moving the split.
 export const RUNS_PER_SUITE = 3;
 const REPORT = /^vitest-(web|server)-(\d+)-attempt-(\d+)$/;
 
 /**
+ * Each suite's shard count in a ci.yml's text: the length of its job's `shard: [1, ..., n]`
+ * matrix, or null when the job or a 1..n matrix is not there.
+ */
+export function matrixShards(workflow) {
+  return Object.fromEntries(
+    SUITES.map((suite) => {
+      const start = workflow.indexOf(`\n  ${JOBS[suite]}:\n`);
+      if (start < 0) return [suite, null];
+      const next = workflow.slice(start + 1).search(/\n  [\w-]+:\n/);
+      const block = workflow.slice(start, next < 0 ? undefined : start + 1 + next);
+      const listed = /\n\s+shard: \[([\d, ]+)\]/.exec(block)?.[1].split(",").map(Number);
+      const counted = listed?.length && listed.every((shard, index) => shard === index + 1);
+      return [suite, counted ? listed.length : null];
+    }),
+  );
+}
+
+/**
  * Groups each suite's complete runs, newest first: one successful report per shard, from that
- * shard's latest successful attempt. A run missing any shard is not used for that suite.
+ * shard's latest successful attempt. A run is used for a suite only when its own workflow
+ * (`run.shards`, from matrixShards) had today's shard count and no shard is missing.
  */
 export function collectReports(runs) {
   const bySuite = Object.fromEntries(SUITES.map((suite) => [suite, []]));
   for (const run of runs) {
     for (const suite of SUITES) {
+      if (run.shards?.[suite] !== SHARDS[suite]) continue;
       const byShard = new Map();
       for (const entry of run.reports) {
         if (entry.suite !== suite || entry.report?.success !== true) continue;
@@ -77,8 +99,44 @@ async function pool(items, limit, work) {
   return results;
 }
 
+// The shard counts in the workflow file that `runId` ran, at the commit it ran; null if unread.
+async function runShards(repository, runId) {
+  try {
+    const [sha, path] = (
+      await gh([
+        "api",
+        `repos/${repository}/actions/runs/${runId}`,
+        "--jq",
+        "[.head_sha, .path] | @tsv",
+      ])
+    )
+      .trim()
+      .split("\t");
+    const workflow = await gh([
+      "api",
+      "-H",
+      "Accept: application/vnd.github.raw+json",
+      `repos/${repository}/contents/${path.replace(/@.*$/, "")}?ref=${sha}`,
+    ]);
+    return matrixShards(workflow);
+  } catch (error) {
+    console.warn(`No workflow for run ${runId}: ${String(error.stderr ?? error.message).trim()}`);
+    return null;
+  }
+}
+
 async function readRuns(repository, runIds, scratch) {
-  const listed = await pool(runIds, 8, async (runId) => {
+  const shards = new Map(
+    await pool(runIds, 8, async (runId) => [runId, await runShards(repository, runId)]),
+  );
+  // A run whose matrix differs for every suite has nothing to download.
+  const usable = runIds.filter((runId) =>
+    SUITES.some((suite) => shards.get(runId)?.[suite] === SHARDS[suite]),
+  );
+  for (const runId of runIds)
+    if (!usable.includes(runId))
+      console.log(`Run ${runId} ran other shard counts: ${JSON.stringify(shards.get(runId))}`);
+  const listed = await pool(usable, 8, async (runId) => {
     try {
       const names = JSON.parse(
         await gh([
@@ -129,6 +187,7 @@ async function readRuns(repository, runIds, scratch) {
   });
   return runIds.map((runId) => ({
     runId,
+    shards: shards.get(runId),
     reports: reports.flat().filter((entry) => entry.runId === runId),
   }));
 }
