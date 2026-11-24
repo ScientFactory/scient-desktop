@@ -17,3 +17,8 @@ reads. An image or PDF answers questions about the layout of that view.
 - Render a local PDF with `pdftoppm` or the staged `doc.py render` helper.
   `scient_document_runtime` gives the Python executable and tools directory
   when local helpers are available. Report which views you could inspect.
+- For Hebrew or mixed-direction content, check the paragraph edge or first
+  logical sheet column separately from the reading order within a line or
+  cell. In the actual export, check both sides of inline language switches,
+  wrapped phrases, punctuation, signed values, and table or sheet break
+  boundaries where present.

@@ -62,6 +62,12 @@ compares package parts and relationships. `recalc` verifies the recalculation
 result. `render` shows the LibreOffice layout. Use `probe` to diagnose a
 missing route. The editing reference gives the chart helper commands.
 
+For changes to the layout or export of right-to-left or bilingual sheets,
+check where the first logical column appears, then check mixed-language
+headings, signs, percent values and wrapping in the cells. When delivering a PDF, reopen the exported file and
+check print boundaries, repeated headings and clipped columns against the
+workbook. Report which visual checks were possible.
+
 Use an isolated worker for unfamiliar files when required by the runtime.
 Keep macros and the `.xlsm` extension when applicable. If a legacy file needs
 conversion, verify the converted baseline and report conversion losses.
