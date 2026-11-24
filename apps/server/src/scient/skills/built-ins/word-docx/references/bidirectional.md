@@ -21,6 +21,9 @@
   value has operators, for example `0.85 ± 0.04`. Right alignment can still
   match the table column. Check where the first logical column appears.
 - Check the rendered paragraph edge and reading order separately. Check
+  whether ordinary Hebrew prose starts at the right edge in the baseline
+  image, including when its XML already says RTL. Report paragraphs on the
+  wrong edge as an inherited defect when the task preserves the layout. Check
   Hebrew before and after an inline English span, and English before and
   after an inline Hebrew span. Include a wrap across lines when one occurs.
   Check niqqud, quotes, brackets, dates, IDs, percentages and the sign on
