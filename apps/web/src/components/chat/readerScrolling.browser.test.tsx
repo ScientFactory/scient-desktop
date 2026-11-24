@@ -1118,7 +1118,6 @@ function _createFixture(context: TestContext) {
     latestRun: null,
     runningRunId: null,
     turnDiffSummaries: [],
-    onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
     supportsConversationRollback: false,

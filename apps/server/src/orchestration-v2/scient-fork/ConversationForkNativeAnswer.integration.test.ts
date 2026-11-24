@@ -125,7 +125,11 @@ it.live("forks an ordinary native ACP answer through its persisted direct-child 
             Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
           ),
         ).pipe(
-          Stream.filter((projection) => projection.runs[0]?.status === "completed"),
+          Stream.filter(
+            (projection) =>
+              projection.runs[0]?.status === "completed" &&
+              projection.runs[0].checkpointId !== null,
+          ),
           Stream.runHead,
           Effect.timeout("15 seconds"),
         );

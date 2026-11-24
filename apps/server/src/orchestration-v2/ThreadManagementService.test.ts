@@ -243,7 +243,12 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     Layer.provide(
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     ),
-    Layer.provide(Layer.succeed(ThreadWorktreeRestore, { restore: () => Effect.void })),
+    Layer.provide(
+      Layer.succeed(ThreadWorktreeRestore, {
+        restore: () => Effect.void,
+        takeRecreated: () => Effect.undefined,
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -277,6 +282,7 @@ it.effect.each([
   const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
     Layer.provide(
       Layer.succeed(ThreadWorktreeRestore, {
+        takeRecreated: () => Effect.undefined,
         restore: () =>
           Effect.fail(
             new WorktreeRecreateError({

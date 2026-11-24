@@ -23,6 +23,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
@@ -3000,6 +3001,17 @@ describe("orchestration v2 provider switching", () => {
         detail: "Claude provider query ended before the turn could start.",
       }),
     ],
+    // ACP rejects a model it cannot select before sending the prompt.
+    [
+      "an ACP start that rejected the model",
+      new ProviderAdapter.ProviderAdapterTurnStartError({
+        driver: GROK_DRIVER,
+        threadId,
+        providerThreadId: ProviderThreadId.make("provider-thread:acp-refused-start"),
+        runId: RunId.make("run:acp-refused-start"),
+        refusedBeforePrompt: true,
+      }),
+    ],
     // Injected history is text only, so a refusal after injection must not settle the image.
     [
       "background work after native history injection",
@@ -3548,7 +3560,7 @@ describe("orchestration v2 provider switching", () => {
 
           // The handoff itself is not a failure: the run completes once the session closes.
           const runSettled = yield* awaitEvent(
-            (event) => event.type === "run.updated" && event.payload.status === "waiting",
+            (event) => event.type === "run.updated" && event.payload.status === "completed",
           );
           yield* orchestrator.dispatch({
             type: "thread.metadata.update",
@@ -4912,7 +4924,10 @@ describe("orchestration v2 provider switching", () => {
           }
 
           yield* worker.drain();
-          const afterFirst = yield* waitForIdle(handoffThreadId);
+          yield* waitForIdle(handoffThreadId);
+          // The run completes before its checkpoint capture; let the capture finish first.
+          yield* worker.drain();
+          const afterFirst = yield* orchestrator.getThreadProjection(handoffThreadId);
           const firstSession = afterFirst.providerSessions.find(
             (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
           );
@@ -6729,6 +6744,8 @@ describe("orchestration v2 provider switching", () => {
           yield* orchestrator.dispatch(commands[0]!);
           yield* orchestrator.dispatch(commands[1]!);
           yield* waitForIdle(threadId);
+          // The run completes before its checkpoint capture; let the capture finish first.
+          yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
           yield* orchestrator.dispatch(commands[2]!);
           assert.deepEqual(
             (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,

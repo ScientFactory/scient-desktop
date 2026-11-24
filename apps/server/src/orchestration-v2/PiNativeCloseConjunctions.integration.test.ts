@@ -616,7 +616,7 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
           yield* worker.drain(24);
           yield* waitForProjection(
             orchestrator,
-            (projection) => projection.runs[1]?.status === "waiting",
+            (projection) => projection.runs[1]?.status === "completed",
           );
           yield* worker.drain(24);
           const replacement = yield* snapshot("same-file-replacement-completed");
@@ -637,14 +637,16 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
           assert.lengthOf(answers, 1);
           if (answers[0]!.type === "assistant_message")
             assert.equal(answers[0]!.text, "Same-file replacement completed.");
-          assert.lengthOf(
-            replacement.stored.filter(
-              (row) =>
-                row.event.type === "run.updated" &&
-                row.event.payload.id === replacementRun.id &&
-                row.event.payload.status === "completed",
+          // The turn end completes the run once; its checkpoint capture repeats that update.
+          assert.deepEqual(
+            replacement.stored.flatMap((row) =>
+              row.event.type === "run.updated" &&
+              row.event.payload.id === replacementRun.id &&
+              row.event.payload.status === "completed"
+                ? [row.event.payload.checkpointId !== null]
+                : [],
             ),
-            1,
+            [false, true],
           );
           assert.lengthOf(
             replacement.wire.filter(

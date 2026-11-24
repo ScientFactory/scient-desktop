@@ -1150,7 +1150,7 @@ effectIt.effect(
             run: (input) => {
               spawnedArgs.push(input.args);
               const isIpv6 = input.args.includes("tcpv6");
-              const isTasklist = input.command === "tasklist.exe";
+              const isTasklist = input.command.endsWith(String.raw`\System32\tasklist.exe`);
               const failTasklist = isTasklist && tasklistCalls++ === 0;
               return Effect.succeed({
                 stdout: isTasklist
@@ -1459,7 +1459,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            if (input.command === "tasklist.exe") {
+            if (input.command === String.raw`C:\Windows\System32\tasklist.exe`) {
               return Effect.succeed(
                 processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'),
               );
@@ -1480,6 +1480,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
           },
         }),
         Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Environment, {}),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
         TestOwnedLocalEndpointsLive,
       ),

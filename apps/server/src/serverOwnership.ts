@@ -89,7 +89,7 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner
     .run({
-      ...legacyOwnerStartTimeCommand(state.pid, platform),
+      ...legacyOwnerStartTimeCommand(state.pid, platform, yield* HostProcess.Environment),
       // SCIENT-FORK:START — a cold PowerShell start can take most of 2s at login.
       timeout: Duration.seconds(platform === "win32" ? 5 : 2),
       // SCIENT-FORK:END

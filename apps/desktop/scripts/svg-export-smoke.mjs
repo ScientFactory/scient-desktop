@@ -74,7 +74,18 @@ async function run() {
       cacheDir: NodePath.join(state, "vite"),
       resolve: { alias: { "~": NodePath.join(webRoot, "src") } },
       server: { host: "127.0.0.1", port: 0 },
-      optimizeDeps: { include: ["mermaid"] },
+      // Scan the modules this page imports, not index.html, whose scan needs the app's own
+      // config. Otherwise each dependency is found at import time and its re-bundling
+      // fails the imports still loading.
+      optimizeDeps: {
+        include: ["mermaid"],
+        entries: [
+          "src/scient/diagrams/mermaidRuntime.ts",
+          "src/scient/diagrams/mermaidExport.ts",
+          "src/components/preview/staticImageActions.ts",
+          "src/scient/presentation/loadCanvasImage.ts",
+        ],
+      },
     });
     let savedImage = Buffer.alloc(0);
     let savedType = "image/svg+xml";

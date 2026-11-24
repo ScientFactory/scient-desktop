@@ -43,7 +43,7 @@ import * as ScientKeepAwakeService from "./scient/keepAwake/KeepAwakeService.ts"
 import * as ServerConfig from "./config.ts";
 import { withRootRequestSpans, withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
-import { wordDiagramRequestBodyLayer } from "./scient/pandoc/wordDiagramBodyLimit.ts";
+import { largeRequestBodyLayer } from "./scient/largeRequestBodies.ts";
 import { scientFeatureUsageLayer } from "./telemetry/ScientFeatureUsage.ts";
 import {
   guardHttpResponseWriteErrors,
@@ -105,6 +105,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
+import * as ProviderHostPathWatcher from "./provider/ProviderHostPathWatcher.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
@@ -799,6 +800,7 @@ const layerServerRestart = Layer.effect(
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderLifecycleCoordinator.layer,
   AgentAwarenessRelay.layer,
+  ProviderHostPathWatcher.layer.pipe(Layer.provide(layerDesktopTelemetryReceiver)),
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
@@ -1038,6 +1040,7 @@ export const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(ServerHttp.layerApiBodyLimit),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
@@ -1061,7 +1064,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     conversationImportUploadRouteLayer,
-    wordDiagramRequestBodyLayer,
+    largeRequestBodyLayer,
     scientFeatureUsageLayer,
     documentCaptureStartupSweepLayer,
     libraryMovePassLayer,

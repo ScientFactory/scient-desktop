@@ -177,6 +177,7 @@ function makeHarness(options?: {
       getProviders: SubscriptionRef.get(providersRef),
       refresh: () => SubscriptionRef.get(providersRef),
       refreshAfterUpdate: () => SubscriptionRef.get(providersRef),
+      rebuildMissingAndRefresh: SubscriptionRef.get(providersRef),
       invalidateModelCaches: () => Effect.void,
       refreshModelCatalog: Effect.void,
       refreshInstance: (instanceId) =>

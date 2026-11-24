@@ -73,6 +73,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
@@ -132,6 +133,9 @@ const ProviderRegistryTestLayer = Layer.succeed(ProviderRegistry.ProviderRegistr
 
 const PlatformTestLayer = Layer.mergeAll(
   ThreadCommandExecutor.layer,
+  Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+    runForThread: () => Effect.succeed({ status: "no-script" }),
+  }),
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
     get: () => Effect.succeed(null),
     discard: () => Effect.void,

@@ -11,7 +11,9 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
+  mcpClientScopes,
 } from "./auth.ts";
+import { PeerLinkLinkPairingInput } from "./peerLink.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 // SCIENT-FORK:START — Extensions mutations share the destination settings grant.
@@ -225,6 +227,7 @@ export type ClientGuardedHttpTag = keyof typeof CLIENT_GUARDED_HTTP_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeLinkPairing = Schema.decodeUnknownSync(PeerLinkLinkPairingInput);
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -244,6 +247,14 @@ export function clientRpcRequiredScopes(
       (payload.action === "create_pr" || payload.action === "commit_push_pr")
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
+  }
+  // Handing out access takes holding it: the caller gets back a credential it can spend itself.
+  if (method === WS_METHODS.peerLinksPairLink && input !== undefined) {
+    const held = mcpClientScopes(decodeLinkPairing(input).access);
+    return [AuthAccessWriteScope, ...held];
+  }
+  if (method === WS_METHODS.guestShareCreate) {
+    return [AuthAccessWriteScope, AuthOrchestrationReadScope];
   }
   // SCIENT-FORK:START — package operations require file access and the matching Compute grant.
   if (

@@ -52,6 +52,8 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+const SCHTASKS = "D:\\WinNT\\System32\\schtasks.exe";
+
 it("keeps systemd pinned to the stable launcher rather than a versioned server", () => {
   const unit = BootService.renderBootServiceUnit({
     nodePath: "/usr/bin/node",
@@ -351,13 +353,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         command === "systemctl --user disable --now scient.service" ||
         command === "systemctl --user restart --no-block scient.service" ||
         command.startsWith("launchctl bootout --wait ") ||
-        (input.command === "schtasks" && input.args[0] === "/End")
+        (input.command === SCHTASKS && input.args[0] === "/End")
       ) {
         markersAtStop.push(yield* fs.exists(marker));
       }
       if (
         command === "systemctl --user daemon-reload" ||
-        (input.command === "schtasks" && input.args[0] === "/Create")
+        (input.command === SCHTASKS && input.args[0] === "/Create")
       ) {
         markersAtPreparation.push(yield* fs.exists(marker));
       }
@@ -376,8 +378,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       }
       if (!failed && command === "systemctl --user enable scient.service") control.enabled = true;
       const taskMissing =
-        input.command === "schtasks" && input.args[0] !== "/Create" && control.task === undefined;
-      if (input.command === "schtasks" && !failed) {
+        input.command === SCHTASKS && input.args[0] !== "/Create" && control.task === undefined;
+      if (input.command === SCHTASKS && !failed) {
         if (input.args[0] === "/Create") {
           const xml = decodeServiceUnit(yield* fs.readFile(input.args[2] ?? ""));
           control.task = { xml, enabled: !serviceTaskIsDisabled(xml) };
@@ -418,7 +420,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
               })
             : input.args[1] === "--version"
               ? `t3 v${/versions\/([^/]+)\//.exec(input.args[0] ?? "")?.[1] ?? "1.2.3"}\n`
-              : input.command === "schtasks" && input.args.includes("/XML")
+              : input.command === SCHTASKS && input.args.includes("/XML")
                 ? control.task?.enabled === false
                   ? disabledServiceTask(control.task.xml)
                   : (control.task?.xml ?? "")
@@ -501,6 +503,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 USERPROFILE: home,
                 LOCALAPPDATA: path.join(home, "AppData", "Local"),
                 USERDOMAIN: "PC",
+                windir: "D:\\WinNT",
                 USERNAME: "theo",
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
@@ -1814,9 +1817,9 @@ process.disconnect();
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
       });
-      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
-        `schtasks /Create /XML ${plan.unitPath} /TN scient-PC-theo /F`,
-        "schtasks /Run /TN scient-PC-theo",
+      expect(commands.filter((command) => command.startsWith(`${SCHTASKS} `))).toEqual([
+        `${SCHTASKS} /Create /XML ${plan.unitPath} /TN scient-PC-theo /F`,
+        `${SCHTASKS} /Run /TN scient-PC-theo`,
       ]);
       // No launcher holds the lock here.
       expect(yield* service.status).toMatchObject({
@@ -1826,7 +1829,7 @@ process.disconnect();
       });
 
       // A task that Task Scheduler refuses to delete stays installed, so a retry finds it.
-      control.failCommand = "schtasks /Delete /TN scient-PC-theo /F";
+      control.failCommand = `${SCHTASKS} /Delete /TN scient-PC-theo /F`;
       expect((yield* service.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
       expect((yield* service.status).installed).toBe(true);
       control.failCommand = undefined;
@@ -1834,9 +1837,9 @@ process.disconnect();
       commands.length = 0;
       expect(yield* service.uninstall).toBe(true);
       expect(commands).toEqual([
-        "schtasks /Change /TN scient-PC-theo /DISABLE",
-        "schtasks /End /TN scient-PC-theo",
-        "schtasks /Delete /TN scient-PC-theo /F",
+        `${SCHTASKS} /Change /TN scient-PC-theo /DISABLE`,
+        `${SCHTASKS} /End /TN scient-PC-theo`,
+        `${SCHTASKS} /Delete /TN scient-PC-theo /F`,
       ]);
       expect(control.task).toBeUndefined();
       expect((yield* service.status).installed).toBe(false);
@@ -1876,11 +1879,11 @@ process.disconnect();
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
       expect(commands.filter((command) => !command.includes("/Query"))).toEqual([
-        "schtasks /Change /TN scient-PC-theo /DISABLE",
-        "schtasks /End /TN scient-PC-theo",
+        `${SCHTASKS} /Change /TN scient-PC-theo /DISABLE`,
+        `${SCHTASKS} /End /TN scient-PC-theo`,
         "repair",
-        "schtasks /Change /TN scient-PC-theo /ENABLE",
-        "schtasks /Run /TN scient-PC-theo",
+        `${SCHTASKS} /Change /TN scient-PC-theo /ENABLE`,
+        `${SCHTASKS} /Run /TN scient-PC-theo`,
       ]);
     }),
   );
@@ -1901,14 +1904,14 @@ process.disconnect();
       const inside = yield* makeService(undefined, "1.2.4", undefined, true);
       const relayMarker = `${plan.baseDir}/runtime/${DESKTOP_UPDATE_RESTART_MARKER_FILE}`;
       const handoff = [
-        `schtasks /Create /XML ${plan.unitPath} /TN scient-PC-theo /F`,
-        "schtasks /End /TN scient-PC-theo",
-        "schtasks /Run /TN scient-PC-theo",
+        `${SCHTASKS} /Create /XML ${plan.unitPath} /TN scient-PC-theo /F`,
+        `${SCHTASKS} /End /TN scient-PC-theo`,
+        `${SCHTASKS} /Run /TN scient-PC-theo`,
       ];
       commands.length = 0;
 
       expect(yield* inside.install()).toMatchObject({ handedOff: true, logPath: plan.logPath });
-      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual(handoff);
+      expect(commands.filter((command) => command.startsWith(`${SCHTASKS} `))).toEqual(handoff);
       expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
       expect(
         yield* fs.readFileString(`${plan.baseDir}/runtime/${SERVICE_RESTART_PENDING_FILE}`),
