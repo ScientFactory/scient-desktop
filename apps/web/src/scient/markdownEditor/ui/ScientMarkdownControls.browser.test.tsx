@@ -488,6 +488,60 @@ describe("formatting menu focus", () => {
     expect(view.hasFocus()).toBe(true);
   });
 
+  it("keeps the selection toolbar's size panel open while plus is clicked, with Alt and Shift steps", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const { view, controller } = await fixture(
+      _fixture,
+      'Say <span style="font-size:18pt">hello</span> now.\n',
+    );
+    await act(() =>
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 5, 10))),
+    );
+    const sizeButton = await vi.waitFor(() => {
+      const button = document.body.querySelector<HTMLButtonElement>(
+        '[role="toolbar"][aria-label="Text formatting"] button[aria-label="Font and size"]',
+      );
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    await act(() => sizeButton.click());
+    // The popup sits outside the test viewport, so the press is sent as the pointer events that
+    // start and end a step, modifier keys included.
+    const larger = await vi.waitFor(() => {
+      const button = document.body.querySelector<HTMLButtonElement>('button[aria-label="Larger"]');
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    const press = async (modifiers: { altKey?: boolean; shiftKey?: boolean } = {}) =>
+      act(() => {
+        const init = { bubbles: true, button: 0, pointerType: "mouse", ...modifiers };
+        larger.dispatchEvent(new PointerEvent("pointerdown", init));
+        larger.dispatchEvent(new PointerEvent("pointerup", init));
+      });
+    const sizeIs = (points: string) =>
+      vi.waitFor(() =>
+        expect(controller.session.session.draftSource).toBe(
+          `Say <span style="font-size:${points}pt">hello</span> now.\n`,
+        ),
+      );
+    // The editor never takes focus back: the popup closes when focus leaves it.
+    const stillOpen = async () => {
+      expect(view.hasFocus()).toBe(false);
+      expect(document.body.contains(larger)).toBe(true);
+      expect(larger.closest("[data-closed]")).toBeNull();
+    };
+    await press();
+    await sizeIs("19");
+    await stillOpen();
+    await press({ altKey: true });
+    await sizeIs("19.5");
+    await press({ shiftKey: true });
+    await sizeIs("29.5");
+    await stillOpen();
+  });
+
   it("shows understated LTR shortcut hints without changing action names", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

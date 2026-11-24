@@ -1,4 +1,10 @@
 import {
+  DictationVocabulary,
+  DictationWordsError,
+  WordsCommand,
+  WordsCommandResult,
+} from "./transcriptionWords.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -50,7 +56,7 @@ import {
   DocumentBindingSubscriptionInput,
 } from "@scientfactory/document-artifacts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
@@ -713,6 +719,12 @@ import {
 import {
   SCIENT_CHATGPT_DICTATION_WS_METHODS,
   WsVoiceDictateWithChatGptRpc,
+  WsVoiceDictateRpc,
+  WsVoiceDictationWaitRpc,
+  WsVoiceCloudChoicesRpc,
+  WsVoiceChooseCloudRpc,
+  WsVoiceConfigureCloudRpc,
+  WsVoiceSavedKeysRpc,
 } from "./scient/chatGptDictation.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
@@ -952,6 +964,8 @@ export const WS_METHODS = {
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   // Scient-owned optional voice transcript correction.
+  voiceManageWords: "voice.manageWords",
+  voiceReadWords: "voice.readWords",
   voiceCorrectTranscript: "voice.correctTranscript",
 
   workflowsSubscribe: "workflows.subscribe",
@@ -1356,6 +1370,21 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsVoiceManageWordsRpc = Rpc.make(WS_METHODS.voiceManageWords, {
+  payload: WordsCommand,
+  success: WordsCommandResult,
+  error: Schema.Union([DictationWordsError, EnvironmentAuthorizationError]),
+});
+
+const WsVoiceReadWordsRpc = Rpc.make(WS_METHODS.voiceReadWords, {
+  payload: Schema.Struct({
+    projectId: Schema.optionalKey(ProjectId),
+    language: Schema.String.check(Schema.isMaxLength(32)),
+  }),
+  success: DictationVocabulary,
+  error: Schema.Union([DictationWordsError, EnvironmentAuthorizationError]),
 });
 
 const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTranscript, {
@@ -2934,6 +2963,8 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsProviderSkillsReadDocumentRpc,
   // SCIENT-FORK:END
   WsVoiceCorrectTranscriptRpc,
+  WsVoiceReadWordsRpc,
+  WsVoiceManageWordsRpc,
   WsProviderUploadFeedbackRpc,
   WsProviderMcpSignInStartRpc,
   WsProviderMcpSignInCompleteRpc,
@@ -3137,6 +3168,12 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsLiveVoiceCallRpc,
   WsLiveVoiceMuteRpc,
   WsVoiceDictateWithChatGptRpc,
+  WsVoiceDictateRpc,
+  WsVoiceDictationWaitRpc,
+  WsVoiceCloudChoicesRpc,
+  WsVoiceChooseCloudRpc,
+  WsVoiceConfigureCloudRpc,
+  WsVoiceSavedKeysRpc,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
   WsPluginSignInOpenRpc,

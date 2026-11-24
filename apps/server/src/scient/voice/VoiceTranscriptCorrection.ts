@@ -40,13 +40,15 @@ export function makeVoiceTranscriptCorrection(input: {
     correct: Effect.fn("VoiceTranscriptCorrection.correct")(function* (request: {
       readonly transcript: string;
       readonly language?: VoiceTranscriptionLanguage;
+      readonly hints?: readonly string[];
     }): Effect.fn.Return<VoiceTranscriptCorrectionResult, VoiceTranscriptCorrectionError> {
       const settings = yield* input.serverSettings.getSettings.pipe(
         Effect.mapError(() =>
           failure("provider-unavailable", "The selected AI provider is unavailable."),
         ),
       );
-      const modelSelection = settings.textGenerationModelSelection;
+      const modelSelection =
+        settings.speechPostProcessingModelSelection ?? settings.textGenerationModelSelection;
       // A text generator (a model API) corrects the transcript directly with Scient's prompt.
       const textGenerator =
         input.textGenerators === undefined
@@ -56,7 +58,11 @@ export function makeVoiceTranscriptCorrection(input: {
         const output = yield* textGenerator({
           operation: "generateTranscriptionPostProcessing",
           cwd: input.cwd ?? ".",
-          prompt: buildVoiceTranscriptCorrectionPrompt(request.transcript, request.language),
+          prompt: buildVoiceTranscriptCorrectionPrompt(
+            request.transcript,
+            request.language,
+            request.hints,
+          ),
           outputSchema: VoiceTranscriptCorrectionOutput,
           modelSelection,
         }).pipe(
@@ -113,6 +119,7 @@ export function makeVoiceTranscriptCorrection(input: {
           transcript: request.transcript,
           ...(request.language ? { language: request.language } : {}),
           modelSelection,
+          ...(request.hints ? { hints: request.hints } : {}),
         })
         .pipe(Effect.timeoutOption(timeoutMs));
       if (Option.isNone(corrected)) {

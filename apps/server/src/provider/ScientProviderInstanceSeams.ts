@@ -37,6 +37,7 @@ export interface ProviderVoiceTranscriptCorrection {
     readonly transcript: string;
     readonly language?: VoiceTranscriptionLanguage;
     readonly modelSelection: ModelSelection;
+    readonly hints?: readonly string[];
   }) => Effect.Effect<{ readonly text: string }, VoiceTranscriptCorrectionError>;
 }
 

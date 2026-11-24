@@ -1,3 +1,4 @@
+import { isElectron } from "~/env";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
@@ -31,7 +32,7 @@ export function useTextFieldSpeech(input: {
     environmentId: input.environmentId,
     projectId: input.projectId,
     ownerKey: input.ownerKey,
-    disabled: input.disabled,
+    disabled: input.disabled || isElectron,
     offerSetup: false,
     readDraft: () => {
       const field = latest.current.textareaRef.current;
@@ -52,14 +53,15 @@ export function useTextFieldSpeech(input: {
     },
   });
   const shortcutLabel = useDictationShortcut({
+    enabled: !isElectron,
     keybindings,
     speech,
-    disabled: input.disabled ?? false,
+    disabled: input.disabled || isElectron,
     terminalOpen: false,
     modelPickerOpen: false,
     targetRef: input.textareaRef,
   });
-  return { ...speech, shortcutLabel };
+  return { ...speech, available: !isElectron && speech.available, shortcutLabel };
 }
 
 export type TextFieldSpeech = ReturnType<typeof useTextFieldSpeech>;

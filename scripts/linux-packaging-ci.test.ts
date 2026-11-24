@@ -99,16 +99,12 @@ describe("Linux packaging CI contracts", () => {
           const stage = NodePath.join(scratch, "t3code-desktop-linux-stage-fixture/app");
           NodeFS.mkdirSync(NodePath.join(stage, "dist"), { recursive: true });
           const filters = new Set(
-            [
-              "whisper-runtime",
-              "resource-monitor",
-              "synctex-runtime",
-              "kde-capture",
-              "hyprland-capture",
-            ].flatMap((name) => [
-              `!apps/desktop/prod-resources/${name}`,
-              `!apps/desktop/prod-resources/${name}/**/*`,
-            ]),
+            ["resource-monitor", "synctex-runtime", "kde-capture", "hyprland-capture"].flatMap(
+              (name) => [
+                `!apps/desktop/prod-resources/${name}`,
+                `!apps/desktop/prod-resources/${name}/**/*`,
+              ],
+            ),
           );
           const retained = inputs.files.filter((file) => !filters.has(file));
           const original = JSON.stringify({

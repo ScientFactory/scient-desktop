@@ -135,7 +135,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/custom-models": BrainCircuitIcon,
-  "/settings/voice": Mic2Icon,
+  "/settings/transcription": Mic2Icon,
   "/settings/skills": Layers3Icon,
   // SCIENT-FORK:START — Scient Extensions
   "/settings/extensions": PlugIcon,
@@ -167,7 +167,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
 const settingsNavGroupsWithoutVoice = (hasSecretProvidersEnvironment: boolean) =>
   settingsNavGroups(hasSecretProvidersEnvironment).map((group) => ({
     ...group,
-    paths: group.paths.filter((to) => isElectron || to !== "/settings/voice"),
+    paths: group.paths.filter((to) => isElectron || to !== "/settings/transcription"),
   }));
 const SETTINGS_NAV_GROUPS_WITH_SECRETS = settingsNavGroupsWithoutVoice(true);
 const SETTINGS_NAV_GROUPS_WITHOUT_SECRETS = settingsNavGroupsWithoutVoice(false);
@@ -313,7 +313,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
   const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === "Escape" && isSearching) {
+    if (event.key === "Escape" && (query || event.repeat)) {
       event.preventDefault();
       event.stopPropagation();
       clearSearch();

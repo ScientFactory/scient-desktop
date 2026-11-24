@@ -1,0 +1,183 @@
+// Replays the reported font gestures on a real LaTeX Visual editor schema in a browser: words
+// sized one by one, the word under the caret, and + and − over mixed sizes.
+import { Editor, Mark } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
+import { describe, expect, it } from "vite-plus/test";
+import { attachShortcutHost } from "../keyboard/host";
+import { isMacKeyboard } from "../keyboard/keys";
+import { drawnPointsAt } from "../writing/fontChoices";
+import { latexFontState, setLatexFontSize, stepLatexFontSize } from "./latexFontCommands";
+import { LATEX_CANVAS_TEXT_MARKS } from "./latexTextFormatting";
+
+const marks = [
+  Mark.create({
+    name: "latexFontSize",
+    addAttributes: () => ({ points: { default: 10 }, leading: { default: 12 } }),
+    renderHTML: () => ["span", 0],
+  }),
+  Mark.create({
+    name: "latexFontFamily",
+    addAttributes: () => ({ family: { default: "" }, engine: { default: "pdftex" } }),
+    renderHTML: () => ["span", 0],
+  }),
+  ...LATEX_CANVAS_TEXT_MARKS.map(({ name }) =>
+    Mark.create({
+      name,
+      // Small caps drawn smaller, so text without a size is drawn at two sizes.
+      renderHTML: () => ["span", name === "latexSmallCaps" ? { style: "font-size:8px" } : {}, 0],
+    }),
+  ),
+];
+
+/** An editor on a throwaway element; `using` destroys both when the test ends. */
+function open(text: string) {
+  const element = document.createElement("div");
+  document.body.append(element);
+  const editor = new Editor({
+    element,
+    extensions: [StarterKit, ...marks],
+    content: `<p>${text}</p>`,
+  });
+  return {
+    editor,
+    [Symbol.dispose]() {
+      editor.destroy();
+      element.remove();
+    },
+  };
+}
+
+/** Text offsets of the first paragraph (0 = start of its text). */
+const select = (editor: Editor, from: number, to = from) =>
+  editor.commands.setTextSelection({ from: 1 + from, to: 1 + to });
+
+/** Each word with its size, read from the document. */
+const sizes = (editor: Editor) => {
+  const runs: Array<[string, unknown]> = [];
+  editor.state.doc.descendants((node) => {
+    if (node.isText)
+      runs.push([
+        node.text!,
+        node.marks.find((m) => m.type.name === "latexFontSize")?.attrs.points,
+      ]);
+  });
+  return runs;
+};
+
+describe("LaTeX font commands in a real editor", () => {
+  it("shows the common size of words sized one by one", () => {
+    using fixture = open("alpha beta gamma");
+    const { editor } = fixture;
+    select(editor, 2);
+    setLatexFontSize(editor, 14);
+    select(editor, 8);
+    setLatexFontSize(editor, 14);
+    select(editor, 0, 10);
+    expect(latexFontState(editor)).toMatchObject({ size: 14, sizeMixed: false });
+  });
+
+  it("sizes a whole word with an apostrophe or a combining accent at the caret", () => {
+    using fixture = open("I don't know café now");
+    const { editor } = fixture;
+    select(editor, 3);
+    setLatexFontSize(editor, 14);
+    select(editor, 14);
+    setLatexFontSize(editor, 16);
+    expect(sizes(editor)).toEqual([
+      ["I ", undefined],
+      ["don't", 14],
+      [" know ", undefined],
+      ["café", 16],
+      [" now", undefined],
+    ]);
+  });
+
+  it("+ and − move each word of a mixed selection by one point and keep the field empty", () => {
+    using fixture = open("alpha beta gamma");
+    const { editor } = fixture;
+    const drawn = drawnPointsAt(editor.view, 13)!;
+    select(editor, 2);
+    setLatexFontSize(editor, 11);
+    select(editor, 8);
+    setLatexFontSize(editor, 20);
+    select(editor, 0, 16);
+    stepLatexFontSize(editor, 1, 10);
+    expect(sizes(editor)).toEqual([
+      ["alpha", 12],
+      [" ", undefined],
+      ["beta", 21],
+      [" ", undefined],
+      ["gamma", drawn + 1],
+    ]);
+    expect(latexFontState(editor)).toMatchObject({ size: null, sizeMixed: true });
+    stepLatexFontSize(editor, -1, 10);
+    expect(sizes(editor).map(([, points]) => points)).toEqual([
+      11,
+      undefined,
+      20,
+      undefined,
+      drawn,
+    ]);
+  });
+
+  it("+ at a caret moves the word under it, from a named size", () => {
+    using fixture = open("one two");
+    const { editor } = fixture;
+    editor.commands.setTextSelection({ from: 1, to: 4 });
+    editor.commands.setMark("latexSize_large");
+    select(editor, 1);
+    stepLatexFontSize(editor, 1, 10);
+    expect(sizes(editor)).toEqual([
+      ["one", 13],
+      [" two", undefined],
+    ]);
+  });
+
+  it("Mod+Shift+. and Mod+Shift+, reach the LaTeX size commands", () => {
+    using fixture = open("alpha beta");
+    const { editor } = fixture;
+    const run: string[] = [];
+    const detach = attachShortcutHost(editor.view.dom, ["latex"], {
+      accepts: () => true,
+      execute: (id) => {
+        run.push(id);
+        return true;
+      },
+    });
+    editor.commands.focus();
+    select(editor, 0, 5);
+    // macOS reports the unshifted character while Cmd and Shift are held.
+    const mac = isMacKeyboard();
+    for (const [code, key] of [
+      ["Period", "."],
+      ["Comma", ","],
+    ] as const) {
+      editor.view.dom.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          code,
+          metaKey: mac,
+          ctrlKey: !mac,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+    detach();
+    expect(run).toEqual(["latex.fontSizeLarger", "latex.fontSizeSmaller"]);
+  });
+
+  it("text without a size steps from the size it is drawn at, wherever the selection starts", () => {
+    using fixture = open("ab cd");
+    const { editor } = fixture;
+    select(editor, 3, 5);
+    editor.commands.setMark("latexSmallCaps");
+    const small = drawnPointsAt(editor.view, 1 + 4)!;
+    const body = drawnPointsAt(editor.view, 1 + 1)!;
+    expect(small).toBeLessThan(body);
+    select(editor, 0, 5);
+    stepLatexFontSize(editor, 1, 10);
+    expect(sizes(editor).map(([, points]) => points)).toEqual([body + 1, undefined, small + 1]);
+  });
+});

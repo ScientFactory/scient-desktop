@@ -38,7 +38,9 @@ export const memoryStore = () => {
   const blobs = new Map<string, Uint8Array>();
   const operations: string[] = [];
   let failWrite: string | undefined;
+  let failRemove: string | undefined;
   const store = ServerSecretStore.of({
+    listNames: Effect.sync(() => [...blobs.keys()]),
     get: (name) => Effect.sync(() => Option.fromUndefinedOr(blobs.get(name)?.slice())),
     set: (name, value) =>
       Effect.suspend(() => {
@@ -73,15 +75,26 @@ export const memoryStore = () => {
         return value.slice();
       }),
     remove: (name) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
+        if (name === failRemove)
+          return Effect.fail(
+            new SecretStorePersistError({
+              resource: "synthetic record",
+              cause: new Error("Synthetic removal failure"),
+            }),
+          );
         operations.push(`remove:${name}`);
         blobs.delete(name);
+        return Effect.void;
       }),
   });
   return {
     store,
     blobs,
     operations,
+    failRemovalOf: (name: string | undefined) => {
+      failRemove = name;
+    },
     failWritesTo: (name: string | undefined) => {
       failWrite = name;
     },
@@ -297,6 +310,8 @@ export function fakeAccounts(
       }),
     resolveBound: () => unsupported,
     listBindable: () => unsupported,
+    resolveCustomModelAccountKey: () => unsupported,
+    resolveSpeechKey: () => Effect.die("Speech account resolution is unavailable in this fake"),
     resolveSecrets: (_id, fields) =>
       Effect.sync(() => {
         calls.push("resolve");

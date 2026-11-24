@@ -27,7 +27,6 @@ import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
-import * as DesktopVoice from "./DesktopVoice.ts";
 // SCIENT-FORK:START — the keep-awake IPC handler needs its service.
 import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
@@ -264,7 +263,6 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       Layer.mock(ElectronTheme.ElectronTheme, {}),
       Layer.mock(ElectronShell.ElectronShell, {}),
       Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
-      Layer.mock(DesktopVoice.DesktopVoice, {}),
       Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
       Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
       Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),

@@ -91,7 +91,9 @@ import {
   type InsertMenuAction,
   type InsertMenuLayout,
 } from "../../writing/InsertMenu";
+import { FontControls } from "../../writing/FontControls";
 import { TextMenu, TextMenuItems } from "../../writing/TextMenu";
+import { MarkdownDocumentSettings } from "./MarkdownDocumentSettings";
 import { DockCommandCheckboxItem } from "../../writing/dockChrome";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 
@@ -121,6 +123,7 @@ import {
   DockOverflowRow,
   MenuRow,
   dockButtonClass,
+  DockPanelCloseContext,
   type DockGroup,
 } from "../../writing/dockChrome";
 import { ScientFindBar } from "../../writing/ScientFindBar";
@@ -381,6 +384,74 @@ function FormattingMenuItems({
   );
 }
 
+/** The shared Font / Size panel wired to the Markdown editor; used by the Text menu and the selection toolbar. */
+function MarkdownFontControls({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <FontControls
+      family={snapshot.fontFamily}
+      size={snapshot.fontSize}
+      familyMixed={snapshot.fontFamilyMixed}
+      sizeMixed={snapshot.fontSizeMixed}
+      disabled={!snapshot.editable}
+      onFamily={(family) => controller.execute(`font-family-${family ?? "default"}`)}
+      onSize={(size) =>
+        controller.execute(size === null ? "font-size-default" : `font-size-${size}`)
+      }
+      onStep={(steps) => controller.stepFontSize(steps)}
+    />
+  );
+}
+
+/** Selection toolbar button showing the current size; opens the same panel as Text > Font / Size. */
+function FontSizeButton({
+  controller,
+  snapshot,
+  onOpenChange,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+  readonly onOpenChange: (open: boolean) => void;
+}) {
+  const gt = useGT();
+  const [open, setOpenState] = useState(false);
+  const setOpen = (next: boolean) => {
+    setOpenState(next);
+    onOpenChange(next);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the toolbar freeze if the button unmounts while its panel is open
+  useEffect(() => () => onOpenChange(false), [onOpenChange]);
+  const close = () => {
+    setOpen(false);
+    controller.focus();
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className={cn(dockButtonClass(false), "px-2 text-xs tabular-nums")}
+            aria-label={gt("Font and size")}
+          >
+            {snapshot.fontSize ?? gt("Aa", { $context: "sample letters on the font button" })}
+          </button>
+        }
+      />
+      <PopoverPopup side="bottom" padding="none" data-keybinding-capture="">
+        <DockPanelCloseContext value={close}>
+          <MarkdownFontControls controller={controller} snapshot={snapshot} />
+        </DockPanelCloseContext>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
 function markdownTextContents(
   controller: ScientMarkdownEditorView,
   snapshot: ScientMarkdownEditorSnapshot,
@@ -389,6 +460,7 @@ function markdownTextContents(
   return {
     paragraphStyle: <StyleMenuItems controller={controller} snapshot={snapshot} />,
     formatting: <FormattingMenuItems controller={controller} snapshot={snapshot} />,
+    font: <MarkdownFontControls controller={controller} snapshot={snapshot} />,
     direction: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
     directionLabel: snapshot.inTable
       ? resolve(msg("Table direction"))
@@ -1153,6 +1225,8 @@ function SelectionToolbar({
   const [anchor, setAnchor] = useState<{ left: number; top: number; bottom: number } | null>(null);
   const [place, setPlace] = useState<"above" | "below">("above");
   const [selectingWithPointer, setSelectingWithPointer] = useState(false);
+  // While the size panel is open the toolbar stays put, so repeated + clicks hit the same spot.
+  const [sizePanelOpen, setSizePanelOpen] = useState(false);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks pointer-driven text selection via window pointer and blur listeners
   useEffect(() => {
@@ -1177,7 +1251,7 @@ function SelectionToolbar({
 
   const measuredSelectionAnchor = useRef<ReturnType<typeof measureSelectionToolbarAnchor>>(null);
   const synchronizeSelectionAnchor = useEffectEvent((..._changes: readonly unknown[]) => {
-    if (selectingWithPointer) return;
+    if (selectingWithPointer || sizePanelOpen) return;
     measuredSelectionAnchor.current = measureSelectionToolbarAnchor(
       controller,
       snapshot.editable,
@@ -1191,6 +1265,7 @@ function SelectionToolbar({
       synchronizeSelectionAnchor(
         controller,
         selectingWithPointer,
+        sizePanelOpen,
         snapshot.version,
         snapshot.editable,
         snapshot.selectionEmpty,
@@ -1198,6 +1273,7 @@ function SelectionToolbar({
     [
       controller,
       selectingWithPointer,
+      sizePanelOpen,
       snapshot.version,
       snapshot.editable,
       snapshot.selectionEmpty,
@@ -1284,6 +1360,7 @@ function SelectionToolbar({
         active={active.has("code")}
         shortcut="inlineCode"
       />
+      <FontSizeButton controller={controller} snapshot={snapshot} onOpenChange={setSizePanelOpen} />
       <LinkEditorTrigger
         controller={controller}
         active={active.has("link")}
@@ -1303,6 +1380,38 @@ function SelectionToolbar({
       />
     </div>,
     document.body,
+  );
+}
+
+function DocumentSettingsMenu({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  return (
+    <MenuSub open={open} onOpenChange={setOpen}>
+      <MenuSubTrigger disabled={!snapshot.editable}>
+        <T>Document settings</T>
+      </MenuSubTrigger>
+      <MenuSubPopup
+        className="w-96 max-w-[calc(100vw-2rem)]"
+        aria-label={gt("Document settings")}
+        finalFocus={false}
+      >
+        {open ? (
+          <MarkdownDocumentSettings
+            font={snapshot.documentFont}
+            disabled={!snapshot.editable || !snapshot.documentFontEditable}
+            onApply={(font) => controller.setDocumentFont(font)}
+            onClose={() => setOpen(false)}
+          />
+        ) : null}
+      </MenuSubPopup>
+    </MenuSub>
   );
 }
 
@@ -1514,6 +1623,8 @@ export function ScientMarkdownControls({
         overflowItems={
           <>
             <BlockActionsMenuItems controller={controller} snapshot={snapshot} />
+            <MenuSeparator />
+            <DocumentSettingsMenu controller={controller} snapshot={snapshot} />
             {documentActions ? (
               <>
                 <MenuSeparator />

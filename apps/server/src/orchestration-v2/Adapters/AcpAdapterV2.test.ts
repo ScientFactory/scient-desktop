@@ -69,6 +69,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   ACP_EMPTY_OPTION_VALUE,
@@ -6019,12 +6020,26 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const startup = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" ||
+            (event.type === "provider_turn.updated" && event.providerTurn.status === "running"),
+        ),
+        Stream.runCollect,
       );
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
+      // Loading the thread into the replacement agent is reported, and cleared before the turn runs.
+      assert.deepEqual(
+        Array.from(startup, (event) =>
+          event.type === "provider_session.updated"
+            ? (event.providerSession.startupPhase ?? null)
+            : "turn running",
+        ).slice(0, 3),
+        ["resume", null, "turn running"],
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -6167,6 +6182,80 @@ describe("AcpAdapterV2", () => {
         }).pipe(Effect.provideService(Clock.Clock, hostClock));
       }).pipe(Effect.provide(layerTest)),
   );
+
+  // SCIENT-FORK:START — exercise the bash fallback through the ACP session update harness.
+  it.effect("keeps the outer diagnostic and images on OMP bash fallback cards", () =>
+    Effect.gen(function* () {
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({ T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "execute" }),
+      });
+      yield* harness.startTurn(1);
+      yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call",
+        ),
+        Stream.runHead,
+      );
+      const shell = "scient_connector_list\nprintf diagnostic >&2\nexit 1";
+      const image = { type: "image", mimeType: "image/png", data: "AAAA" };
+      const text = { type: "text", text: "Generated image" };
+      for (const [id, script, tool, status, content] of [
+        ["mixed", shell, "scient_connector_list", "failed", [{ type: "text", text: "diagnostic" }]],
+        ["image", "generate_image --prompt chart", "generate_image", "completed", [text, image]],
+      ] as const) {
+        yield* harness.emitUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: id,
+            name: "bash",
+            title: "bash",
+            kind: "execute",
+            status,
+            rawInput: { command: script },
+            rawOutput: {
+              content,
+              // Oh My Pi 19.1 reports the exit code under details, as bash.ts does.
+              details: {
+                exitCode: status === "failed" ? 1 : 0,
+                toolCommands: [
+                  { tool, mode: "execute", args: {}, exitCode: 0, inner: { content: [] } },
+                ],
+              },
+            },
+          },
+        });
+      }
+      const events = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn_item.updated"),
+        Stream.takeUntil((event) => event.turnItem.nativeItemRef?.nativeId === "image"),
+        Stream.runCollect,
+      );
+      const items = events.map((event) => event.turnItem);
+      assert.deepInclude(
+        items.find((item) => item.nativeItemRef?.nativeId === "mixed"),
+        {
+          type: "command_execution",
+          input: shell,
+          status: "failed",
+          exitCode: 1,
+          output: "diagnostic",
+        },
+      );
+      assert.deepInclude(
+        items.find((item) => item.nativeItemRef?.nativeId === "image"),
+        {
+          type: "dynamic_tool",
+          toolName: "bash",
+          input: { command: "generate_image --prompt chart" },
+          output: { content: [text, image], exitCode: 0 },
+        },
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+  // SCIENT-FORK:END
 
   it.effect(
     "holds the inactivity timeout while a tool runs and restarts it when the tool ends",
@@ -13952,6 +14041,96 @@ describe("AcpAdapterV2", () => {
         assert.isAbove(runtimeCount, 1);
         assert.include(postRestartTurn.prompt, tag("Updated Jira issue PROJ-43"));
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("sends an image to an agent without image prompts as a file path", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const host = yield* ProviderHost.ProviderHost;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const sent: Array<EffectAcpSchema.PromptRequest["prompt"]> = [];
+      const instanceId = ProviderInstanceId.make("acp-test-image-without-image-prompts");
+      const threadId = ThreadId.make("thread-acp-image-without-image-prompts");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload, promptOptions) =>
+                Effect.sync(() => void sent.push(payload.prompt)).pipe(
+                  Effect.andThen(runtime.prompt(payload, promptOptions)),
+                ),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-image-without-prompts"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const screenshot = {
+        type: "image",
+        id: "screenshot-1",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 8,
+      } as const;
+      const screenshotPath = host.resolveAttachmentPath(screenshot);
+      if (screenshotPath === null) return assert.fail("expected a screenshot path");
+      yield* fileSystem.writeFile(
+        screenshotPath,
+        Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+      );
+      const base = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+        messageText: "What is in this screenshot?",
+      });
+
+      yield* runtime.startTurn({
+        ...base,
+        message: { ...base.message, attachments: [screenshot] },
+      });
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      assert.equal(Option.getOrThrow(terminal).status, "completed");
+      const blocks = sent[0] ?? [];
+      assert.deepEqual(
+        blocks.filter((block) => block.type !== "text"),
+        [],
+      );
+      assert.include(
+        blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
+        `[Attached image "screenshot.png" is saved at: ${screenshotPath}]`,
+      );
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live(

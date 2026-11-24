@@ -1,3 +1,4 @@
+import { TranscriptionJobs } from "./transcription/TranscriptionJobs.ts";
 import {
   GitCommandError,
   WsWorkspaceRpcGroup,
@@ -51,8 +52,12 @@ import {
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
+  ProviderDriverKind,
   type ScheduledTaskListResult,
   WorkflowRequestError,
   AuthSessionId,
@@ -224,6 +229,7 @@ import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as ManagedProviders from "./policy/managedProviders.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
@@ -352,6 +358,9 @@ import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcH
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
 // SCIENT-FORK: voice calls with a thread's Scient Agent, and dictation with its ChatGPT sign-in.
 import { makeLiveVoiceRpcHandlers } from "./scient/liveVoice/LiveVoiceRpcHandlers.ts";
+import { makeDictationRpcHandlers } from "./speech/DictationRpcHandlers.ts";
+import * as Speech from "./speech/SpeechService.ts";
+import * as SpeechCloud from "./transcription/CloudEngines.ts";
 import { makeChatGptDictationRpcHandlers } from "./scient/voice/ChatGptDictationRpcHandlers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
@@ -425,6 +434,16 @@ import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+// SCIENT-FORK:START — a missing thread snapshot (deleted or never created), as http.ts tells it apart.
+const isProjectionThreadNotFound = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "cause" in error &&
+  typeof error.cause === "object" &&
+  error.cause !== null &&
+  "_tag" in error.cause &&
+  error.cause._tag === "ProjectionStoreThreadNotFoundError";
+// SCIENT-FORK:END
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -1116,6 +1135,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             new OrchestrationV2GetThreadProjectionError({
               threadId: input.threadId,
               message: `Failed to load orchestration V2 thread ${input.threadId}`,
+              // SCIENT-FORK: a deleted thread's snapshot reads as missing; a warm client retires its cache.
+              ...(isProjectionThreadNotFound(cause) ? { reason: "thread_not_found" as const } : {}),
               cause,
             }),
         ),
@@ -1228,7 +1249,11 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       ) {
         return yield* snapshotThenLive();
       }
-      const replay = coalesceLiveUpdatedEvents(replayed);
+      // A deleted thread reads as gone: its replay starts at the deletion.
+      const deletion = replayed.findLastIndex((item) => item.event.type === "thread.deleted");
+      const replay = coalesceLiveUpdatedEvents(
+        deletion === -1 ? replayed : replayed.slice(deletion),
+      );
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,
@@ -1596,6 +1621,10 @@ export const layerWsRpc = (
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: { readonly secretReferences: boolean },
+  speechEngines?: {
+    speech: Speech.SpeechService["Service"];
+    cloud: SpeechCloud.CloudEngines["Service"];
+  },
 ) =>
   Layer.unwrap(
     Effect.gen(function* () {
@@ -1809,6 +1838,11 @@ export const layerWsRpc = (
               ...result,
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
+      // A project's layout command is its owner's code: only a session that may already run
+      // commands on the host has it run from a worktree request.
+      const projectCommands =
+        currentSession.scopes.includes(AuthOrchestrationOperateScope) ||
+        currentSession.scopes.includes(AuthTerminalOperateScope);
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
@@ -1822,6 +1856,14 @@ export const layerWsRpc = (
       ) {
         const project = yield* acpRegistrySessions.project(input.projectId);
         const { instance, manager } = yield* acpRegistrySessions.sessionManager(input.instanceId);
+        // Only a probed agent advertises listing, so a read never installs or first-starts one.
+        const snapshot = yield* instance.snapshot.getSnapshot;
+        if (snapshot.nativeSessions?.canList !== true) {
+          return yield* new AcpRegistryOperationError({
+            reason: "session_list_unsupported",
+            message: "The ACP agent does not advertise session listing.",
+          });
+        }
         const listed = yield* manager.listSessions({
           cwd: project.workspaceRoot,
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
@@ -2056,6 +2098,7 @@ export const layerWsRpc = (
       const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
       const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
       const scientSettings = yield* ScientServerSettings;
+      const transcriptionJobs = yield* TranscriptionJobs;
       const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
         registry: providerRegistry,
         serverSettings,
@@ -2291,6 +2334,13 @@ export const layerWsRpc = (
           observeRpcStream,
           threadManagement,
           providerSessions: providerSessionsV2,
+          providerInstances,
+        }),
+        ...makeDictationRpcHandlers({
+          observeRpcEffect,
+          speech: speechEngines?.speech,
+          cloud: speechEngines?.cloud,
+          cloudChoices: speechEngines?.cloud,
           providerInstances,
         }),
         ...makeChatGptDictationRpcHandlers({ observeRpcEffect, providerInstances }),
@@ -2881,9 +2931,19 @@ export const layerWsRpc = (
         [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
           Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
             Effect.andThen(
-              acpRegistryCatalog
-                .prepare(input)
-                .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+              Effect.suspend(() => {
+                const blocked = ManagedProviders.disallowedDriverReason(
+                  serverSettings.managedPolicy,
+                  ProviderDriverKind.make("acpRegistry"),
+                );
+                return blocked === undefined
+                  ? acpRegistryCatalog
+                      .prepare(input)
+                      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError))
+                  : Effect.fail(
+                      new AcpRegistryOperationError({ reason: "install_failed", message: blocked }),
+                    );
+              }),
             ),
           ),
         [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: (input) =>
@@ -3348,6 +3408,26 @@ export const layerWsRpc = (
                 Effect.forkScoped,
               ),
           ),
+        [WS_METHODS.voiceManageWords]: (input) => {
+          const operation = transcriptionJobs.manageWords(input);
+          return observeRpcEffect(
+            WS_METHODS.voiceManageWords,
+            input.projectId === undefined
+              ? operation
+              : authorizeEffect(
+                  AuthOrchestrationOperateScope,
+                  authorizeEffect(
+                    AuthFilesystemReadScope,
+                    authorizeEffect(AuthFilesystemWriteScope, operation),
+                  ),
+                ),
+            { "rpc.aggregate": "voice" },
+          );
+        },
+        [WS_METHODS.voiceReadWords]: (input) =>
+          observeRpcEffect(WS_METHODS.voiceReadWords, transcriptionJobs.readDictationWords(input), {
+            "rpc.aggregate": "voice",
+          }),
         [WS_METHODS.voiceCorrectTranscript]: (input) =>
           observeRpcEffect(
             WS_METHODS.voiceCorrectTranscript,
@@ -3991,7 +4071,7 @@ export const layerWsRpc = (
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
-          taskFolders.createForProjectFolder(input).pipe(
+          taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
             Effect.mapError(
               (cause) =>
                 new GitCommandError({
@@ -4009,28 +4089,30 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           // A thread's worktree may be a task folder: its repositories' worktrees go with it.
-          taskFolders.removeIfTaskFolder({ path: input.path, force: input.force === true }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitCommandError({
-                  operation: "TaskFolders.remove",
-                  command: "git worktree remove",
-                  cwd: input.cwd,
-                  detail: cause.detail,
-                }),
+          taskFolders
+            .removeIfTaskFolder({ path: input.path, force: input.force === true, projectCommands })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    operation: "TaskFolders.remove",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: cause.detail,
+                  }),
+              ),
+              Effect.flatMap((removed) =>
+                removed ? Effect.void : gitWorkflow.removeWorktree(input),
+              ),
+              // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
+              // second refresh would queue behind this one and reread an unchanged repository.
+              // Subscribers of the removed checkout learn it is no longer a repository.
+              Effect.tap(() =>
+                vcsStatusBroadcaster
+                  .refreshLocalStatus(input.path)
+                  .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
+              ),
             ),
-            Effect.flatMap((removed) =>
-              removed ? Effect.void : gitWorkflow.removeWorktree(input),
-            ),
-            // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
-            // second refresh would queue behind this one and reread an unchanged repository.
-            // Subscribers of the removed checkout learn it is no longer a repository.
-            Effect.tap(() =>
-              vcsStatusBroadcaster
-                .refreshLocalStatus(input.path)
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
-            ),
-          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           (input.switchRef
             ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
@@ -4461,6 +4543,34 @@ export const layerWsRpc = (
             papers: accountUserRuns.papers,
             plainKeys: accountPlainKeys,
             linkKey: linkAccountKey,
+            ...(speechEngines
+              ? {
+                  speechConsumers: Effect.gen(function* () {
+                    const configs = yield* speechEngines.cloud.execute({ action: "list" });
+                    const settings = yield* serverSettings.getSettings;
+                    const legacy = Object.entries(settings.legacySpeechAccountIds ?? {}).flatMap(
+                      ([provider, accountId]) =>
+                        accountId ? [{ accountId, label: `Legacy speech · ${provider}` }] : [],
+                    );
+                    return [
+                      ...legacy,
+                      ...(Array.isArray(configs)
+                        ? configs.flatMap((config) =>
+                            config.accountId
+                              ? [
+                                  {
+                                    accountId: config.accountId,
+                                    label: config.model,
+                                    engineId: config.id,
+                                  },
+                                ]
+                              : [],
+                          )
+                        : []),
+                    ];
+                  }).pipe(Effect.orElseSucceed(() => [])),
+                }
+              : {}),
             restoreKeptKeys: restoreKeptAgentKeys,
           }),
         ),
@@ -4478,6 +4588,8 @@ export const WS_RPC_SERVER_OPTIONS = {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const speech = yield* Speech.SpeechService;
+    const cloud = yield* SpeechCloud.CloudEngines;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
@@ -4567,6 +4679,7 @@ export const layer = Layer.unwrap(
               serverBrowser,
               reportProfiles,
               readSettingsClient(url.value),
+              { speech, cloud },
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.

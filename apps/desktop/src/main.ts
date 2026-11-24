@@ -23,7 +23,6 @@ import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
-import * as DesktopVoice from "./app/DesktopVoice.ts";
 // SCIENT-FORK:START — keep the computer awake while threads work.
 import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
@@ -249,8 +248,6 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerDesktopBackend),
 );
 
-const layerDesktopVoice = DesktopVoice.layer.pipe(Layer.provideMerge(layerDesktopFoundation));
-
 const layerDesktopApplication = Layer.mergeAll(
   // SCIENT-FORK:START — keep the computer awake while threads work.
   DesktopKeepAwake.layer,
@@ -269,7 +266,6 @@ const layerDesktopApplication = Layer.mergeAll(
   DesktopLinuxUrlHandler.layer,
   DesktopCliCommand.layer,
 ).pipe(
-  Layer.provideMerge(layerDesktopVoice),
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(
     DesktopUpdates.layer.pipe(

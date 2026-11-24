@@ -39,9 +39,10 @@ import type { MicrophoneEntry } from "../../lib/microphonePriority";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { localVoiceTranscriberAtom, voiceInputAtom } from "./VoiceInputProvider";
+import { voiceRouteAtom } from "./voiceDestination";
 import { createVoiceInputTarget } from "./voiceInputSession";
 
-it("uses the loaded microphone order when recording starts before preferences hydrate", async () => {
+it("uses hydrated microphone order and stops recording when the route changes", async () => {
   const registry = AtomRegistry.make();
   const preferences = mobilePreferencesAtom as Atom.Writable<
     AsyncResult.AsyncResult<{ microphones: ReadonlyArray<MicrophoneEntry> }>,
@@ -51,11 +52,12 @@ it("uses the loaded microphone order when recording starts before preferences hy
   const startup = Promise.withResolvers<void>();
   vi.mocked(setAudioModeAsync).mockImplementation(async () => startup.resolve());
   const setInput = vi.fn();
+  const stopped = Promise.withResolvers<void>();
   vi.mocked(createVoiceRecorder, { partial: true }).mockReturnValue({
     uri: "file:///voice.m4a",
     prepareToRecordAsync: async () => {},
     record() {},
-    stop: async () => {},
+    stop: async () => stopped.resolve(),
     getStatus: () => ({
       canRecord: true,
       isRecording: false,
@@ -101,6 +103,9 @@ it("uses the loaded microphone order when recording starts before preferences hy
       expect.objectContaining({ allowsRecording: true, allowBluetoothRecording: false }),
     );
     expect(setInput).toHaveBeenCalledWith("iphone");
+    const route = voiceRouteAtom as Atom.Writable<null, { transcriber: null }>;
+    registry.set(route, { transcriber: null });
+    await stopped.promise;
   } finally {
     await session.controller.cancel();
     registry.dispose();

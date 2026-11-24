@@ -498,7 +498,12 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         );
         const identified = result.code === 0 ? target.identify(result.stdout) : undefined;
         if (identified === undefined) {
-          return yield* new OmpRpcProtocolError({ detail: target.unsupportedDetail });
+          const newerApp = result.code === 0 && target.needsNewerApp?.(result.stdout) === true;
+          return yield* new OmpRpcProtocolError({
+            detail: newerApp
+              ? (target.newerAppDetail ?? target.unsupportedDetail)
+              : target.unsupportedDetail,
+          });
         }
         return identified;
       }),

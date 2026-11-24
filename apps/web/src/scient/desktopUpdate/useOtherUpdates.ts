@@ -12,6 +12,7 @@ import { useEffect } from "react";
 
 import { getProviderUpdateRunToastView } from "~/components/ProviderUpdateLaunchNotification.logic";
 import { type ServerUpdateTarget, useServerUpdate } from "~/components/ServerUpdateAction";
+import type { UpdateEverythingMachine } from "~/components/sidebar/updateEverything.logic";
 import {
   useQualifiedUpdateRunServers,
   useUpdateEverythingRun,
@@ -188,7 +189,11 @@ function providerUpdateFailure(
  * here, and a row seen updating reports "done" until the card shows it. Updates started here
  * report their progress and results like updates started elsewhere.
  */
-export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
+export function useOtherUpdates(
+  servers: ReadonlyArray<OtherServerUpdate>,
+  /** Every server as it is now, to rebuild the target of a pass's row restored after a relaunch. */
+  current: ReadonlyArray<UpdateEverythingMachine>,
+) {
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
   const run = useUpdateEverythingRun();
@@ -238,6 +243,7 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
     run,
     qualifiedServers,
     environments: new Set(labels.keys()),
+    current,
     liveOf: (item) => {
       switch (item.kind) {
         case "provider":
@@ -312,8 +318,8 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
       return;
     }
     if (isMachineUpdating(row.item.environmentId)) return;
-    if (failedUpdateRunServer(run, row.item.environmentId) !== null) {
-      retryUpdateRunServer(row.item.environmentId, qualifiedServers, updateServer);
+    if (failedUpdateRunServer(run, row.item.environmentId, current) !== null) {
+      retryUpdateRunServer(row.item.environmentId, qualifiedServers, updateServer, current);
       return;
     }
     const state = serverStates.get(row.item.environmentId);

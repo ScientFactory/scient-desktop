@@ -277,6 +277,7 @@ it.live.each(
           "issues",
           "documents:build",
           "compute",
+          "transcription",
           "sources:read",
           "sources:write",
           "skills:write",

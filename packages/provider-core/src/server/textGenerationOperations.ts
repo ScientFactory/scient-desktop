@@ -21,17 +21,42 @@ import {
 
 export const TranscriptionPostProcessingOutput = Schema.Struct({ transcription: Schema.String });
 
+const StructuredCorrectionOutput = Schema.Struct({
+  segments: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      start: Schema.Number,
+      end: Schema.Number,
+      text: Schema.String,
+      uncertain: Schema.Boolean,
+      protected: Schema.Boolean,
+    }),
+  ),
+  suggestions: Schema.Array(Schema.Struct({ term: Schema.String, language: Schema.String })),
+});
+
+const encodeStructuredCorrection = Schema.encodeEffect(
+  Schema.fromJsonString(StructuredCorrectionOutput),
+);
+
 export type Operation = keyof ProviderTextGeneration;
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
   readonly cwd: string;
+  readonly structuredCorrection?: "initial" | "repair";
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
-  readonly investigate?: { readonly timeoutMs: number } | undefined;
+  readonly investigate?:
+    | {
+        readonly timeoutMs: number;
+        /** cwd holds the content under review; paths the user configured resolve here instead. */
+        readonly projectCwd: string;
+      }
+    | undefined;
 }
 
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
@@ -174,6 +199,26 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
 
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
     Effect.fn(`${name}.generateTranscriptionPostProcessing`)(function* (input) {
+      if (input.structuredCorrection) {
+        const result = yield* run({
+          operation: "generateTranscriptionPostProcessing",
+          cwd: input.cwd,
+          prompt: input.prompt,
+          outputSchema: StructuredCorrectionOutput,
+          modelSelection: input.modelSelection,
+          structuredCorrection: input.structuredCorrection,
+        });
+        const transcription = yield* encodeStructuredCorrection(result).pipe(
+          Effect.mapError(
+            () =>
+              new TextGenerationError({
+                operation: "generateTranscriptionPostProcessing",
+                detail: "Could not encode structured correction output.",
+              }),
+          ),
+        );
+        return { transcription };
+      }
       return yield* run({
         operation: "generateTranscriptionPostProcessing",
         cwd: input.cwd,
@@ -190,7 +235,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       operation: "generateReviewGuide",
       cwd: input.cwd,
       modelSelection: input.modelSelection,
-      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS, projectCwd: input.projectCwd },
       ...buildReviewGuidePrompt(input),
     });
   });

@@ -76,11 +76,13 @@ const harness = Effect.gen(function* () {
       );
     }),
   );
-  const openStore = SpeechModelStore.SpeechModelStore.pipe(
-    Effect.provide(
+  const openStore = Effect.gen(function* () {
+    const context = yield* Layer.buildWithScope(
       SpeechModelStore.layer.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
-    ),
-  );
+      yield* Effect.scope,
+    );
+    return yield* SpeechModelStore.SpeechModelStore.pipe(Effect.provide(context));
+  });
   const store = yield* openStore;
   return {
     model,
@@ -220,3 +222,65 @@ it.effect("installs from a Hugging Face cache copy instead of downloading", () =
     expect(h.requests).toHaveLength(0);
   }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );
+
+// SCIENT-FORK:START — Uses the store fixture's controlled transfer stream.
+it.effect("shares an artifact transfer when its first waiter cancels", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    const release = yield* Deferred.make<void>();
+    h.bodies.current = () =>
+      Stream.concat(
+        Stream.fromEffect(Deferred.await(release)).pipe(Stream.drain),
+        Stream.succeed(bytes),
+      );
+    const firstProgress: number[] = [];
+    const joinedProgress: number[] = [];
+    let verified = false;
+    const first = yield* h.store
+      .download(h.model, { onProgress: (size) => firstProgress.push(size) })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(h.bodyStarted);
+    const second = yield* h.store
+      .download(h.model, {
+        onProgress: (size) => joinedProgress.push(size),
+        onVerificationStart: () => {
+          verified = true;
+        },
+      })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    expect(joinedProgress).toEqual(firstProgress);
+    expect(joinedProgress.length).toBeGreaterThan(0);
+    yield* Fiber.interrupt(first);
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(second)).toBe(h.stale);
+    expect(h.requests).toHaveLength(1);
+    expect(joinedProgress.at(-1)).toBe(bytes.length);
+    expect(verified).toBe(true);
+    expect(firstProgress.at(-1)).toBe(0);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.effect("starts a fresh transfer while the last canceled transfer is cleaning up", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    const cleaning = yield* Deferred.make<void>();
+    const cleaned = yield* Deferred.make<void>();
+    h.bodies.current = () =>
+      Stream.never.pipe(
+        Stream.ensuring(
+          Deferred.succeed(cleaning, undefined).pipe(Effect.andThen(Deferred.await(cleaned))),
+        ),
+      );
+    const first = yield* h.store.download(h.model).pipe(Effect.forkChild);
+    yield* Deferred.await(h.bodyStarted);
+    const cancel = yield* Fiber.interrupt(first).pipe(Effect.forkChild);
+    yield* Deferred.await(cleaning);
+    h.bodies.current = () => Stream.succeed(bytes);
+    yield* Effect.gen(function* () {
+      expect(yield* h.store.download(h.model)).toBe(h.stale);
+      expect(h.requests).toHaveLength(2);
+    }).pipe(Effect.ensuring(Deferred.succeed(cleaned, undefined)));
+    yield* Fiber.join(cancel);
+  }).pipe(Effect.provide(dependencies)),
+);
+// SCIENT-FORK:END

@@ -1,20 +1,17 @@
 import {
-  VoiceModelDownloadRequest,
-  VoiceModelOperationRequest,
-  VoiceModelRemoveRequest,
-  VoiceModelsSnapshot,
   VoiceMicrophoneAccessStatus,
   type VoiceMicrophoneAccessStatus as VoiceMicrophoneAccessStatusType,
-  VoiceTranscribeRequest,
-  VoiceCancelTranscriptionRequest,
-  VoiceTranscript,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Electron from "electron";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
-import * as DesktopVoice from "../../app/DesktopVoice.ts";
+import {
+  hasLegacyVoiceModelFiles,
+  removeLegacyVoiceModelFiles,
+} from "../../app/LegacyVoiceModelFiles.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -67,82 +64,49 @@ export const requestMicrophoneAccess = DesktopIpc.makeIpcMethod({
   }),
 });
 
-const getVoiceModelsState = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_GET_MODELS_STATE_CHANNEL,
+class LegacyVoiceModelFilesError extends Schema.TaggedError<
+  LegacyVoiceModelFilesError,
+  { readonly brand: unique symbol }
+>()("LegacyVoiceModelFilesError", { message: Schema.String }) {}
+
+export const hasLegacyModels = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.VOICE_HAS_LEGACY_MODELS_CHANNEL,
   payload: Schema.Void,
-  result: VoiceModelsSnapshot,
-  handler: Effect.fn("desktop.ipc.voice.getModelsState")(function* () {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.getModelsState;
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.voice.hasLegacyModels")(function* () {
+    const { stateDir } = yield* DesktopEnvironment.DesktopEnvironment;
+    return yield* Effect.tryPromise({
+      try: () => hasLegacyVoiceModelFiles(stateDir),
+      catch: () =>
+        new LegacyVoiceModelFilesError({
+          message: "Could not check previous dictation model files.",
+        }),
+    });
   }),
 });
 
-const downloadVoiceModel = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL,
-  payload: VoiceModelDownloadRequest,
-  result: VoiceModelsSnapshot,
-  handler: Effect.fn("desktop.ipc.voice.downloadModel")(function* (request) {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.downloadModel(request);
-  }),
-});
-
-const cancelVoiceModelDownload = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL,
-  payload: VoiceModelOperationRequest,
+export const removeLegacyModels = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.VOICE_REMOVE_LEGACY_MODELS_CHANNEL,
+  payload: Schema.Void,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.voice.cancelModelDownload")(function* (request) {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    yield* voice.cancelModelDownload(request);
+  handler: Effect.fn("desktop.ipc.voice.removeLegacyModels")(function* () {
+    const { stateDir } = yield* DesktopEnvironment.DesktopEnvironment;
+    return yield* Effect.tryPromise({
+      try: () => removeLegacyVoiceModelFiles(stateDir),
+      catch: () =>
+        new LegacyVoiceModelFilesError({
+          message: "Could not remove previous dictation model files.",
+        }),
+    });
   }),
 });
 
-const selectVoiceModel = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_SELECT_MODEL_CHANNEL,
-  payload: VoiceModelOperationRequest,
-  result: VoiceModelsSnapshot,
-  handler: Effect.fn("desktop.ipc.voice.selectModel")(function* (request) {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.selectModel(request);
+export const hadLegacySelection = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.VOICE_HAD_LEGACY_SELECTION_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.voice.hadLegacySelection")(function* () {
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    return Boolean((yield* settings.load).voiceSelectedModelId);
   }),
 });
-
-const removeVoiceModel = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_REMOVE_MODEL_CHANNEL,
-  payload: VoiceModelRemoveRequest,
-  result: VoiceModelsSnapshot,
-  handler: Effect.fn("desktop.ipc.voice.removeModel")(function* (request) {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.removeModel(request);
-  }),
-});
-
-const transcribeVoice = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_TRANSCRIBE_CHANNEL,
-  payload: VoiceTranscribeRequest,
-  result: VoiceTranscript,
-  handler: Effect.fn("desktop.ipc.voice.transcribe")(function* (request) {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.transcribe(request);
-  }),
-});
-
-const cancelVoiceTranscription = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL,
-  payload: Schema.Union([VoiceCancelTranscriptionRequest, Schema.Void]),
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.voice.cancelTranscription")(function* (request) {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    yield* voice.cancelTranscription(request);
-  }),
-});
-
-export const methods = [
-  getVoiceModelsState,
-  downloadVoiceModel,
-  cancelVoiceModelDownload,
-  selectVoiceModel,
-  removeVoiceModel,
-  transcribeVoice,
-  cancelVoiceTranscription,
-] as const;

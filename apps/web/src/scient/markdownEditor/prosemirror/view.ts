@@ -43,14 +43,21 @@ import type {
   ScientMarkdownImageNodeViewOptions,
   ScientMarkdownImageNodeViewRegistration,
 } from "../nodes/imageNodeView";
+import type { MarkdownDocumentFont } from "../documentFont";
 import {
+  documentFontEditable,
+  documentFontOf,
   filterScientMarkdownSlashCommands,
   runScientMarkdownCommand,
+  runScientMarkdownDocumentFont,
+  runScientMarkdownFontStep,
   runScientMarkdownTableInsert,
   type ScientMarkdownCommand,
   type ScientMarkdownTableDimensions,
 } from "./commands";
 import { scientMarkdownParser, scientMarkdownSchema } from "./schema";
+import { selectionMarkValue } from "./selectionMarkValue";
+import { drawnPointsAt } from "../../writing/fontChoices";
 import {
   addImageUploadPlaceholder,
   imageUploadPlaceholderPosition,
@@ -183,6 +190,8 @@ export interface ScientMarkdownEditorSnapshot {
   readonly citationActiveIndex: number;
   /** Library sources matching what follows `[@`; empty when the menu is closed. */
   readonly citationItems: ReadonlyArray<LibraryCitationCandidate>;
+  readonly documentFont: MarkdownDocumentFont;
+  readonly documentFontEditable: boolean;
   readonly editable: boolean;
   readonly headingLevel: number | null;
   readonly findActiveIndex: number;
@@ -191,6 +200,12 @@ export interface ScientMarkdownEditorSnapshot {
   readonly findMatchCount: number;
   readonly findOpen: boolean;
   readonly findQuery: string;
+  readonly fontFamily: string | null;
+  /** True when the selection mixes several fonts; fontFamily is then null. */
+  readonly fontFamilyMixed: boolean;
+  readonly fontSize: number | null;
+  /** True when the selection mixes several sizes; fontSize is then null. */
+  readonly fontSizeMixed: boolean;
   readonly findWholeWord: boolean;
   readonly inTable: boolean;
   readonly listKind: "bullet" | "ordered" | "task" | null;
@@ -355,6 +370,8 @@ export class ScientMarkdownEditorView {
     if (!modeIsEditable(this.mode)) return false;
     if (id === "link") return this.requestLinkEdit();
     if (id === "duplicateBlock") return this.executeBlock("duplicate");
+    if (id === "fontSizeLarger") return this.stepFontSize(1);
+    if (id === "fontSizeSmaller") return this.stepFontSize(-1);
     if (id === "moveBlockUp") return this.executeBlock("move-up");
     if (id === "moveBlockDown") return this.executeBlock("move-down");
     const mapped = SCIENT_MARKDOWN_COMMAND_SHORTCUTS.find(([shortcut]) => shortcut === id);
@@ -769,6 +786,27 @@ export class ScientMarkdownEditorView {
       else view.focus();
     }
     return handled;
+  }
+
+  /**
+   * Moves every run of the selection by `steps` size steps, each keeping its own size. Focus
+   * stays where it is, so the size panel stays open for the next click.
+   */
+  stepFontSize(steps: number): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    return runScientMarkdownFontStep(
+      steps,
+      (position) => drawnPointsAt(view, position),
+      view.state,
+      view.dispatch,
+    );
+  }
+
+  setDocumentFont(font: MarkdownDocumentFont): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    return runScientMarkdownDocumentFont(font, view.state, view.dispatch);
   }
 
   insertTable(dimensions: ScientMarkdownTableDimensions): boolean {
@@ -1876,6 +1914,8 @@ export class ScientMarkdownEditorView {
           : state.doc.rangeHasMark(selection.from, selection.to, mark),
       )
       .map((mark) => mark.name);
+    const fontFamily = selectionMarkValue<string>(state, "font_family", "family", "string");
+    const fontSize = selectionMarkValue<number>(state, "font_size", "size", "number");
     let blockType = selection.$from.parent.type.name;
     let headingLevel: number | null =
       blockType === "heading" ? Number(selection.$from.parent.attrs.level) : null;
@@ -1943,6 +1983,8 @@ export class ScientMarkdownEditorView {
         Math.max(0, citationItems.length - 1),
       ),
       citationItems,
+      documentFont: documentFontOf(state.doc),
+      documentFontEditable: documentFontEditable(state.doc),
       editable: modeIsEditable(this.mode),
       findActiveIndex: find.activeIndex,
       findCaseSensitive: find.caseSensitive,
@@ -1950,6 +1992,10 @@ export class ScientMarkdownEditorView {
       findMatchCount: find.matches.length,
       findOpen: this.findOpen,
       findQuery: find.query,
+      fontFamily: fontFamily.value,
+      fontFamilyMixed: fontFamily.mixed,
+      fontSize: fontSize.value,
+      fontSizeMixed: fontSize.mixed,
       findWholeWord: find.wholeWord,
       headingLevel,
       inTable,

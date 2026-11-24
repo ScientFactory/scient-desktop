@@ -1,3 +1,5 @@
+import type { VoiceSetupSnapshot } from "./voiceClient";
+import type { VoiceSetupClient } from "./voiceClient";
 import {
   render as _fixtureRender,
   type Screen,
@@ -8,8 +10,6 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   ThreadId,
-  type DesktopVoiceBridge,
-  type VoiceModelsSnapshot,
   type VoiceTranscript,
   type VoiceTranscriptCorrectionResult,
 } from "@t3tools/contracts";
@@ -61,19 +61,18 @@ function deferred<T>() {
 
 const snapshot = {
   runtimeAvailable: true,
-  selectedModelId: "whisper-small-multilingual-q5_1",
+  selectedModelId: "catalog/example-small",
   recommendation: null,
-  activeDownloadModelId: null,
   models: [
     {
-      id: "whisper-small-multilingual-q5_1",
+      id: "catalog/example-small",
       displayName: "Small",
       description: "Test",
       byteSize: 1,
-      state: { state: "ready", byteSize: 1 },
+      state: { state: "ready" },
     },
   ],
-} satisfies VoiceModelsSnapshot;
+} satisfies VoiceSetupSnapshot;
 
 const LOCAL = EnvironmentId.make("environment-local");
 const REMOTE = EnvironmentId.make("environment-remote");
@@ -98,7 +97,7 @@ const nextFrame = (_fixture: _Fixture) => {
 };
 
 describe("committed composer dictation outlives navigation", () => {
-  let client: DesktopVoiceBridge;
+  let client: VoiceSetupClient & { cancelTranscription: () => Promise<void> };
   let pending: ReturnType<typeof deferred<VoiceTranscript>>;
   let correctionClient: VoiceTranscriptCorrectionClient | undefined;
 
@@ -198,7 +197,6 @@ describe("committed composer dictation outlives navigation", () => {
       downloadModel: async () => snapshot,
       cancelModelDownload: vi.fn(),
       selectModel: async () => snapshot,
-      removeModel: async () => snapshot,
       transcribe: vi.fn(() => pending.promise),
       cancelTranscription: vi.fn(async () => {}),
       cancelTranscriptionRequest: vi.fn(async () => {}),

@@ -61,6 +61,7 @@ describe("Scient skill management", () => {
           "grill-me",
           "to-questionnaire",
           "teach",
+          "transcripts",
         ]);
         expect(initial.skills.map((skill) => skill.category)).toEqual([
           "Workspace readiness",
@@ -82,6 +83,7 @@ describe("Scient skill management", () => {
           "Planning and learning",
           "Planning and learning",
           "Planning and learning",
+          "Document creation",
         ]);
         expect(new Set(initial.skills.map((skill) => skill.categoryDescription))).toEqual(
           new Set([
@@ -209,7 +211,7 @@ describe("Scient skill management", () => {
           active: false,
           invocationPolicy: "explicit",
         });
-        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(19);
+        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(20);
         yield* Effect.promise(() =>
           NodeFSP.appendFile(
             NodePath.join(projectRoot, ".scient", "skills", "project-method", "SKILL.md"),

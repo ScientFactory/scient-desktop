@@ -124,6 +124,7 @@ import type { FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "~/scient/markdownEditor/markdownCitation";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { fileManagerActionForPath } from "~/components/chat/OpenInPicker.logic";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { useRemoteOpenState } from "~/remoteOpen";
@@ -1871,12 +1872,12 @@ export default function FilePreviewPanel({
     (queriedFile.isNotFile ||
       (folderTrail !== undefined && queriedFile.data === null && queriedFile.error === null));
   const hostFolderPath = isFolder && isHostFile ? relativePath : null;
-  // A chat-linked folder reads as a file until its read settles, and revealing a
-  // folder selects it in its parent instead of opening it, so reveal waits.
-  const revealsInFileManager =
-    !isFolder &&
-    (queriedFile.data !== null || queriedFile.error !== null) &&
-    serverConfig?.shellRevealInFileManager === true;
+  // A chat-linked folder reads as a file until its read settles, and a trail only implies a folder.
+  const fileManagerAction = fileManagerActionForPath({
+    isFolder: relativePath === null || queriedFile.isNotFile,
+    isSettled: queriedFile.data !== null || queriedFile.error !== null,
+    canReveal: serverConfig?.shellRevealInFileManager === true,
+  });
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isFolder ? null : relativePath;
   // SCIENT-FORK:START — a workspace file's crumbs are Scient's picker; see the subheader
@@ -2673,7 +2674,7 @@ export default function FilePreviewPanel({
               openInCwd={absolutePath}
               openInCwdIsFile={file.isFile}
               compact
-              revealFileManager={revealsInFileManager}
+              fileManagerAction={fileManagerAction}
             />
           ) : null}
           {/* Word wrap comes before the view toggle, so the toggle keeps its place

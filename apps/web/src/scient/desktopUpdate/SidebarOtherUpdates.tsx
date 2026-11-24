@@ -6,6 +6,7 @@ import { Link } from "@tanstack/react-router";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import type { ServerUpdateTarget } from "~/components/ServerUpdateAction";
+import type { UpdateEverythingMachine } from "~/components/sidebar/updateEverything.logic";
 import { useUpdateEverythingRun } from "~/components/sidebar/updateEverythingRun";
 import {
   Popover,
@@ -299,10 +300,13 @@ function OtherUpdateRowItem({
  */
 export function SidebarOtherUpdates({
   servers,
+  current,
   updateAll,
   placement = "pill",
 }: {
   readonly servers: ReadonlyArray<OtherServerUpdate>;
+  /** Every server as it is now, so a pass's failure restored after a relaunch offers Retry. */
+  readonly current: ReadonlyArray<UpdateEverythingMachine>;
   /**
    * A pass without this app, so it needs no confirmation. `admitServer` is asked again for
    * each server when its restart is due.
@@ -312,7 +316,7 @@ export function SidebarOtherUpdates({
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const updates = useOtherUpdates(servers);
+  const updates = useOtherUpdates(servers, current);
   const runActive = isUpdateRunActive(useUpdateEverythingRun());
   const [handle] = useState(() => PopoverCreateHandle());
   const triggerId = useId();

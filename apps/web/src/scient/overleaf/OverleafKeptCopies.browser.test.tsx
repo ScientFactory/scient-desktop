@@ -4,6 +4,7 @@ import "../../index.css";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { revealInFileExplorerLabelForKind } from "~/components/preview/fileExplorerLabel";
 import { EnvironmentId, type ScientOverleafKeptCopies } from "@t3tools/contracts";
+import type { RemoteOpenResolution } from "~/remoteOpen";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
@@ -45,6 +46,19 @@ vi.mock("~/state/server", async (original) => {
     serverEnvironment: { ...actual.serverEnvironment, configValueAtom: reveal.config },
   };
 });
+// The file reveal runs on the server host, so it is offered only where that host is the viewer's
+// machine: a resolved local-exec environment the viewer may operate.
+const remote = vi.hoisted(() => ({
+  resolution: { state: { mode: "local-exec" }, isResolved: true } as RemoteOpenResolution,
+}));
+vi.mock("~/remoteOpen", async (original) => ({
+  ...(await original<typeof import("~/remoteOpen")>()),
+  useRemoteOpenResolution: () => remote.resolution,
+}));
+vi.mock("~/state/session", async (original) => ({
+  ...(await original<typeof import("~/state/session")>()),
+  useEnvironmentScope: () => true,
+}));
 vi.mock("~/state/use-atom-command", async () => {
   const { shellEnvironment } = await import("~/state/shell");
   return {
@@ -93,6 +107,7 @@ function reset(linkedHere: boolean) {
   // The panel store is shared by every browser test file: start each test with no open tabs.
   useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
   reveal.config.mockReturnValue(Atom.make(null));
+  remote.resolution = { state: { mode: "local-exec" }, isResolved: true };
   reveal.open.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   for (const mock of Object.values(client)) mock.mockReset();
   client.listOverleafConnections.mockResolvedValue({ connections: [link(linkedHere)] });
@@ -122,11 +137,33 @@ describe("OverleafKeptCopies", () => {
 
   it("reveals the listed path only in an environment that can reveal, for readable copies", async () => {
     const label = revealInFileExplorerLabelForKind("file-explorer");
-    for (const capability of [
-      { shellRevealInFileManager: false, availableEditors: ["file-manager"], offered: false },
-      { shellRevealInFileManager: true, availableEditors: ["file-manager"], offered: true },
+    const localExec: RemoteOpenResolution = { state: { mode: "local-exec" }, isResolved: true };
+    const overSsh: RemoteOpenResolution = {
+      state: { mode: "remote-links", host: { kind: "ssh-alias", host: "box", username: "me" } },
+      isResolved: true,
+    };
+    for (const { resolution, ...capability } of [
+      {
+        shellRevealInFileManager: false,
+        availableEditors: ["file-manager"],
+        resolution: localExec,
+        offered: false,
+      },
+      {
+        shellRevealInFileManager: true,
+        availableEditors: ["file-manager"],
+        resolution: overSsh,
+        offered: false,
+      },
+      {
+        shellRevealInFileManager: true,
+        availableEditors: ["file-manager"],
+        resolution: localExec,
+        offered: true,
+      },
     ]) {
       reset(true);
+      remote.resolution = resolution;
       reveal.config.mockReturnValue(
         Atom.make({
           ...capability,

@@ -112,6 +112,7 @@ const ompStatusCheckFailure = (target: OmpTarget, error: unknown): ProviderStatu
   switch (error.detail) {
     case ompVersionCheckFailedDetail(target):
     case target.unsupportedDetail:
+    case target.newerAppDetail:
       return "version_failed";
     case ompNotInstalledDetail(target):
     case ompStartFailedDetail(target):
@@ -247,6 +248,11 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
         },
       }),
       checkFailure: ompStatusCheckFailure(target, error),
+      ...(target.newerAppDetail !== undefined &&
+      isProtocolError(error) &&
+      error.detail === target.newerAppDetail
+        ? { requiresAppUpdate: true }
+        : {}),
     };
   }
   const models = discovery.value.models.flatMap((model) => {

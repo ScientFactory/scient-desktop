@@ -1922,6 +1922,20 @@ function scientToolSummaryLabel(
               { count },
             ),
           );
+    case "scient-transcription":
+      return done
+        ? resolve(
+            msg(
+              "{count, plural, one {Used transcription {count} time} other {Used transcription {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to use transcription {count} time} other {Tried to use transcription {count} times}}",
+              { count },
+            ),
+          );
   }
 }
 // SCIENT-FORK:END

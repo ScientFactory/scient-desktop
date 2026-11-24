@@ -1,3 +1,4 @@
+import { DictationRecognitionHints } from "./transcriptionWords.ts";
 // SCIENT-FORK:START — Scient desktop bridge members live in a Scient module.
 import type {
   DesktopAssetCopyRequest,
@@ -43,6 +44,8 @@ export interface ContextMenuItem<T extends string = string> {
   disabled?: boolean;
   header?: boolean;
   icon?: string;
+  /** PNG data URL; takes precedence over `icon`. */
+  iconImage?: string;
   separatorBefore?: boolean;
   checked?: boolean;
   children?: readonly ContextMenuItem<T>[];
@@ -60,6 +63,7 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
+  readonly iconImage?: string;
   readonly separatorBefore?: boolean;
   readonly checked?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
@@ -73,6 +77,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
+  iconImage: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
   checked: Schema.optionalKey(Schema.Boolean),
   children: Schema.optionalKey(
@@ -1187,6 +1192,7 @@ export const DesktopAppleSpeechResultSchema = Schema.Union([
 export type DesktopAppleSpeechResult = typeof DesktopAppleSpeechResultSchema.Type;
 
 export const DesktopAppleSpeechTranscribeInputSchema = Schema.Struct({
+  hints: Schema.optionalKey(DictationRecognitionHints),
   locale: Schema.String.check(Schema.isMaxLength(64)),
   // 16 kHz mono Float32 PCM, at most five minutes.
   pcm: Schema.Uint8Array,
@@ -1348,7 +1354,9 @@ export interface DesktopBridge extends ScientDesktopBridge {
   appleSpeech?: {
     supportedLocales: () => Promise<readonly string[]>;
     prepare: (locale: string) => Promise<DesktopAppleSpeechResult>;
-    transcribe: (input: { locale: string; pcm: Uint8Array }) => Promise<DesktopAppleSpeechResult>;
+    transcribe: (
+      input: typeof DesktopAppleSpeechTranscribeInputSchema.Type,
+    ) => Promise<DesktopAppleSpeechResult>;
   };
 }
 

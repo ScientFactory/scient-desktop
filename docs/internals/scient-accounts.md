@@ -933,3 +933,23 @@ provider environment. The existing proxy redacts reflected values in responses.
   or React state.
 - **Command-line logins** show the tool's own login command to copy; Scient doesn't import CLI
   sessions.
+
+### Custom models downgrade window
+
+The release that migrates Custom models keys keeps a sealed escrow for the previous build. Live Custom models and Accounts readers use the Accounts binding. Accounts persistence writes exact origins separately from the site list the previous build understands. An origin the previous build cannot describe is omitted from its site list. It is never widened to a domain.
+
+Before downgrading, quit Scient and stop the server for the affected profile. Run the migrating release's server binary with `restore-model-keys --base-dir <profile-base-dir>`. Use the same profile flags as the server normally uses. Then start the previous release. The command restores an unchanged key to its original legacy slot and writes the legacy slot ID to the connection. It skips removed keys, replaced keys, and changed endpoints. Reconnect skipped connections in the previous release. If an older release edits Accounts, it may discard the new origin metadata. Check the connection after upgrading again.
+
+During the downgrade window, migration sweeps unreferenced version-one escrow files and logs cleanup failures for retry.
+
+**Next release:** sweep every version-one escrow, clear its registry, and remove the restore command after the downgrade window closes. Keep the compatibility reader for state already written during the window.
+
+### Shared keys with native model agents
+
+Pi and OMP currently require a connection-owned key for Anthropic Messages. The Settings form can save a dedicated key in its sealed Custom models slot. Accounts does not offer that slot for sharing. The follow-up is a key-adding broker for native Pi and OMP requests. It will pin the destination and keep the key out of the child process.
+
+The owner's cross-port checks on Node 24.19 and Bun 1.4.4 observed that platform fetch stripped the bearer header on 307 and 308 redirects and forwarded the Anthropic key header. A dedicated Anthropic key can therefore still reach a redirect destination. The Settings form warns about this until the broker lands.
+
+For the standard OpenAI Completions and Responses clients, Pi passes the connection key as the OpenAI client's `apiKey`. That client uses the key for bearer authorization. OMP passes both protocols through its shared OpenAI request setup, which uses the connection key for bearer authorization. Scient supplies no custom key header for these two protocols. [Pi Completions](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts), [Pi Responses](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-responses.ts), [OpenAI client](https://github.com/openai/openai-node/blob/main/src/client.ts), [OMP Completions](https://github.com/can1357/oh-my-pi/blob/main/packages/ai/src/providers/openai-completions.ts), [OMP Responses](https://github.com/can1357/oh-my-pi/blob/main/packages/ai/src/providers/openai-responses.ts), [OMP OpenAI request setup](https://github.com/can1357/oh-my-pi/blob/main/packages/ai/src/providers/openai-shared.ts).
+
+The source review covers the standard clients in the upstream source trees and the Scient connection configuration. Live qualification of the installed agents and HTTPS-to-HTTP transitions remains open.

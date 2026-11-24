@@ -409,8 +409,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ),
       );
 
-      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
-
       return yield* fileSystem.readFileString(outputPath).pipe(
         Effect.mapError(
           (cause) =>
@@ -420,17 +418,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               cause,
             }),
         ),
-        Effect.flatMap(decodeOutput),
-        Effect.catchTags({
-          SchemaError: (cause) =>
-            Effect.fail(
-              new TextGenerationError({
-                operation,
-                detail: "Codex returned invalid structured output.",
-                cause,
-              }),
-            ),
-        }),
+        Effect.flatMap((text) =>
+          TextGenerationOperations.decodeJsonReply(
+            { operation, outputSchema: outputSchemaJson },
+            "Codex",
+            text,
+          ),
+        ),
       );
     }).pipe(Effect.ensuring(cleanup));
   });

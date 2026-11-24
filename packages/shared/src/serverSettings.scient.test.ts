@@ -3,11 +3,18 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettings,
+  ServerSettingsPatch,
   UsageAccountingSourceId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection, resolveProviderModelPreferences } from "./model.ts";
 import { applyServerSettingsPatch, isModelSelectionProviderEnabled } from "./serverSettings.ts";
+
+const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
 describe("serverSettings helpers", () => {
   // regression: 89974f96b6 fix(alignment): preserve Scient provider and lifecycle behavior
@@ -220,4 +227,40 @@ describe("atomic initialization of curated model preferences", () => {
       modelOrder: [],
     });
   });
+});
+
+it("preserves legacy speech spellings and never reapplies an acknowledged import", () => {
+  const before = decodeServerSettings({
+    transcriptionWords: [
+      { term: "c#", preferred: "C#", variants: ["see sharp"], language: "und", source: "user" },
+      { term: "C#", language: "he", source: "user" },
+    ],
+  });
+  const id = "a".repeat(64);
+  const patch = decodeServerSettingsPatch({
+    migrateLegacySpeechWords: {
+      id,
+      words: [
+        { term: "C#", aliases: ["C sharp"] },
+        { term: "שלום", aliases: ["שלם"] },
+        { term: "<T>", aliases: ["{T}"] },
+      ],
+    },
+  });
+  const after = decodeServerSettings(encodeServerSettings(applyServerSettingsPatch(before, patch)));
+  expect(after.transcriptionWords).toEqual([
+    {
+      term: "c#",
+      preferred: "C#",
+      variants: ["see sharp", "C sharp"],
+      language: "und",
+      source: "user",
+    },
+    { term: "C#", language: "he", source: "user" },
+    { term: "שלום", preferred: "שלום", variants: ["שלם"], language: "und", source: "user" },
+    { term: "<T>", preferred: "<T>", variants: ["{T}"], language: "und", source: "user" },
+  ]);
+  expect(after.legacySpeechWordsReceipts).toEqual([id]);
+  const edited = { ...after, transcriptionWords: [] };
+  expect(applyServerSettingsPatch(edited, patch).transcriptionWords).toEqual([]);
 });

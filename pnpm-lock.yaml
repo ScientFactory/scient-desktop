@@ -374,7 +374,7 @@ patchedDependencies:
   '@effect/vitest@4.1.5': dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5
   '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
-  '@legendapp/list@3.7.3': 85979836ae620bdc6b40e29e3da04afd0a1a3a925ef00bdb3788e9b6fa2153f4
+  '@legendapp/list@3.7.3': c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': f3e9ce74755a659b7cb8c4c4defd5b67359f9e0b1f1bc8dbc928a76d5066177f
   '@pierre/trees@1.0.0-beta.6': fa712464867a49dfdfaa2e714cc91ea38c75f821d94c05740e9885b23dd627f7
@@ -449,9 +449,6 @@ importers:
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
-      '@scientfactory/scient-voice':
-        specifier: workspace:*
-        version: link:../../packages/scient-voice
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -603,7 +600,7 @@ importers:
         version: 5.4.6
       '@legendapp/list':
         specifier: 3.7.3
-        version: 3.7.3(patch_hash=85979836ae620bdc6b40e29e3da04afd0a1a3a925ef00bdb3788e9b6fa2153f4)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        version: 3.7.3(patch_hash=c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@material/material-color-utilities':
         specifier: 0.3.0
         version: 0.3.0
@@ -953,6 +950,9 @@ importers:
       '@scientfactory/scient-cloud':
         specifier: workspace:*
         version: link:../../packages/scient-cloud
+      '@scientfactory/scient-document':
+        specifier: workspace:*
+        version: link:../../packages/scient-document
       '@scientfactory/scient-markdown':
         specifier: workspace:*
         version: link:../../packages/scient-markdown
@@ -1244,7 +1244,7 @@ importers:
         version: 5.3.0
       '@legendapp/list':
         specifier: 3.7.3
-        version: 3.7.3(patch_hash=85979836ae620bdc6b40e29e3da04afd0a1a3a925ef00bdb3788e9b6fa2153f4)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        version: 3.7.3(patch_hash=c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@lexical/markdown':
         specifier: ^0.41.0
         version: 0.41.0
@@ -1500,6 +1500,9 @@ importers:
       remark-parse:
         specifier: 'catalog:'
         version: 11.0.0(supports-color@8.1.1)
+      remark-rehype:
+        specifier: 'catalog:'
+        version: 11.1.2
       saxes:
         specifier: 6.0.0
         version: 6.0.0
@@ -1533,6 +1536,9 @@ importers:
       vega-tooltip:
         specifier: 1.0.0
         version: 1.0.0
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zustand:
         specifier: ^5.0.11
         version: 5.0.14(@types/react@19.3.0)(react@19.3.0)(use-sync-external-store@1.6.0(react@19.3.0))
@@ -2737,15 +2743,6 @@ importers:
       '@effect/vitest':
         specifier: 4.1.5
         version: 4.1.5(patch_hash=dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5)(@astrojs/compiler-rs@0.5.1)(@opentelemetry/api@1.10.0)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.5(patch_hash=14a7acd734809d8dddbf2c19c4ec01fdd2ffae60a612de42b5ed29860216052a))(esbuild@0.28.2)(happy-dom@20.11.6(bufferutil@4.1.0)(utf-8-validate@6.0.6))(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
-      '@types/node':
-        specifier: 24.12.4
-        version: 24.12.4
-      vite-plus:
-        specifier: 1.4.0
-        version: 1.4.0(@astrojs/compiler-rs@0.5.1)(@opentelemetry/api@1.10.0)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(esbuild@0.28.2)(happy-dom@20.11.6(bufferutil@4.1.0)(utf-8-validate@6.0.6))(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
-
-  packages/scient-voice:
-    devDependencies:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -17650,7 +17647,7 @@ snapshots:
   '@koromix/koffi-win32-x64@3.3.7':
     optional: true
 
-  '@legendapp/list@3.7.3(patch_hash=85979836ae620bdc6b40e29e3da04afd0a1a3a925ef00bdb3788e9b6fa2153f4)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
+  '@legendapp/list@3.7.3(patch_hash=c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
     dependencies:
       react: 19.3.0
       use-sync-external-store: 1.7.0(react@19.3.0)

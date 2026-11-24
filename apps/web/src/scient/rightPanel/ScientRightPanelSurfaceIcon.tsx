@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   BookOpenText,
   File,
   FileText,
@@ -32,6 +33,9 @@ function ComputeSurfaceIcon(props: { readonly contextId: ComputeContextId | unde
 
 export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRightPanelSurface }) {
   switch (props.surface.module) {
+    case "recording":
+    case "recordings":
+      return <AudioLines className="size-3 shrink-0" />;
     case "sources":
       return <Library className="size-3 shrink-0" />;
     case "new-tab":

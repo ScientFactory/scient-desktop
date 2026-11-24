@@ -1,5 +1,3 @@
-import { compareSemverVersions } from "@t3tools/shared/semver";
-
 import {
   isSupportedManagedRuntimeStableVersion,
   type ManagedRuntimeArtifactPolicy,
@@ -7,13 +5,13 @@ import {
 import type { ManagedRuntimeTarget } from "./target.ts";
 
 const SCIENT_AGENT_MINIMUM_VERSION = "0.1.0";
-const SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE = "2.0.0";
 
+/**
+ * Any stable Scient Agent release from the first: it is ScientFactory's own product, checked against
+ * Scient before release, and test-run before a managed install activates it. No ceiling.
+ */
 export function isSupportedScientAgentVersion(version: string): boolean {
-  return (
-    isSupportedManagedRuntimeStableVersion(version, SCIENT_AGENT_MINIMUM_VERSION) &&
-    compareSemverVersions(version, SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE) < 0
-  );
+  return isSupportedManagedRuntimeStableVersion(version, SCIENT_AGENT_MINIMUM_VERSION);
 }
 
 /**
@@ -71,7 +69,6 @@ export function resolveScientAgentArtifactPolicy(
     compressedArtifactName: `${artifactName}.zst`,
     checksum: { algorithm: "sha256" },
     minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,
-    maximumVersionExclusive: SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE,
     archiveFormat: "raw",
     executablePath,
     smokeArgs: ["--runtime-info"],

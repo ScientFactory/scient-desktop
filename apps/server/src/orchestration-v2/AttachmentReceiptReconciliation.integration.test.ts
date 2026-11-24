@@ -54,9 +54,18 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import { OrchestratorDispatchError } from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  type ThreadManagementServiceShape,
+} from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 import { makeReplayServerConfig } from "./testkit/ProviderReplayHarness.ts";
+
+// The intake reads the pending question first; these questions answer by form.
+const noPendingRuntimeRequests = () =>
+  Effect.succeed({ runtimeRequests: [] } as unknown as Effect.Success<
+    ReturnType<ThreadManagementServiceShape["getThreadRecords"]>
+  >);
 
 const now = DateTime.makeUnsafe("2026-10-05T00:00:00Z");
 const threadId = ThreadId.make("receipt-owner");
@@ -212,6 +221,7 @@ it.live(
                 Layer.mergeAll(
                   Layer.mock(ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
                   Layer.mock(ThreadManagementService)({
+                    getThreadRecords: noPendingRuntimeRequests,
                     dispatch: (command) =>
                       Effect.gen(function* () {
                         if (command.type !== "runtime-request.respond")
@@ -316,6 +326,7 @@ it.live(
                 Layer.mergeAll(
                   Layer.mock(ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
                   Layer.mock(ThreadManagementService)({
+                    getThreadRecords: noPendingRuntimeRequests,
                     dispatch: (command) =>
                       Effect.gen(function* () {
                         if (command.type !== "runtime-request.respond")

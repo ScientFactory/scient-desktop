@@ -158,6 +158,17 @@ export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 export const PastedTextAttachmentSource = Schema.TaggedStruct("pasted-text", {});
 export type PastedTextAttachmentSource = typeof PastedTextAttachmentSource.Type;
 
+export const ChatFileAttachmentSource = Schema.Union([
+  PastedTextAttachmentSource,
+  Schema.TaggedStruct("recording-transcript", {
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+    revision: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+    start: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    end: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
+]);
+
 export const ChatFileAttachment = Schema.Struct({
   type: Schema.Literal("file"),
   id: ChatAttachmentId,
@@ -168,7 +179,7 @@ export const ChatFileAttachment = Schema.Struct({
     Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
   ),
   /** Keep path-only so agents inspect selectively without consuming the context folding preserves. */
-  source: Schema.optional(PastedTextAttachmentSource),
+  source: Schema.optional(ChatFileAttachmentSource),
 });
 export type ChatFileAttachment = typeof ChatFileAttachment.Type;
 

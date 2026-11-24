@@ -82,7 +82,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
   it.effect("publishes proven install ownership only for manually updated servers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const platform = yield* HostProcess.Platform;
+      const baseDir = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
       const prefix = `${baseDir}/node`;
       const entry = `${prefix}/lib/node_modules/t3/dist/bin.mjs`;
       yield* fs.makeDirectory(`${prefix}/lib/node_modules/t3/dist`, { recursive: true });
@@ -93,7 +94,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         '{"name":"t3","version":"0.0.45","bin":{"t3":"./dist/bin.mjs"}}',
       );
       yield* fs.symlink(entry, `${prefix}/bin/t3`);
-      const canonicalPrefix = yield* fs.realPath(prefix);
       const config = yield* makeServerConfig(baseDir);
       yield* fs.makeDirectory(config.stateDir, { recursive: true });
       for (const mode of ["web", "desktop"] as const) {
@@ -109,11 +109,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           ),
           Effect.provideService(HostProcess.Arguments, ["node", entry]),
           Effect.provideService(HostProcess.IsExecutable, false),
-          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, {}),
         );
         expect(descriptor.capabilities.serverInstallation).toEqual(
-          mode === "web" ? { kind: "npm-global", prefix: canonicalPrefix } : undefined,
+          mode === "web" && platform !== "win32" ? { kind: "npm-global", prefix } : undefined,
         );
         expect(descriptor.capabilities.serverSelfUpdate).toBe(
           mode === "web" ? undefined : "desktop-managed",
@@ -222,9 +221,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         Effect.provideService(HostProcess.Architecture, host.architecture),
         Effect.provideService(HostProcess.LinuxLibc, "libc" in host ? host.libc : "gnu"),
       );
-      // SCIENT-FORK: T3's environment transcription is dormant in Scient for now.
-      expect(descriptor.capabilities.voiceTranscription).toBe(false);
-      expect(typeof host.supported).toBe("boolean");
+      expect(descriptor.capabilities.voiceTranscription).toBe(host.supported);
+      expect(descriptor.capabilities.cloudVoiceTranscription).toBe(true);
     }),
   );
   it.effect.each([

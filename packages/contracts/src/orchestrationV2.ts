@@ -1224,6 +1224,8 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
    * clients already released reject a literal they do not know; they show the ones they do.
    */
   startupPhase: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+  /** Set by a session that serves several threads: the one thread whose start the phase describes. */
+  startupPhaseThreadId: Schema.optionalKey(ThreadId),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   lastError: Schema.NullOr(Schema.String),
@@ -3981,6 +3983,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.edit"),
+    modelSelection: Schema.optional(ModelSelection),
     // Omitted leaves the snapshot intact; null explicitly removes it.
     context: Schema.optional(Schema.NullOr(OrchestrationMessageContext)),
     selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
@@ -4785,6 +4788,8 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   {
     threadId: ThreadId,
     message: Schema.String,
+    // SCIENT-FORK: a deleted or never-created thread fails as missing, so a warm client drops its cached copy; optional so older clients still decode it.
+    reason: Schema.optional(Schema.Literal("thread_not_found")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

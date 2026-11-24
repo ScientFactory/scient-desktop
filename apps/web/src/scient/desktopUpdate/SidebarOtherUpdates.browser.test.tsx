@@ -72,7 +72,9 @@ function setup() {
 it("retains targeted provider Settings beside native update and retry actions", async () => {
   setup();
   const updateAll = vi.fn(async () => {});
-  await using screen = await render(<SidebarOtherUpdates servers={[]} updateAll={updateAll} />);
+  await using screen = await render(
+    <SidebarOtherUpdates current={[]} servers={[]} updateAll={updateAll} />,
+  );
   await screen.getByRole("button", { name: "Other update failed", exact: true }).click();
   const codex = page.getByRole("link", { name: "Open Codex settings on Lab", exact: true });
   const cursor = page.getByRole("link", { name: "Open Cursor settings on Lab", exact: true });

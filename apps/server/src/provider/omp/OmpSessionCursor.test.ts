@@ -130,9 +130,10 @@ describe("Oh My Pi session cursor", () => {
 
       expect(ompMajorCompatible("18.2.8", "18.9.0")).toBe(true);
       expect(ompMajorCompatible("18.2.8", "19.0.0")).toBe(false);
-      // Forward along the product's majors only: a newer major reads the older one's session files.
-      expect(ompMajorCompatible("18.22.0", "19.0.1", [18, 19])).toBe(true);
-      expect(ompMajorCompatible("19.0.1", "18.22.0", [18, 19])).toBe(false);
+      // A product that resumes earlier releases' sessions goes forward across any major, never back.
+      expect(ompMajorCompatible("18.22.0", "19.0.1", true)).toBe(true);
+      expect(ompMajorCompatible("18.22.0", "23.4.0", true)).toBe(true);
+      expect(ompMajorCompatible("19.0.1", "18.22.0", true)).toBe(false);
       expect(yield* reject(identity({ workspace: "/workspace/other" }))).toContain("workspace");
       expect(yield* reject(identity({ homeIdentity: "/home/test/.omp/other" }))).toContain(
         "home or profile",

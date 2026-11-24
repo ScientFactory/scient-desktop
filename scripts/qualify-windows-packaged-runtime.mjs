@@ -1,3 +1,4 @@
+import { qualifyPackagedSpeech } from "./qualify-packaged-speech.mjs";
 import { qualifyPackagedOverleaf } from "./qualify-overleaf-packaged.mjs";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
@@ -69,6 +70,7 @@ if (process.argv.includes("--launch-smoke")) {
     helper: NodePath.join(packageRoot, "resources/file-exchange/scient-file-publication.exe"),
   });
   const executable = NodePath.join(packageRoot, "Scient.exe");
+  qualifyPackagedSpeech(executable, NodePath.join(packageRoot, "resources"));
   // The app's own processes: everything started from its install folder (main, renderer, GPU,
   // utility, backend, resource monitor). Helpers it started from elsewhere, such as Azure CLI's
   // Python for source control discovery, are not the app and may finish in their own time.

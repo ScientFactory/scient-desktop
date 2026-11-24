@@ -236,3 +236,63 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
     expect(seen).toHaveLength(requestsBefore);
   }),
 );
+
+// SCIENT-FORK:START — Uses the generator suite's configured provider fixture.
+it.effect.each(["openaiCompatible", "anthropic"] as const)(
+  "requests native correction output via %s and can repair with plain JSON",
+  (kind) =>
+    Effect.gen(function* () {
+      const expected = { segments: [{ id: "0-2" }], suggestions: [] };
+      const schema = Schema.Struct({
+        segments: Schema.Array(Schema.Struct({ id: Schema.String })),
+        suggestions: Schema.Array(Schema.String),
+      });
+      const upstream = vi.fn<typeof fetch>(async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        const repair = upstream.mock.calls.length > 1;
+        if (kind === "openaiCompatible") {
+          if (repair) expect(body.response_format).toBeUndefined();
+          else
+            expect(body.response_format).toMatchObject({
+              type: "json_schema",
+              json_schema: {
+                name: "transcript_correction",
+                strict: true,
+                schema: { required: ["segments", "suggestions"] },
+              },
+            });
+          return Response.json({
+            choices: [{ finish_reason: "stop", message: { content: JSON.stringify(expected) } }],
+          });
+        }
+        if (repair) {
+          expect(body.tools).toBeUndefined();
+          return Response.json({
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: JSON.stringify(expected) }],
+          });
+        }
+        expect(body.tool_choice).toEqual({ type: "tool", name: "transcript_correction" });
+        expect(body.tools[0].input_schema.required).toEqual(["segments", "suggestions"]);
+        return Response.json({
+          stop_reason: "tool_use",
+          content: [{ type: "tool_use", name: "transcript_correction", input: expected }],
+        });
+      });
+      const generators = yield* TextGenerators.TextGenerators.pipe(
+        Effect.provide(layer({ kind, apiKey: "secret" })),
+      );
+      const run = yield* generators.runner(ID);
+      for (const attempt of ["initial", "repair"] as const) {
+        expect(
+          yield* run!({
+            ...request,
+            operation: "generateTranscriptionPostProcessing",
+            outputSchema: schema,
+            structuredCorrection: attempt,
+          }).pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+        ).toEqual(expected);
+      }
+    }),
+);
+// SCIENT-FORK:END

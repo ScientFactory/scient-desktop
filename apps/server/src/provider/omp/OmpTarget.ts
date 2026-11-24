@@ -55,10 +55,17 @@ export interface OmpTarget {
   /** What the user can do when the product has no model to run. */
   readonly noModelsHint: string;
   /**
-   * Upstream majors in release order whose session files a later major in the list resumes. Without
-   * it, a resume cursor resumes only on the major that wrote it.
+   * A release the server refuses because it speaks none of this server's RPC protocols, which a
+   * newer Scient does. Without it, every refusal reads `unsupportedDetail`.
    */
-  readonly resumableUpstreamMajors?: ReadonlyArray<number>;
+  readonly needsNewerApp?: (stdout: string) => boolean;
+  /** Shown instead of `unsupportedDetail` when `needsNewerApp` holds. */
+  readonly newerAppDetail?: string;
+  /**
+   * The product resumes a session written by any earlier Oh My Pi release, and is checked to before
+   * each release. Without it, a resume cursor resumes only on the major that wrote it.
+   */
+  readonly resumesEarlierUpstreamSessions?: boolean;
 }
 
 /** True for an Oh My Pi release whose RPC surface this server is qualified against. */

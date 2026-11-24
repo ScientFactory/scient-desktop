@@ -1,6 +1,6 @@
 // t3-apple-speech available                      -> {"value":"en-US,fr-FR,..."}
 // t3-apple-speech prepare <locale>               -> {"value":"en-US"}  (resolved locale)
-// t3-apple-speech transcribe <locale> <wav-path> -> {"value":"..."}    (transcript)
+// t3-apple-speech transcribe <locale> <wav-path> [hints-path] -> {"value":"..."}    (transcript)
 // Exit codes are consumed by AppleSpeech.ts; failures print one message line to stderr.
 
 import Foundation
@@ -22,8 +22,13 @@ struct AppleSpeech {
         try write(try await AppleSpeechEngine.supportedLocales().joined(separator: ","))
       case ("prepare", 2):
         try write(try await AppleSpeechEngine.prepare(arguments[1]))
-      case ("transcribe", 3):
-        try write(try await AppleSpeechEngine.transcribe(arguments[1], file: URL(fileURLWithPath: arguments[2])))
+      case ("transcribe", 3), ("transcribe", 4):
+        let hints = arguments.count == 4
+          ? try JSONDecoder().decode([String].self, from: Data(contentsOf: URL(fileURLWithPath: arguments[3])))
+          : []
+        try write(try await AppleSpeechEngine.transcribe(
+          arguments[1], file: URL(fileURLWithPath: arguments[2]), hints: hints
+        ))
       default:
         fail(.usage, "Unknown command.")
       }

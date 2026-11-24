@@ -1,4 +1,4 @@
-import type { DesktopAppleSpeechResult } from "@t3tools/contracts";
+import { DictationRecognitionHints, type DesktopAppleSpeechResult } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -21,6 +21,8 @@ const TRANSCRIBE_TIMEOUT = Duration.minutes(5);
 const decodeOutput = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ value: Schema.String })),
 );
+
+const encodeHints = Schema.encodeEffect(Schema.fromJsonString(DictationRecognitionHints));
 
 /** 16 kHz mono Float32 PCM to a 16-bit WAV that AVAudioFile reads. */
 function encodeSpeechWav(pcmBytes: Uint8Array): Uint8Array {
@@ -68,6 +70,7 @@ export class AppleSpeech extends Context.Service<
     readonly transcribe: (
       locale: string,
       pcm: Uint8Array,
+      hints?: readonly string[],
     ) => Effect.Effect<DesktopAppleSpeechResult>;
   }
 >()("@t3tools/desktop/speech/AppleSpeech") {}
@@ -171,7 +174,7 @@ export const layer = Layer.effect(
       prepare: Effect.fn("AppleSpeech.prepare")(function* (locale) {
         return yield* yield* getPendingPrepare(locale);
       }),
-      transcribe: Effect.fn("AppleSpeech.transcribe")(function* (locale, pcm) {
+      transcribe: Effect.fn("AppleSpeech.transcribe")(function* (locale, pcm, hints) {
         if (
           pcm.byteLength === 0 ||
           pcm.byteLength > MAX_PCM_BYTES ||
@@ -182,7 +185,15 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const file = yield* fileSystem.makeTempFileScoped({ suffix: ".wav" });
             yield* fileSystem.writeFile(file, encodeSpeechWav(pcm));
-            return yield* run(["transcribe", locale, file], TRANSCRIBE_TIMEOUT);
+            const words = hints?.length
+              ? yield* fileSystem.makeTempFileScoped({ suffix: ".json" })
+              : undefined;
+            if (words && hints)
+              yield* fileSystem.writeFileString(words, yield* encodeHints(hints), { mode: 0o600 });
+            return yield* run(
+              ["transcribe", locale, file, ...(words ? [words] : [])],
+              TRANSCRIBE_TIMEOUT,
+            );
           }),
         ).pipe(Effect.orElseSucceed(() => failed));
       }),

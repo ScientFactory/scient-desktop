@@ -1,3 +1,4 @@
+import { openRecordingCapture } from "../scient/recordings/recordingCaptureStore";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
@@ -46,7 +47,7 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
 } from "@t3tools/client-runtime/state/thread-inbox";
-import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
+import { activeThreadSortKey, sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
   threadSearchMatchKey,
@@ -674,9 +675,12 @@ function useSidebarThreads(input: {
     pinnedKeysById: new Map(
       threads.map((thread) => [threadShellKey(thread), thread.pinOrderKey ?? null] as const),
     ),
-    activeKeysById: new Map(
-      threads.map((thread) => [threadShellKey(thread), thread.activeOrderKey ?? null] as const),
-    ),
+    activeKeysById: new Map([
+      ...threads.map((thread) => [threadShellKey(thread), thread.activeOrderKey ?? null] as const),
+      ...activeThreads.map(
+        (thread) => [threadShellKey(thread), activeThreadSortKey(thread)] as const,
+      ),
+    ]),
   };
 }
 
@@ -1385,6 +1389,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             [
               { id: "new-thread", label: gt("New thread") },
               { id: "copy-path", label: gt("Copy path") },
+              ...(group.environmentId === primaryEnvironmentId
+                ? [
+                    { id: "recordings", label: gt("Recordings") },
+                    { id: "record-audio", label: gt("Record audio") },
+                  ]
+                : []),
               ...(canPinProject(group)
                 ? [
                     group.pinned
@@ -1402,6 +1412,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         switch (clicked.value) {
           case "new-thread":
             startThreadInProjectFolder(group);
+            return;
+          case "record-audio":
+            if (isMobile) setOpenMobile(false);
+            openRecordingCapture(group.id);
+            return;
+          case "recordings":
+            if (isMobile) setOpenMobile(false);
+            void router.navigate({ to: "/recordings", search: { project: group.id } });
             return;
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
@@ -2367,7 +2385,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         plan.kind === "settle" ||
         (plan.kind === "move-active" && plan.unsnooze),
       order: plan.kind === "settle" ? null : plan.order,
-      keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
+      // Stored keys, not sort keys: an unpinned row gaining its implied key is not a foreign write.
+      keysAtDrop:
+        target.section === "active"
+          ? new Map([...threadByKey].map(([key, thread]) => [key, thread.activeOrderKey ?? null]))
+          : pinnedKeysById,
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
       // SCIENT-FORK:START — shell echoes can precede the awaited command result.
       presentationPending: canonicalActiveOrder !== undefined && plan.kind === "move-active",

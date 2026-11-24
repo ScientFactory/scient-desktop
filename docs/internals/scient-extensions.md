@@ -83,12 +83,13 @@ before the UI updates. The UI never predicts success.
 
 ## Agent tool loading
 
-Scient Agent 0.1.4 and later on OMP 18.18 or later, and stock OMP 18.18 and later,
+Scient Agent 0.1.4 and later on OMP 18.18 or later, and supported stock OMP releases from 18.18,
 keep a small Scient core loaded: Compute, paper retrieval, messaging, HTML rendering,
 thread inspection and management, delegation, secrets and skill discovery. Other Scient
-and connector tools remain callable through `xd://` devices. Older runtimes receive
-all schemas directly. The bridge passes service ownership metadata so runtimes with
-grouped catalogs can list a service once and expose its individual tools on demand.
+and connector tools use `xd://` devices before OMP 19.1.0. From 19.1.0 the session's
+command catalog lists them while bash is active. When Scient Agent groups tools by service,
+read the advertised `help://services/<key>` link for the exact commands. Runtimes
+below the discovery threshold receive all schemas directly.
 Each service's description is the first line of its MCP server's `instructions`. Scient's
 own server sends `SCIENT_MCP_INSTRUCTIONS`, which Codex also shows for its namespace.
 
@@ -490,16 +491,15 @@ become `_`, a leading digit gains a `_` prefix, and a name that is too long or
 already taken becomes its first 55 characters plus `_` and 8 hex digits of
 SHA-256(`<server>\0<tool>`). Calls use the original tool name.
 
-Scient Agent 0.1.4 with OMP 18.18.0 or newer registers connector tools as
-discoverable `xd://` devices. Native `read` lists their schemas and `write`
-calls them; Scient's own tools, including discovery and turn controls, stay
-essential. Desktop gates this on the executable's verified `--runtime-info`,
-then passes the mode to the extension through `SCIENT_AGENT_CONNECTOR_LOAD_MODE`.
-Earlier versions and external OMP keep all tools essential. Custom tools were
-already discoverable in Scient Agent 0.1.0; the later gate also requires the
-mounted-tool restoration fixes for revived subagents. Runtime settings can
-still expose discoverable tools top-level (`tools.xdev: false`) or inline their
-documentation (`tools.xdevDocs: inline`), increasing request cost.
+Desktop selects the discovery guidance from the verified OMP runtime version
+for both providers. Scient Agent reports its underlying OMP version through
+`--runtime-info`. Its additional product version gate covers mounted-tool
+restoration in revived subagents. The extension reads the selection from
+`SCIENT_AGENT_CONNECTOR_LOAD_MODE` and keeps the same registrations on reload.
+On device runtimes, use `read` for the schema and `write` for JSON arguments.
+On command runtimes, use bash to run `<command> --help` and then
+`<command> <args>` or `<command> -j '<json>'`. Disabling tool commands or
+running without bash exposes the enabled tools directly.
 
 Reserved server names: `scient`, `t3-code`, `t3_code`, `t3code`. Connector names
 are `[a-z0-9_-]{1,48}`, unique, and suffixed `_2`, `_3` on collision. Planning
@@ -860,8 +860,7 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   (`chatgpt.com/backend-api/ps/mcp`, the one the Codex apps use) itself; Scient
   never holds the token. Conversations, and not title or other one-off runs,
   start with `SCIENT_AGENT_CHATGPT_APPS=all`: the agent then registers every
-  connected app's tools as discoverable `<app>__<tool>` tools under `xd://`,
-  leaving out ChatGPT's own `connector_openai_*` features. **Add more on
+  connected app's `<app>__<tool>` tools for discovery, leaving out ChatGPT's own `connector_openai_*` features. **Add more on
   ChatGPT** opens `chatgpt.com/apps`. When the same service is also a delivered
   Scient connector, the agent currently receives both.
 

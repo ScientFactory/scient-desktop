@@ -54,7 +54,7 @@ export function connectionKeyMissing(
 }
 
 /** A connection's saved key is gone or unusable; only re-entering it helps. */
-export const MISSING_KEY_STATUS = msg("Saved key missing. Re-enter it");
+export const MISSING_KEY_STATUS = msg("Saved key unavailable");
 const NEEDS_SETUP_STATUS = msg("Needs setup", { $context: "custom model status" });
 const CHECK_AGENT_STATUS = msg("Check agent", { $context: "custom model status" });
 

@@ -1,8 +1,10 @@
+import { FONT_CATALOGUE } from "@scientfactory/scient-markdown/fonts";
 import { T, useGT, useMessages } from "gt-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { DocumentSettingsField } from "../writing/DocumentSettingsField";
 import { LatexSelect } from "./LatexSelect";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
@@ -52,16 +54,6 @@ function currentSettings(source: string) {
       string
     >,
   };
-}
-
-/** A small label above its control. */
-function Field(props: { readonly label: string; readonly children: ReactNode }) {
-  return (
-    <div className="grid min-w-0 gap-1">
-      <span className="text-xs text-muted-foreground">{props.label}</span>
-      {props.children}
-    </div>
-  );
 }
 
 /**
@@ -237,7 +229,7 @@ export function LatexDocumentSettings(props: {
       >
         <fieldset className="grid grid-cols-2 gap-x-3 gap-y-2.5" disabled={locked}>
           <div className="col-span-2 grid min-w-0 grid-cols-3 gap-2">
-            <Field label={gt("Type", { $context: "document class" })}>
+            <DocumentSettingsField label={gt("Type", { $context: "document class" })}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -266,8 +258,8 @@ export function LatexDocumentSettings(props: {
                   { value: "book", label: gt("Book", { $context: "document class" }) },
                 ]}
               />
-            </Field>
-            <Field label={gt("Text size")}>
+            </DocumentSettingsField>
+            <DocumentSettingsField label={gt("Text size")}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -283,8 +275,8 @@ export function LatexDocumentSettings(props: {
                 aria-label={gt("Text size")}
                 options={[10, 11, 12].map((size) => ({ value: String(size), label: `${size} pt` }))}
               />
-            </Field>
-            <Field label={gt("Paper", { $context: "paper size" })}>
+            </DocumentSettingsField>
+            <DocumentSettingsField label={gt("Paper", { $context: "paper size" })}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -299,9 +291,37 @@ export function LatexDocumentSettings(props: {
                   label: messages(paper.label),
                 }))}
               />
-            </Field>
+            </DocumentSettingsField>
           </div>
-          <Field label={gt("Language")}>
+          <DocumentSettingsField label={gt("Main font")}>
+            <LatexSelect
+              size="sm"
+              width="fluid"
+              aria-label={gt("Document font")}
+              value={changes.fontFamily ?? extended.fontFamily}
+              options={[
+                { value: "default", label: gt("Default", { $context: "document font" }) },
+                { value: "serif", label: gt("Serif", { $context: "font family" }) },
+                { value: "sans-serif", label: gt("Sans serif", { $context: "font family" }) },
+                { value: "monospace", label: gt("Code", { $context: "monospace font family" }) },
+                ...FONT_CATALOGUE.map((font) => {
+                  const unavailable =
+                    (changes.engine
+                      ? changes.engine === "pdflatex"
+                      : extended.fontEngine === "pdftex") && font.latex.pdftex === null;
+                  return {
+                    value: font.name,
+                    label: unavailable
+                      ? gt("{font} (needs XeLaTeX or LuaLaTeX)", { font: font.name })
+                      : font.name,
+                    disabled: unavailable,
+                  };
+                }),
+              ]}
+              onValueChange={(value) => setLayout("fontFamily", value)}
+            />
+          </DocumentSettingsField>
+          <DocumentSettingsField label={gt("Language")}>
             <LatexSelect
               size="sm"
               width="fluid"
@@ -333,8 +353,8 @@ export function LatexDocumentSettings(props: {
                 setError(null);
               }}
             />
-          </Field>
-          <Field label={gt("Orientation")}>
+          </DocumentSettingsField>
+          <DocumentSettingsField label={gt("Orientation")}>
             <Choice
               label={gt("Orientation")}
               value={changes.orientation ?? current.orientation}
@@ -345,8 +365,8 @@ export function LatexDocumentSettings(props: {
                 { value: "landscape", label: gt("Landscape") },
               ]}
             />
-          </Field>
-          <Field label={gt("Margins")}>
+          </DocumentSettingsField>
+          <DocumentSettingsField label={gt("Margins")}>
             <LatexSelect
               size="sm"
               width="fluid"
@@ -372,8 +392,8 @@ export function LatexDocumentSettings(props: {
                 { value: "custom", label: gt("Custom", { $context: "custom margins" }) },
               ]}
             />
-          </Field>
-          <Field label={gt("Paragraph style")}>
+          </DocumentSettingsField>
+          <DocumentSettingsField label={gt("Paragraph style")}>
             <Choice
               label={gt("Paragraphs", { $context: "paragraph style" })}
               value={changes.paragraphStyle ?? current.paragraphs}
@@ -386,7 +406,7 @@ export function LatexDocumentSettings(props: {
                 { value: "spaced", label: gt("Spaced", { $context: "paragraph style" }) },
               ]}
             />
-          </Field>
+          </DocumentSettingsField>
           {marginChoice === "custom" ? (
             <div
               className="col-span-2 grid grid-cols-4 gap-2"
@@ -403,7 +423,7 @@ export function LatexDocumentSettings(props: {
                         ? gt("Left", { $context: "page margin" })
                         : gt("Right", { $context: "page margin" });
                 return (
-                  <Field key={side} label={name}>
+                  <DocumentSettingsField key={side} label={name}>
                     <Input
                       size="compact"
                       aria-label={
@@ -418,7 +438,7 @@ export function LatexDocumentSettings(props: {
                       defaultValue={current.margins[side]}
                       onChange={(event) => setSide(side, event.target.value)}
                     />
-                  </Field>
+                  </DocumentSettingsField>
                 );
               })}
             </div>
@@ -429,7 +449,7 @@ export function LatexDocumentSettings(props: {
             <T>Columns and spacing</T>
           </summary>
           <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
-            <Field label={gt("Columns", { $context: "text columns layout" })}>
+            <DocumentSettingsField label={gt("Columns", { $context: "text columns layout" })}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -441,8 +461,8 @@ export function LatexDocumentSettings(props: {
                 ]}
                 onValueChange={(value) => setLayout("columns", Number(value) as 1 | 2)}
               />
-            </Field>
-            <Field label={gt("Line spacing")}>
+            </DocumentSettingsField>
+            <DocumentSettingsField label={gt("Line spacing")}>
               <Input
                 size="compact"
                 type="number"
@@ -453,7 +473,7 @@ export function LatexDocumentSettings(props: {
                 value={changes.lineSpacing ?? extended.lineSpacing}
                 onChange={(event) => setLayout("lineSpacing", Number(event.target.value))}
               />
-            </Field>
+            </DocumentSettingsField>
             {(
               [
                 ["columnGap", gt("Column gap")],
@@ -462,16 +482,16 @@ export function LatexDocumentSettings(props: {
                 ["paragraphGap", gt("Paragraph spacing")],
               ] as const
             ).map(([key, label]) => (
-              <Field key={key} label={label}>
+              <DocumentSettingsField key={key} label={label}>
                 <Input
                   size="compact"
                   aria-label={label}
                   value={changes[key] ?? extended[key]}
                   onChange={(event) => setLayout(key, event.target.value)}
                 />
-              </Field>
+              </DocumentSettingsField>
             ))}
-            <Field label={gt("Alignment", { $context: "text alignment" })}>
+            <DocumentSettingsField label={gt("Alignment", { $context: "text alignment" })}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -483,7 +503,7 @@ export function LatexDocumentSettings(props: {
                 ]}
                 onValueChange={(value) => setLayout("alignment", value as "justify" | "left")}
               />
-            </Field>
+            </DocumentSettingsField>
           </fieldset>
         </details>
         <details>
@@ -498,16 +518,16 @@ export function LatexDocumentSettings(props: {
                 ["gutter", gt("Binding gutter")],
               ] as const
             ).map(([key, label]) => (
-              <Field key={key} label={label}>
+              <DocumentSettingsField key={key} label={label}>
                 <Input
                   size="compact"
                   aria-label={label}
                   value={changes[key] ?? extended[key]}
                   onChange={(event) => setLayout(key, event.target.value)}
                 />
-              </Field>
+              </DocumentSettingsField>
             ))}
-            <Field label={gt("Facing pages")}>
+            <DocumentSettingsField label={gt("Facing pages")}>
               <Choice
                 label={gt("Facing pages")}
                 value={(changes.mirroredMargins ?? extended.mirroredMargins) ? "yes" : "no"}
@@ -518,7 +538,7 @@ export function LatexDocumentSettings(props: {
                 ]}
                 onChange={(value) => setLayout("mirroredMargins", value === "yes")}
               />
-            </Field>
+            </DocumentSettingsField>
           </fieldset>
         </details>
         <details>
@@ -526,7 +546,7 @@ export function LatexDocumentSettings(props: {
             <T>Fonts and compiler</T>
           </summary>
           <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
-            <Field label={gt("Compiler")}>
+            <DocumentSettingsField label={gt("Compiler")}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -541,7 +561,7 @@ export function LatexDocumentSettings(props: {
                   setLayout("engine", value as DocumentLayoutSettings["engine"])
                 }
               />
-            </Field>
+            </DocumentSettingsField>
             {(
               [
                 ["mainFont", gt("Main font")],
@@ -549,7 +569,7 @@ export function LatexDocumentSettings(props: {
                 ["monoFont", gt("Monospace font")],
               ] as const
             ).map(([key, label]) => (
-              <Field key={key} label={label}>
+              <DocumentSettingsField key={key} label={label}>
                 <Input
                   size="compact"
                   aria-label={label}
@@ -567,7 +587,7 @@ export function LatexDocumentSettings(props: {
                   }
                   onChange={(event) => setLayout(key, event.target.value)}
                 />
-              </Field>
+              </DocumentSettingsField>
             ))}
           </fieldset>
         </details>
@@ -576,7 +596,7 @@ export function LatexDocumentSettings(props: {
             <T>Headings</T>
           </summary>
           <fieldset disabled={locked || customClass} className="mt-2 grid grid-cols-2 gap-2">
-            <Field label={gt("Title size (pt)")}>
+            <DocumentSettingsField label={gt("Title size (pt)")}>
               <Input
                 size="compact"
                 type="number"
@@ -587,8 +607,8 @@ export function LatexDocumentSettings(props: {
                 value={changes.titleSize ?? extended.titleSize}
                 onChange={(event) => setLayout("titleSize", Number(event.target.value))}
               />
-            </Field>
-            <Field label={gt("Section size (pt)")}>
+            </DocumentSettingsField>
+            <DocumentSettingsField label={gt("Section size (pt)")}>
               <Input
                 size="compact"
                 type="number"
@@ -599,8 +619,8 @@ export function LatexDocumentSettings(props: {
                 value={changes.headingSize ?? extended.headingSize}
                 onChange={(event) => setLayout("headingSize", Number(event.target.value))}
               />
-            </Field>
-            <Field label={gt("Numbering depth")}>
+            </DocumentSettingsField>
+            <DocumentSettingsField label={gt("Numbering depth")}>
               <Input
                 size="compact"
                 type="number"
@@ -610,21 +630,21 @@ export function LatexDocumentSettings(props: {
                 value={changes.numberingDepth ?? extended.numberingDepth}
                 onChange={(event) => setLayout("numberingDepth", Number(event.target.value))}
               />
-            </Field>
+            </DocumentSettingsField>
             {(
               [
                 ["headingBefore", gt("Space before sections")],
                 ["headingAfter", gt("Space after sections")],
               ] as const
             ).map(([key, label]) => (
-              <Field key={key} label={label}>
+              <DocumentSettingsField key={key} label={label}>
                 <Input
                   size="compact"
                   aria-label={label}
                   value={changes[key] ?? extended[key]}
                   onChange={(event) => setLayout(key, event.target.value)}
                 />
-              </Field>
+              </DocumentSettingsField>
             ))}
           </fieldset>
         </details>
@@ -655,7 +675,7 @@ export function LatexDocumentSettings(props: {
                   .replaceAll("\\rightmark", ""),
               );
               return (
-                <Field key={key} label={label}>
+                <DocumentSettingsField key={key} label={label}>
                   <Input
                     size="compact"
                     aria-label={label}
@@ -683,10 +703,10 @@ export function LatexDocumentSettings(props: {
                       )
                     }
                   />
-                </Field>
+                </DocumentSettingsField>
               );
             })}
-            <Field label={gt("Page numbering")}>
+            <DocumentSettingsField label={gt("Page numbering")}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -705,8 +725,8 @@ export function LatexDocumentSettings(props: {
                   setLayout("pageNumbering", value as DocumentLayoutSettings["pageNumbering"])
                 }
               />
-            </Field>
-            <Field label={gt("First page")}>
+            </DocumentSettingsField>
+            <DocumentSettingsField label={gt("First page")}>
               <LatexSelect
                 size="sm"
                 width="fluid"
@@ -722,7 +742,7 @@ export function LatexDocumentSettings(props: {
                   setLayout("firstPageStyle", value as DocumentLayoutSettings["firstPageStyle"])
                 }
               />
-            </Field>
+            </DocumentSettingsField>
           </fieldset>
           {(changes.mirroredMargins ?? extended.mirroredMargins) && (
             <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
@@ -734,14 +754,14 @@ export function LatexDocumentSettings(props: {
                   ["evenFooterRight", gt("Even-page right footer")],
                 ] as const
               ).map(([key, label]) => (
-                <Field key={key} label={label}>
+                <DocumentSettingsField key={key} label={label}>
                   <Input
                     size="compact"
                     aria-label={label}
                     value={changes[key] ?? extended[key]}
                     onChange={(event) => setLayout(key, event.target.value)}
                   />
-                </Field>
+                </DocumentSettingsField>
               ))}
             </fieldset>
           )}

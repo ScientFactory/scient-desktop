@@ -6,6 +6,7 @@ import { mathFromMarkdown } from "mdast-util-math";
 import { frontmatter } from "micromark-extension-frontmatter";
 import { gfm } from "micromark-extension-gfm";
 import { math } from "micromark-extension-math";
+import { MARKDOWN_FONT_SPAN_CLOSE, parseMarkdownFontSpanOpen } from "./fontSpans.ts";
 
 export interface MarkdownSourceBlock {
   /** Stable only for the lifetime of this parsed ledger. */
@@ -129,15 +130,45 @@ function directionWrapperIndexes(children: ReadonlyArray<MdastValueNode>): Set<n
   return indexes;
 }
 
+/**
+ * Indexes of inline HTML nodes that form a recognised font span: an opening
+ * tag of a listed form and the `</span>` that closes it among its siblings.
+ */
+function fontSpanIndexes(children: ReadonlyArray<MdastValueNode>): Set<number> {
+  const indexes = new Set<number>();
+  const html = (node: MdastValueNode | undefined) =>
+    node?.type === "html" && typeof node.value === "string" ? node.value : null;
+  children.forEach((child, index) => {
+    const opening = html(child);
+    if (opening === null || parseMarkdownFontSpanOpen(opening) === null) return;
+    let depth = 1;
+    for (let next = index + 1; next < children.length; next += 1) {
+      const value = html(children[next]);
+      if (value === null) continue;
+      if (value === MARKDOWN_FONT_SPAN_CLOSE) depth -= 1;
+      else if (/^<span\b/u.test(value)) depth += 1;
+      if (depth === 0) {
+        indexes.add(index);
+        indexes.add(next);
+        return;
+      }
+    }
+  });
+  return indexes;
+}
+
 function nestedBlockKinds(node: MdastValueNode): string[] {
   const kinds = new Set<string>();
   // Inline HTML inside a nested paragraph, heading or table is source the
-  // rich document shows as literal text; report it like an HTML block.
+  // rich document shows as literal text, except recognised font spans;
+  // report it like an HTML block.
   const visitInline = (parent: MdastValueNode): void => {
-    for (const child of parent.children ?? []) {
-      if (child.type === "html") kinds.add(child.type);
+    const children = parent.children ?? [];
+    const fontSpans = fontSpanIndexes(children);
+    children.forEach((child, index) => {
+      if (child.type === "html" && !fontSpans.has(index)) kinds.add(child.type);
       visitInline(child);
-    }
+    });
   };
   const visit = (container: MdastValueNode): void => {
     if (!CONTAINER_NODE_KINDS.has(container.type)) return;

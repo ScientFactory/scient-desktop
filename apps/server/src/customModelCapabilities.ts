@@ -20,6 +20,8 @@ export function customModelRuntimeChange(
     if (
       !next ||
       next.credentialId !== connection.credentialId ||
+      next.accountId !== connection.accountId ||
+      next.accountKeyVersion !== connection.accountKeyVersion ||
       next.baseUrl !== connection.baseUrl ||
       next.protocol !== connection.protocol ||
       connection.models.some(
@@ -70,29 +72,18 @@ export function effectiveCustomModelReasoning(
 export function customModelDiscoverySnapshot(
   connections: ReadonlyArray<CustomModelConnection>,
   instanceId: ProviderInstanceId,
-) {
+): Array<{
+  id: string;
+  name: string;
+  protocol: CustomModelProtocol;
+  baseUrl: string;
+  credentialId: string | null;
+  accountId?: CustomModelConnection["accountId"];
+  accountKeyVersion?: string;
+  models: ReturnType<typeof customModelDiscoveryModels>;
+}> {
   return connections.flatMap((connection) => {
-    const models = connection.models
-      .filter((model) => model.instanceIds.includes(instanceId))
-      .map((model) => ({
-        id: model.id,
-        modelId: model.modelId,
-        name: model.name,
-        configurationMode: model.configurationMode,
-        contextWindow: model.contextWindow,
-        maxOutputTokens: model.maxOutputTokens,
-        images: model.images,
-        imageInput: model.imageInput,
-        reasoning: model.reasoning,
-        defaultReasoningLevel: model.defaultReasoningLevel,
-        reasoningOverride: model.reasoningOverride,
-        reasoningMetadata: {
-          ...effectiveCustomModelReasoning(model, connection.protocol),
-          contextWindow: model.reasoningMetadata?.contextWindow,
-          maxOutputTokens: model.reasoningMetadata?.maxOutputTokens,
-          images: model.reasoningMetadata?.images,
-        },
-      }));
+    const models = customModelDiscoveryModels(connection, instanceId);
     return models.length
       ? [
           {
@@ -101,9 +92,40 @@ export function customModelDiscoverySnapshot(
             protocol: connection.protocol,
             baseUrl: connection.baseUrl,
             credentialId: connection.credentialId,
+            ...(connection.accountId ? { accountId: connection.accountId } : {}),
+            ...(connection.accountKeyVersion
+              ? { accountKeyVersion: connection.accountKeyVersion }
+              : {}),
             models,
           },
         ]
       : [];
   });
+}
+
+function customModelDiscoveryModels(
+  connection: CustomModelConnection,
+  instanceId: ProviderInstanceId,
+) {
+  return connection.models
+    .filter((model) => model.instanceIds.includes(instanceId))
+    .map((model) => ({
+      id: model.id,
+      modelId: model.modelId,
+      name: model.name,
+      configurationMode: model.configurationMode,
+      contextWindow: model.contextWindow,
+      maxOutputTokens: model.maxOutputTokens,
+      images: model.images,
+      imageInput: model.imageInput,
+      reasoning: model.reasoning,
+      defaultReasoningLevel: model.defaultReasoningLevel,
+      reasoningOverride: model.reasoningOverride,
+      reasoningMetadata: {
+        ...effectiveCustomModelReasoning(model, connection.protocol),
+        contextWindow: model.reasoningMetadata?.contextWindow,
+        maxOutputTokens: model.reasoningMetadata?.maxOutputTokens,
+        images: model.reasoningMetadata?.images,
+      },
+    }));
 }

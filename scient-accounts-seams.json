@@ -39,7 +39,7 @@
   "upstreamMounts": [
     {
       "path": ".github/workflows/ci.yml",
-      "anchor": "SCIENT-FORK:START \u2014 Windows Overleaf and Accounts evidence is mandatory",
+      "anchor": "SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory",
       "purpose": "Run the desktop Accounts and browser import tests, and real Chrome and Edge sign-in windows, on Windows."
     },
     {
@@ -134,12 +134,12 @@
     },
     {
       "path": "apps/web/src/components/Sidebar.tsx",
-      "anchor": "SCIENT-FORK:START \u2014 the conversation's browser profile.",
+      "anchor": "SCIENT-FORK:START — the conversation's browser profile.",
       "purpose": "Offer and apply a conversation's browser profile from its right-click menu."
     },
     {
       "path": "apps/web/src/components/threadActionMenu.logic.ts",
-      "anchor": "SCIENT-FORK:START \u2014 the conversation's browser profile.",
+      "anchor": "SCIENT-FORK:START — the conversation's browser profile.",
       "purpose": "Place the conversation's Browser profile submenu in the thread menu."
     },
     {
@@ -618,6 +618,36 @@
       "path": ".github/scripts/ci-quarantine.json",
       "anchor": "\"schemaVersion\": 1",
       "purpose": "Flake quarantine rows name the Windows Chrome and Edge sign-in window tests by their exact test id; CI still runs them."
+    },
+    {
+      "path": "apps/server/src/cli/restoreModelKeys.ts",
+      "anchor": "import * as AccountVault from \"../scient/accounts/AccountVault.ts\";",
+      "purpose": "Restore Custom models keys from the Accounts vault after a failed migration."
+    },
+    {
+      "path": "apps/server/src/speech/LegacySpeechKeys.ts",
+      "anchor": "import { AccountsService } from \"../scient/accounts/AccountsService.ts\";",
+      "purpose": "Move saved speech keys into Accounts as stable references."
+    },
+    {
+      "path": "apps/server/src/transcription/CloudEngines.ts",
+      "anchor": "import { AccountsService, SPEECH_KEY_OUTSIDE_PROJECT } from \"../scient/accounts/AccountsService.ts\";",
+      "purpose": "Cloud transcription engines read their keys from Accounts."
+    },
+    {
+      "path": "apps/web/src/components/settings/CustomModelSavedKeyPicker.tsx",
+      "anchor": "import { AccountDialog } from \"~/scient/accounts/AccountDialog\";",
+      "purpose": "Custom models choose a saved key from Accounts or add one there."
+    },
+    {
+      "path": "apps/web/src/components/settings/CustomModelsPanel.tsx",
+      "anchor": "import { useAccounts } from \"~/scient/accounts/useAccounts\";",
+      "purpose": "Custom models list and manage keys held in Accounts."
+    },
+    {
+      "path": "packages/contracts/src/customModels.ts",
+      "anchor": "import { AccountId } from \"./scient/accounts.ts\";",
+      "purpose": "Custom model connections reference an Accounts key by ID."
     }
   ]
 }

@@ -31,6 +31,8 @@ const markdownActions = [
   ["bulletList", msg("Bullet list")],
   ["taskList", msg("Task list")],
   ["clearFormatting", msg("Clear formatting")],
+  ["fontSizeLarger", msg("Larger text size")],
+  ["fontSizeSmaller", msg("Smaller text size")],
   ["moveBlockUp", msg("Move block up")],
   ["moveBlockDown", msg("Move block down")],
   ["duplicateBlock", msg("Duplicate block")],

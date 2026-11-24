@@ -5505,6 +5505,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
 
+    const remoteNamesInGitOrder =
+      remoteNamesResult.exitCode === 0 ? parseRemoteNamesInGitOrder(remoteNamesResult.stdout) : [];
     const remoteNames =
       remoteNamesResult.exitCode === 0 ? parseRemoteNames(remoteNamesResult.stdout) : [];
     if (remoteNamesResult.exitCode !== 0 && remoteNamesResult.stderr.trim().length > 0) {
@@ -5512,10 +5514,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         `GitVcsDriver.listRefs: remote name lookup returned code ${remoteNamesResult.exitCode} for ${gitCommonDir}: ${remoteNamesResult.stderr.trim()}. Falling back to an empty remote name list.`,
       );
     }
-    const defaultBranch =
+    const originDefaultBranch =
       defaultRefResult.exitCode === 0
         ? parseDefaultBranchFromRemoteHeadRef(defaultRefResult.stdout, "origin")
         : null;
+    // Same fallback as resolvePrimaryDefaultBranchName: without an origin, the first remote is primary.
+    const [firstRemoteName] = remoteNamesInGitOrder;
+    const fallbackRemoteName =
+      originDefaultBranch === null &&
+      firstRemoteName !== undefined &&
+      !remoteNamesInGitOrder.includes("origin")
+        ? firstRemoteName
+        : null;
+    const defaultBranch =
+      fallbackRemoteName === null
+        ? originDefaultBranch
+        : yield* resolveDefaultBranchName(fetchCwd, fallbackRemoteName, gitDirArgs);
+    const defaultRemoteName = fallbackRemoteName ?? "origin";
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
@@ -5551,7 +5566,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         isRemote: true,
         isDefault:
           defaultBranch !== null &&
-          parsedRemoteRef?.remoteName === "origin" &&
+          parsedRemoteRef?.remoteName === defaultRemoteName &&
           parsedRemoteRef.branchName === defaultBranch,
         worktreePath: null,
         ...(parsedRemoteRef ? { remoteName: parsedRemoteRef.remoteName } : {}),
@@ -6964,9 +6979,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             )
           : null;
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
+      const localTrackedBranchCandidate =
+        remoteExists && !localInputExists && !localTrackingBranch
+          ? yield* executeGit("GitVcsDriver.switchRef.remoteNames", input.cwd, ["remote"], {
+              timeoutMs: 5_000,
+              allowNonZeroExit: true,
+            }).pipe(
+              Effect.map((result) => {
+                const remoteNames = result.exitCode === 0 ? parseRemoteNames(result.stdout) : [];
+                return (
+                  parseRemoteRefWithRemoteNames(input.refName, remoteNames)?.branchName ??
+                  deriveLocalBranchNameFromRemoteRef(input.refName)
+                );
+              }),
+            )
+          : null;
       const localTrackedBranchTargetExists =
-        remoteExists && !localInputExists && !localTrackingBranch && localTrackedBranchCandidate
+        localTrackedBranchCandidate !== null
           ? yield* executeGit(
               "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
               input.cwd,
@@ -6979,7 +7008,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : false;
 
       const newTrackingBranch =
-        !localInputExists && remoteExists && !localTrackingBranch && !localTrackedBranchTargetExists
+        localTrackedBranchCandidate !== null && !localTrackedBranchTargetExists
           ? localTrackedBranchCandidate
           : null;
 
@@ -6988,7 +7017,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : newTrackingBranch
           ? ["checkout", newTrackingBranch]
           : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
+            ? localTrackedBranchCandidate
+              ? [
+                  "checkout",
+                  "--track",
+                  "-b",
+                  localTrackedBranchCandidate,
+                  `refs/remotes/${input.refName}`,
+                ]
+              : ["checkout", "--track", input.refName]
             : remoteExists && localTrackingBranch
               ? ["checkout", localTrackingBranch]
               : ["checkout", input.refName];

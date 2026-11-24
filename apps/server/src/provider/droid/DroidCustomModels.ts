@@ -532,7 +532,9 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
             const loaded = connections.find((entry) => entry.id === current.connection.id);
             if (
               loaded?.credentialError !== undefined &&
-              loaded.credentialId === current.connection.credentialId
+              loaded.credentialId === current.connection.credentialId &&
+              loaded.accountId === current.connection.accountId &&
+              loaded.accountKeyVersion === current.connection.accountKeyVersion
             )
               return loaded.credentialError;
             // Attached after this process loaded its catalog: the next message reconnects.

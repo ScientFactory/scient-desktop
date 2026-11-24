@@ -1,3 +1,4 @@
+import { TranscriptionJobs } from "../../../transcription/TranscriptionJobs.ts";
 // SCIENT-FORK:START — Scient Accounts: keep MCP fixtures away from native credential stores.
 import * as AccountsTestkit from "../../../scient/accounts/Accounts.testkit.ts";
 // SCIENT-FORK:END
@@ -78,6 +79,7 @@ const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceContro
 );
 
 const StubServicesLive = Layer.mergeAll(
+  Layer.mock(TranscriptionJobs)({}),
   // SCIENT-FORK:START — Scient Accounts: use an in-memory account owner.
   AccountsTestkit.layer,
   // SCIENT-FORK:END

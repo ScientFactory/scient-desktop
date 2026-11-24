@@ -1,3 +1,4 @@
+import { scientRecordingsSurface } from "~/scient/rightPanel/surfaces";
 import { useComposerCitations } from "./chat/useComposerCitations";
 // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
 import { DesktopWorkspaceReadiness } from "./desktop/DesktopWorkspaceReadiness";
@@ -184,6 +185,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveLatestThreadRun,
+  presentProviderStarting,
   deriveThreadStructureRuntime,
   limitRecoveryOwnsSnooze,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -517,6 +519,13 @@ import {
 } from "./ChatView.logic";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const ACTIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -1053,7 +1062,14 @@ function ChatViewContent(props: ChatViewProps) {
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
   const serverActivityRun =
-    serverProjection === null ? null : deriveThreadActivityRun(serverProjection);
+    serverProjection === null
+      ? null
+      : deriveThreadActivityRun(
+          serverProjection,
+          serverThread === null
+            ? undefined
+            : providersByEnvironment.get(serverThread.environmentId),
+        );
   const serverRuntime =
     serverProjection === null ? null : deriveThreadStructureRuntime(serverProjection);
   const runlessWorkStartedAt =
@@ -1975,6 +1991,18 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
+  // Until the server has the run, a send shows the provider it is starting, not the thinking brain.
+  const providerStartingRun =
+    activeActivityRun?.providerStartingLabelMsg !== undefined
+      ? activeActivityRun
+      : isSendBusy &&
+          selectedProviderEntry !== undefined &&
+          (activeActivityRun === null || !ACTIVE_RUN_STATUSES.has(activeActivityRun.status))
+        ? presentProviderStarting({
+            instanceId: selectedProviderEntry.instanceId,
+            driver: selectedProviderEntry.driverKind,
+          })
+        : null;
   const downloadFileAttachment = async (attachment: ChatFileAttachment) => {
     const connection = readPreparedConnection(environmentId);
     if (!connection) {
@@ -3890,7 +3918,7 @@ function ChatViewContent(props: ChatViewProps) {
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus: scheduleComposerFocusStable,
   });
-  const { onSend, captureDetachedSend } = useComposerSend({
+  const { onSend } = useComposerSend({
     serverProjection,
     hasHeldQueuedRuns,
     onForkConversation,
@@ -4212,6 +4240,14 @@ function ChatViewContent(props: ChatViewProps) {
     return forkLanding.pending || embedded ? null : <NoActiveThreadState />;
   }
 
+  const revealRecordingComposer = () => {
+    if (!activeThreadRef) return;
+    const panel = useRightPanelStore.getState();
+    panel.consumeMaximizeRequest(routeThreadRef);
+    panel.setMaximized(activeThreadRef, false);
+    scheduleComposerFocusStable();
+  };
+
   const rightPanelContent = activeThreadRef ? (
     // SCIENT-FORK:START — the agents panel and Scient-owned surfaces render from their modules.
     renderedRightPanelSurface?.kind === "agents" ? (
@@ -4231,6 +4267,7 @@ function ChatViewContent(props: ChatViewProps) {
         keybindings={keybindings}
         closeRightPanelSurface={closeRightPanelSurface}
         openScientSourcePdf={openScientSourcePdf}
+        onRevealRecordingComposer={revealRecordingComposer}
         openFileSourceSurface={openFileSourceSurface}
       />
     ) : (
@@ -4536,13 +4573,13 @@ function ChatViewContent(props: ChatViewProps) {
                   }
                   activeTurnStartedAt={activeWorkStartedAt}
                   providerStartingLabel={
-                    activeActivityRun?.providerStartingLabelMsg
-                      ? messages(activeActivityRun.providerStartingLabelMsg)
+                    providerStartingRun?.providerStartingLabelMsg
+                      ? messages(providerStartingRun.providerStartingLabelMsg)
                       : null
                   }
                   providerStarting={
-                    activeActivityRun?.providerStartingLabelMsg
-                      ? (activeActivityRun.providerStarting ?? null)
+                    providerStartingRun?.providerStartingLabelMsg
+                      ? (providerStartingRun.providerStarting ?? null)
                       : null
                   }
                   worktreeSetup={worktreeSetup}
@@ -4922,7 +4959,6 @@ function ChatViewContent(props: ChatViewProps) {
                                 onPageScrollRelease={onComposerPageScrollReleaseStable}
                                 onCompactContext={onComposerCompactContextStable}
                                 onSend={onComposerSendStable}
-                                captureDetachedSend={captureDetachedSend}
                                 onResume={onComposerResumeStable}
                                 onInterrupt={onInterruptStable}
                                 // SCIENT-FORK:START — conversation fork from the composer.
@@ -5243,6 +5279,16 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddAgents={addAgentsSurface}
           onAddSources={addSourcesSurface}
+          onAddRecordings={
+            activeProject &&
+            activeThreadRef &&
+            activeProject.environmentId === primaryEnvironment?.environmentId
+              ? () =>
+                  useRightPanelStore
+                    .getState()
+                    .openScient(activeThreadRef, scientRecordingsSurface(activeProject.id))
+              : undefined
+          }
           // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
           onAddNewTab={addNewTabSurface}
           onDuplicateSurface={panelTabs.duplicateSurface}

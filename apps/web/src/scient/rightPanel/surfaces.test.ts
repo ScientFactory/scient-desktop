@@ -8,6 +8,7 @@ import {
   scientGeneratedPdfSurface,
   scientOverleafReviewSurface,
   scientRightPanelSurfaceTitle,
+  scientRecordingsSurface,
   scientSkillSurface,
   scientSourcePdfSurface,
   scientSourcesSurface,
@@ -55,6 +56,12 @@ describe("Scient right-panel surfaces", () => {
     pageCount: 1,
   });
   if (generatedPdf._tag !== "generated-pdf") throw new Error("expected generated PDF fixture");
+
+  it("restores a Recordings tab with its project filter", () => {
+    const surface = scientRecordingsSurface("course-project");
+    expect(normalizeScientRightPanelSurface(JSON.parse(JSON.stringify(surface)))).toEqual(surface);
+    expect(normalizeScientRightPanelSurface({ ...surface, projectId: "" })).toBeNull();
+  });
 
   it("builds stable Sources and source-PDF descriptors", () => {
     expect(scientSourcesSurface()).toEqual({

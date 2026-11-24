@@ -1,3 +1,4 @@
+import { TranscriptionJobs } from "../transcription/TranscriptionJobs.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -83,6 +84,7 @@ import { ScientServerSettings } from "../scientServerSettings.ts";
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AnalyticsService)({}),
+  Layer.mock(TranscriptionJobs)({}),
   Layer.mock(AssetSigner)({}),
   Layer.mock(WorkspacePreviewRevisions)({}),
   Layer.mock(DeviceService)({}),

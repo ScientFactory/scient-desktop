@@ -31,7 +31,7 @@ export const appleSpeechTranscribe = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.APPLE_SPEECH_TRANSCRIBE_CHANNEL,
   payload: DesktopAppleSpeechTranscribeInputSchema,
   result: DesktopAppleSpeechResultSchema,
-  handler: Effect.fn("desktop.ipc.appleSpeech.transcribe")(function* ({ locale, pcm }) {
-    return yield* (yield* AppleSpeech.AppleSpeech).transcribe(locale, pcm);
+  handler: Effect.fn("desktop.ipc.appleSpeech.transcribe")(function* ({ locale, pcm, hints }) {
+    return yield* (yield* AppleSpeech.AppleSpeech).transcribe(locale, pcm, hints);
   }),
 });

@@ -79,6 +79,39 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
+  // SCIENT-FORK:START — Uses the configured package tree from this suite.
+  it("collects component-specific native speech licences", async () => {
+    const fixture = await createFixture();
+    const name = "@transcribe-cpp/fixture";
+    const pkg = NodePath.join(fixture.root, "node_modules", name);
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { [name]: "1.0.0" },
+    });
+    await writeJson(NodePath.join(pkg, "package.json"), {
+      name,
+      version: "1.0.0",
+      license: "MIT",
+      main: "index.js",
+    });
+    await NodeFSP.writeFile(NodePath.join(pkg, "index.js"), "");
+    await NodeFSP.mkdir(NodePath.join(pkg, "licenses"));
+    const components = ["ggml", "miniz", "silero_vad", "future-component"];
+    for (const component of components) {
+      await NodeFSP.writeFile(
+        NodePath.join(pkg, "licenses", `LICENSE.${component}`),
+        `Terms for ${component}`,
+      );
+    }
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+    for (const component of components)
+      expect(JSON.stringify(manifest)).toContain(`Terms for ${component}`);
+  });
+  // SCIENT-FORK:END
+
   it.each(["web", "mobile"])(
     "uses installer pins for device tool notices in the %s manifest",
     async (bundle) => {

@@ -280,9 +280,7 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
-    for (const id of ["response-streaming", "speech-project-dictionary"]) {
-      expect(getSettingsSearchTargetScope(id)?.scope).toBe("project-defaults");
-    }
+    expect(getSettingsSearchTargetScope("response-streaming")?.scope).toBe("project-defaults");
     for (const scope of ["all", "environment", "project"] as const) {
       expect(isSettingsSearchScopeAvailable("project-defaults", scope)).toBe(true);
     }

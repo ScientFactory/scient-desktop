@@ -1,9 +1,11 @@
+import { dictationSpelling } from "@t3tools/shared/speech";
 // Recording ends with its control, but committed dictation must survive thread navigation. Hold the
 // job outside React with an owner fixed at stop; delivery must use that owner.
 
 import { useSyncExternalStore } from "react";
 import type {
   EnvironmentId,
+  DictationVocabulary,
   VoiceCancelTranscriptionRequest,
   VoiceTranscribeRequest,
   VoiceTranscriptionLanguage,
@@ -22,14 +24,18 @@ const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
 
 export type VoiceJobPhase = "transcribing" | "correcting";
 
-/** Turns a committed recording into text: this computer's Whisper, or ChatGPT. */
+/** Turns a committed recording into text through the selected dictation engine. */
 export interface VoiceJobTranscriber {
-  readonly transcribe: (request: VoiceTranscribeRequest) => Promise<{ readonly text: string }>;
+  readonly transcribe: (
+    request: VoiceTranscribeRequest,
+    signal?: AbortSignal,
+  ) => Promise<{ readonly text: string }>;
+  readonly waitingForWorker?: (signal: AbortSignal) => Promise<boolean>;
   readonly cancelTranscriptionRequest?: (request: VoiceCancelTranscriptionRequest) => Promise<void>;
 }
 
 /** The analytics name of the engine that transcribed. */
-export type VoiceEngineClass = "local-whisper" | "chatgpt";
+export type VoiceEngineClass = "local-whisper" | "chatgpt" | "other";
 
 export interface VoiceJobInput {
   /** Fixed at the stop click; the control showing this key displays the job. */
@@ -44,6 +50,7 @@ export interface VoiceJobInput {
     readonly environmentId: EnvironmentId;
   } | null;
   readonly language: VoiceTranscriptionLanguage | undefined;
+  readonly loadVocabulary?: (() => Promise<DictationVocabulary>) | undefined;
   readonly recordAnalytics: (event: ScientAnalyticsUiEvent) => void;
   /** Called at most once, after the job has left the store. */
   readonly deliver: (text: string, send: boolean) => void;
@@ -54,6 +61,8 @@ export interface VoiceJobInput {
 interface VoiceJob {
   readonly id: string;
   readonly input: VoiceJobInput;
+  readonly abortController: AbortController;
+  waiting: boolean;
   phase: VoiceJobPhase;
   active: boolean;
   requestId: string | null;
@@ -69,6 +78,7 @@ interface VoiceJob {
 }
 
 export interface VoiceJobView {
+  readonly waiting: boolean;
   readonly id: string;
   readonly phase: VoiceJobPhase;
 }
@@ -98,7 +108,8 @@ function publish(next: Partial<VoiceProcessingSnapshot>): void {
 function publishJobs(): void {
   const jobs = new Map<string, VoiceJobView>();
   for (const job of jobsById.values()) {
-    if (job.active) jobs.set(job.input.ownerKey, { id: job.id, phase: job.phase });
+    if (job.active)
+      jobs.set(job.input.ownerKey, { id: job.id, phase: job.phase, waiting: job.waiting });
   }
   publish({ jobs });
 }
@@ -214,10 +225,16 @@ async function run(job: VoiceJob): Promise<void> {
     return;
   }
   const startedAt = performance.now();
-  const requestId = randomUUID();
-  job.requestId = requestId;
   try {
+    const vocabulary = input.loadVocabulary ? await input.loadVocabulary() : undefined;
+    if (!job.active) return;
+    const requestId = randomUUID();
+    job.requestId = requestId;
+    const applySpelling = dictationSpelling(vocabulary?.words ?? []);
     const request: VoiceTranscribeRequest = {
+      ...(input.engineClass !== "chatgpt" && vocabulary?.hints.length
+        ? { hints: vocabulary.hints }
+        : {}),
       requestId,
       audioBase64: clip.base64,
       mimeType: "audio/wav",
@@ -225,11 +242,32 @@ async function run(job: VoiceJob): Promise<void> {
       durationMs: clip.durationMs,
       ...(input.language ? { language: input.language } : {}),
     };
-    const transcript = await input.voiceBridge.transcribe(request);
+    const wait = input.voiceBridge.waitingForWorker;
+    const waitController = new AbortController();
+    const signal = AbortSignal.any([waitController.signal, job.abortController.signal]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      if (!wait || signal.aborted) return;
+      const waiting = await wait(signal).catch(() => false);
+      if (signal.aborted) return;
+      if (job.waiting !== waiting) {
+        job.waiting = waiting;
+        publishJobs();
+      }
+      timer = setTimeout(() => void poll(), 250);
+    };
+    if (wait) timer = setTimeout(() => void poll(), 2_000);
+    const transcript = await input.voiceBridge
+      .transcribe(request, job.abortController.signal)
+      .finally(() => {
+        waitController.abort();
+        clearTimeout(timer);
+        job.waiting = false;
+      });
     job.transcriptionDurationMs = performance.now() - startedAt;
     job.requestId = null;
     if (!job.active) return;
-    const text = transcript.text.trim();
+    const text = applySpelling(transcript.text.trim());
     if (!text) {
       if (!settle(job)) return;
       record(job, {
@@ -266,10 +304,11 @@ async function run(job: VoiceJob): Promise<void> {
       correctionClient: input.correction.corrector,
       environmentId: input.correction.environmentId,
       transcript: text,
+      ...(vocabulary?.hints.length ? { hints: vocabulary.hints } : {}),
       ...(input.language ? { language: input.language } : {}),
       signal: abortController.signal,
     });
-    complete(job, corrected.text, startedAt, clip.durationMs, corrected.kind);
+    complete(job, applySpelling(corrected.text), startedAt, clip.durationMs, corrected.kind);
   } catch (error) {
     job.requestId = null;
     if (!settle(job)) return;
@@ -300,6 +339,8 @@ export function startVoiceJob(input: VoiceJobInput): {
     id: randomUUID(),
     input,
     phase: "transcribing",
+    waiting: false,
+    abortController: new AbortController(),
     active: true,
     requestId: null,
     startedAt: performance.now(),
@@ -317,6 +358,7 @@ export async function cancelVoiceJob(id: string): Promise<void> {
   if (!job) return;
   const phase = job.phase;
   const requestId = job.requestId;
+  job.abortController.abort();
   job.correction?.abortController.abort();
   if (!settle(job)) return;
   record(job, {

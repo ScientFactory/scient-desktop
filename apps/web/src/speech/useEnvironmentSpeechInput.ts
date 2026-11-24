@@ -16,7 +16,7 @@ import type {
   ProjectId,
   SpeechBenchmarkTier,
 } from "@t3tools/contracts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+
 import { chooseSetupSpeechModel } from "@t3tools/shared/speech";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -26,11 +26,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
 import { m } from "../i18n/messages";
-import {
-  useClientSettings,
-  useClientSettingsHydrated,
-  useEnvironmentSettings,
-} from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { useAppleSpeechLocales } from "./appleSpeech";
@@ -45,8 +41,6 @@ import {
   useVoiceInputSessionSnapshot,
   type VoiceInputTarget,
 } from "./voiceInputSession";
-// SCIENT-FORK: T3 voice is dormant, so its first-run microphone is not offered.
-import { SCIENT_OFFERS_T3_VOICE_SETUP } from "../scient/voice/t3VoiceDormancy";
 
 /** A product name, shown untranslated. */
 export const APPLE_SPEECH_LABEL = "Apple Speech";
@@ -122,7 +116,7 @@ type HookInput = {
  * the recording is abandoned the moment that choice changes or its connection drops.
  * Apple Speech ("device") keeps audio on this Mac and needs no environment.
  */
-export function useVoiceTranscriptionDestination() {
+export function useVoiceTranscriptionDestination(offerSetup = false) {
   const gt = useGT();
   const hydrated = useClientSettingsHydrated();
   const choice = useAudioChoice();
@@ -144,9 +138,7 @@ export function useVoiceTranscriptionDestination() {
       provider ? "cloudVoiceTranscription" : "voiceTranscription"
     ] === true;
   return {
-    ...(SCIENT_OFFERS_T3_VOICE_SETUP && hydrated && choice === null
-      ? { offerFirstRunSetup: true }
-      : {}),
+    ...(offerSetup && hydrated && choice === null ? { offerFirstRunSetup: true } : {}),
     environmentId,
     ...(device ? { device: true, onDevice: appleSpeechAvailable } : {}),
     ...(provider ? { cloudProvider: provider } : {}),
@@ -166,7 +158,7 @@ export function useVoiceTranscriptionDestination() {
 
 export function useEnvironmentSpeechInput(input: HookInput) {
   const navigate = useNavigate();
-  const destination = useVoiceTranscriptionDestination();
+  const destination = useVoiceTranscriptionDestination(input.offerSetup === true);
   const prepared = destination.prepared;
   const onDevice = destination.onDevice === true;
   const grantId = destination.grantId;
@@ -182,11 +174,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       ? originatingConnection
       : null;
   const clientSettings = useClientSettings();
-  const projectId = input.projectId ?? null;
-  const projectWords = useEnvironmentSettings(
-    input.environmentId,
-    (settings) => resolveProjectSettings(settings, projectId).settings.speechProjectCustomWords,
-  );
   const [status, setStatus] = useState<{
     readonly prepared: PreparedConnection;
     readonly value: EnvironmentSpeechStatus | null;
@@ -221,10 +208,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const busyElsewhere = !owns && voiceInputBlocksSubmission(snapshot.state);
 
   const startRequestRef = useRef(0);
-  const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords, session });
+  const latestRef = useRef({ input, clientSettings, cleanupPrepared, session });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props before an async completion can read them through the session
   useLayoutEffect(() => {
-    latestRef.current = { input, clientSettings, cleanupPrepared, projectWords, session };
+    latestRef.current = { input, clientSettings, cleanupPrepared, session };
   });
   const mountedRef = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons this editor's pending work, and a recording that cannot outlive it, on unmount or a destination change
@@ -316,7 +303,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return {
         environmentId: current.input.environmentId,
         projectName: current.input.projectName ?? null,
-        projectWords: current.projectWords,
+        projectId: current.input.projectId ?? null,
         clientSettings: current.clientSettings,
         cleanup: current.input.cleanup !== false,
         cleanupPrepared: current.cleanupPrepared,
@@ -394,7 +381,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
-        await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
+        await navigate({ to: "/settings/transcription", hash: "voice-transcription-destination" });
       return;
     }
     if (!session || voiceInputBlocksSubmission(session.state)) return;

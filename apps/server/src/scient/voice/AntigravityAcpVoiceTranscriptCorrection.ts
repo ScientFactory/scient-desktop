@@ -30,7 +30,7 @@ export function makeAntigravityAcpVoiceTranscriptCorrection(
     correct: (input) =>
       generateStructured({
         operation: "correctVoiceTranscript",
-        prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
+        prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language, input.hints),
         outputSchema: VoiceTranscriptCorrectionOutput,
         modelSelection: input.modelSelection,
       }).pipe(

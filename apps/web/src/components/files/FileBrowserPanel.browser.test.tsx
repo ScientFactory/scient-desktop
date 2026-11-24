@@ -325,7 +325,8 @@ describe("Files panel search", () => {
     await act(async () => {
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
-    expect(document.activeElement).not.toBe(input);
+    // Clearing a search keeps focus in the field; only an Escape on an empty field leaves it.
+    expect(document.activeElement).toBe(input);
     await expect.poll(visiblePaths).toEqual(["src/", "package.json"]);
     expect(hasMessage(`No files or folders match “${searchInput().value.trim()}”.`)).toBe(false);
   });
@@ -677,9 +678,14 @@ describe("Files panel search", () => {
 
     await userEvent.keyboard("{Escape}");
     await expect.element(search).toHaveValue("");
+    await expect.element(search).toHaveFocus();
+    await act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }),
+      );
+    });
     expect(onCloseSheet).not.toHaveBeenCalled();
 
-    (search.element() as HTMLElement).focus();
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
   });

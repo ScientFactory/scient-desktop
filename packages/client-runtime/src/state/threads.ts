@@ -99,6 +99,21 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
     : THREAD_SYNC_ERROR;
 }
 
+// SCIENT-FORK:START — the server names a missing thread snapshot (deleted, or never created).
+function isThreadNotFoundFailure(cause: Cause.Cause<unknown>): boolean {
+  return cause.reasons.some(
+    (reason) =>
+      reason._tag === "Fail" &&
+      typeof reason.error === "object" &&
+      reason.error !== null &&
+      "_tag" in reason.error &&
+      reason.error._tag === "OrchestrationV2GetThreadProjectionError" &&
+      "reason" in reason.error &&
+      reason.error.reason === "thread_not_found",
+  );
+}
+// SCIENT-FORK:END
+
 function formatHistoryError(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -1217,6 +1232,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           yield* Queue.offer(resubscribes, undefined);
         }),
         onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
+          // SCIENT-FORK:START — a warm thread whose snapshot fallback reads as missing existed and
+          // was deleted, like a thread.deleted event: retire the cache instead of showing it.
+          // Without data a miss can mean "not created yet", so those keep the paths below.
+          if (
+            isThreadNotFoundFailure(cause) &&
+            Option.isSome((yield* SubscriptionRef.get(state)).data)
+          ) {
+            return yield* setDeleted();
+          }
+          // SCIENT-FORK:END
           const retryOverHttp = !isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen);
           if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
         }),

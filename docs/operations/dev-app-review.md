@@ -85,11 +85,9 @@ forward, or starts the last reviewed reference. On Windows, quitting the app
 ends the launch. Logs rotate at 10 MB and keep three files at
 `~/.scient-next/scient-dev-stable/local-dev-app.log`.
 
-Voice uses the machine's shared runtime (`pnpm voice:runtime:stage` once per
-machine). On Windows, allow microphone access for desktop apps in Settings >
-Privacy & security > Microphone. Staging voice on Windows needs Visual Studio
-2022 or later with the C++ desktop workload (Build Tools are enough); see
-[Scient voice](../internals/scient-voice.md).
+On Windows, allow microphone access for desktop apps in Settings >
+Privacy & security > Microphone. Install a speech model in Transcription
+settings to use local dictation in the review profile.
 
 ## How It Stays Safe
 

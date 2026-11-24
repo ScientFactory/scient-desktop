@@ -55,6 +55,7 @@ import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
   getClientSettings,
   startModelPreferencesMigration,
+  startClientWordsMigration,
   subscribeClientSettings,
   updateClientSettings,
 } from "./hooks/useSettings";
@@ -102,6 +103,9 @@ function startClientAppearance(): void {
     }
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
+    }
+    if (previous?.htmlPreviewWidth !== settings.htmlPreviewWidth) {
+      root.dataset.htmlPreviewWidth = settings.htmlPreviewWidth;
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
@@ -305,6 +309,7 @@ export function startAppServices(): AppRouter {
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();
+  startClientWordsMigration();
   startAgentOpenedPreviews();
   if (isElectron) startElectronBrowserHost();
   startPreviewTitleRecording();

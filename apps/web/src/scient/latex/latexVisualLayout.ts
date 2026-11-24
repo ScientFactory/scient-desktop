@@ -1,3 +1,4 @@
+import { fontForLatexCode } from "@scientfactory/scient-markdown/fonts";
 /** Dimensions are kept in TeX points or inches until the presentation boundary. */
 import { msg } from "gt-react";
 import { latexDocumentLanguage, latexLanguageFont } from "./latexLanguage";
@@ -15,24 +16,7 @@ export interface LatexVisualListLayout {
   readonly nested?: LatexVisualListLayout;
 }
 
-/** Standard class font sizes and baselines, in TeX points. */
-export function latexVisualFontMetrics(base: 10 | 11 | 12) {
-  return {
-    tiny: [base === 10 ? 5 : 6, base === 10 ? 6 : 7],
-    scriptsize: [base === 10 ? 7 : 8, base === 10 ? 8 : 9.5],
-    footnotesize: [
-      base === 10 ? 8 : base === 11 ? 9 : 10,
-      base === 10 ? 9.5 : base === 11 ? 11 : 12,
-    ],
-    small: [base === 10 ? 9 : base === 11 ? 10 : 10.95, base === 10 ? 11 : base === 11 ? 12 : 13.6],
-    normalsize: [base === 11 ? 10.95 : base, base === 10 ? 12 : base === 11 ? 13.6 : 14.5],
-    large: [base === 12 ? 14.4 : 12, base === 12 ? 18 : 14],
-    Large: [base === 12 ? 17.28 : 14.4, base === 12 ? 22 : 18],
-    LARGE: [base === 12 ? 20.74 : 17.28, base === 12 ? 25 : 22],
-    huge: [base === 12 ? 24.88 : 20.74, base === 12 ? 30 : 25],
-    Huge: [24.88, 30],
-  } as const;
-}
+export { latexVisualFontMetrics } from "@scientfactory/scient-document/latex";
 
 /** Labels are `msg()` strings: resolve them with `useMessages()` where they are shown. */
 export const LATEX_PAPER_SIZES = {
@@ -318,15 +302,15 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     fontFamily = '"TeX Gyre Termes", "Times New Roman", serif';
   if (["palatino", "mathpazo", "newpxtext", "tgpagella"].some((name) => packages.has(name)))
     fontFamily = '"TeX Gyre Pagella", "Palatino Linotype", "Palatino", serif';
-  if (topLevel(/\\renewcommand\s*\{\\familydefault\}\s*\{\\sfdefault\}/gu).length > 0)
-    fontFamily = '"KaTeX_SansSerif", "Arial", sans-serif';
-  if (topLevel(/\\renewcommand\s*\{\\familydefault\}\s*\{\\ttdefault\}/gu).length > 0)
-    fontFamily = '"KaTeX_Typewriter", monospace';
+  const family = topLevel(/\\renewcommand\s*\{\\familydefault\}\s*\{\\?([A-Za-z0-9]+)\}/gu).at(
+    -1,
+  )?.[1];
   const language = latexDocumentLanguage(source);
-  fontFamily = latexLanguageFont(
-    language.main === "hebrew" ? language.hebrewFont : language.mainFont,
-    fontFamily,
-  );
+  if (family === "sfdefault") fontFamily = '"KaTeX_SansSerif", "Arial", sans-serif';
+  else if (family === "ttdefault") fontFamily = '"KaTeX_Typewriter", monospace';
+  else
+    fontFamily = fontForLatexCode(family)?.css ?? latexLanguageFont(language.mainFont, fontFamily);
+  if (language.main === "hebrew") fontFamily = latexLanguageFont(language.hebrewFont, fontFamily);
   const lists = {} as Record<LatexVisualListKind, LatexVisualListLayout>;
   const listSettings = topLevel(/\\setlist\s*(?:\[([^\]]*)\])?\s*\{([^{}]*)\}/gu);
   for (const kind of ["itemize", "enumerate", "description"] as const) {
@@ -445,7 +429,7 @@ export function resolvedLatexFontSize(points: number, source: string): number {
     source.indexOf("\\begin{document}") < 0 ? source.length : source.indexOf("\\begin{document}"),
   );
   if (
-    /\\(?:setmainfont|babelfont)\b|\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^{}]*\b(?:fontspec|lmodern|newtxtext|newpxtext|tgtermes|tgpagella)\b/u.test(
+    /\\(?:setmainfont|babelfont)\b|\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^{}]*\b(?:fontspec|fix-cm|lmodern|newtxtext|newpxtext|tgtermes|tgpagella)\b/u.test(
       preamble,
     )
   )

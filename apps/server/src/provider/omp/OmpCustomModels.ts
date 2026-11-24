@@ -418,6 +418,8 @@ const requiresCredentialRestart = (
       next === undefined ||
       next.credentialError !== undefined ||
       next.credentialId !== connection.credentialId ||
+      next.accountId !== connection.accountId ||
+      next.accountKeyVersion !== connection.accountKeyVersion ||
       next.baseUrl !== connection.baseUrl ||
       next.protocol !== connection.protocol
     );

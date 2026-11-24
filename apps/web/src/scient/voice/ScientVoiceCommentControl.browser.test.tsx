@@ -1,5 +1,6 @@
+import type { VoiceSetupSnapshot } from "./voiceClient";
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
-import { EnvironmentId, type VoiceModelsSnapshot } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -7,8 +8,24 @@ const state = vi.hoisted(() => ({
   client: null as null | { getModelsState: ReturnType<typeof vi.fn> },
 }));
 
-vi.mock("./voiceClient.ts", () => ({
-  getVoiceBridge: () => state.client,
+vi.mock("../../state/environments", async (original) => ({
+  ...(await original<typeof import("../../state/environments")>()),
+  useEnvironmentProviders: () =>
+    new Map([
+      [
+        "local",
+        ["first", "second"].map((instanceId) => ({
+          instanceId,
+          enabled: true,
+          driver: "codex",
+          auth: { status: "authenticated", type: "chatgpt" },
+        })),
+      ],
+    ]),
+}));
+
+vi.mock("./catalogDictation", () => ({
+  useCatalogDictation: () => ({ enabled: true, setup: state.client }),
 }));
 
 vi.mock("./ScientVoiceComposerControl.tsx", () => ({
@@ -16,40 +33,43 @@ vi.mock("./ScientVoiceComposerControl.tsx", () => ({
     ariaLabel,
     presentation,
     readyModelOnly,
+    activeProviderInstanceId,
   }: {
     ariaLabel: string;
     presentation: string;
     readyModelOnly: boolean;
+    activeProviderInstanceId?: string;
   }) => (
     <button
       type="button"
       aria-label={ariaLabel}
       data-presentation={presentation}
       data-ready-model-only={String(readyModelOnly)}
+      data-provider={activeProviderInstanceId}
     />
   ),
 }));
 
 import { ScientVoiceCommentControl } from "./ScientVoiceCommentControl.tsx";
+import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
 
-const modelId = "whisper-small-multilingual-q5_1" as const;
+const modelId = "catalog/example-small" as const;
 function snapshot(
   stateName: "missing" | "ready" = "ready",
-  overrides: Partial<VoiceModelsSnapshot> = {},
-): VoiceModelsSnapshot {
+  overrides: Partial<VoiceSetupSnapshot> = {},
+): VoiceSetupSnapshot {
   return {
     runtimeAvailable: true,
     selectedModelId: modelId,
     recommendation: null,
-    activeDownloadModelId: null,
     models: [
       {
         id: modelId,
         displayName: "Multilingual Small",
         description: "Test model",
         byteSize: 1,
-        state: stateName === "ready" ? { state: "ready", byteSize: 1 } : { state: "missing" },
+        state: stateName === "ready" ? { state: "ready" } : { state: "missing" },
       },
     ],
     ...overrides,
@@ -164,3 +184,27 @@ function _createFixture() {
   };
 }
 type _Fixture = ReturnType<typeof _createFixture>;
+
+it("keeps citation dictation available through the source chat's Codex connection", async () => {
+  const previous = getClientSettings();
+  try {
+    __setClientSettingsForTests({
+      ...previous,
+      voiceDictationEngine: "chatgpt",
+      voiceChatGptInstanceId: null,
+    });
+    state.client = { getModelsState: vi.fn().mockResolvedValue(snapshot("missing")) };
+    await using screen = await _fixtureRender(
+      <ScientVoiceCommentControl
+        environmentId={EnvironmentId.make("local")}
+        activeProviderInstanceId={ProviderInstanceId.make("second")}
+        onTranscript={() => undefined}
+      />,
+    );
+    const button = screen.container.querySelector('[aria-label="Dictate citation comment"]');
+    expect(button?.getAttribute("data-provider")).toBe("second");
+  } finally {
+    state.client = null;
+    await act(() => __setClientSettingsForTests(previous));
+  }
+});

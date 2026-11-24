@@ -18,6 +18,7 @@ import {
 import type { ServerUpdateTarget } from "~/components/ServerUpdateAction";
 import {
   currentConfirmedServerTargets,
+  resolveRestoredRetry,
   type UpdateEverythingMachine,
   type UpdateEverythingRun,
 } from "~/components/sidebar/updateEverything.logic";
@@ -376,20 +377,24 @@ interface ServerFailure {
   readonly target: ServerUpdateTarget;
 }
 
-/** A pass's server that failed or was withdrawn before its update, with its confirmed target. */
+/**
+ * A pass's server that failed or was withdrawn before its update, with its confirmed target. A
+ * server restored after this app relaunched keeps only its target version, so its target is
+ * rebuilt from `current`, every server as it is now; one already on that version has not failed.
+ */
 export function failedUpdateRunServer(
   run: UpdateEverythingRun | null,
   environmentId: EnvironmentId,
+  current: ReadonlyArray<UpdateEverythingMachine> = [],
 ): ServerFailure | null {
   const machine = run?.machines.find(
-    (candidate) =>
-      candidate.environmentId === environmentId &&
-      candidate.result === "failed" &&
-      candidate.server !== null,
+    (candidate) => candidate.environmentId === environmentId && candidate.result === "failed",
   );
-  return machine?.server
-    ? { reason: machine.failure ?? "Server update failed.", target: machine.server }
-    : null;
+  if (machine === undefined) return null;
+  const target = machine.server ?? resolveRestoredRetry(machine, current);
+  return target === null || target === "current"
+    ? null
+    : { reason: machine.failure ?? "Server update failed.", target };
 }
 
 /**
@@ -485,6 +490,8 @@ export function buildOtherUpdateRows(input: {
   readonly run: UpdateEverythingRun | null;
   readonly qualifiedServers: ReadonlyArray<ServerUpdateTarget>;
   readonly environments: ReadonlySet<EnvironmentId>;
+  /** Every server as it is now, to rebuild the target of a pass's row restored after a relaunch. */
+  readonly current?: ReadonlyArray<UpdateEverythingMachine>;
 }): OtherUpdateRow[] {
   const listed = new Set(input.items.map((item) => item.key));
   const items = [
@@ -500,7 +507,9 @@ export function buildOtherUpdateRows(input: {
       tracked: input.tracked.get(item.key),
       runProgress: updateRunProgress(item, input.run),
       runFailure:
-        item.kind === "server" ? failedUpdateRunServer(input.run, item.environmentId) : null,
+        item.kind === "server"
+          ? failedUpdateRunServer(input.run, item.environmentId, input.current)
+          : null,
       qualifiedServers: input.qualifiedServers,
     });
     return state === null ? [] : [{ item, state }];

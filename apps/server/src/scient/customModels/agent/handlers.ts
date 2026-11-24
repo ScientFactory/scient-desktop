@@ -110,7 +110,7 @@ function listCustomModels(
       protocol: connection.protocol,
       baseUrl: connection.baseUrl,
       key:
-        connection.credentialId === null
+        connection.credentialId === null && !connection.accountId
           ? "none"
           : connection.apiKeySuffix
             ? `saved, ends in ${connection.apiKeySuffix}`
@@ -246,7 +246,11 @@ export const layer = McpToolAccess.toLayer(
                   .removeCustomModel({ revision: current.revision, connectionId: existing.id })
                   .pipe(Effect.mapError((error) => invalid(error.message))),
               );
-              lines.push(`Removed ${existing.name}, its models and its key.`);
+              lines.push(
+                existing.accountId
+                  ? `Removed ${existing.name} and its models. The saved key stays in Accounts.`
+                  : `Removed ${existing.name}, its models and its key.`,
+              );
               return { lines };
             }
             if (modelId === undefined)

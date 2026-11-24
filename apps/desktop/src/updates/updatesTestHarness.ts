@@ -76,6 +76,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
   readonly updateRestartMarkers: Set<string>;
   readonly updateInProgressMarker: () => string | undefined;
   readonly installRecords: Map<string, string>;
+  readonly deletedFiles: Set<string>;
   readonly previousInstallRecord: () => string | undefined;
   readonly downloadCount: () => number;
   readonly feedUrls: () => ElectronUpdater.ElectronUpdaterFeedUrl[];
@@ -286,7 +287,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
                 ),
           setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
           setWslDistro: () => Effect.die("unexpected WSL distro change"),
-          setVoiceSelectedModelId: () => Effect.die("unexpected voice model change"),
           setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
           applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
@@ -297,6 +297,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
   const updateRestartMarkers = new Set<string>();
   const updateMarkerContents = new Map<string, string>();
   const installRecords = new Map<string, string>();
+  const deletedFiles = new Set<string>();
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
@@ -319,6 +320,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
               }),
             );
     },
+    exists: (path) => Effect.succeed(!deletedFiles.has(path)),
     makeDirectory: () => Effect.void,
     writeFileString: (path, data) =>
       Effect.sync(() => {
@@ -382,6 +384,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
     updateInProgressMarker: () =>
       [...updateMarkerContents].find(([path]) => path.endsWith("/desktop-update-in-progress"))?.[1],
     installRecords,
+    /** Paths removed behind the app's back, as by a cache cleaner. */
+    deletedFiles,
     previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,

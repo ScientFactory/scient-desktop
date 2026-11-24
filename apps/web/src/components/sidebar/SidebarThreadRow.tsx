@@ -2032,7 +2032,7 @@ const SidebarSearchResultRowBody = memo(function SidebarSearchResultRowBody(prop
                   settled={props.isSettled}
                 />
               </span>
-              <span className="w-8 shrink-0 text-right text-xs text-muted-foreground/55 tabular-nums">
+              <span className="min-w-8 shrink-0 text-right text-xs text-muted-foreground/55 tabular-nums">
                 <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
               </span>
             </span>

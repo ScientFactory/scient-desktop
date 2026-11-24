@@ -47,6 +47,7 @@ import {
   compactT3McpToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
+  toolOutputImageBlocks,
 } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -152,6 +153,9 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+// SCIENT-FORK:START — Oh My Pi 19.1 reports a bash exit code under details.
+import { withOmpDetailsExitCode } from "./scientOmpCommandIdentity.ts";
+// SCIENT-FORK:END
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
@@ -3159,6 +3163,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
         let refreshModelSwitchCapability: Effect.Effect<void> = Effect.void;
+        let reportStartupPhase: (phase: string | undefined) => Effect.Effect<void> = () =>
+          Effect.void;
         // openSession configures the session itself; a late setup that lands
         // first waits here and is adopted once that configuration is in place.
         const lateSessionSetup: {
@@ -4093,8 +4099,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 mcpIdentity === undefined
                   ? (merged.title ?? merged.kind ?? "Tool")
                   : `${mcpIdentity.server}.${mcpIdentity.tool}`,
-              input: merged.data.rawInput ?? null,
-              output: merged.data.rawOutput ?? merged.data.content ?? null,
+              // SCIENT-FORK:START — a tool command has its own arguments and result inside bash.
+              input:
+                (mcpIdentity?.output === undefined ? merged.data.rawInput : mcpIdentity.input) ??
+                null,
+              output: mcpIdentity?.output ?? merged.data.rawOutput ?? merged.data.content ?? null,
+              // SCIENT-FORK:END
             },
           });
         });
@@ -5305,7 +5315,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
-            let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
+            // SCIENT-FORK:START — keep OMP's wrapped MCP response, including images and errors.
+            let output =
+              mcpIdentity.output ??
+              (rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput));
+            // SCIENT-FORK:END
             const resolvedT3Tool = resolveT3McpToolId(toolName);
             const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
             const isError =
@@ -5547,7 +5561,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 break;
               }
               case "execute": {
-                const exitCode = acpProjectedCommandExitCode(status, rawOutput);
+                // SCIENT-FORK:START — Oh My Pi 19.1 reports the exit code under details; a bash
+                // result with images keeps them on a dynamic card, which has no exit-code field.
+                const exitCode = acpProjectedCommandExitCode(
+                  status,
+                  withOmpDetailsExitCode(rawOutput),
+                );
+                if (
+                  toolCall.data.name === "bash" &&
+                  Array.isArray(rawOutputRecord?.content) &&
+                  toolOutputImageBlocks(rawOutputRecord.content).length > 0
+                ) {
+                  turnItem = {
+                    ...base,
+                    type: "dynamic_tool",
+                    toolName: "bash",
+                    input: rawInputRecord ?? {},
+                    output: {
+                      content: rawOutputRecord.content,
+                      ...(exitCode === undefined ? {} : { exitCode }),
+                    },
+                  };
+                  break;
+                }
+                // SCIENT-FORK:END
                 turnItem = {
                   ...base,
                   type: "command_execution",
@@ -8834,15 +8871,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           prepareTerminalEnvironment(mcpContext, sessionId);
           yield* Ref.set(loadingSessionId, sessionId);
           const activated = yield* Effect.gen(function* () {
+            if (!canLoadSession && !canResumeSession) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: `ACP driver cannot load or resume session ${sessionId}`,
+              });
+            }
+            yield* reportStartupPhase("resume");
             return canLoadSession
               ? yield* runtime.loadSession(sessionId, activationOptions)
-              : canResumeSession
-                ? yield* runtime.resumeSession(sessionId, activationOptions)
-                : yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver,
-                    detail: `ACP driver cannot load or resume session ${sessionId}`,
-                  });
-          }).pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
+              : yield* runtime.resumeSession(sessionId, activationOptions);
+          }).pipe(
+            Effect.onError(() => Ref.set(loadingSessionId, null)),
+            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+          );
           rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
           return activated;
         });
@@ -9221,6 +9263,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ...capabilities,
               sessions: { ...capabilities.sessions, supportsModelSwitchInSession },
             },
+            updatedAt: yield* DateTime.now,
+          };
+          yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
+        });
+        reportStartupPhase = Effect.fn("AcpAdapterV2.reportStartupPhase")(function* (
+          phase: string | undefined,
+        ) {
+          if (providerSession.startupPhase === phase) return;
+          const { startupPhase: _reported, ...reported } = providerSession;
+          providerSession = {
+            ...reported,
+            ...(phase === undefined ? {} : { startupPhase: phase }),
             updatedAt: yield* DateTime.now,
           };
           yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
@@ -9886,13 +9940,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageText: string,
           attachments: ReadonlyArray<ChatAttachment>,
         ) {
-          if (!supportsImagePrompts && attachments.some(isProviderNativeImageAttachment)) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver,
-              detail: "ACP driver did not negotiate image prompt support",
-            });
+          // Without image prompts the saved path already in the message text is how the agent
+          // reaches the image; a flavor's own builder checks the capabilities it is handed.
+          if (!flavor.buildAttachmentPrompt) {
+            return supportsImagePrompts ? yield* imageAttachmentBlocks(attachments) : [];
           }
-          if (!flavor.buildAttachmentPrompt) return yield* imageAttachmentBlocks(attachments);
           const setup = yield* Ref.get(activeSessionSetup);
           // SCIENT-FORK:START — see AcpAdapterV2Flavor.buildAttachmentPrompt.
           const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);

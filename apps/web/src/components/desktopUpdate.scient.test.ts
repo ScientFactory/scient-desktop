@@ -1,3 +1,4 @@
+import { resolveProviderAppUpdateAction } from "~/scient/desktopUpdate/providerAppUpdate.logic";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -63,4 +64,46 @@ it("native preparation blocks every update action even while the archive remains
   expect(
     getDesktopUpdateActionError({ accepted: true, completed: false, state: preparing }),
   ).toBeNull();
+});
+
+describe("updating the app for a provider", () => {
+  it("asks for a restart when the update is ready", () => {
+    expect(resolveProviderAppUpdateAction(downloaded)).toBe("confirm-install");
+  });
+
+  it("retries a restart that the user already confirmed", () => {
+    expect(
+      resolveProviderAppUpdateAction({ ...downloaded, status: "error", errorContext: "install" }),
+    ).toBe("retry-install");
+  });
+
+  it("downloads the available update, including after a failed download", () => {
+    const available: DesktopUpdateState = {
+      ...downloaded,
+      downloadedVersion: null,
+      status: "available",
+    };
+    expect(resolveProviderAppUpdateAction(available)).toBe("download");
+    expect(
+      resolveProviderAppUpdateAction({ ...available, status: "error", errorContext: "download" }),
+    ).toBe("download");
+  });
+
+  it("checks for an update when none is offered", () => {
+    expect(
+      resolveProviderAppUpdateAction({
+        ...downloaded,
+        status: "up-to-date",
+        availableVersion: null,
+        downloadedVersion: null,
+      }),
+    ).toBe("check");
+  });
+
+  it("waits for the updater state and leaves an active or disabled updater alone", () => {
+    expect(resolveProviderAppUpdateAction(null)).toBeNull();
+    for (const status of ["checking", "downloading", "preparing", "disabled"] as const) {
+      expect(resolveProviderAppUpdateAction({ ...downloaded, status }), status).toBeNull();
+    }
+  });
 });

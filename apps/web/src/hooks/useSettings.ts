@@ -1,3 +1,4 @@
+import { startLegacySpeechWordsMigration } from "~/scient/transcription/legacySpeechWordsMigration";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useRef, useSyncExternalStore, use } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
@@ -377,7 +378,7 @@ const selectLegacyModelPreferences = (settings: ClientSettings) => ({
 // Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
 const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 
-const modelPreferencesMigrationTargetsAtom = Atom.make((get) =>
+const connectedSettingsMigrationTargetsAtom = Atom.make((get) =>
   [...get(environmentCatalog.catalogValueAtom).entries.keys()].flatMap((environmentId) => {
     const generation = Option.match(
       AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))),
@@ -391,12 +392,12 @@ const modelPreferencesMigrationTargetsAtom = Atom.make((get) =>
       ? []
       : [{ environmentId, generation, settings }];
   }),
-).pipe(Atom.withLabel("web-model-preferences-migration-targets"));
+).pipe(Atom.withLabel("web-connected-settings-migration-targets"));
 
 function migrateModelPreferences(): void {
   if (clientSettingsHydrationStatus !== "ready") return;
   for (const { environmentId, generation, settings } of appAtomRegistry.get(
-    modelPreferencesMigrationTargetsAtom,
+    connectedSettingsMigrationTargetsAtom,
   )) {
     if (attemptedMigrationGenerations.get(environmentId) === generation) continue;
     const patch = modelPreferencesMigrationPatch(settings, clientSettingsSnapshot);
@@ -414,7 +415,7 @@ function migrateModelPreferences(): void {
 /** Moves this client's legacy model preferences onto each server, once per connection. */
 export function startModelPreferencesMigration(): () => void {
   const unsubscribes = [
-    appAtomRegistry.subscribe(modelPreferencesMigrationTargetsAtom, migrateModelPreferences),
+    appAtomRegistry.subscribe(connectedSettingsMigrationTargetsAtom, migrateModelPreferences),
     subscribeClientSettings(migrateModelPreferences),
     subscribeClientSettingsHydration(migrateModelPreferences),
   ];
@@ -422,6 +423,36 @@ export function startModelPreferencesMigration(): () => void {
   return () => {
     for (const unsubscribe of unsubscribes) unsubscribe();
   };
+}
+
+export function startClientWordsMigration(): () => void {
+  return startLegacySpeechWordsMigration({
+    read: getClientSettingsSnapshot,
+    targets: () =>
+      clientSettingsHydrationStatus === "ready"
+        ? appAtomRegistry
+            .get(connectedSettingsMigrationTargetsAtom)
+            .map(({ environmentId }) => environmentId)
+        : [],
+    send: async (environmentId, batch) => {
+      const result = await runAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.updateSettings,
+        { environmentId, input: { patch: { migrateLegacySpeechWords: batch } } },
+        { reportFailure: false },
+      );
+      return result._tag === "Success" ? result.value.legacySpeechWordsReceipts : [];
+    },
+    persist: persistClientSettingsUpdate,
+    subscribe: (wake) => {
+      const stops = [
+        appAtomRegistry.subscribe(connectedSettingsMigrationTargetsAtom, wake),
+        subscribeClientSettingsHydration(wake),
+        subscribeClientSettings(wake),
+      ];
+      return () => stops.forEach((stop) => stop());
+    },
+  });
 }
 
 export function useMergedSettings<T = UnifiedSettings>(

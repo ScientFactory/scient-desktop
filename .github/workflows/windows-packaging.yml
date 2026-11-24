@@ -210,20 +210,14 @@ jobs:
             if (!$value) { throw "Missing compiler environment variable: $name" }
             "$name=$value" >> $env:GITHUB_ENV
           }
-      # The pinned whisper.cpp and SyncTeX builds, by the scripts that pin their sources and on
+      # The pinned SyncTeX build, by the scripts that pin their sources and on
       # this runner image's compiler. The build verifies each receipt before staging it.
       - name: Restore native runtimes
         id: native_cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: native-runtimes
-          key: windows-native-runtimes-v1-${{ steps.msvc.outputs.image }}-${{ steps.msvc.outputs.toolset }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/lib/whisper-runtime-receipt.ts', 'scripts/stage-synctex-runtime.ts') }}
-      # Each script runs in the shell the build gives it: whisper.cpp extracts with Git Bash's
-      # GNU tar (--force-local), SyncTeX with Windows tar, which takes C: paths.
-      - name: Build the voice runtime
-        if: ${{ steps.native_cache.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: node scripts/stage-whisper-runtime.ts --platform win --arch x64 --output native-runtimes/whisper-runtime --verbose
+          key: windows-native-runtimes-v1-${{ steps.msvc.outputs.image }}-${{ steps.msvc.outputs.toolset }}-${{ hashFiles('scripts/stage-synctex-runtime.ts') }}
       - name: Build the SyncTeX runtime
         if: ${{ steps.native_cache.outputs.cache-hit != 'true' }}
         shell: pwsh
@@ -260,7 +254,6 @@ jobs:
           set -euo pipefail
           vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --keep-stage --verbose \
             --synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime" \
-            --voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime" \
             --wsl-prebuild "$GITHUB_WORKSPACE/windows-prerequisites/wsl-prebuild/pty.node" \
             --wsl-synctex-runtime "$GITHUB_WORKSPACE/windows-prerequisites/synctex-wsl"
       # The Linux runtime the installer carries, for the WSL qualification after this job;
@@ -298,9 +291,16 @@ jobs:
       - name: Exercise packaged terminal and Cursor helpers
         shell: pwsh
         run: node scripts/qualify-windows-packaged-runtime.mjs "$env:SCIENT_PACKAGING_UNPACKED"
+      - name: Cache verified speech probe inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/scient-speech-probe
+          key: speech-probe-v1-${{ hashFiles('apps/server/src/speech/catalog.json', 'apps/server/src/speech-packaging-probe.ts') }}
       - name: Install 0.6.21 and upgrade to the candidate
         shell: pwsh
         timeout-minutes: 10
+        env:
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
         run: |
           $status = Join-Path $env:RUNNER_TEMP 'stable-install-status'
           while (!(Test-Path -LiteralPath $status)) { Start-Sleep -Seconds 1 }
@@ -334,23 +334,8 @@ jobs:
           $installed = (Get-FileHash (Join-Path $env:SCIENT_PACKAGING_INSTALL 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash
           $qualified = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash
           if ($installed -ne $qualified) { throw "Installed WSL runtime $installed is not the uploaded $qualified" }
-      # The voice helper must need nothing Windows lacks (no Visual C++
-      # Redistributable) and must transcribe through the app's runtime owner.
-      - name: Transcribe with the installed voice runtime
-        id: voice_transcription
-        shell: pwsh
-        run: node scripts/qualify-whisper-runtime.mjs (Join-Path $env:SCIENT_PACKAGING_INSTALL 'resources/whisper-runtime')
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: windows-voice-runtime
-          path: ${{ env.SCIENT_PACKAGING_INSTALL }}/resources/whisper-runtime/
-          if-no-files-found: error
-          retention-days: 7
       # Last: each install here replaces the registered upgrade install above.
-      # It also runs after a voice transcription failure, whose quarantine row
-      # (ci-flakes.md) waives that step only when every later check still ran.
       - name: Install into a fresh, a shared and a linked folder
-        if: ${{ success() || (!cancelled() && steps.voice_transcription.outcome == 'failure') }}
         shell: pwsh
         timeout-minutes: 10
         run: node scripts/qualify-windows-install-folder.mjs fixtures (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path

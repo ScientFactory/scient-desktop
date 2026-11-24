@@ -1,3 +1,5 @@
+import { readDictationWords } from "../transcription/readDictationWords";
+import type { ProjectId } from "@t3tools/contracts";
 // Thin composer presentation for Scient-owned local voice dictation.
 import { T, useGT, Var } from "gt-react";
 // Async lifecycle and stale-operation protection live in the controller hook;
@@ -15,7 +17,11 @@ import {
   XIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import type { EnvironmentId, VoiceModelId, VoiceModelsSnapshot } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderInstanceId,
+  ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 
 import { ComposerControl, ComposerControlIcon } from "../../components/chat/ComposerControl.tsx";
 import { Badge } from "../../components/ui/badge.tsx";
@@ -31,8 +37,12 @@ import { cn } from "../../lib/utils.ts";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { buildVoiceWaveformLevels, VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
-import { getVoiceBridge } from "./voiceClient.ts";
+import { useDictationShortcut } from "../../speech/useDictationShortcut";
+import { useCloudDictation } from "./cloudDictation";
+import { useCatalogDictation } from "./catalogDictation";
+import { type VoiceSetupSnapshot, getVoiceBridge } from "./voiceClient.ts";
 import { useChatGptDictation } from "./chatGptDictation.ts";
+import { MAX_RECORDING_MS } from "./useVoiceRecorder";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
 import {
   makeVoiceTranscriptCorrectionClient,
@@ -44,6 +54,7 @@ import type { VoiceDraftOrigin } from "./voiceDraftDelivery.ts";
 export interface ScientVoiceComposerControlProps {
   readonly disabled?: boolean;
   readonly environmentId?: EnvironmentId;
+  readonly projectId?: ProjectId | null;
   /** Composer draft that committed dictation lands in, even after leaving. */
   readonly draftOrigin?: VoiceDraftOrigin | null;
   /** Field that local (non-draft) dictation belongs to; see the controller. */
@@ -53,6 +64,13 @@ export interface ScientVoiceComposerControlProps {
   readonly onRequestSubmit?: () => void;
   readonly className?: string;
   readonly ariaLabel?: string;
+  readonly activeProviderInstanceId?: ProviderInstanceId;
+  readonly shortcut?: {
+    readonly keybindings: ResolvedKeybindingsConfig;
+    readonly terminalOpen: boolean;
+    readonly modelPickerOpen: boolean;
+    readonly targetRef?: React.RefObject<HTMLElement | null>;
+  };
   readonly presentation?: "composer" | "compact";
   readonly readyModelOnly?: boolean;
 }
@@ -126,8 +144,8 @@ function VoiceErrorText({
 
 interface VoiceModelSetupPickerProps {
   readonly disabled: boolean;
-  readonly snapshot: VoiceModelsSnapshot | null;
-  readonly onSelect: (modelId: VoiceModelId) => void;
+  readonly snapshot: VoiceSetupSnapshot | null;
+  readonly onSelect: (modelId: string) => void;
   /** Offers ChatGPT first, through a provider's ChatGPT sign-in. */
   readonly onChooseChatGpt?: (() => void) | undefined;
 }
@@ -144,8 +162,14 @@ function VoiceModelSetupPicker({
   onChooseChatGpt,
 }: VoiceModelSetupPickerProps): ReactNode {
   // Models this computer cannot run are not offered; ChatGPT may still be.
-  const models = snapshot?.runtimeAvailable ? snapshot.models : [];
+  const gt = useGT();
   const recommendedModelId = snapshot?.recommendation?.modelId ?? null;
+  const availableModels = snapshot?.runtimeAvailable ? snapshot.models : [];
+  const recommended =
+    availableModels.find((model) => model.id === recommendedModelId) ??
+    availableModels.find((model) => model.id === snapshot?.selectedModelId) ??
+    availableModels[0];
+  const models = recommended ? [recommended] : [];
 
   return (
     // The microphone was just pressed: the choices open at once.
@@ -166,35 +190,6 @@ function VoiceModelSetupPicker({
         sideOffset={8}
       >
         <div className="space-y-1 p-2">
-          {onChooseChatGpt ? (
-            <button
-              className={SETUP_OPTION_CLASS_NAME}
-              disabled={disabled}
-              onClick={onChooseChatGpt}
-              type="button"
-            >
-              <span className="min-w-0 flex-1 space-y-0.5">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-medium text-sm">ChatGPT</span>
-                  <Badge size="sm" variant="info">
-                    <T>Nothing to download</T>
-                  </Badge>
-                </span>
-                <span className="block text-muted-foreground text-xs leading-4">
-                  <T>
-                    Uses your ChatGPT sign-in. Recordings go to OpenAI, which keeps them for 30
-                    days.
-                  </T>
-                </span>
-              </span>
-              <MicIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
-            </button>
-          ) : null}
-          {onChooseChatGpt && models.length > 0 ? (
-            <p className="px-2.5 pt-1.5 text-muted-foreground text-xs">
-              <T>Or keep recordings on this computer</T>
-            </p>
-          ) : null}
           {models.map((model) => {
             const recommended = model.id === recommendedModelId;
             const downloaded = model.state.state === "ready";
@@ -209,9 +204,22 @@ function VoiceModelSetupPicker({
                 <span className="min-w-0 flex-1 space-y-0.5">
                   <span className="flex flex-wrap items-center gap-1.5">
                     <span className="font-medium text-sm">{model.displayName}</span>
+                    {model.grade ? (
+                      <Badge size="sm" variant="outline">
+                        {model.grade}
+                      </Badge>
+                    ) : null}
                     {recommended ? (
                       <Badge size="sm" variant="info">
-                        <T>Best for this computer</T>
+                        {snapshot?.recommendation?.language ? (
+                          gt("Recommended for {language}", {
+                            language: new Intl.DisplayNames(undefined, { type: "language" }).of(
+                              snapshot.recommendation.language,
+                            ),
+                          })
+                        ) : (
+                          <T>Recommended</T>
+                        )}
                       </Badge>
                     ) : null}
                   </span>
@@ -228,17 +236,38 @@ function VoiceModelSetupPicker({
               </button>
             );
           })}
+          {onChooseChatGpt ? (
+            <button
+              className={SETUP_OPTION_CLASS_NAME}
+              disabled={disabled}
+              onClick={onChooseChatGpt}
+              type="button"
+            >
+              <span className="min-w-0 flex-1 space-y-0.5">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium text-sm">ChatGPT</span>
+                  <Badge size="sm" variant="info">
+                    <T>Nothing to download</T>
+                  </Badge>
+                </span>
+                <span className="block text-muted-foreground text-xs leading-4">
+                  <T>Uses your ChatGPT sign-in.</T>
+                </span>
+              </span>
+              <MicIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+            </button>
+          ) : null}
         </div>
         {/* Inset like the options above, so its hover never touches the popup's corner. */}
-        <div className="px-2 pb-2">
+        <div className="flex flex-wrap items-center gap-2 px-2 pb-2">
           <Button
             className="justify-start"
-            render={<Link to="/settings/voice" />}
+            render={<Link to="/settings/transcription" />}
             size="compact"
             variant="ghost-muted"
           >
             <SlidersHorizontalIcon className="text-current" />
-            <T context="verb, manage voice models">Manage</T>
+            <T>More models…</T>
           </Button>
         </div>
       </PopoverPopup>
@@ -249,6 +278,7 @@ function VoiceModelSetupPicker({
 export function ScientVoiceComposerControl({
   disabled = false,
   environmentId,
+  projectId,
   draftOrigin = null,
   localFieldKey = null,
   onTranscript,
@@ -256,27 +286,37 @@ export function ScientVoiceComposerControl({
   onRequestSubmit,
   className,
   ariaLabel,
+  shortcut,
+  activeProviderInstanceId,
   presentation = "composer",
   readyModelOnly = false,
 }: ScientVoiceComposerControlProps): ReactNode {
   const gt = useGT();
-  const client = getVoiceBridge();
+  const desktopVoice = getVoiceBridge();
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const catalog = useCatalogDictation(languagePreference);
+  const client = catalog.setup;
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
-  const chatGpt = useChatGptDictation(environmentId);
+  const cloud = useCloudDictation();
+  const chatGpt = useChatGptDictation(environmentId, activeProviderInstanceId);
   const runVoiceTranscriptCorrection = useAtomCommand(voiceTranscriptCorrectionCommand, {
     reportFailure: false,
   });
   const correctionClient = makeVoiceTranscriptCorrectionClient(runVoiceTranscriptCorrection);
   const controller = useScientVoiceController({
     client,
+    requestMicrophoneAccess: desktopVoice?.requestMicrophoneAccess,
     correctionClient,
     correctionEnabled,
     languagePreference,
+    ...(environmentId
+      ? { loadVocabulary: () => readDictationWords(environmentId, projectId, languagePreference) }
+      : {}),
     engine,
+    cloud,
     chatGpt: chatGpt.transcriber,
     chatGptUnavailableMessage: chatGpt.unavailableMessage,
     onEngineChosen: (chosen) => void updateClientSettings({ voiceDictationEngine: chosen }),
@@ -308,12 +348,30 @@ export function ScientVoiceComposerControl({
   const readyModelBecameUnavailable =
     readyModelOnly &&
     engine !== "chatgpt" &&
+    engine !== "cloud" &&
     (controller.phase === "setup-prompt" ||
       (controller.modelSnapshot !== null &&
         !hasReadySelectedVoiceModel(controller.modelSnapshot)) ||
       (controller.modelSnapshot === null && controller.errorMessage !== null));
-  if (!client || readyModelBecameUnavailable) return null;
+  const available = client !== null || (desktopVoice !== null && engine !== "auto");
+  const shortcutLabel = useDictationShortcut({
+    enabled: shortcut !== undefined,
+    keybindings: shortcut?.keybindings ?? [],
+    terminalOpen: shortcut?.terminalOpen ?? false,
+    modelPickerOpen: shortcut?.modelPickerOpen ?? false,
+    ...(shortcut?.targetRef ? { targetRef: shortcut.targetRef } : {}),
+    disabled: disabled || !shortcut || readyModelBecameUnavailable,
+    speech: {
+      available: shortcut !== undefined && available && engine !== "off",
+      state: { phase: shortcut ? controller.phase : "idle" },
+      start: controller.activate,
+      stop: () => controller.stop(false),
+      cancel: () => void controller.cancel(),
+    },
+  });
+  if ((!available && !busy) || engine === "off" || readyModelBecameUnavailable) return null;
 
+  const remainingMs = MAX_RECORDING_MS - controller.elapsedMs;
   const actionsClassName = cn(
     "flex shrink-0 items-center justify-end gap-2",
     presentation === "composer" ? "w-28 sm:w-25" : "w-24",
@@ -334,8 +392,12 @@ export function ScientVoiceComposerControl({
                 <span className="size-2 rounded-full bg-destructive" />
               </span>
               <VoiceWaveform levels={controller.levels} />
-              <span dir="ltr" className="w-9 shrink-0 text-muted-foreground text-xs tabular-nums">
-                {formatVoiceTimer(controller.elapsedMs)}
+              <span
+                dir="ltr"
+                aria-label={remainingMs <= 30_000 ? gt("Time remaining") : gt("Time recorded")}
+                className="w-9 shrink-0 text-muted-foreground text-xs tabular-nums"
+              >
+                {formatVoiceTimer(remainingMs <= 30_000 ? remainingMs : controller.elapsedMs)}
               </span>
               <span className="sr-only" role="status">
                 <T context="voice recording in progress">Recording</T>
@@ -354,7 +416,9 @@ export function ScientVoiceComposerControl({
                 {controller.phase === "requesting-permission"
                   ? gt("Waiting for microphone access…")
                   : controller.phase === "transcribing"
-                    ? gt("Transcribing…")
+                    ? controller.waitingForWorker
+                      ? gt("Waiting for the recording transcription…")
+                      : gt("Transcribing…")
                     : gt("Correcting transcript…")}
               </span>
               <span aria-hidden="true" className="w-9 shrink-0" />
@@ -505,6 +569,9 @@ export function ScientVoiceComposerControl({
         <>
           <ComposerControl
             aria-label={ariaLabel ?? gt("Dictate a voice message")}
+            title={
+              shortcutLabel ? gt("Dictate ({shortcut})", { shortcut: shortcutLabel }) : undefined
+            }
             disabled={disabled || controller.phase !== "idle"}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => void controller.activate()}

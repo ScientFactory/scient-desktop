@@ -28,13 +28,11 @@ async function render(
   props: {
     testAgents?: ReadonlyArray<typeof pi>;
     statuses?: ReadonlyArray<ModelConnectionStatusKind | undefined>;
-    keyMissing?: boolean;
     notice?: CustomModelTestNotice | null;
   } = {},
 ) {
   const onTest = vi.fn();
   const onCheckAgain = vi.fn();
-  const onReenterKey = vi.fn();
   _fixture.host = document.createElement("div");
   _fixture.host.className = "flex items-center gap-2";
   document.body.append(_fixture.host);
@@ -46,15 +44,13 @@ async function render(
       busy={false}
       testing={false}
       statuses={props.statuses ?? []}
-      keyMissing={props.keyMissing ?? false}
       testAgents={props.testAgents ?? [pi, droid]}
       notice={props.notice ?? null}
       onCheckAgain={onCheckAgain}
-      onReenterKey={onReenterKey}
       onTest={onTest}
     />,
   );
-  return { onTest, onCheckAgain, onReenterKey };
+  return { onTest, onCheckAgain };
 }
 
 it("opens the agent menu for a model attached to several agents and tests through the choice", async () => {
@@ -69,22 +65,6 @@ it("opens the agent menu for a model attached to several agents and tests throug
   expect(onTest).toHaveBeenCalledExactlyOnceWith(droid.id);
 });
 
-it("offers Re-enter key when the key is missing and the agent reporting it is signed out", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  // The row's only label is the agent's own problem; the key is still missing.
-  const { onReenterKey, onCheckAgain } = await render(_fixture, {
-    statuses: ["check-agent"],
-    keyMissing: true,
-  });
-  await userEvent.click(page.getByRole("button", { name: "Re-enter key" }));
-  expect(onReenterKey).toHaveBeenCalledOnce();
-  await userEvent.click(page.getByRole("button", { name: "Check again" }));
-  expect(onCheckAgain).toHaveBeenCalledOnce();
-});
-
-// regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
 it("says how to make the model testable when no enabled agent can run a Test", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

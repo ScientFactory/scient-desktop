@@ -6,11 +6,13 @@ import {
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
   ProjectMutation,
+  SecretRequestAnswerInput,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
@@ -250,6 +252,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetUsageSummary]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.voiceManageWords]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceReadWords]: AuthOrchestrationOperateScope,
   [WS_METHODS.voiceCorrectTranscript]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
@@ -413,6 +417,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.liveVoiceMute]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — ChatGPT dictation runs the agent with its sign-in, like transcript correction.
+  [WS_METHODS.voiceDictate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.voiceCloudChoices]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceSavedKeys]: AuthAccessWriteScope,
+  [WS_METHODS.voiceConfigureCloud]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceChooseCloud]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceDictationWait]: AuthOrchestrationOperateScope,
   [WS_METHODS.voiceDictateWithChatGpt]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash write files.
@@ -508,6 +518,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
+const decodeSecretRequestAnswer = Schema.decodeUnknownSync(SecretRequestAnswerInput);
 
 /**
  * A queued edit that omits `attachments` keeps the queued ones, which a payload cannot show;
@@ -556,6 +567,9 @@ const requiredScopesForRpcCall = (
         : AuthOrchestrationReadScope,
     ];
   }
+  if (method === WS_METHODS.voiceConfigureCloud) {
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
   // These send the credential they are given to a URL the caller names, as a saved setting would.
   if (
@@ -565,6 +579,14 @@ const requiredScopesForRpcCall = (
     containsSecretReference(payload)
   ) {
     return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
+  // A reference answer has the server read a secret the caller names, as a saved reference does.
+  // Typed values can use any field names, so the answer's type decides, not its shape.
+  if (
+    method === WS_METHODS.secretsAnswerRequest &&
+    decodeSecretRequestAnswer(payload).answer.type === "reference"
+  ) {
+    return [AuthOrchestrationOperateScope, AuthProvidersManageScope];
   }
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));

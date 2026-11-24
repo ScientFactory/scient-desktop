@@ -7,6 +7,7 @@ import { expect, vi } from "vite-plus/test";
 import {
   AuthSessionId,
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   CloudSpeechError,
@@ -37,17 +38,18 @@ import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
 
-const principal = (...scopes: AuthEnvironmentScope[]) =>
+const principalWith = (scopes: ReadonlySet<AuthEnvironmentScope>) =>
   Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
     effect.pipe(
       Effect.provideService(EnvironmentAuthenticatedPrincipal, {
         sessionId: decodeSessionId("voice-test"),
         subject: "test",
         method: "bearer-access-token",
-        scopes: new Set(scopes),
+        scopes,
       }),
     ),
   );
+const principal = (...scopes: AuthEnvironmentScope[]) => principalWith(new Set(scopes));
 
 const dependencies = Layer.mergeAll(
   Layer.mock(CloudSpeech.CloudSpeech)({}),
@@ -77,7 +79,13 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       Layer.provide(speechHttpApiLayer),
       Layer.provide(principal(AuthOrchestrationOperateScope)),
       Layer.provide(
-        Layer.succeed(SpeechService.SpeechService, {
+        Layer.mock(SpeechService.SpeechService)({
+          openRecordingVad: async () => {
+            throw new Error("not used");
+          },
+          withRecordingWindow: async () => {
+            throw new Error("not used");
+          },
           status: Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
           models: () => Effect.succeed({ models: [] }),
@@ -145,6 +153,10 @@ effectIt.effect(
     Effect.gen(function* () {
       let stored = false;
       const reference = { provider: "work", reference: "op://Work/Voice/key" };
+      const scopes = new Set<AuthEnvironmentScope>([
+        AuthOrchestrationOperateScope,
+        AuthSettingsWriteScope,
+      ]);
       const save = vi.fn();
       const transcribe = vi.fn();
       const cloud = Layer.mock(CloudSpeech.CloudSpeech)({
@@ -182,9 +194,15 @@ effectIt.effect(
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
+          Layer.provide(principalWith(scopes)),
           Layer.provide(
             Layer.mock(SpeechService.SpeechService)({
+              openRecordingVad: async () => {
+                throw new Error("not used");
+              },
+              withRecordingWindow: async () => {
+                throw new Error("not used");
+              },
               models: () => Effect.succeed({ models: [linkedModel] }),
               downloadModel: () => Effect.succeed({ models: [linkedModel], cancelled: true }),
             }),
@@ -220,6 +238,14 @@ effectIt.effect(
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ key }),
         });
+      // A reference needs the scope that saving it through settings would.
+      const refused = yield* setReference(reference);
+      expect(refused.status).toBe(403);
+      expect(yield* Effect.promise(() => refused.json())).toMatchObject({
+        requiredPermission: AuthProvidersManageScope,
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      scopes.add(AuthProvidersManageScope);
       expect((yield* setReference(reference)).status).toBe(204);
       expect(save).toHaveBeenLastCalledWith("xai", reference);
       expect((yield* setReference(reference.reference)).status).toBe(400);
@@ -319,7 +345,13 @@ effectIt.effect.each([
     Effect.gen(function* () {
       // Only authentication and the native service are replaced; exercise the actual HTTP handlers and codecs.
       const transcribe = vi.fn(() => Effect.fail(error));
-      const service = Layer.succeed(SpeechService.SpeechService, {
+      const service = Layer.mock(SpeechService.SpeechService)({
+        openRecordingVad: async () => {
+          throw new Error("not used");
+        },
+        withRecordingWindow: async () => {
+          throw new Error("not used");
+        },
         status: Effect.succeed({ supported: false as const, reason: "test" }),
         prepareModel: Effect.void,
         models: () => Effect.succeed({ models: [] }),
@@ -406,7 +438,16 @@ effectIt.effect("tells the client why transcript cleanup failed", () =>
       HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
         Layer.provide(speechHttpApiLayer),
         Layer.provide(principal(AuthOrchestrationOperateScope)),
-        Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+        Layer.provide(
+          Layer.mock(SpeechService.SpeechService)({
+            openRecordingVad: async () => {
+              throw new Error("not used");
+            },
+            withRecordingWindow: async () => {
+              throw new Error("not used");
+            },
+          }),
+        ),
         Layer.provide(failingCleanup),
         // Cleanup makes a real temporary directory; the HTTP services only carry a no-op filesystem.
         Layer.provide(NodeServices.layer),
@@ -423,7 +464,6 @@ effectIt.effect("tells the client why transcript cleanup failed", () =>
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             options: {
-              speechCustomWords: [],
               speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
             },
             transcript: "um so hello world",

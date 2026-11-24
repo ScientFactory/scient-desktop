@@ -1,3 +1,4 @@
+import { AccountId } from "./scient/accounts.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 // SCIENT-FORK:START
 import {
@@ -34,6 +35,7 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import * as Effect from "effect/Effect";
+import { TranscriptionWordEdit, TranscriptionWords } from "./transcriptionWords.ts";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
@@ -413,6 +415,10 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+/** How wide inline HTML previews grow: "chat" keeps them in the chat column. */
+export const HtmlPreviewWidth = Schema.Literals(["chat", "wide", "full"]);
+export type HtmlPreviewWidth = typeof HtmlPreviewWidth.Type;
+
 /** How the composer shows reasoning effort: the level's name, or rising bars. */
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
@@ -477,6 +483,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
+  htmlPreviewWidth: HtmlPreviewWidth.pipe(
+    Schema.withDecodingDefault(Effect.succeed("chat" as const)),
+  ),
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -660,6 +669,17 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_LANGUAGE_PREFERENCE)),
   ),
   // SCIENT-FORK:START — dictation with ChatGPT through a provider's ChatGPT sign-in.
+  voiceCloudSelection: Schema.NullOr(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      engineId: Schema.String,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  voiceCatalogDictated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  voiceChatGptInstanceId: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
+  voiceCatalogModelId: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   voiceDictationEngine: VoiceDictationEngine.pipe(
     Schema.withDecodingDefault(Effect.succeed("auto" as const)),
   ),
@@ -673,7 +693,17 @@ export const ClientSettingsSchema = Schema.Struct({
   voiceShortcutMode: VoiceShortcutMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Read pending legacy words until the server acknowledges their import.
+  speechCustomWords: Schema.optionalKey(SpeechCustomWords),
+  legacySpeechWordsArchive: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        words: SpeechCustomWords,
+        acknowledged: Schema.Array(EnvironmentId),
+      }),
+    ),
+  ),
   speechSilenceFiltering: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1338,6 +1368,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleKeepPullRequests",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
+  "recordingNotesRecipe",
   "speechProjectCustomWords",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
@@ -1376,6 +1407,9 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  recordingNotesRecipe: Schema.optionalKey(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+  ),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
@@ -1504,6 +1538,25 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+export const RecordingEngineSelection = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("local"), modelId: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("cloud"), engineId: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("chatgpt"), instanceId: ProviderInstanceId }),
+]);
+export type RecordingEngineSelection = typeof RecordingEngineSelection.Type;
+
+export const RecordingDefaults = Schema.Struct({
+  engines: Schema.optionalKey(Schema.Record(Schema.String, RecordingEngineSelection)),
+  models: Schema.Record(Schema.String, Schema.String),
+  correction: Schema.Literals(["off", "quick", "thorough"]),
+  notify: Schema.Boolean,
+});
+export const DEFAULT_RECORDING_DEFAULTS: typeof RecordingDefaults.Type = {
+  models: {},
+  correction: "off",
+  notify: true,
+} as const;
+
 export const ServerSettings = Schema.Struct({
   customModels: CustomModelsSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // SCIENT-FORK:START
@@ -1560,6 +1613,21 @@ export const ServerSettings = Schema.Struct({
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Lets clients reach this machine's loopback ports over `/api/preview/tunnel`. */
   enablePreviewTunnel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  recordingDefaults: Schema.optionalKey(RecordingDefaults),
+  recordingCorrectionModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  transcription: Schema.Struct({
+    agentsMayTranscribe: Schema.optionalKey(Schema.Boolean),
+    agentsMaySuggestWords: Schema.optionalKey(Schema.Boolean),
+    // Cloud speech engines are as ordinary as cloud chat models.
+    agentsMayUseCloudEngines: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({ agentsMayUseCloudEngines: true }))),
+  legacySpeechAccountIds: Schema.optionalKey(
+    Schema.Struct({
+      openai: Schema.optionalKey(AccountId),
+      xai: Schema.optionalKey(AccountId),
+      openrouter: Schema.optionalKey(AccountId),
+    }),
+  ),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
@@ -1570,8 +1638,6 @@ export const ServerSettings = Schema.Struct({
   speechModelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
     Schema.withDecodingDefault(Effect.succeed("min_15")),
   ),
-  // Vocabulary shared by everyone who dictates in a project; it lives with the project's environment.
-  speechProjectCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   // Null follows textGenerationModelSelection; a selection pins transcript cleanup to its own model.
   speechPostProcessingModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -1704,6 +1770,20 @@ export const ServerSettings = Schema.Struct({
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Clones default to `<addProjectBaseDirectory>/<host>/<owner>/<repo>`, like ghq. */
   ghqCloneLayout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  legacySpeechWordsReceipts: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  recordingNotesRecipe: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  speechProjectCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  legacyProjectSpeechWordWrites: Schema.Record(ProjectId, Schema.Array(SpeechCustomWords)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  legacyEnvironmentSpeechWordsMigrated: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  transcriptionWords: TranscriptionWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -2045,6 +2125,12 @@ export const ServerSettingsPatch = Schema.Struct({
   favorites: Schema.optionalKey(ModelFavorites),
   providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
   // Applied under the settings service's write lock, only while still unset.
+  migrateLegacySpeechWords: Schema.optionalKey(
+    Schema.Struct({
+      id: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+      words: SpeechCustomWords,
+    }),
+  ),
   migrateModelPreferences: Schema.optionalKey(
     Schema.Struct({
       favorites: Schema.optionalKey(ModelFavorites),
@@ -2091,6 +2177,15 @@ export const ServerSettingsPatch = Schema.Struct({
   requireConnectDeviceApproval: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enablePreviewTunnel: Schema.optionalKey(Schema.Boolean),
+  recordingDefaults: Schema.optionalKey(RecordingDefaults),
+  recordingCorrectionModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  transcription: Schema.optionalKey(
+    Schema.Struct({
+      agentsMayTranscribe: Schema.optionalKey(Schema.Boolean),
+      agentsMaySuggestWords: Schema.optionalKey(Schema.Boolean),
+      agentsMayUseCloudEngines: Schema.Boolean,
+    }),
+  ),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
@@ -2101,7 +2196,6 @@ export const ServerSettingsPatch = Schema.Struct({
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
-  speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechPostProcessingModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
@@ -2178,6 +2272,12 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   ghqCloneLayout: Schema.optionalKey(Schema.Boolean),
+  recordingNotesRecipe: Schema.optionalKey(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+  ),
+  speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
+  transcriptionWords: Schema.optionalKey(TranscriptionWords),
+  editTranscriptionWord: Schema.optionalKey(TranscriptionWordEdit),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
@@ -2270,6 +2370,17 @@ export const ClientServerSettingsPatch = ServerSettingsPatch.mapFields(
   Struct.omit(["defaultTheme", "defaultThemeSetAt", "defaultAppearance", "defaultAppearanceSetAt"]),
 );
 
+/** The host runs saved project scripts, some without anyone asking: on worktree creation and on settle. */
+function carriesProjectScripts(patch: ServerSettingsPatch): boolean {
+  return (
+    patch.defaultProjectScripts !== undefined ||
+    Object.values(patch.projectScriptOverrides ?? {}).some((scripts) => scripts !== null) ||
+    Object.values(patch.projectSettingsOverrides ?? {}).some(
+      (overrides) => overrides?.defaultProjectScripts !== undefined,
+    )
+  );
+}
+
 export function requiredScopesForServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ReadonlyArray<AuthEnvironmentScope> {
@@ -2302,6 +2413,8 @@ export function requiredScopesForServerSettingsPatch(
     ...(changesSettings || (!changesProviders && !changesAccess) ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
     ...(changesAccess ? [AuthAccessWriteScope] : []),
+    // Saving a script is choosing a command for the host to run, wherever the patch carries it.
+    ...(carriesProjectScripts(patch) ? [AuthOrchestrationOperateScope] : []),
   ];
 }
 
@@ -2313,8 +2426,10 @@ export function requiredScopesForProjectMutation(
     return [AuthOrchestrationOperateScope];
   }
   return [
-    AuthOrchestrationOperateScope,
-    ...requiredScopesForServerSettingsPatch({ defaultProjectScripts: mutation.scripts }),
+    ...new Set([
+      AuthOrchestrationOperateScope,
+      ...requiredScopesForServerSettingsPatch({ defaultProjectScripts: mutation.scripts }),
+    ]),
   ];
 }
 
@@ -2323,6 +2438,7 @@ export const ClientSettingsPatch = Schema.Struct({
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
+  htmlPreviewWidth: Schema.optionalKey(HtmlPreviewWidth),
   effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
@@ -2405,6 +2521,17 @@ export const ClientSettingsPatch = Schema.Struct({
   voiceTranscriptCorrectionEnabled: Schema.optionalKey(Schema.Boolean),
   voiceLanguagePreference: Schema.optionalKey(VoiceLanguagePreference),
   // SCIENT-FORK:START — dictation with ChatGPT through Scient Agent's sign-in.
+  voiceCloudSelection: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        engineId: Schema.String,
+      }),
+    ),
+  ),
+  voiceCatalogDictated: Schema.optionalKey(Schema.Boolean),
+  voiceChatGptInstanceId: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
+  voiceCatalogModelId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   voiceDictationEngine: Schema.optionalKey(VoiceDictationEngine),
   // SCIENT-FORK:END
   voiceMicrophone: Schema.optionalKey(Schema.String),
@@ -2412,7 +2539,6 @@ export const ClientSettingsPatch = Schema.Struct({
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),
   speechLanguage: Schema.optionalKey(SpeechLanguage),
   speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
-  speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechSilenceFiltering: Schema.optionalKey(Schema.Boolean),
   speechStreaming: Schema.optionalKey(Schema.Boolean),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),

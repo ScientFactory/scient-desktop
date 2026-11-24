@@ -1,50 +1,103 @@
-// SCIENT-OWNED: Scient's voice settings page (whisper.cpp models, language and transcript
-// correction). The settings route shows it in place of T3's voice page until the voice decision.
-import { T, useGT, Var } from "gt-react";
+import { TranscriptionSelect } from "./TranscriptionSelect";
+import { useThreadShells } from "../../state/entities";
+import { useEnvironmentProviders } from "../../state/environments";
+import { resolveThreadActivityTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+import { CloudDictationSettings } from "./cloudDictation";
+import { DictationChoices } from "./DictationChoices";
+import { DictationInputSettings } from "../../components/settings/DictationInputSettings";
+import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
+import { RecordingDefaultsSettings } from "./RecordingDefaultsSettings";
+import { useOptionalSettingsScope } from "../../components/settings/SettingsScopeContext";
+import {
+  CleanupModelRow,
+  DictationEngineCatalog,
+  useVoiceModels,
+} from "../../components/settings/VoiceSettingsPanel";
+import { localEnvironmentIdAtom } from "../../state/primaryEnvironment";
+import { WordsSettingsSection } from "../transcription/WordsPanel";
+// SCIENT-OWNED: Transcription settings for Scient dictation.
+import { T, useGT } from "gt-react";
 
-import { useStableCallback } from "../../hooks/useStableCallback";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  DownloadIcon,
-  Mic2Icon,
-  RefreshCwIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { CheckIcon, Mic2Icon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
   VOICE_LANGUAGE_NAMES,
+  ProviderInstanceId,
   type VoiceLanguagePreference,
-  type VoiceModelId,
-  type VoiceModelSummary,
-  type VoiceModelsSnapshot,
 } from "@t3tools/contracts";
 
-import { ChatGptDictationCard } from "./ChatGptDictationCard";
 import { useChatGptDictation } from "./chatGptDictation";
 import { describeVoiceError } from "./voiceErrorPresentation";
 import { getVoiceBridge } from "./voiceClient";
-import { hasReadySelectedVoiceModel } from "./voiceModelReadiness";
 import { Badge } from "../../components/ui/badge";
-import {
-  Popover,
-  PopoverDescription,
-  PopoverPopup,
-  PopoverTitle,
-  PopoverTrigger,
-} from "../../components/ui/popover";
+import { Popover, PopoverTrigger, PopoverPopup } from "../../components/ui/popover";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
-import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
-import { SettingsPageContainer, SettingsSection } from "../../components/settings/settingsLayout";
+import {
+  updateClientSettings,
+  useClientSettings,
+  useEnvironmentSettings,
+  useUpdateEnvironmentSettings,
+} from "../../hooks/useSettings";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "../../components/settings/settingsLayout";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 
-function formatBytes(bytes: number): string {
-  const mib = bytes / 1024 / 1024;
-  // oxlint-disable-next-line t3code/no-untranslated-copy -- a size with its unit symbol
-  return `~${Math.round(mib)} MiB`;
+import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { andFinally } from "../../lib/compilerSafe";
+
+function TranscriptionPrivacy({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
+  const preferences = useEnvironmentSettings(environmentId, (settings) => settings.transcription);
+  const update = useUpdateEnvironmentSettings(environmentId);
+  const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const rows = [
+    {
+      key: "agentsMayUseCloudEngines",
+      label: gt("Agents may send audio to cloud engines"),
+      checked: preferences.agentsMayUseCloudEngines,
+    },
+    {
+      key: "agentsMayTranscribe",
+      label: gt("Agents may start and check transcriptions"),
+      checked: preferences.agentsMayTranscribe !== false,
+    },
+    {
+      key: "agentsMaySuggestWords",
+      label: gt("Agents may suggest Words"),
+      checked: preferences.agentsMaySuggestWords !== false,
+    },
+  ] as const;
+
+  return (
+    <>
+      {rows.map(({ key, label, checked }) => (
+        <SettingsRow
+          key={key}
+          serverScoped
+          settingKeys={["transcription"]}
+          title={label}
+          control={
+            <Switch
+              aria-label={label}
+              checked={checked}
+              disabled={!canWrite}
+              onCheckedChange={(value) =>
+                update({ transcription: { ...preferences, [key]: value } })
+              }
+            />
+          }
+        />
+      ))}
+    </>
+  );
 }
 
 const PRIMARY_VOICE_LANGUAGES = [
@@ -185,371 +238,95 @@ function VoiceLanguagePicker({
   );
 }
 
-export function voiceModelProgressPercent(model: VoiceModelSummary): number {
-  if (model.state.state !== "downloading" || model.state.totalBytes <= 0) return 0;
-  return Math.min(100, Math.round((model.state.downloadedBytes / model.state.totalBytes) * 100));
-}
-
-export function findVoiceReplacementModel(
-  models: readonly VoiceModelSummary[],
-  removedModelId: VoiceModelId,
-): VoiceModelSummary | null {
-  return (
-    models.find((model) => model.id !== removedModelId && model.state.state === "ready") ?? null
-  );
-}
-
-export function shouldSelectVoiceModelAfterDownload(
-  selectedModelId: VoiceModelId | null,
-  downloadedModelId: VoiceModelId,
-): boolean {
-  return selectedModelId === null || selectedModelId === downloadedModelId;
-}
-
-interface VoiceModelCardProps {
-  readonly model: VoiceModelSummary;
-  readonly runtimeAvailable: boolean;
-  readonly selected: boolean;
-  readonly recommended: boolean;
-  readonly busy: boolean;
-  readonly activeDownload: boolean;
-  readonly queuedDownload: boolean;
-  readonly downloadBlocked: boolean;
-  readonly removeOpen: boolean;
-  readonly removeDescription: string;
-  readonly onDownload: (modelId: VoiceModelId) => void;
-  readonly onCancel: (modelId: VoiceModelId) => void;
-  readonly onCancelQueued: () => void;
-  readonly onSelect: (modelId: VoiceModelId) => void;
-  readonly onRemoveOpenChange: (open: boolean) => void;
-  readonly onConfirmRemove: () => void;
-}
-
-function VoiceModelCard({
-  model,
-  runtimeAvailable,
-  selected,
-  recommended,
-  busy,
-  activeDownload,
-  queuedDownload,
-  downloadBlocked,
-  removeOpen,
-  removeDescription,
-  onDownload,
-  onCancel,
-  onCancelQueued,
-  onSelect,
-  onRemoveOpenChange,
-  onConfirmRemove,
-}: VoiceModelCardProps): ReactNode {
-  const gt = useGT();
-  const state = model.state;
-  const progress = voiceModelProgressPercent(model);
-  const downloading = state.state === "downloading" || activeDownload;
-  return (
-    <div className="rounded-xl border border-border/70 bg-card/50 p-4">
-      <div className="min-w-0 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="font-medium text-sm">{model.displayName}</h3>
-          {recommended ? (
-            <Badge variant="info" size="sm">
-              <T>Best for this computer</T>
-            </Badge>
-          ) : null}
-          {selected ? (
-            <Badge variant="success" size="sm">
-              <CheckIcon /> <T context="this voice model is the one in use">In use</T>
-            </Badge>
-          ) : null}
-        </div>
-        <p className="text-muted-foreground text-xs">{model.description}</p>
-        <p className="text-muted-foreground/70 text-xs">
-          <T>
-            Multilingual · <Var>{formatBytes(model.byteSize)}</Var>
-          </T>
-        </p>
-      </div>
-
-      {downloading ? (
-        <div className="mt-4 space-y-2">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {state.state === "downloading" ? gt("Downloading…") : gt("Starting download…")}
-            </span>
-            <span>{progress}%</span>
-          </div>
-          <div
-            aria-label={gt("Downloading {model}", { model: model.displayName })}
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={progress}
-            className="h-1.5 overflow-hidden rounded-full bg-muted"
-            role="progressbar"
-          >
-            <div
-              className="h-full rounded-full bg-primary transition-[width]"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {state.state === "missing" && state.partialBytes ? (
-        <p className="mt-3 text-muted-foreground text-xs">
-          <T>
-            Paused at <Var>{formatBytes(state.partialBytes)}</Var>.
-          </T>
-        </p>
-      ) : null}
-      {state.state === "error" ? (
-        <p className="mt-3 text-destructive text-xs">{state.message}</p>
-      ) : null}
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {queuedDownload ? (
-          <>
-            <span className="text-muted-foreground text-xs">
-              <T context="download is queued">Queued</T>
-            </span>
-            <Button size="xs" variant="ghost-muted" onClick={onCancelQueued}>
-              <T>Cancel</T>
-            </Button>
-          </>
-        ) : downloading ? (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!runtimeAvailable}
-            onClick={() => onCancel(model.id)}
-          >
-            <T>Cancel</T>
-          </Button>
-        ) : state.state === "ready" ? (
-          <Button
-            size="xs"
-            variant={selected ? "outline" : "default"}
-            disabled={selected || busy || !runtimeAvailable}
-            onClick={() => onSelect(model.id)}
-          >
-            {selected
-              ? gt("In use", { $context: "this voice model is the one in use" })
-              : gt("Use this model")}
-          </Button>
-        ) : (
-          <Button
-            size="xs"
-            disabled={downloadBlocked || !runtimeAvailable}
-            onClick={() => onDownload(model.id)}
-          >
-            {state.state === "error" ? <RefreshCwIcon /> : <DownloadIcon />}
-            {state.state === "error"
-              ? gt("Retry")
-              : state.state === "missing" && Boolean(state.partialBytes)
-                ? gt("Resume", { $context: "resume the download" })
-                : gt("Download", { $context: "verb, downloads the voice model" })}
-          </Button>
-        )}
-        {!downloading && !queuedDownload ? (
-          <Popover
-            open={removeOpen}
-            onOpenChange={(open) => {
-              if (busy) return;
-              onRemoveOpenChange(open);
-            }}
-          >
-            <PopoverTrigger
-              render={
-                <Button
-                  aria-label={gt("Remove {model}", { model: model.displayName })}
-                  size="icon-xs"
-                  variant="ghost"
-                  disabled={busy || (state.state === "missing" && !state.partialBytes)}
-                />
-              }
-            >
-              <Trash2Icon />
-            </PopoverTrigger>
-            <PopoverPopup
-              align="start"
-              className="w-72 max-w-[calc(100vw-1rem)]"
-              padding="none"
-              side="bottom"
-              sideOffset={6}
-              role="alertdialog"
-            >
-              <div className="p-3">
-                <PopoverTitle>{gt("Remove {model}?", { model: model.displayName })}</PopoverTitle>
-                <PopoverDescription className="mt-1" size="compact">
-                  {removeDescription}
-                </PopoverDescription>
-                <div className="mt-3 flex justify-end gap-1.5">
-                  <Button size="xs" variant="ghost" onClick={() => onRemoveOpenChange(false)}>
-                    <T>Cancel</T>
-                  </Button>
-                  <Button size="xs" variant="destructive" onClick={onConfirmRemove}>
-                    <T>Remove model</T>
-                  </Button>
-                </div>
-              </div>
-            </PopoverPopup>
-          </Popover>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 export function ScientVoiceSettingsPanel(): ReactNode {
   const gt = useGT();
+  const settingsScope = useOptionalSettingsScope();
+  const silenceFiltering = useClientSettings((settings) => settings.speechSilenceFiltering);
+  const removeFillerWords = useClientSettings((settings) => settings.speechRemoveFillerWords);
+  const [cloudRevision, setCloudRevision] = useState(0);
   const [client] = useState(() => getVoiceBridge());
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
-  const chatGptSignedIn =
-    useChatGptDictation(usePrimaryEnvironmentId() ?? undefined).transcriber !== null;
-  const [snapshot, setSnapshot] = useState<VoiceModelsSnapshot | null>(null);
-  // Before an engine is chosen, a model set up here dictates only while ChatGPT is not on offer.
-  const localInUse =
-    engine === "local" ||
-    (engine === "auto" &&
-      !chatGptSignedIn &&
-      snapshot !== null &&
-      hasReadySelectedVoiceModel(snapshot));
-  const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
-  const [localDownloadModelId, setLocalDownloadModelId] = useState<VoiceModelId | null>(null);
-  const [queuedDownload, setQueuedDownload] = useState<{
-    readonly modelId: VoiceModelId;
-    readonly selectOnSuccess: boolean;
-  } | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<VoiceModelSummary | null>(null);
+  const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
+  const prepared = Option.getOrNull(usePreparedConnection(localEnvironmentId));
+  const catalog = useVoiceModels(prepared);
+  const environmentId = usePrimaryEnvironmentId();
+  const threads = useThreadShells();
+  const providersByEnvironment = useEnvironmentProviders();
+  const providers = environmentId ? providersByEnvironment.get(environmentId) : undefined;
+  const recentChat = threads
+    .filter((thread) => thread.environmentId === environmentId && !thread.archivedAt)
+    .reduce<(typeof threads)[number] | undefined>(
+      (latest, thread) =>
+        !latest ||
+        (resolveThreadActivityTimestamp(thread) ?? "") >
+          (resolveThreadActivityTimestamp(latest) ?? "")
+          ? thread
+          : latest,
+      undefined,
+    );
+  const recentProvider = recentChat?.modelSelection?.instanceId ?? recentChat?.providerInstanceId;
+  const activeCodex = providers?.find(
+    (provider) =>
+      provider.instanceId === recentProvider && provider.driver === "codex" && provider.enabled,
+  )?.instanceId;
+  const chatGpt = useChatGptDictation(environmentId ?? undefined, activeCodex);
+  const chatGptSignedIn = chatGpt.transcriber !== null;
+  const catalogDictated = useClientSettings((settings) => settings.voiceCatalogDictated);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const cancelledDownloadRef = useRef<VoiceModelId | null>(null);
-  const localDownloadModelIdRef = useRef<VoiceModelId | null>(null);
-
-  const refresh = useStableCallback(async (clearError = false) => {
-    if (!client) return;
-    try {
-      setSnapshot(await client.getModelsState());
-      if (clearError) setErrorMessage(null);
-    } catch {
-      setErrorMessage(gt("Voice settings could not be loaded."));
-    }
-  });
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the initial voice-models snapshot from the native voice client
+  const [hasLegacyModels, setHasLegacyModels] = useState(false);
+  const [removingLegacyModels, setRemovingLegacyModels] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the native file inventory after catalog dictation succeeds
   useEffect(() => {
-    void refresh(true);
-  }, [refresh]);
+    if (!catalogDictated || !client?.hasLegacyModels) return;
+    let current = true;
+    void client
+      .hasLegacyModels()
+      .then((present) => {
+        if (current) setHasLegacyModels(present);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [catalogDictated, client]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the native voice client every 500ms while a download is active
-  useEffect(() => {
-    if (!busyModelId && !snapshot?.activeDownloadModelId) return;
-    const interval = window.setInterval(() => void refresh(), 500);
-    return () => window.clearInterval(interval);
-  }, [busyModelId, refresh, snapshot?.activeDownloadModelId]);
-
-  const run = async (modelId: VoiceModelId, operation: () => Promise<VoiceModelsSnapshot>) => {
-    setBusyModelId(modelId);
+  const removeLegacyModels = async () => {
+    const removeModels = client?.removeLegacyModels;
+    if (!removeModels || removingLegacyModels) return;
     setErrorMessage(null);
-    let actionFailure: { readonly cause: unknown } | undefined;
-    try {
-      try {
-        setSnapshot(await operation());
-      } catch (error) {
-        if (cancelledDownloadRef.current !== modelId) {
+    setRemovingLegacyModels(true);
+    await andFinally(
+      async () => {
+        try {
+          await removeModels.call(client);
+          setHasLegacyModels(false);
+        } catch (error) {
           setErrorMessage(describeVoiceError(error));
         }
-      }
-    } catch (cause) {
-      actionFailure = { cause };
-    }
-    if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
-    setBusyModelId(null);
-    if (actionFailure) throw actionFailure.cause;
+      },
+      () => {
+        setRemovingLegacyModels(false);
+      },
+    );
   };
 
-  const startDownload = useStableCallback((modelId: VoiceModelId, selectOnSuccess: boolean) => {
-    if (!client) return;
-    cancelledDownloadRef.current = null;
-    localDownloadModelIdRef.current = modelId;
-    setLocalDownloadModelId(modelId);
-    void run(modelId, () => client.downloadModel({ modelId, selectOnSuccess })).finally(() => {
-      if (localDownloadModelIdRef.current !== modelId) return;
-      localDownloadModelIdRef.current = null;
-      setLocalDownloadModelId(null);
-    });
-  });
-
-  const observedActiveDownloadModelId =
-    localDownloadModelId ?? snapshot?.activeDownloadModelId ?? null;
-
-  const handleDownload = (modelId: VoiceModelId, selectOnSuccess: boolean) => {
-    const activeModelId =
-      localDownloadModelIdRef.current ?? snapshot?.activeDownloadModelId ?? null;
-    if (activeModelId !== null && activeModelId !== modelId) {
-      setQueuedDownload({ modelId, selectOnSuccess });
-      return;
-    }
-    startDownload(modelId, selectOnSuccess);
-  };
-
-  const startQueuedDownload = useStableCallback((next: NonNullable<typeof queuedDownload>) => {
-    setQueuedDownload(null);
-    startDownload(next.modelId, next.selectOnSuccess);
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the queued download once no download or operation is active
-  useEffect(() => {
-    if (queuedDownload === null || observedActiveDownloadModelId !== null || busyModelId !== null) {
-      return;
-    }
-    startQueuedDownload(queuedDownload);
-  }, [busyModelId, observedActiveDownloadModelId, queuedDownload, startQueuedDownload]);
-
-  const handleCancel = async (modelId: VoiceModelId) => {
-    if (!client) return;
-    cancelledDownloadRef.current = modelId;
-    try {
-      await client.cancelModelDownload({ modelId });
-      await refresh();
-    } catch (error) {
-      if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
-      setErrorMessage(describeVoiceError(error));
-    }
-  };
-
-  const handleSelect = (modelId: VoiceModelId) => {
-    if (!client) return;
-    updateClientSettings({ voiceDictationEngine: "local" });
-    void run(modelId, () => client.selectModel({ modelId }));
-  };
-
-  const replacementModel = (() => {
-    if (!removeTarget || !snapshot || snapshot.selectedModelId !== removeTarget.id) return null;
-    return findVoiceReplacementModel(snapshot.models, removeTarget.id);
-  })();
-
-  const confirmRemove = async () => {
-    if (!client || !removeTarget) return;
-    const target = removeTarget;
-    setRemoveTarget(null);
-    await run(target.id, async () => {
-      const next = await client.removeModel({
-        modelId: target.id,
-        ...(replacementModel ? { replacementModelId: replacementModel.id } : {}),
-      });
-      return next;
-    });
-  };
-
-  if (!client) return null;
+  if (!client && !prepared && !environmentId) {
+    return (
+      <SettingsPageContainer>
+        <WordsSettingsSection />
+      </SettingsPageContainer>
+    );
+  }
 
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title={gt("Voice", { $context: "settings page for voice dictation" })}
+        id="voice-transcription-destination"
+        title={gt("Dictation")}
         icon={<Mic2Icon className="size-4 text-muted-foreground" />}
         variant="plain"
       >
@@ -558,108 +335,193 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
               <div className="min-w-0">
                 <h3 className="font-medium text-sm">
-                  <T>Correct transcripts with an LLM</T>
+                  <T>Clean up dictation</T>
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  <T>Fix spelling and punctuation. Significantly slower.</T>
+                  <T>Fix spelling and punctuation after dictation.</T>
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  className="h-6 px-1.5"
-                  render={<Link hash="text-generation-model" to="/settings/general" />}
-                  size="sm"
-                  variant="ghost-muted"
-                >
-                  <T context="verb, manage the text generation model">Manage</T>
-                </Button>
-                <Switch
-                  aria-label={gt("Correct voice transcripts with an LLM")}
-                  checked={correctionEnabled}
-                  onCheckedChange={(checked) =>
-                    updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
-                  }
-                />
-              </div>
+              <Switch
+                aria-label={gt("Clean up dictation")}
+                checked={correctionEnabled}
+                onCheckedChange={(checked) =>
+                  updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
+                }
+              />
             </div>
             <VoiceLanguagePicker
               value={languagePreference}
               onChange={(language) => updateClientSettings({ voiceLanguagePreference: language })}
             />
           </div>
+          {correctionEnabled && settingsScope ? <CleanupModelRow /> : null}
+          {prepared && (engine === "local" || engine === "auto") ? (
+            <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
+              <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
+                <div className="min-w-0">
+                  <h3 className="font-medium text-sm">
+                    <T>Silence filtering</T>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    <T>Skip pauses before transcribing.</T>
+                  </p>
+                </div>
+                <Switch
+                  aria-label={gt("Silence filtering")}
+                  checked={silenceFiltering}
+                  onCheckedChange={(speechSilenceFiltering) =>
+                    void updateClientSettings({ speechSilenceFiltering })
+                  }
+                />
+              </div>
+              <div className="flex items-start justify-between gap-4 py-1 md:pl-8">
+                <div className="min-w-0">
+                  <h3 className="font-medium text-sm">
+                    <T>Remove filler words</T>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    <T>Drop “um” and “uh” from the text.</T>
+                  </p>
+                </div>
+                <Switch
+                  aria-label={gt("Remove filler words")}
+                  checked={removeFillerWords}
+                  onCheckedChange={(speechRemoveFillerWords) =>
+                    void updateClientSettings({ speechRemoveFillerWords })
+                  }
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="border-border/60 border-t pt-3">
             <h3 className="font-medium text-sm">
-              <T>Voice model</T>
+              <T>Dictate with</T>
             </h3>
             <p className="text-muted-foreground text-xs">
-              <T>
-                Transcribe with ChatGPT, or on this computer with the balance of speed and accuracy
-                you choose.
-              </T>
+              <T>ChatGPT, a model on this computer, or a cloud engine you added.</T>
             </p>
           </div>
-          {!snapshot ? (
-            <p className="text-sm text-muted-foreground">
-              <T>Loading voice models…</T>
-            </p>
-          ) : null}
-          {snapshot && !snapshot.runtimeAvailable ? (
-            <p className="rounded-lg border border-warning/30 bg-warning/8 p-3 text-sm text-warning-foreground">
-              {snapshot.runtimeMessage}
-            </p>
-          ) : null}
-          {errorMessage ? (
-            <p className="text-sm text-destructive" role="alert">
-              {errorMessage}
-            </p>
-          ) : null}
-          <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
-            <ChatGptDictationCard
-              selected={engine === "chatgpt"}
-              signedIn={chatGptSignedIn}
-              offeredOnFirstUse={engine === "auto"}
-              onSelect={() => updateClientSettings({ voiceDictationEngine: "chatgpt" })}
+          {environmentId ? (
+            <DictationChoices
+              catalog={catalog}
+              chatGptSignedIn={chatGptSignedIn}
+              environmentId={environmentId}
+              language={languagePreference}
             />
-            {snapshot?.models.map((model) => (
-              <VoiceModelCard
-                key={model.id}
-                model={model}
-                runtimeAvailable={snapshot.runtimeAvailable}
-                selected={localInUse && snapshot.selectedModelId === model.id}
-                recommended={snapshot.recommendation?.modelId === model.id}
-                busy={busyModelId !== null}
-                activeDownload={observedActiveDownloadModelId === model.id}
-                queuedDownload={queuedDownload?.modelId === model.id}
-                downloadBlocked={
-                  (busyModelId !== null && observedActiveDownloadModelId === null) ||
-                  (queuedDownload !== null && queuedDownload.modelId !== model.id)
-                }
-                removeOpen={removeTarget?.id === model.id}
-                removeDescription={
-                  removeTarget?.id === model.id && replacementModel
-                    ? gt("{model} will be used instead.", { model: replacementModel.displayName })
-                    : gt("You can download this model again here at any time.")
-                }
-                onDownload={(modelId) =>
-                  handleDownload(
-                    modelId,
-                    shouldSelectVoiceModelAfterDownload(snapshot.selectedModelId, modelId),
-                  )
-                }
-                onCancel={handleCancel}
-                onCancelQueued={() => setQueuedDownload(null)}
-                onSelect={handleSelect}
-                onRemoveOpenChange={(open) =>
-                  setRemoveTarget((current) =>
-                    open ? model : current?.id === model.id ? null : current,
-                  )
-                }
-                onConfirmRemove={() => void confirmRemove()}
-              />
-            ))}
-          </div>
+          ) : null}
         </div>
       </SettingsSection>
+      <DictationInputSettings />
+      {prepared ? (
+        <RecordingDefaultsSettings prepared={prepared} catalog={catalog} key={cloudRevision} />
+      ) : null}
+      {prepared ? (
+        <SettingsSection id="voice-models" title={gt("Speech models")} variant="plain">
+          <DictationEngineCatalog
+            catalog={catalog}
+            prepared={prepared}
+            language={languagePreference}
+          />
+        </SettingsSection>
+      ) : null}
+      {prepared || environmentId ? (
+        <SettingsSection id="voice-cloud" title={gt("Cloud engines")}>
+          <SettingsRow
+            title="ChatGPT"
+            description={
+              !chatGpt.pinned && activeCodex && chatGpt.connection.selected
+                ? gt("Follows your active chat, currently {connection}", {
+                    connection: chatGpt.connection.selected.displayName,
+                  })
+                : chatGpt.connection.selected
+                  ? chatGpt.connection.ready
+                    ? gt("Signed in with {connection}", {
+                        connection: chatGpt.connection.selected.displayName,
+                      })
+                    : gt("Sign in again with {connection}", {
+                        connection: chatGpt.connection.selected.displayName,
+                      })
+                  : chatGpt.connection.ambiguous
+                    ? gt("Choose a connection to use for ChatGPT.")
+                    : gt("Use your ChatGPT sign-in.")
+            }
+            control={
+              <Button size="sm" variant="outline" render={<Link to="/settings/providers" />}>
+                {chatGpt.connection.ready
+                  ? gt("Manage sign-in…")
+                  : chatGpt.connection.selected
+                    ? gt("Sign in again")
+                    : gt("Sign in")}
+              </Button>
+            }
+          >
+            {chatGpt.connection.choices.length ? (
+              <TranscriptionSelect
+                label={gt("Use a different connection…")}
+                value={chatGpt.pinned ?? ""}
+                options={[
+                  { value: "", label: gt("Follow the active chat connection") },
+                  ...chatGpt.connection.choices.map((provider) => ({
+                    value: provider.instanceId,
+                    label: provider.displayName ?? provider.instanceId,
+                  })),
+                ]}
+                onChange={(value) =>
+                  void updateClientSettings({
+                    voiceChatGptInstanceId: value ? ProviderInstanceId.make(value) : null,
+                  })
+                }
+              />
+            ) : null}
+          </SettingsRow>
+          {environmentId ? (
+            <CloudDictationSettings
+              key={environmentId}
+              manage
+              environmentId={environmentId}
+              onEngineAdded={() => setCloudRevision((value) => value + 1)}
+            />
+          ) : null}
+          <SettingsRow
+            title={gt("Speech accounts")}
+            description={gt("Keys for cloud engines live in Accounts & secrets.")}
+            control={
+              <Button size="sm" variant="outline" render={<Link to="/settings/accounts" />}>
+                <T>Open</T>
+              </Button>
+            }
+          />
+          {catalogDictated && hasLegacyModels && client?.removeLegacyModels ? (
+            <SettingsRow
+              title={gt("Previous dictation models")}
+              status={
+                errorMessage ? (
+                  <span className="text-destructive" role="alert">
+                    {errorMessage}
+                  </span>
+                ) : null
+              }
+              description={gt("You can free up space by removing the old model files.")}
+              control={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={removingLegacyModels}
+                  onClick={() => void removeLegacyModels()}
+                >
+                  <T>Remove old model files</T>
+                </Button>
+              }
+            />
+          ) : null}
+        </SettingsSection>
+      ) : null}
+      <WordsSettingsSection />
+      {environmentId ? (
+        <SettingsSection id="voice-agents" title={gt("Agents")}>
+          <TranscriptionPrivacy environmentId={environmentId} />
+        </SettingsSection>
+      ) : null}
     </SettingsPageContainer>
   );
 }

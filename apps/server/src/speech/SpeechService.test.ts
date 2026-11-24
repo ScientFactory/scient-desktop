@@ -1,3 +1,4 @@
+import { openSharedLocalEngine, openVad } from "../transcription/local.ts";
 import { beforeEach, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -34,6 +35,7 @@ const native = vi.hoisted(() => ({
   finish: vi.fn(async () => "hello"),
   reset: vi.fn(async () => {}),
   dispose: vi.fn(),
+  scoreFrames: vi.fn(async () => [0.8]),
   transcribe: vi.fn(async (_pcm: Float32Array, _options?: unknown) => ({ text: "hello" })),
 }));
 const loadNative = vi.hoisted(() =>
@@ -49,10 +51,12 @@ const loadNative = vi.hoisted(() =>
     },
   ),
 );
+const installedFile = vi.hoisted(() => ({ path: "test.gguf" }));
 const readyModels = vi.hoisted(() => new Set(["test-model", "fallback-model"]));
 const modelDefinitions = vi.hoisted(() => [
   {
     id: "test-model",
+    filename: "test.gguf",
     name: "test",
     description: "test",
     size: 4,
@@ -70,6 +74,7 @@ const modelDefinitions = vi.hoisted(() => [
   },
   {
     id: "fallback-model",
+    filename: "fallback.gguf",
     name: "fallback",
     description: "fallback",
     size: 8,
@@ -101,7 +106,7 @@ const store = Layer.succeed(
   SpeechModelStore.SpeechModelStore.of({
     isReady: (model) => Effect.sync(() => readyModels.has(model.id)),
     installedPath: (model) =>
-      Effect.sync(() => (readyModels.has(model.id) ? "test.gguf" : undefined)),
+      Effect.sync(() => (readyModels.has(model.id) ? installedFile.path : undefined)),
     download,
     link: () => Effect.succeed([]),
     linkedFrom: () => Effect.undefined,
@@ -123,6 +128,7 @@ beforeEach(() => {
   loadNative.mockReset();
   native.finish.mockReset();
   native.backend = "Vulkan0";
+  installedFile.path = "test.gguf";
   native.supportsVocabulary = false;
   native.supportsStreaming = true;
   native.languages = ["en", "fr"];
@@ -241,8 +247,9 @@ it.effect("sends the chosen language in the spelling the loaded model advertises
   }).pipe(Effect.provide(layer)),
 );
 
+// SCIENT-FORK:START — Uses the suite's native worker mocks and scoped speech layer.
 it.effect.each(["cancellation", "timeout"] as const)(
-  "releases a stalled model preparation on %s",
+  "cancels stalled preparation on %s and waits for worker exit before replacement",
   (reason) =>
     Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
@@ -269,11 +276,17 @@ it.effect.each(["cancellation", "timeout"] as const)(
             value: { _tag: "SpeechOperationError", operation: "model preparation" },
           });
         }
-        yield* speech.selectModel("fallback-model");
-        const transcribe = speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
-        expect(yield* transcribe).toBe("hello");
+        const transcribe = speech.dictateLocal(
+          "fallback-model",
+          pcm(),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        );
+        const replacement = yield* transcribe.pipe(Effect.forkChild);
+        yield* TestClock.adjust(0);
+        expect(loadNative).toHaveBeenCalledTimes(1);
         stalled.resolve(abandoned);
         yield* Effect.promise(() => disposed.promise);
+        expect(yield* Fiber.join(replacement)).toBe("hello");
         expect(yield* transcribe).toBe("hello");
         expect(loadNative).toHaveBeenCalledTimes(2);
       } finally {
@@ -281,6 +294,7 @@ it.effect.each(["cancellation", "timeout"] as const)(
       }
     }).pipe(Effect.provide(layer)),
 );
+// SCIENT-FORK:END
 
 it.effect("rejects model mutations outside the offered registry", () =>
   Effect.gen(function* () {
@@ -484,95 +498,73 @@ it.effect(
     }).pipe(Effect.provide(layer)),
 );
 
-it.effect("honors exact aliases and phrase boundaries in batch and streamed text", () =>
+// SCIENT-FORK:START — Uses the suite's native worker mocks and scoped speech layer.
+it.effect("keeps released-client dictionary spellings and recognition hints working", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
-    const options = {
-      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-      speechCustomWords: [
-        { term: "AI", aliases: ["ay eye"] },
-        { term: "Bob", aliases: ["Robert"] },
-        { term: "Roberts", aliases: [] },
-        { term: "O'Reilly", aliases: ['"the publisher"'] },
-        { term: "GitHub", aliases: [] },
-        { term: "McDonald’s", aliases: [] },
-        { term: "King’s Cross", aliases: [] },
-        { term: "C#", aliases: [] },
-        { term: "React", aliases: ["瑞安特"] },
-        { term: "Kubernetes", aliases: [] },
-      ],
-    };
-    const spoken =
-      'a test with a i and ay eye. Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
-      "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross. vitamin c and plan c. " +
-      "我用github和瑞安特，部署到kubernetis上。Robert用git hub。githubで管理する。";
-    const expected =
-      "a test with AI and AI. Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
-      "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross. vitamin c and plan c. " +
-      "我用GitHub和React，部署到Kubernetes上。Bob用GitHub。GitHubで管理する。";
-    native.transcribe.mockResolvedValueOnce({ text: spoken });
-    native.finish.mockResolvedValueOnce(spoken);
-    expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
-    const stream = yield* speech.startStream(options);
-    expect(yield* stream.finish).toBe(expected);
-  }).pipe(Effect.scoped, Effect.provide(layer)),
+    native.supportsVocabulary = true;
+    native.transcribe.mockResolvedValueOnce({ text: "C sharp, but plain C." });
+    expect(
+      yield* speech.transcribe(pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechCustomWords: [{ term: "C#", aliases: ["C sharp"] }],
+      }),
+    ).toBe("C#, but plain C.");
+    expect(native.transcribe.mock.lastCall?.[1]).toMatchObject({ vocabulary: ["C#"] });
+  }).pipe(Effect.provide(layer)),
 );
 
-it.effect("uses vocabulary only for supported transcription and always applies aliases", () =>
-  Effect.gen(function* () {
-    for (const supportsVocabulary of [false, true]) {
-      for (const translate of [false, true]) {
-        yield* Effect.gen(function* () {
-          native.supportsVocabulary = supportsVocabulary;
-          const speech = yield* SpeechService.SpeechService;
-          const options = {
-            ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-            speechLanguage: "fr" as const,
-            speechTranslateToEnglish: translate,
-            speechCustomWords: [
-              { term: "GitHub", aliases: [] },
-              { term: "Bob", aliases: ["Robert"] },
-              { term: "T3 Code", aliases: [] },
-            ],
-            speechHints: ["Server"],
-          };
-          const vocabulary =
-            supportsVocabulary && !translate ? ["Server", "GitHub", "Bob", "T3 Code"] : undefined;
-          native.transcribe.mockResolvedValueOnce({ text: "git hub and Robert on the server" });
-          expect(yield* speech.transcribe(pcm(), options)).toBe(
-            vocabulary ? "git hub and Bob on the server" : "GitHub and Bob on the server",
-          );
-          const delivered = native.transcribe.mock.lastCall?.[1];
-          expect(delivered).toEqual({
-            timestamps: "none",
-            language: "fr",
-            ...(translate ? { task: "translate", targetLanguage: "en" } : {}),
-            ...(vocabulary ? { vocabulary } : {}),
-          });
-          if (translate) return;
-          native.feed.mockResolvedValueOnce({
-            revision: 1,
-            text: { committed: "git hub", tentative: "Robert" },
-          });
-          native.finish.mockResolvedValueOnce("git hub and Robert on the server");
-          const stream = yield* speech.startStream(options);
-          expect(yield* stream.feed(pcm())).toEqual({
-            revision: 1,
-            text: { committed: vocabulary ? "git hub" : "GitHub", tentative: "Bob" },
-          });
-          expect(yield* stream.finish).toBe(
-            vocabulary ? "git hub and Bob on the server" : "GitHub and Bob on the server",
-          );
-          expect(native.begin.mock.lastCall).toEqual([
-            { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) },
-            true,
-            "test.gguf",
-          ]);
-        }).pipe(Effect.scoped, Effect.provide(layer));
+it.effect(
+  "passes vocabulary only for supported transcription without rewriting engine output",
+  () =>
+    Effect.gen(function* () {
+      for (const supportsVocabulary of [false, true]) {
+        for (const translate of [false, true]) {
+          yield* Effect.gen(function* () {
+            native.supportsVocabulary = supportsVocabulary;
+            const speech = yield* SpeechService.SpeechService;
+            const options = {
+              ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+              speechLanguage: "fr" as const,
+              speechTranslateToEnglish: translate,
+              speechHints: ["Server", "GitHub", "Bob", "T3 Code"],
+            };
+            const vocabulary =
+              supportsVocabulary && !translate ? ["Server", "GitHub", "Bob", "T3 Code"] : undefined;
+            native.transcribe.mockResolvedValueOnce({ text: "git hub and Robert on the server" });
+            expect(yield* speech.transcribe(pcm(), options)).toBe(
+              "git hub and Robert on the server",
+            );
+            const delivered = native.transcribe.mock.lastCall?.[1];
+            expect(delivered).toEqual({
+              timestamps: "none",
+              language: "fr",
+              ...(translate ? { task: "translate", targetLanguage: "en" } : {}),
+              ...(vocabulary ? { vocabulary } : {}),
+            });
+            if (translate) return;
+            native.feed.mockResolvedValueOnce({
+              revision: 1,
+              text: { committed: "git hub", tentative: "Robert" },
+            });
+            native.finish.mockResolvedValueOnce("git hub and Robert on the server");
+            const stream = yield* speech.startStream(options);
+            expect(yield* stream.feed(pcm())).toEqual({
+              revision: 1,
+              text: { committed: "git hub", tentative: "Robert" },
+            });
+            expect(yield* stream.finish).toBe("git hub and Robert on the server");
+            expect(native.begin.mock.lastCall).toEqual([
+              { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) },
+              true,
+              "test.gguf",
+            ]);
+          }).pipe(Effect.scoped, Effect.provide(layer));
+        }
       }
-    }
-  }),
+    }),
 );
+// SCIENT-FORK:END
 
 it.effect("unloads after the chosen idle period and reloads on the next recording", () =>
   Effect.gen(function* () {
@@ -647,7 +639,7 @@ it.effect.each([
         ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
         speechLanguage: "en",
         speechRemoveFillerWords: remove,
-        speechCustomWords: [{ term: "um", aliases: [] }],
+        speechHints: ["um"],
         ...(cue === undefined ? {} : { speechCorrectionWord: cue }),
       };
       native.transcribe.mockResolvedValueOnce({ text });
@@ -772,51 +764,44 @@ it.effect.each([{ devices: [] }, { devices: [{ id: "gpu", name: "Test GPU" }] }]
     }).pipe(Effect.provide(layer)),
 );
 
-it.effect(
-  "retries Auto-placed inference with the dictionary and the CPU's vocabulary capability",
-  () =>
-    Effect.gen(function* () {
-      for (const cpuSupportsVocabulary of [true, false]) {
-        yield* Effect.gen(function* () {
-          native.supportsVocabulary = true;
-          loadNative.mockImplementationOnce(async () => native);
-          loadNative.mockImplementationOnce(async () => ({
-            ...native,
-            backend: "CPU",
-            supportsVocabulary: cpuSupportsVocabulary,
-          }));
-          native.transcribe
-            .mockRejectedValueOnce(new Error("worker stopped"))
-            .mockResolvedValueOnce({ text: "git hub Robert" });
-          const options = {
-            ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-            speechCustomWords: [
-              { term: "GitHub", aliases: [] },
-              { term: "Bob", aliases: ["Robert"] },
-            ],
-          };
-          const speech = yield* SpeechService.SpeechService;
-          expect(yield* speech.status).toMatchObject({ benchmarkTier: "accelerated" });
-          expect(yield* speech.transcribe(pcm(), options)).toBe(
-            cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
-          );
-          expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
-          expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe(
-            "hello",
-          );
-          expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
-          expect(native.transcribe.mock.calls.slice(-3, -1).map((call) => call[1])).toEqual([
-            { timestamps: "none", language: "en", vocabulary: ["GitHub", "Bob"] },
-            {
-              timestamps: "none",
-              language: "en",
-              ...(cpuSupportsVocabulary ? { vocabulary: ["GitHub", "Bob"] } : {}),
-            },
-          ]);
-        }).pipe(Effect.provide(layer));
-      }
-    }),
+// SCIENT-FORK:START — Uses the suite's native worker mocks and scoped speech layer.
+it.effect("retries Auto-placed inference with the CPU's vocabulary capability", () =>
+  Effect.gen(function* () {
+    for (const cpuSupportsVocabulary of [true, false]) {
+      yield* Effect.gen(function* () {
+        native.supportsVocabulary = true;
+        loadNative.mockImplementationOnce(async () => native);
+        loadNative.mockImplementationOnce(async () => ({
+          ...native,
+          backend: "CPU",
+          supportsVocabulary: cpuSupportsVocabulary,
+        }));
+        native.transcribe
+          .mockRejectedValueOnce(new Error("worker stopped"))
+          .mockResolvedValueOnce({ text: "git hub Robert" });
+        const options = {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechHints: ["GitHub", "Bob"],
+        };
+        const speech = yield* SpeechService.SpeechService;
+        expect(yield* speech.status).toMatchObject({ benchmarkTier: "accelerated" });
+        expect(yield* speech.transcribe(pcm(), options)).toBe("git hub Robert");
+        expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
+        expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+        expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
+        expect(native.transcribe.mock.calls.slice(-3, -1).map((call) => call[1])).toEqual([
+          { timestamps: "none", language: "en", vocabulary: ["GitHub", "Bob"] },
+          {
+            timestamps: "none",
+            language: "en",
+            ...(cpuSupportsVocabulary ? { vocabulary: ["GitHub", "Bob"] } : {}),
+          },
+        ]);
+      }).pipe(Effect.provide(layer));
+    }
+  }),
 );
+// SCIENT-FORK:END
 
 it.effect("reports a failure on a GPU the person chose instead of switching to CPU", () =>
   Effect.gen(function* () {
@@ -845,13 +830,9 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
         native.supportsVocabulary = true;
         const feedCalls = native.feed.mock.calls.length;
         const text = { committed: "", tentative: "git hub Robert" };
-        const corrected = { committed: "", tentative: "git hub Bob" };
         const options = {
           ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-          speechCustomWords: [
-            { term: "GitHub", aliases: [] },
-            { term: "Bob", aliases: ["Robert"] },
-          ],
+          speechHints: ["GitHub", "Bob"],
         };
         native.feed
           .mockResolvedValueOnce({ revision: 3, text })
@@ -867,10 +848,10 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
         }));
         const speech = yield* SpeechService.SpeechService;
         const stream = yield* speech.startStream(options);
-        expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text: corrected });
+        expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text });
         const recovered = {
           committed: "",
-          tentative: cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
+          tentative: "git hub Robert",
         };
         expect(yield* stream.feed(pcm())).toEqual({ revision: 5, text: recovered });
         expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
@@ -922,10 +903,10 @@ it.effect.each([false, true])(
         const stream = yield* speech.startStream({
           ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
           speechLanguage: "fr",
-          speechCustomWords: [{ term: "Bob", aliases: ["Robert"] }],
+          speechHints: ["Bob"],
         });
         for (const chunk of chunks) yield* stream.feed(new Uint8Array(chunk.buffer));
-        expect(yield* stream.finish).toBe("Bob");
+        expect(yield* stream.finish).toBe("Robert");
         expect(cpu.feed.mock.calls.map(([chunk]) => [...chunk])).toEqual(
           chunks.map((chunk) => [...chunk]),
         );
@@ -996,3 +977,231 @@ it.effect("does not restart a stream cancelled while native finalization is pend
     expect(native.reset).toHaveBeenCalledOnce();
   }).pipe(Effect.provide(layer)),
 );
+
+// SCIENT-FORK:START — Uses the suite's native worker mocks and scoped speech layer.
+it.effect("preempts a recording window at two seconds and retries after dictation", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const started = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    const retired = Promise.withResolvers<void>();
+    const events: string[] = [];
+    let attempts = 0;
+    const recognizeWindow = async () => {
+      attempts++;
+      events.push("window");
+      return { text: "recorded", segments: [], timestampKind: "none" };
+    };
+    loadNative.mockImplementation(async () => ({ ...native, recognizeWindow }));
+    const stopped = Promise.withResolvers<void>();
+    loadNative.mockImplementationOnce(async () => ({
+      ...native,
+      recognizeWindow: async () => {
+        attempts++;
+        events.push("window");
+        started.resolve();
+        await stopped.promise;
+        return { text: "abandoned", segments: [], timestampKind: "none" };
+      },
+      dispose: vi.fn(() => {
+        stopped.resolve();
+        aborted.resolve();
+        return retired.promise;
+      }),
+    }));
+    const recording = yield* Effect.promise(async (signal) => {
+      const engine = await openSharedLocalEngine(speech, "test.gguf", "en", signal, "auto");
+      return engine.recognize(new Float32Array(4000), false);
+    }).pipe(Effect.forkChild);
+    yield* Effect.promise(() => started.promise);
+    native.transcribe.mockImplementationOnce(async () => {
+      events.push("dictation");
+      return { text: "dictated" };
+    });
+    const dictation = yield* speech
+      .dictateLocal("test-model", pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    try {
+      yield* TestClock.adjust("1999 millis");
+      expect(yield* speech.waitingForWorker).toBe(false);
+      yield* TestClock.adjust("1 millis");
+      yield* Effect.promise(() => aborted.promise);
+      expect(yield* speech.waitingForWorker).toBe(true);
+      expect(loadNative).toHaveBeenCalledTimes(1);
+      expect(events).toEqual(["window"]);
+    } finally {
+      retired.resolve();
+    }
+    expect(yield* Fiber.join(dictation)).toBe("dictated");
+    expect(yield* Fiber.join(recording)).toMatchObject([{ text: "recorded" }]);
+    expect(attempts).toBe(2);
+    expect(yield* speech.waitingForWorker).toBe(false);
+    expect(events).toEqual(["window", "dictation", "window"]);
+    expect(loadNative).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("shares Windows catalog paths and retires the worker before removing the model", () =>
+  Effect.gen(function* () {
+    installedFile.path = "C:\\models\\test.gguf";
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.promise((signal) =>
+      speech.withRecordingWindow("c:/MODELS/TEST.gguf", "auto", signal, async () => undefined),
+    );
+    expect(
+      yield* speech.dictateLocal("test-model", pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+    ).toBe("hello");
+    expect(loadNative).toHaveBeenCalledTimes(1);
+    yield* speech.removeModel("test-model");
+    expect(native.dispose).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("opens the recording VAD in a CPU scoring worker using the shared store", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const vad = yield* Effect.promise((signal) => openVad(speech, signal));
+    const frame = new Float32Array(512).fill(0.25);
+    expect(yield* Effect.promise(() => vad.score([frame]))).toEqual([0.8]);
+    expect(download).toHaveBeenCalledWith(SILERO_VAD);
+    expect(loadNative).toHaveBeenCalledWith(
+      "test.gguf",
+      expect.any(AbortSignal),
+      undefined,
+      "cpu",
+      true,
+      "vad",
+    );
+    yield* Effect.promise(async () => vad.close());
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["upload", "stream"] as const)(
+  "admits a legacy %s at the next recording window boundary",
+  (kind) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      const window = yield* Effect.promise((signal) =>
+        speech.withRecordingWindow("test.gguf", "auto", signal, async () => {
+          started.resolve();
+          await finish.promise;
+        }),
+      ).pipe(Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        transcriptionWords: [
+          ...Array.from({ length: 33 }, (_, index) => ({
+            term: `word${index}`,
+            language: "en",
+            source: "user" as const,
+          })),
+          { term: "Alpha Beta", variants: ["alfa"], language: "en", source: "user" },
+          { term: "Gamma", variants: ["Beta"], language: "en", source: "user" },
+        ],
+      });
+      native.supportsVocabulary = true;
+      native.transcribe.mockResolvedValueOnce({ text: "alfa" });
+      native.finish.mockResolvedValueOnce("alfa");
+      const options = {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "en",
+        speechCustomWords: [{ term: "Wrong", aliases: ["Alpha Beta", "alfa"] }],
+      };
+      const request =
+        kind === "upload"
+          ? speech.transcribe(pcm(), options)
+          : Effect.scoped(
+              Effect.gen(function* () {
+                const stream = yield* speech.startStream(options);
+                yield* stream.feed(pcm());
+                return yield* stream.finish;
+              }),
+            );
+      const dictation = yield* request.pipe(Effect.forkChild({ startImmediately: true }));
+      expect(dictation.pollUnsafe()).toBeUndefined();
+      finish.resolve();
+      yield* Fiber.join(window);
+      expect(yield* Fiber.join(dictation)).toBe("Alpha Beta");
+      const nativeOptions =
+        kind === "upload" ? native.transcribe.mock.lastCall?.[1] : native.begin.mock.lastCall?.[0];
+      expect(nativeOptions).toMatchObject({
+        vocabulary: Array.from({ length: 16 }, (_, index) => `word${index}`),
+      });
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect("a canceled queued dictation leaves the active recording window in place", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const window = yield* Effect.promise((signal) =>
+      speech.withRecordingWindow("test.gguf", "auto", signal, async (_worker, attempt) => {
+        started.resolve();
+        await finish.promise;
+        expect(attempt.aborted).toBe(false);
+      }),
+    ).pipe(Effect.forkChild);
+    yield* Effect.promise(() => started.promise);
+    const dictation = yield* speech
+      .dictateLocal("fallback-model", pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    try {
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.interrupt(dictation);
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* speech.waitingForWorker).toBe(false);
+      expect(native.transcribe).not.toHaveBeenCalled();
+      for (const change of [
+        speech.selectModel("fallback-model"),
+        speech.removeModel("test-model"),
+      ]) {
+        expect(yield* Effect.flip(change)).toBeInstanceOf(SpeechService.SpeechBusyError);
+      }
+    } finally {
+      finish.resolve();
+    }
+    yield* Fiber.join(window);
+    expect(loadNative).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("rejects an unsupported dictation language before loading the selected model", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const failure = yield* Effect.flip(
+      speech.dictateLocal("test-model", pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "he",
+      }),
+    );
+    expect(failure).toBeInstanceOf(SpeechService.SpeechUnsupportedLanguageError);
+    expect(failure).toMatchObject({ language: "he" });
+    expect(loadNative).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("removing a catalog model leaves an unrelated same-name recording worker loaded", () =>
+  Effect.gen(function* () {
+    installedFile.path = "C:\\models\\test.gguf";
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.promise((signal) =>
+      speech.withRecordingWindow(
+        "C:\\recordings\\test.gguf",
+        "auto",
+        signal,
+        async () => undefined,
+      ),
+    );
+    yield* speech.removeModel("test-model");
+    expect(native.dispose).not.toHaveBeenCalled();
+    yield* Effect.promise((signal) =>
+      speech.withRecordingWindow("c:/RECORDINGS/test.gguf", "auto", signal, async () => undefined),
+    );
+    expect(loadNative).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END

@@ -28,6 +28,7 @@ import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import {
   checkCodexProviderStatus,
+  openCodexAppServerConnection,
   makePendingCodexProvider,
   makeCodexSkillsProbe,
   setCodexSkillEnabled,
@@ -564,6 +565,14 @@ export const CodexDriver: ScientProviderDriver<
       textGeneration,
       voiceTranscriptCorrection,
       voiceDictation,
+      openCodexConnection: (cwd) =>
+        openCodexAppServerConnection({
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          cwd,
+          environment: processEnv,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
       connectionActions,
       managedRuntimeActions: managedRuntime.actions,
       skillActions,

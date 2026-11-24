@@ -273,7 +273,7 @@ describe("Scient Agent first managed release", () => {
   });
 
   // regression: 8f4842a96b feat(scient-agent): add managed runtime installation and maintenance
-  it.each(["0.0.9", "2.0.0", "0.1.0-beta.1", "0.1.0+build", "latest"])(
+  it.each(["0.0.9", "0.1.0-beta.1", "0.1.0+build", "latest"])(
     "rejects unsupported stable pointer %s",
     async (version) => {
       await expect(

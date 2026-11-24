@@ -103,7 +103,11 @@ const makeClaudeVoiceTranscriptCorrectionEffect = Effect.fn(
           }),
           cwd: tempDirectory,
           environment: providerEnvironment,
-          prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
+          prompt: buildVoiceTranscriptCorrectionPrompt(
+            input.transcript,
+            input.language,
+            input.hints,
+          ),
         });
         const envelope = yield* decodeClaudeOutput(stdout).pipe(
           Effect.mapError(

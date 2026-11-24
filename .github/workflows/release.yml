@@ -445,7 +445,7 @@ jobs:
             if (!$value) { throw "Missing compiler environment variable: $name" }
             "$name=$value" >> $env:GITHUB_ENV
           }
-      - name: Build Windows publication and voice prerequisites
+      - name: Build Windows publication prerequisites
         if: matrix.platform == 'win'
         shell: bash
         env:
@@ -455,12 +455,11 @@ jobs:
           set -euo pipefail
           mkdir -p windows-native
           node scripts/stage-file-exchange.ts --platform=win32 --arch="$TARGET_ARCH" --destination="$PWD/windows-native/file-exchange"
-          node scripts/stage-whisper-runtime.ts --platform win --arch "$TARGET_ARCH" --output windows-native/whisper-runtime --verbose
           node --input-type=module <<'JS'
           import fs from "node:fs";
           import crypto from "node:crypto";
           const files = {};
-          for (const directory of ["file-exchange", "whisper-runtime"]) {
+          for (const directory of ["file-exchange"]) {
             for (const name of fs.readdirSync(`windows-native/${directory}`)) {
               const file = `${directory}/${name}`;
               if (!fs.lstatSync(`windows-native/${file}`).isFile()) throw Error(`Not a regular file: ${file}`);
@@ -690,7 +689,7 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
-      # The pinned whisper.cpp and SyncTeX builds, by the scripts that pin them and this runner's
+      # The pinned SyncTeX build, by the scripts that pin them and this runner's
       # toolchain. The packer verifies each receipt and every file before staging them.
       - name: Identify macOS native runtime toolchain
         if: matrix.platform == 'mac'
@@ -706,13 +705,12 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native-runtimes
-          key: macos-native-runtimes-v1-${{ matrix.arch }}-${{ steps.native_toolchain.outputs.id }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/lib/whisper-runtime-receipt.ts', 'scripts/stage-synctex-runtime.ts') }}
+          key: macos-native-runtimes-v1-${{ matrix.arch }}-${{ steps.native_toolchain.outputs.id }}-${{ hashFiles('scripts/stage-synctex-runtime.ts') }}
       - name: Build macOS native runtimes
         if: matrix.platform == 'mac' && steps.native_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/stage-whisper-runtime.ts --platform mac --arch "${{ matrix.arch }}" --output native-runtimes/whisper-runtime --verbose
           node scripts/stage-synctex-runtime.ts --platform mac --arch "${{ matrix.arch }}" --output native-runtimes/synctex-runtime --verbose
       # Only trusted main writes this cache; other refs restore from it.
       - name: Save macOS native runtimes
@@ -850,7 +848,6 @@ jobs:
           )
           if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
             args+=(--synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime")
-            args+=(--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime")
           else
             args+=(--synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current")
           fi
@@ -905,6 +902,56 @@ jobs:
           if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
             echo "SCIENT_MAC_SIGNING_READY=$signed" >> "$GITHUB_ENV"
           fi
+
+      - name: Cache verified speech probe inputs
+        if: matrix.platform != 'win'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/scient-speech-probe
+          key: speech-probe-v1-${{ hashFiles('apps/server/src/speech/catalog.json', 'apps/server/src/speech-packaging-probe.ts') }}
+      - name: Qualify packaged speech on Linux
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          images=("$PWD"/release-publish/*.AppImage)
+          [[ ${#images[@]} -eq 1 ]]
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          (cd "$scratch" && "${images[0]}" --appimage-extract >/dev/null)
+          node scripts/qualify-packaged-speech.mjs "$scratch/squashfs-root/scient" "$scratch/squashfs-root/resources"
+
+      - name: Qualify packaged speech on macOS
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(release-publish/*.dmg)
+          [[ ${#dmgs[@]} -eq 1 ]]
+          scratch="$(mktemp -d)"
+          mkdir "$scratch/mount"
+          cleanup() {
+            hdiutil detach "$scratch/mount" -quiet 2>/dev/null || true
+            rm -rf "$scratch"
+          }
+          trap cleanup EXIT
+          hdiutil attach "${dmgs[0]}" -nobrowse -readonly -mountpoint "$scratch/mount" >/dev/null
+          apps=("$scratch/mount"/*.app)
+          [[ ${#apps[@]} -eq 1 ]]
+          app="${apps[0]}"
+          if [[ "${SCIENT_MAC_SIGNING_READY:-false}" != "true" ]]; then
+            ditto "$app" "$scratch/Scient.app"
+            app="$scratch/Scient.app"
+            codesign --force --deep --sign - "$app"
+          fi
+          executable="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")"
+          node scripts/qualify-packaged-speech.mjs "$app/Contents/MacOS/$executable" "$app/Contents/Resources"
 
       - name: Verify macOS signing and notarization
         if: matrix.platform == 'mac' && env.SCIENT_MAC_SIGNING_READY == 'true'
@@ -1012,6 +1059,16 @@ jobs:
           node verify/verify-windows-desktop-artifact.mjs \
             --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
             --arch x64 --build-version "$RELEASE_VERSION" --verbose
+      - name: Cache verified speech probe inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/scient-speech-probe
+          key: speech-probe-v1-${{ hashFiles('apps/server/src/speech/catalog.json', 'apps/server/src/speech-packaging-probe.ts') }}
+      - name: Qualify packaged speech on Windows
+        shell: pwsh
+        env:
+          SCIENT_SPEECH_PROBE_CACHE: ${{ runner.temp }}/scient-speech-probe
+        run: node scripts/qualify-packaged-speech.mjs verify/win-unpacked/Scient.exe verify/win-unpacked/resources
       - name: Smoke-test resource monitor
         shell: bash
         env:

@@ -2,6 +2,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import {
+  AudioLinesIcon,
   ChartNoAxesColumnIcon,
   CloudIcon,
   createLucideIcon,
@@ -66,6 +67,7 @@ const T3ConnectRailAccount = lazy(() =>
 
 type RailPage =
   | "home"
+  | "recordings"
   | "scheduled-tasks"
   | "extensions"
   | "code-review"
@@ -81,6 +83,7 @@ function railPageFor(pathname: string): RailPage | null {
   }
   if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
   if (pathname === "/pull-requests" || pathname === "/issues") return "code-review";
+  if (pathname === "/recordings") return "recordings";
   if (pathname === "/usage") return "usage";
   if (pathname === "/cloud" || pathname.startsWith("/cloud/")) return "cloud";
   return null;
@@ -192,10 +195,11 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
   const page = useLocation({ select: (location) => railPageFor(location.pathname) });
   const actions = useSidebarUtilityActions();
   const openLibrary = useOpenWholeLibrary();
-  const go = (to: "/" | "/settings/scheduled-tasks" | "/settings/extensions") => () => {
-    actions.closeMobileSidebar();
-    void navigate({ to });
-  };
+  const go =
+    (to: "/" | "/recordings" | "/settings/scheduled-tasks" | "/settings/extensions") => () => {
+      actions.closeMobileSidebar();
+      void navigate({ to });
+    };
 
   const nav = (
     <nav
@@ -221,6 +225,12 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
             actions.closeMobileSidebar();
             void openLibrary();
           }}
+        />
+        <RailItem
+          icon={<AudioLinesIcon />}
+          label={gt("Recordings")}
+          onClick={go("/recordings")}
+          active={page === "recordings"}
         />
         <RailItem
           icon={<ScheduledTasksRailIcon />}

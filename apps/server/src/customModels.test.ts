@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import {
+  AccountId,
   CustomModelError,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
@@ -94,6 +95,63 @@ const rejects = <A>(effect: Effect.Effect<A, CustomModelError>, message: string)
       expect(error.message).toContain(message);
     }),
   );
+
+it.effect("binds a selected Accounts key without allocating another literal slot", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    yield* f.save({ apiKey: Redacted.make("synthetic-key") });
+    const accountId = AccountId.make("acc_shared_model_key");
+    yield* rejects(f.save({ accountId, apiKey: Redacted.make("synthetic-key") }), "Choose one way");
+    const next = yield* f.save({ accountId });
+    expect(next.connections[0]).toMatchObject({ id: connection.id, accountId, credentialId: null });
+    expect(f.values.size).toBe(0);
+    yield* rejects(
+      f.save({ apiKey: Redacted.make("synthetic-replacement") }),
+      "Replace this key in Accounts",
+    );
+    expect(f.settings().customModels).toEqual(next);
+    expect(f.values.size).toBe(0);
+  }),
+);
+
+it.effect(
+  "restricts shared keys on native Messages connections while allowing dedicated keys",
+  () =>
+    Effect.gen(function* () {
+      for (const driver of ["pi", "omp"] as const) {
+        for (const protocol of [
+          "openai-completions",
+          "openai-responses",
+          "anthropic-messages",
+        ] as const) {
+          const f = fixture();
+          const modelConnection = {
+            ...connection,
+            protocol,
+            models: [{ ...connection.models[0]!, instanceIds: [ProviderInstanceId.make(driver)] }],
+          };
+          const accountId = AccountId.make("acc_shared_test");
+          if (protocol === "anthropic-messages") {
+            yield* rejects(
+              f.save({ connection: modelConnection, accountId }),
+              "key kept just for this",
+            );
+            const saved = yield* f.save({
+              connection: modelConnection,
+              apiKey: Redacted.make("synthetic"),
+              useDedicatedKey: true,
+            });
+            expect(saved.connections[0]?.credentialId).toBeTruthy();
+            expect(saved.connections[0]?.accountId).toBeUndefined();
+          } else {
+            expect(
+              (yield* f.save({ connection: modelConnection, accountId })).connections[0]?.accountId,
+            ).toBe(accountId);
+          }
+        }
+      }
+    }),
+);
 
 it.effect("rejects a missing recheck target and describes duplicate per-model attachments", () =>
   Effect.gen(function* () {

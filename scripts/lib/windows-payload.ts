@@ -1,25 +1,6 @@
-/** Pinned loose inventories: whisper.cpp v1.9.1 and Cursor SDK 1.0.35. */
+/** Pinned loose inventories: Cursor SDK 1.0.35. */
 export const WINDOWS_SERVER_COMPILE_CACHE_ROOT = "resources/server-compile-cache/";
 export const WINDOWS_SERVER_COMPILE_CACHE_FILE_LIMIT = 64;
-export const WINDOWS_VOICE_FILES = [
-  "whisper-server.exe",
-  "ggml-base.dll",
-  ...[
-    "alderlake",
-    "cannonlake",
-    "cascadelake",
-    "haswell",
-    "icelake",
-    "sandybridge",
-    "skylakex",
-    "sse42",
-    "x64",
-  ].map((cpu) => `ggml-cpu-${cpu}.dll`),
-  "ggml.dll",
-  "whisper.dll",
-  "LICENSE.whisper.cpp",
-  "provenance.json",
-] as const;
 
 /** T3's transcribe.cpp 0.4.1 engine; it ships a Windows build for x64 only. */
 export function windowsTranscribeFiles(arch: "x64" | "arm64") {
@@ -118,19 +99,16 @@ export function analyzeWindowsPayloadInventory(input: {
   readonly previewFiles?: readonly string[];
 }) {
   const components = [
-    { name: "voice", root: "resources/whisper-runtime/", files: WINDOWS_VOICE_FILES },
     {
       name: "cursor",
       root: "resources/node_modules/@cursor/",
       files: windowsCursorFiles(input.arch),
     },
     { name: "preview", root: "resources/conversation-preview/", files: input.previewFiles ?? [] },
-    // Optional: older payloads predate the engine; a present one must match exactly.
     {
       name: "transcribe",
       root: "resources/server.asar.unpacked/node_modules/@transcribe-cpp/win32-x64-cpu-vulkan/",
       files: windowsTranscribeFiles(input.arch),
-      optional: true,
     },
   ];
   const missingFiles: string[] = [];
@@ -141,11 +119,10 @@ export function analyzeWindowsPayloadInventory(input: {
   for (const component of components) {
     const expected = new Set(component.files.map((file) => component.root + file));
     const actual = input.files.filter((file) => file.startsWith(component.root));
-    if (!("optional" in component) || actual.length > 0)
-      missingFiles.push(...[...expected].filter((file) => !present.has(file)));
+    missingFiles.push(...[...expected].filter((file) => !present.has(file)));
     unexpectedFiles.push(...actual.filter((file) => !expected.has(file)));
     counts[component.name] = actual.length;
-    allowance += "optional" in component && actual.length === 0 ? 0 : expected.size;
+    allowance += expected.size;
   }
   // SCIENT-FORK:START — the server's V8 compile cache holds one small entry per cached module and
   // grows as upstream caches more of startup, so it counts apart from the core budget, up to a cap.

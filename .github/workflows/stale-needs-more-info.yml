@@ -5,9 +5,7 @@ on:
     - cron: "17 6 * * *"
   workflow_dispatch:
 
-permissions:
-  actions: write
-  issues: write
+permissions: {}
 
 jobs:
   stale:
@@ -15,6 +13,9 @@ jobs:
     if: ${{ false }}
     # SCIENT-FORK:END
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      issues: write
     steps:
       - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9.1.0
         with:

@@ -1,3 +1,4 @@
+import { recordingTime } from "../../scient/recordings/recordingPresentation";
 import type {
   ChatAttachment,
   ChatFileAttachment,
@@ -475,6 +476,10 @@ export function ComposerAttachmentFileList({
   return (
     <div className="mb-3 flex flex-col gap-1">
       {files.map((file) => {
+        const recording = file.source?._tag === "recording-transcript" ? file.source : undefined;
+        const label = recording
+          ? `${recording.name} · ${recordingTime(recording.start)}–${recordingTime(recording.end)}`
+          : file.name;
         const fileCanUpload =
           supportsAttachmentUploads &&
           maxFileAttachmentBytes !== null &&
@@ -491,10 +496,14 @@ export function ComposerAttachmentFileList({
             <button
               type="button"
               disabled={needsReattach}
-              className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
+              className={
+                recording
+                  ? "min-w-0 max-w-full truncate rounded-full border border-border bg-muted px-2 py-1 text-start text-xs hover:underline focus-visible:outline-2"
+                  : "min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
+              }
               onClick={() => onPreviewFile(file.id)}
             >
-              {file.name}
+              {label}
             </button>
             <span className="shrink-0 text-xs text-secondary-label">
               {needsReattach ? (

@@ -1,14 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
-  VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL,
-  VOICE_CANCEL_TRANSCRIPTION_CHANNEL,
-  VOICE_TRANSCRIBE_CHANNEL,
   VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL,
+  VOICE_HAS_LEGACY_MODELS_CHANNEL,
+  VOICE_REMOVE_LEGACY_MODELS_CHANNEL,
+  VOICE_HAD_LEGACY_SELECTION_CHANNEL,
 } from "../../ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./preloadBridge.ts";
-
-afterEach(() => vi.useRealTimers());
 
 describe("makeDesktopVoiceBridge", () => {
   // regression: cb2164c119 fix(voice): restore first-run macOS microphone access (#319)
@@ -19,82 +16,20 @@ describe("makeDesktopVoiceBridge", () => {
     await expect(bridge.requestMicrophoneAccess?.()).resolves.toBe("granted");
     expect(invoke).toHaveBeenCalledWith(VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL);
   });
-
-  // regression: f1fcd2382a fix(voice): harden lifecycle and model setup
-  it("cancels model setup through its dedicated IPC method", async () => {
-    const invoke = vi.fn().mockResolvedValue(undefined);
+  it("uses the dedicated migration and cleanup methods", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(undefined);
     const bridge = makeDesktopVoiceBridge({ invoke });
-
-    await bridge.cancelModelDownload({ modelId: "whisper-small-multilingual-q5_1" });
-
-    expect(invoke).toHaveBeenCalledWith(VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL, {
-      modelId: "whisper-small-multilingual-q5_1",
-    });
-  });
-
-  it("projects download polling into progress and stops after unsubscribe", async () => {
-    vi.useFakeTimers();
-    const invoke = vi.fn().mockResolvedValue({
-      runtimeAvailable: true,
-      selectedModelId: null,
-      recommendation: null,
-      activeDownloadModelId: "whisper-small-multilingual-q5_1",
-      models: [
-        {
-          id: "whisper-small-multilingual-q5_1",
-          displayName: "Multilingual Small",
-          description: "Compact local multilingual transcription.",
-          byteSize: 100,
-          state: { state: "downloading", downloadedBytes: 25, totalBytes: 100 },
-        },
-        {
-          id: "whisper-medium-multilingual-q5_0",
-          displayName: "Multilingual Medium",
-          description: "Higher-accuracy local multilingual transcription.",
-          byteSize: 200,
-          state: { state: "missing" },
-        },
-        {
-          id: "whisper-large-v3-turbo-multilingual-q5_0",
-          displayName: "Multilingual Turbo",
-          description: "Most capable local multilingual transcription.",
-          byteSize: 300,
-          state: { state: "missing" },
-        },
-      ],
-    });
-    const listener = vi.fn();
-    const bridge = makeDesktopVoiceBridge({ invoke });
-
-    const unsubscribe = bridge.onModelDownloadProgress(listener);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(listener).toHaveBeenCalledWith({
-      modelId: "whisper-small-multilingual-q5_1",
-      downloadedBytes: 25,
-      totalBytes: 100,
-    });
-
-    unsubscribe();
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(listener).toHaveBeenCalledTimes(1);
-  });
-});
-
-// regression: fa095e4714 fix(voice): preserve transcript formatting and scope cancellation (#392)
-it("carries the same transcription identity through both IPC operations", async () => {
-  const invoke = vi.fn().mockResolvedValue(undefined);
-  const bridge = makeDesktopVoiceBridge({ invoke });
-  const request = {
-    requestId: "owner",
-    audioBase64: "AAAA",
-    mimeType: "audio/wav",
-    sampleRateHz: 24000,
-    durationMs: 1,
-  } as const;
-  await bridge.transcribe(request);
-  await bridge.cancelTranscriptionRequest?.({ requestId: request.requestId });
-  expect(invoke).toHaveBeenNthCalledWith(1, VOICE_TRANSCRIBE_CHANNEL, request);
-  expect(invoke).toHaveBeenNthCalledWith(2, VOICE_CANCEL_TRANSCRIPTION_CHANNEL, {
-    requestId: "owner",
+    await expect(bridge.hadLegacySelection?.()).resolves.toBe(true);
+    await expect(bridge.hasLegacyModels?.()).resolves.toBe(false);
+    await expect(bridge.removeLegacyModels?.()).resolves.toBeUndefined();
+    expect(invoke.mock.calls).toEqual([
+      [VOICE_HAD_LEGACY_SELECTION_CHANNEL],
+      [VOICE_HAS_LEGACY_MODELS_CHANNEL],
+      [VOICE_REMOVE_LEGACY_MODELS_CHANNEL],
+    ]);
   });
 });

@@ -1,3 +1,10 @@
+import { CustomModelSavedKeyPicker } from "./CustomModelSavedKeyPicker";
+import {
+  requiresDedicatedCustomModelKey,
+  type AccountId,
+  type AccountsSnapshot,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
@@ -135,9 +142,10 @@ function reuseOptionLabel(
   presetId: string,
   resolve: MessageResolver,
 ): string {
-  const head = connection.credentialId
-    ? resolve(msg("Use saved key •••{suffix}", { suffix: connection.apiKeySuffix ?? "" }))
-    : resolve(msg("Use existing connection"));
+  const head =
+    connection.accountId || connection.credentialId
+      ? resolve(msg("Use saved key •••{suffix}", { suffix: connection.apiKeySuffix ?? "" }))
+      : resolve(msg("Use existing connection"));
   const tail = presetId === "custom" ? ` · ${connection.baseUrl}` : "";
   return `${head} · ${connection.name}${tail}`;
 }
@@ -227,6 +235,7 @@ export function ModelConnectionEditor({
   target,
   agents,
   defaultInstanceIds,
+  keyAccounts,
   onSave,
   onClose,
 }: {
@@ -235,6 +244,7 @@ export function ModelConnectionEditor({
   agents: ReadonlyArray<{ id: ProviderInstanceId; name: string; driver?: ProviderDriverKind }>;
   /** Agents a new model starts attached to (see `defaultModelAgents`). */
   defaultInstanceIds: ReadonlyArray<ProviderInstanceId>;
+  keyAccounts?: { environmentId: EnvironmentId; snapshot: AccountsSnapshot };
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onClose: () => void;
 }) {
@@ -297,6 +307,15 @@ export function ModelConnectionEditor({
   const [instanceIds, setInstanceIds] = useState<ReadonlyArray<ProviderInstanceId>>(
     target.model?.instanceIds ?? defaultInstanceIds,
   );
+  const [choosingKey, setChoosingKey] = useState(false);
+  const [savedKey, setSavedKey] = useState<{
+    id: AccountId;
+    name: string;
+    baseUrl: string;
+    protocol: CustomModelProtocol;
+  }>();
+  const selectedKey =
+    savedKey?.baseUrl === baseUrl && savedKey.protocol === protocol ? savedKey : undefined;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -332,6 +351,12 @@ export function ModelConnectionEditor({
         ? detected.levels
         : []
   ).filter((level) => level !== "off");
+  const dedicated = requiresDedicatedCustomModelKey(
+    { protocol, models: [{ instanceIds }, ...(target.connection?.models ?? [])] },
+    Object.fromEntries(
+      agents.flatMap((agent) => (agent.driver ? [[agent.id, { driver: agent.driver }]] : [])),
+    ),
+  );
   const existing = settings.connections.find((c) => c.id === connectionId);
   const reusing = Boolean(existing && !target.model);
   const newCustomConnection = !existing && presetId === "custom";
@@ -343,6 +368,7 @@ export function ModelConnectionEditor({
     connection: CustomModelConnection | undefined,
   ) => {
     setConnectionId(connection?.id ?? "");
+    setSavedKey(undefined);
     setApiKey("");
     setError(null);
     setConnectionName(connection?.name ?? (preset.id === "custom" ? "" : preset.name));
@@ -482,7 +508,11 @@ export function ModelConnectionEditor({
         await onSave({
           revision: settings.revision,
           connection,
-          ...(!reusing && apiKey ? { apiKey: Redacted.make(apiKey) } : {}),
+          ...(!reusing && selectedKey && !dedicated
+            ? { accountId: selectedKey.id }
+            : !reusing && apiKey
+              ? { apiKey: Redacted.make(apiKey), ...(dedicated ? { useDedicatedKey: true } : {}) }
+              : {}),
         });
         setApiKey("");
         onClose();
@@ -612,7 +642,7 @@ export function ModelConnectionEditor({
               ) : (
                 <Field
                   label={
-                    existing?.credentialId
+                    existing?.accountId || existing?.credentialId
                       ? gt("API key · saved")
                       : !existing && presetId !== "custom"
                         ? gt("API key")
@@ -628,17 +658,46 @@ export function ModelConnectionEditor({
                     ) : undefined
                   }
                 >
-                  <Input
-                    type="password"
-                    aria-label={gt("API key")}
-                    required={!existing && presetId !== "custom"}
-                    autoComplete="off"
-                    spellCheck={false}
-                    maxLength={16384}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={existing?.credentialId ? gt("Leave blank to keep") : gt("API key")}
-                  />
+                  {existing?.accountId && !dedicated ? null : (
+                    <Input
+                      type="password"
+                      aria-label={gt("API key")}
+                      required={!selectedKey && !existing && presetId !== "custom"}
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={16384}
+                      value={apiKey}
+                      onChange={(e) => {
+                        setSavedKey(undefined);
+                        setApiKey(e.target.value);
+                      }}
+                      placeholder={
+                        existing?.accountId || existing?.credentialId
+                          ? gt("Leave blank to keep")
+                          : gt("API key")
+                      }
+                    />
+                  )}
+                  {dedicated ? (
+                    <p className="text-xs text-muted-foreground">
+                      <T>
+                        Pi and OMP need a key kept just for this Anthropic connection. A redirect
+                        can send even a dedicated key to another server.
+                      </T>
+                    </p>
+                  ) : null}
+                  {keyAccounts && !dedicated ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => setChoosingKey(true)}
+                    >
+                      {selectedKey
+                        ? gt("API key · {label}", { label: selectedKey.name })
+                        : gt("Choose saved key…")}
+                    </Button>
+                  ) : null}
                 </Field>
               )}
               <fieldset>
@@ -960,6 +1019,20 @@ export function ModelConnectionEditor({
           </form>
         </DialogPanel>
       </DialogPopup>
+      {choosingKey && keyAccounts ? (
+        <CustomModelSavedKeyPicker
+          environmentId={keyAccounts.environmentId}
+          snapshot={keyAccounts.snapshot}
+          name={connectionName}
+          baseUrl={baseUrl}
+          protocol={protocol}
+          onChoose={(id, name) => {
+            setApiKey("");
+            setSavedKey({ id, name, baseUrl, protocol });
+          }}
+          onClose={() => setChoosingKey(false)}
+        />
+      ) : null}
     </Dialog>
   );
 }
