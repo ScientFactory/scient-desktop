@@ -192,12 +192,31 @@ The test gate is `pnpm run test` in two parts:
   packages run again if the summary cannot be read, and the aggregate's failure still fails the
   gate. The receipt names every failed package.
 - **The server suite** runs alone with files in parallel, like hosted CI's server shards:
-  half the CPUs, at most six, and at least 4 GiB of memory per worker (`--server-workers N`
-  overrides it; `1` is the serial run). The server's config keeps `fileParallelism: false`, so
-  ordinary and targeted local runs are unchanged. When up to 20 files fail, each runs once
-  more, alone, and the receipt lists it under "failed again alone" or "passed when rerun alone".
-  Both fail the gate. One passing rerun does not show why the file failed; treat it as a
-  fault to investigate, not a pass. More failures are listed without a rerun.
+  half the CPUs, at most six, at least 4 GiB of memory per worker, and never more than half of
+  the CPUs the load average leaves free (`--server-workers N` overrides it; `1` is the serial
+  run). The server's config keeps `fileParallelism: false`, so ordinary and targeted local runs
+  are unchanged.
+
+**What a red test gate means.** Failures are compared by test ID (`<file> > <full name>`, and
+`package <name>` for other packages) with a baseline of the same machine on main:
+
+- **New failures** block. Their files run once more, alone. One that fails again is listed under
+  "new failures"; one that passes alone is listed as "new but passed alone (load)" and does not
+  block. Hosted CI still qualifies the pushed revision.
+- **Failures main also has here** are listed with the main commit and do not block.
+- **Baseline failures that pass here** are listed, so a fix shows.
+
+Record the baseline from a clean checkout of main with
+`pnpm alignment:gates --only test --record-baseline`. It reruns every failed file alone and keeps
+only failures that repeat, in `<git common dir>/scient-test-baseline/<platform>-<arch>-node<N>.json`,
+shared by every worktree. Without a baseline every failure blocks, as before, and up to 20 failed
+server files rerun alone as a diagnostic. Record a new baseline after main changes the failing
+set; a stale one only labels, it never hides a new test ID.
+
+The table's first line records the load average and, on macOS, `fseventsd` CPU at the start, and
+names a busy machine (load above three quarters of the CPUs, or `fseventsd` at 80% or more). A
+saturated `fseventsd` delivers file change events late or never, so file-watch tests fail or time
+out. Tests that timed out are listed as such.
 
 A run that includes typecheck, test, build or smoke first takes a lock in the repository's
 shared Git directory, so full runs from different worktrees queue instead of slowing each other

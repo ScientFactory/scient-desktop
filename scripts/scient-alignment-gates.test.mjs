@@ -8,6 +8,7 @@ import * as NodeURL from "node:url";
 import { afterEach, test, vi } from "vite-plus/test";
 import {
   acquireGatesLock,
+  baselinePath,
   claimGatesSlot,
   main,
   serverWorkers,
@@ -197,6 +198,66 @@ test("a failed server file runs once more alone, and the gate fails either way",
   );
 });
 
+const baselineOf = ({ cwd }) => baselinePath(NodePath.join(cwd, ".git"));
+const id = (file) => `${file} > (file error)`;
+
+test("a baseline from main keeps only failures that repeat alone", () => {
+  const gates = fixture();
+  const result = run(gates, ["--only", "test", "--server-workers", "4", "--record-baseline"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts,src/flaky.test.ts",
+    FAKE_SERVER_FAILS_ALONE: "src/known.test.ts",
+  });
+  NodeAssert.equal(result.status, 0, result.stderr);
+  const baseline = JSON.parse(NodeFS.readFileSync(baselineOf(gates), "utf8"));
+  NodeAssert.deepEqual(baseline.failures, [id("src/known.test.ts")]);
+  NodeAssert.equal(baseline.head, result.record.head);
+  NodeAssert.match(result.stdout, /baseline recorded: 1 failure/u);
+});
+
+test("a baseline is recorded only from a clean checkout", () => {
+  const gates = fixture();
+  NodeFS.writeFileSync(NodePath.join(gates.cwd, "file.txt"), "changed\n");
+  const result = run(gates, ["--only", "test", "--record-baseline"]);
+  NodeAssert.equal(result.status, 2);
+  NodeAssert.match(result.stderr, /clean checkout of main/u);
+});
+
+test("failures known on main pass the gate, new ones block, and only new files rerun", () => {
+  const gates = fixture();
+  const calls = NodePath.join(gates.bin, "calls.jsonl");
+  NodeFS.mkdirSync(NodePath.dirname(baselineOf(gates)), { recursive: true });
+  NodeFS.writeFileSync(
+    baselineOf(gates),
+    JSON.stringify({ head: "abc", failures: [id("src/known.test.ts"), id("src/fixed.test.ts")] }),
+  );
+  const known = run(gates, ["--only", "test", "--server-workers", "4"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts",
+    FAKE_CALLS: calls,
+  });
+  NodeAssert.equal(known.status, 0, known.stdout);
+  const { baseline } = known.record.gates[0].tests;
+  NodeAssert.deepEqual(baseline.knownOnMain, [id("src/known.test.ts")]);
+  NodeAssert.deepEqual(baseline.noLongerFailing, [id("src/fixed.test.ts")]);
+  NodeAssert.ok(
+    NodeFS.readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .every((line) => !line.includes("--no-file-parallelism")),
+    "a known failure is not rerun",
+  );
+  NodeAssert.match(known.stdout, /no new failures; also failing on main/u);
+
+  const fresh = run(gates, ["--only", "test", "--server-workers", "4"], {
+    FAKE_SERVER_FAILS_IN_PARALLEL: "src/known.test.ts,src/broken.test.ts,src/loaded.test.ts",
+    FAKE_SERVER_FAILS_ALONE: "src/broken.test.ts",
+  });
+  NodeAssert.equal(fresh.status, 1);
+  const labels = fresh.record.gates[0].tests.baseline;
+  NodeAssert.deepEqual(labels.new, [id("src/broken.test.ts")]);
+  NodeAssert.deepEqual(labels.flakyAlone, [id("src/loaded.test.ts")]);
+  NodeAssert.deepEqual(fresh.record.gates[0].tests.server.failedAgainAlone, ["src/broken.test.ts"]);
+});
+
 const lockFixture = () => {
   const commonDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-lock-"));
   directories.push(commonDir);
@@ -284,6 +345,12 @@ test("a run whose lock folder was deleted leaves the next owner's slot when it e
   NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, String(slots()[0]), "released")), false);
   second();
   NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, String(slots()[0]), "released")), true);
+});
+
+test("server workers leave busy cores alone", () => {
+  NodeAssert.equal(serverWorkers(18, 64 * 1024 ** 3, 0), 6);
+  NodeAssert.equal(serverWorkers(18, 64 * 1024 ** 3, 12), 3);
+  NodeAssert.equal(serverWorkers(18, 64 * 1024 ** 3, 40), 1);
 });
 
 test("server workers leave half the cores free, need 4 GiB each, and stay between 1 and 6", () => {
