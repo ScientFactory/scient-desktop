@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { McpProtocol, type Tool } from "effect/ai";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -9,7 +10,10 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { scientAgentToolCopy } from "../provider/ScientAgentCopy.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { listAvailableScientOperations } from "../scient/operations/AgentOperationDispatcher.ts";
-import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
+import {
+  noWorkspaceBindings,
+  WorkspaceBindingResolver,
+} from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { scientOperationCatalog } from "./ScientOperationCatalog.ts";
 import { McpInvocationContext, type McpCapability } from "./McpInvocationContext.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
@@ -65,7 +69,10 @@ export function makeScientToolListLayer(
   return Layer.effect(
     ScientToolList,
     Effect.gen(function* () {
-      const resolver = yield* WorkspaceBindingResolver;
+      const resolver = Option.getOrElse(
+        yield* Effect.serviceOption(WorkspaceBindingResolver),
+        () => noWorkspaceBindings,
+      );
       return ScientToolList.of((effect) =>
         Effect.gen(function* () {
           const result = yield* effect;

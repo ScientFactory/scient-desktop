@@ -335,7 +335,8 @@ export class ServerSettingsService extends Context.Service<
     // SCIENT-FORK:END
 
     // SCIENT-FORK:START — authoritative project deletion. Server-only: no RPC exposes it.
-    readonly removeProjectSettingsOverrides: (
+    // Optional so T3's hand-built doubles stay T3's; the live and test layers always provide it.
+    readonly removeProjectSettingsOverrides?: (
       projectIds: ReadonlyArray<ProjectId>,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     // SCIENT-FORK:END
@@ -344,8 +345,8 @@ export class ServerSettingsService extends Context.Service<
 
     /** Subscribe before reading a snapshot to retain changes before lazy stream startup. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
-    // SCIENT-FORK:START — custom-model catalog methods
-  } & CustomModelSettingsMethods
+    // SCIENT-FORK:START — custom-model catalog methods; read them through `customModelMethods`.
+  } & Partial<CustomModelSettingsMethods>
   // SCIENT-FORK:END
 >()("t3/serverSettings/ServerSettingsService") {
   static readonly layerTest = (

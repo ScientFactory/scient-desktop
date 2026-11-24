@@ -26,6 +26,7 @@ import { ProviderInstanceRegistry } from "../../../provider/ProviderInstanceRegi
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
+import { customModelMethods } from "../../../scientServerSettings.ts";
 import { testCustomModel } from "../../providerLifecycle/CustomModelRpcHandlers.ts";
 import { CustomModelsToolkit } from "./tools.ts";
 
@@ -135,6 +136,7 @@ export const layer = McpToolAccess.toLayer(
   CustomModelsToolkit,
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
+    const customModelSettings = customModelMethods(serverSettings);
     const providerRegistry = yield* ProviderRegistry;
     const providerInstances = yield* ProviderInstanceRegistry;
     const config = yield* ServerConfig;
@@ -240,7 +242,7 @@ export const layer = McpToolAccess.toLayer(
             if (existing === undefined) return yield* invalid("remove needs a connectionId.");
             if (params.wholeConnection === true) {
               yield* guarded(
-                serverSettings
+                customModelSettings
                   .removeCustomModel({ revision: current.revision, connectionId: existing.id })
                   .pipe(Effect.mapError((error) => invalid(error.message))),
               );
@@ -253,7 +255,7 @@ export const layer = McpToolAccess.toLayer(
             if (remaining.length === existing.models.length)
               return yield* invalid(`${existing.name} has no model ${modelId}.`);
             yield* guarded(
-              serverSettings
+              customModelSettings
                 .saveCustomModel({
                   revision: current.revision,
                   connection: {
@@ -361,7 +363,7 @@ export const layer = McpToolAccess.toLayer(
               // Read only after the caller is checked again, so a refused change leaves the ref.
               const apiKey =
                 params.secretRef === undefined ? undefined : yield* consumeKey(params.secretRef);
-              return yield* serverSettings
+              return yield* customModelSettings
                 .saveCustomModel({
                   revision: current.revision,
                   connection: {

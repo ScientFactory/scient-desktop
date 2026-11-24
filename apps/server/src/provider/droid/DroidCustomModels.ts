@@ -36,6 +36,7 @@ import {
   type CustomModelReasoning,
 } from "../../customModelCapabilities.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
+import { customModelMethods } from "../../scientServerSettings.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeDroidAcpRuntime, type DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
 import {
@@ -324,6 +325,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
+  const { resolveCustomModels, committedCustomModels } = customModelMethods(settings);
   const runBudgetStore = makeDroidRunBudgetStore();
   const readPolicy: ReadDroidOrgHookPolicy =
     readOrgHookPolicy ?? ((input) => readDroidOrgHookPolicy({ ...input, platform }));
@@ -333,7 +335,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
       // Subscribe before resolving credentials, including while process construction is in flight.
       const changes = yield* settings.subscribeChanges;
       const connections = droidConnections(
-        yield* settings.resolveCustomModels(instanceId).pipe(
+        yield* resolveCustomModels(instanceId).pipe(
           Effect.mapError(
             () =>
               new AcpRequestError({
@@ -377,7 +379,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
        * synchronously before each upstream request, see `isCurrent`).
        */
       const assertCurrent = Effect.gen(function* () {
-        const current = settings.committedCustomModels();
+        const current = committedCustomModels();
         if (invalidated || revokedBy(current.connections)) {
           yield* invalidate;
           return yield* new AcpProcessExitedError({});
@@ -410,7 +412,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
           runBudgetStore,
           // Checked in the step that starts each upstream request, so a
           // committed rotation or removal is either seen or after dispatch.
-          isCurrent: () => !invalidated && !revokedBy(settings.committedCustomModels().connections),
+          isCurrent: () => !invalidated && !revokedBy(committedCustomModels().connections),
           retire: invalidate,
           ...(modelTools === "disabled" ? { withoutTools: true } : {}),
           // Upstream requests take the route, and trust the CAs, Droid's own would have.
@@ -519,7 +521,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
                     droidCustomModelId(connection.id, model.id) === modelId,
                 );
             if (!modelId.startsWith(DROID_CUSTOM_MODEL_PREFIX)) return undefined;
-            const current = find(settings.committedCustomModels().connections);
+            const current = find(committedCustomModels().connections);
             if (current === undefined) {
               const removed = find(connections);
               return removed === undefined

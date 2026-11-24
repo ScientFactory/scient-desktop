@@ -44,7 +44,7 @@ export function makeScientProviderReload(deps: {
   const reloadInstance = Effect.fn("ProviderRegistry.reloadInstance")(function* (
     instanceId: ProviderInstanceId,
   ) {
-    yield* instanceRegistry.rebuildInstance(instanceId);
+    yield* instanceRegistry.rebuildInstance?.(instanceId) ?? Effect.void;
     // Do not race the registry-change subscriber: attach the replacement
     // source synchronously before asking it to probe the newly active path.
     yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
@@ -137,7 +137,7 @@ export function makeScientProviderReload(deps: {
     instanceId: ProviderInstanceId,
   ) {
     return yield* Effect.gen(function* () {
-      yield* instanceRegistry.rebuildInstance(instanceId);
+      yield* instanceRegistry.rebuildInstance?.(instanceId) ?? Effect.void;
       yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
       const instance = (yield* getLiveInstances).get(instanceId);
       if (!instance) {

@@ -28,6 +28,7 @@ import { encodeOmpModelSlug } from "../../provider/omp/OmpModel.ts";
 import { encodePiModelSlug } from "@t3tools/provider-pi/server/model";
 import type * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import type * as ServerSettings from "../../serverSettings.ts";
+import { customModelMethods } from "../../scientServerSettings.ts";
 import { droidToolGuardTestRefusal } from "../../textGeneration/DroidTextGeneration.ts";
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 
@@ -97,7 +98,9 @@ export const testCustomModel = (
       return yield* new CustomModelError({
         message: "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
       });
-    const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
+    const resolved = yield* customModelMethods(serverSettings).resolveCustomModels(
+      input.instanceId,
+    );
     const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
     if (credentialError !== undefined)
       return yield* new CustomModelError({ message: credentialError });
@@ -144,13 +147,17 @@ export const makeCustomModelRpcHandlers = ({
 }) =>
   ({
     [WS_METHODS.serverSaveCustomModel]: (input) =>
-      observeRpcEffect(WS_METHODS.serverSaveCustomModel, serverSettings.saveCustomModel(input), {
-        "rpc.aggregate": "server",
-      }),
+      observeRpcEffect(
+        WS_METHODS.serverSaveCustomModel,
+        customModelMethods(serverSettings).saveCustomModel(input),
+        {
+          "rpc.aggregate": "server",
+        },
+      ),
     [WS_METHODS.serverRemoveCustomModel]: (input) =>
       observeRpcEffect(
         WS_METHODS.serverRemoveCustomModel,
-        serverSettings.removeCustomModel(input),
+        customModelMethods(serverSettings).removeCustomModel(input),
         {
           "rpc.aggregate": "server",
         },

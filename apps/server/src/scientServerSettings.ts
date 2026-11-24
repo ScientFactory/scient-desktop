@@ -69,6 +69,25 @@ export const customModelsTestMethods = {
   committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
 } satisfies CustomModelSettingsMethods;
 
+/**
+ * The members are optional on T3's settings shape so T3's test doubles need none of them.
+ * Both settings layers provide all of them; a double without them has no custom models.
+ * Own properties only: `Layer.mock` answers a missing member with a stub that dies.
+ */
+export const customModelMethods = (
+  service: Partial<CustomModelSettingsMethods>,
+): CustomModelSettingsMethods => {
+  const own = <K extends keyof CustomModelSettingsMethods>(key: K) =>
+    Object.hasOwn(service, key) ? service[key] : undefined;
+  return {
+    saveCustomModel: own("saveCustomModel") ?? customModelsTestMethods.saveCustomModel,
+    removeCustomModel: own("removeCustomModel") ?? customModelsTestMethods.removeCustomModel,
+    resolveCustomModels: own("resolveCustomModels") ?? customModelsTestMethods.resolveCustomModels,
+    committedCustomModels:
+      own("committedCustomModels") ?? customModelsTestMethods.committedCustomModels,
+  };
+};
+
 /** Settings-service state the custom-model methods read and commit through. */
 export interface CustomModelSettingsInput {
   readonly secretStore: ServerSecretStore.ServerSecretStore["Service"];

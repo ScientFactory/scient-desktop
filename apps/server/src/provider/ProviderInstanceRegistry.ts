@@ -47,8 +47,9 @@ export interface ProviderInstanceRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ScientProviderInstance | undefined>;
   /** Rebuild for dependencies outside settings, such as app-private runtime updates.
-   * Unknown ids are a no-op; close the old scope before creating the replacement. */
-  readonly rebuildInstance: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
+   * Unknown ids are a no-op; close the old scope before creating the replacement.
+   * Optional so T3's hand-built registries stay T3's; without it a reload only refreshes. */
+  readonly rebuildInstance?: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
   /**
    * Every available (driver-registered, successfully created) instance,
    * in stable settings-author order.
@@ -675,8 +676,9 @@ export const makeProviderInstanceRegistry = Effect.fn(
       Effect.provideContext(driverContext),
     );
   });
-  const rebuildInstance: ProviderInstanceRegistryShape["rebuildInstance"] = (instanceId) =>
-    semaphore.withPermits(1)(rebuildInstanceUnserialized(instanceId));
+  const rebuildInstance: NonNullable<ProviderInstanceRegistryShape["rebuildInstance"]> = (
+    instanceId,
+  ) => semaphore.withPermits(1)(rebuildInstanceUnserialized(instanceId));
   // SCIENT-FORK:END
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does

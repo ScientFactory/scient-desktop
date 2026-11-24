@@ -747,7 +747,9 @@ export const make = Effect.gen(function* () {
     serverSettings.getSettings.pipe(
       Effect.flatMap(({ projectSettingsOverrides }) => {
         const patch = deletedProjectOverridePatch(projectSettingsOverrides[projectId]);
-        const removal = serverSettings.removeProjectSettingsOverrides([projectId]);
+        const removal =
+          serverSettings.removeProjectSettingsOverrides?.([projectId]) ??
+          Effect.die(new Error("Settings service cannot remove project overrides."));
         return patch === null
           ? removal
           : removal.pipe(
