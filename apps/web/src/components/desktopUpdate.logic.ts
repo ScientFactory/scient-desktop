@@ -319,20 +319,20 @@ export async function installDesktopUpdate(
   bridge: Pick<DesktopBridge, "installUpdate" | "onUpdateState">,
   expectedVersion?: string,
 ): Promise<DesktopUpdateActionResult> {
-  let awaitingFailure = false;
   let reportFailure: (state: DesktopUpdateState) => void = () => {};
   const failure = new Promise<DesktopUpdateState>((resolve) => {
     reportFailure = resolve;
   });
+  // SCIENT-FORK:START — a refusal can arrive before the install reply; the promise keeps it.
   const unsubscribe = bridge.onUpdateState((state) => {
-    if (awaitingFailure && state.errorContext === "install") reportFailure(state);
+    if (state.errorContext === "install") reportFailure(state);
   });
+  // SCIENT-FORK:END
   try {
     const result = await bridge.installUpdate(expectedVersion);
     if (!result.accepted || result.completed || getDesktopUpdateActionError(result) !== null) {
       return result;
     }
-    awaitingFailure = true;
     return { ...result, state: await failure };
   } finally {
     unsubscribe();

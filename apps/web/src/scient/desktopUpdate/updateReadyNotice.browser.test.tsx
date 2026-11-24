@@ -320,42 +320,57 @@ describe("installDesktopUpdateNow", () => {
     );
   });
 
-  it("reports a restart macOS refuses after the install was accepted", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
+  it.each([
+    ["after", false],
+    ["before", true],
+  ])(
+    "reports a restart macOS refuses %s the accepted install reply arrives",
+    async (_when, refuseFirst) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
 
-    let publish: (state: DesktopUpdateState) => void = () => {};
-    const relaunching = installDesktopUpdateNow({
-      installUpdate: vi.fn(async () =>
-        installResult({ completed: false, state: downloadedState({ status: "preparing" }) }),
-      ),
-      onUpdateState: (listener) => {
-        publish = listener;
-        return () => {};
-      },
-    });
-    let settled = false;
-    void relaunching.then(() => (settled = true));
-    // The refusal arrives once the accepted reply is in; until then it is not this install's.
-    await vi.waitFor(() => {
-      publish(
-        downloadedState({
-          status: "downloaded",
-          errorContext: "install",
-          message: "macOS did not allow the restart",
+      const listeners = new Set<(state: DesktopUpdateState) => void>();
+      const refuse = () => {
+        for (const listener of listeners)
+          listener(
+            downloadedState({
+              status: "downloaded",
+              errorContext: "install",
+              message: "macOS did not allow the restart",
+            }),
+          );
+      };
+      const reply = Promise.withResolvers<DesktopUpdateActionResult>();
+      const relaunching = installDesktopUpdateNow({
+        installUpdate: vi.fn(() => reply.promise),
+        onUpdateState: (listener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      });
+      const accepted = installResult({
+        completed: false,
+        state: downloadedState({ status: "preparing" }),
+      });
+      if (refuseFirst) refuse();
+      reply.resolve(accepted);
+      if (!refuseFirst) {
+        // The reply is in once the action listens for the refusal that follows it.
+        await reply.promise;
+        await Promise.resolve();
+        refuse();
+      }
+      expect(await relaunching).toBe(false);
+      expect(toasts.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Could not install update",
+          description: "macOS did not allow the restart",
         }),
       );
-      expect(settled).toBe(true);
-    });
-    expect(await relaunching).toBe(false);
-    expect(toasts.add).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Could not install update",
-        description: "macOS did not allow the restart",
-      }),
-    );
-  });
+      expect(listeners.size).toBe(0);
+    },
+  );
 
   it("reports a rejected install call", async () => {
     await using _fixture = _createFixture();
