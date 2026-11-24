@@ -873,7 +873,11 @@ describe("Scient Sources MCP handlers", () => {
         Effect.provideService(AnalyticsService, analytics),
         Effect.provideService(ScientAnalyticsAvailability, { available: true }),
       );
-      expect(added).toMatchObject({ outcome: "imported", verification: "unchecked" });
+      expect(added).toMatchObject({
+        outcome: "imported",
+        verification: "unchecked",
+        duplicate: { kind: "new" },
+      });
       expect(added.sourceId).toMatch(/^source_/);
       expect(added.revision).toBe(1);
       expect(added.validationIssues).toEqual([]);
@@ -886,6 +890,7 @@ describe("Scient Sources MCP handlers", () => {
       expect(repeated.sourceId).toBe(added.sourceId);
       expect(repeated.revision).toBe(1);
       expect(repeated.duplicate.kind).toBe("same-identifier");
+      expect(repeated.duplicate.matchingSourceIds).toEqual([added.sourceId]);
       expect(events.map((event) => event.name)).toEqual([
         "scient.operation.started",
         "scient.operation.completed",
@@ -909,6 +914,10 @@ describe("Scient Sources MCP handlers", () => {
         intake: "identifier",
         review: "none",
       });
+      expect(detail.verification).toEqual({
+        state: "unchecked",
+        identifier: { scheme: "doi", value: "10.1000/agent-source" },
+      });
       expect(detail.fieldProvenance.some((entry) => entry.origin === "agent")).toBe(true);
       expect(detail.fieldProvenance).toEqual(
         expect.arrayContaining([
@@ -916,6 +925,14 @@ describe("Scient Sources MCP handlers", () => {
         ]),
       );
       expect(detail.attachments).toEqual([]);
+
+      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
+      expect(listed.records).toHaveLength(1);
+      expect(listed.records[0]).toMatchObject({
+        addedBy: "agent",
+        verification: "unchecked",
+        hasPdf: false,
+      });
 
       const updated = yield* provideContext(
         updateScientSourceForInvocation({
@@ -1550,6 +1567,10 @@ describe("Scient Sources MCP handlers", () => {
         context,
       );
       expect(added).toMatchObject({ outcome: "imported", verification: "verified" });
+      // The omitted `enrich` option still asks for the missing abstract.
+      expect(metadataRequests.abstracts).toContain(
+        "https://api.crossref.org/works/10.1000/registered",
+      );
       const detail = yield* provideContext(
         getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
         context,
