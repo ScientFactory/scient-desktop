@@ -519,15 +519,18 @@ changed-file diff. The local snapshot uses private temporary Git index/objects a
 deletions and non-ignored untracked files. Reference snapshots under `.repos/` are counted but
 not scanned as product code.
 
-It also checks test placement, line by line: in a T3 test file, a test declaration with a literal title (`it(`, `test(` and their modifiers) outside a
+It also checks test placement, line by line: in a T3 test file, a test declaration with a
+literal title (`it(`, `test(` and modifiers such as `it.effect(`, `it.skipIf(…)(`,
+`it.each<T>(…)(` or a multiline `it.for([…])(`; not an `it.layer(…)(` suite) outside a
 `SCIENT-FORK:START`/`END` pair (each marker a comment line that starts with it) is new when
 that title occurs unmarked more often than in the base or at the frozen upstream, so tests an
-alignment brings from T3 are not new. Each test the change drops (a T3 test T3 still has, one
-T3 added since the base, or Scient's own) offsets one new title as a retitle; a test T3
-deleted, or a retitle an earlier change made, offsets nothing. New titles beyond the offsets
-are `review-needed`. A title held in a variable, new rows in an existing `.each` table, a
-declaration line inside a block comment, and a marker-shaped line inside a multiline string are
-beyond a line scan and left to review.
+alignment brings from T3 are not new. Each unmarked test the change drops (a T3 test T3 still
+has, one T3 added since the base, or Scient's own) offsets one new title as a retitle; a test
+T3 deleted, a retitle an earlier change made, or one inside a region offsets nothing. New
+titles beyond the offsets are `review-needed`, listed as candidates when an offset applied. A
+title held in a variable, new rows in an existing `.each` table, a declaration line inside a
+block comment, and a marker-shaped line inside a multiline string are beyond a line scan and
+left to review.
 
 The command reports `passed`, `review-needed`, `failed`, or `unavailable`; it proves neither
 behavior nor ancestry. A moved locator is a review signal:

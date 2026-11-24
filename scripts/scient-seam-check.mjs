@@ -415,7 +415,7 @@ function check(name, ctx) {
 // onto the next line. A title held in a variable, or new cases added to an existing
 // `.each` table, are out of reach of this text scan; review catches those.
 const testDeclaration =
-  /^[ \t]*(?:it|test)(?:\.\w+(?:<[^<>()\n]*>)?(?:\((?:[^()]|\([^()]*\))*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
+  /^[ \t]*(?:it|test)(?:\.\w+(?:<(?:[^<>()\n]|<[^<>()\n]*>)*>)?(?:\((?:[^()]|\([^()]*\))*\))?)*\(\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/gmu;
 const t3TestFile = (path) => /(^|\/)(__tests__\/.+|[^/]+\.(test|spec))\.[cm]?[jt]sx?$/u.test(path);
 // A marker is a comment line that starts with it, as every region in T3's test files
 // is written, and counts only as a START…END pair: an unclosed START marks nothing.
@@ -442,6 +442,8 @@ function testTitles(source) {
   let scanned = 0;
   for (const match of source.matchAll(testDeclaration)) {
     for (; scanned < match.index; scanned += 1) if (source[scanned] === "\n") line += 1;
+    // `it.layer(layer)("name", (it) => …)` names a suite, not a test.
+    if (/^\s*it\.layer\b/u.test(match[0])) continue;
     titles.push({ title: match[2], marked: marked.has(line) });
   }
   return titles;
@@ -486,19 +488,21 @@ function testPlacement(ctx) {
     const added = [];
     let dropped = 0;
     for (const title of new Set([...head.keys(), ...base.keys(), ...upstream.keys()])) {
-      const [h, b, p, u] = [head, base, previous, upstream].map((m) => m.get(title) ?? 0);
+      const [h, hU, b, bU, p, u] = [head, headUnmarked, base, baseUnmarked, previous, upstream].map(
+        (m) => m.get(title) ?? 0,
+      );
       // Unmarked occurrences beyond what the base had unmarked or T3 has now are new.
-      const extra = (headUnmarked.get(title) ?? 0) - Math.max(baseUnmarked.get(title) ?? 0, u);
+      const extra = hU - Math.max(bU, u);
       for (let i = 0; i < extra; i += 1) added.push(title);
-      // Only a test this change drops offsets one: the base's T3 tests T3 still has,
-      // tests T3 added since the base, and Scient's own.
-      const expected = Math.min(b, p, u) + Math.max(0, u - p) + Math.max(0, b - p);
-      dropped += Math.max(0, expected - h);
+      // Only an unmarked test this change drops offsets one: the base's T3 tests T3
+      // still has, tests T3 added since the base, and Scient's own.
+      const expected = (n) => Math.min(n, p, u) + Math.max(0, u - p) + Math.max(0, n - p);
+      dropped += Math.min(Math.max(0, expected(b) - h), Math.max(0, expected(bU) - hU));
     }
     if (added.length > dropped) {
       findings.push({
         kind: "review-needed",
-        message: `New test in T3's test file outside a SCIENT-FORK:START/END region; put it in the .scient. sibling: ${path}: ${added.map((title) => JSON.stringify(title)).join(", ")}`,
+        message: `${added.length - dropped} new test(s) in T3's test file outside a SCIENT-FORK:START/END region; put them in the .scient. sibling: ${path}: ${dropped ? "candidates " : ""}${added.map((title) => JSON.stringify(title)).join(", ")}`,
       });
     }
   }

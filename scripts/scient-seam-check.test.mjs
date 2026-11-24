@@ -630,13 +630,14 @@ describe("Scient tests placed in T3's test files", () => {
     ['it.for([\n  { input: 1 },\n  { input: 2 },\n])("a Scient case $input", () => {});'],
     ['it.prop({ x: fc.integer() })("a Scient case", () => {});'],
     ['it.each<number>([1, 2])("a Scient case %s", () => {});'],
+    ['it.each<ReadonlyArray<number>>([[1], [2]])("a Scient case %s", () => {});'],
   ])("asks for the sibling when a new test lands unmarked in a T3 file: %s", (test) => {
     const f = placementFixture();
     f.writeTests(test);
     const result = f.inspect();
     expect(result.checks[0].status).toBe("review-needed");
     expect(f.messages(result)).toEqual([
-      expect.stringContaining(`put it in the .scient. sibling: ${t3File}: "a Scient case`),
+      expect.stringContaining(`put them in the .scient. sibling: ${t3File}: "a Scient case`),
     ]);
   });
 
@@ -765,6 +766,28 @@ describe("Scient tests placed in T3's test files", () => {
       "// SCIENT-FORK:END",
     );
     expect(f.inspect(["--base", main]).checks[0].status).toBe("passed");
+  });
+
+  it("does not let a retitle inside a region offset an unmarked addition", () => {
+    const f = placementFixture();
+    const region = (title) => [
+      "// SCIENT-FORK:START",
+      `it("${title}", () => {});`,
+      "// SCIENT-FORK:END",
+    ];
+    f.writeTests(...region("a marked Scient case"));
+    const main = f.commit();
+    f.writeTests(...region("a marked Scient case, retitled"), 'it("a Scient case", () => {});');
+    expect(f.inspect(["--base", main]).checks[0].status).toBe("review-needed");
+  });
+
+  it("does not count a suite wrapper around an existing test as a test", () => {
+    const f = placementFixture();
+    f.write(
+      t3File,
+      `it.layer(TestLayer)("a Scient suite", (it) => {\n${t3Tests.join("\n")}\n});\n`,
+    );
+    expect(f.inspect().checks[0].status).toBe("passed");
   });
 
   it("counts a second test with a T3 test's title as new", () => {
