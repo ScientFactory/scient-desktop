@@ -197,6 +197,7 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_notebook_read: tool(["Read", "Reading", "Read", "a notebook"], "scient-compute"),
   t3_notebook_edit: tool(["Edit", "Editing", "Edited", "a notebook"], "scient-compute"),
   t3_notebook_run: tool(["Run", "Running", "Ran", "notebook cells"], "scient-compute"),
+  t3_notebook_stop: tool(["Stop", "Stopping", "Stopped", "a notebook run"], "scient-compute"),
   t3_compute_output: tool(["Read", "Reading", "Read", "run output"], "scient-compute"),
   t3_results_run: tool(["Run", "Running", "Ran", "a script for results"], "scient-compute"),
   t3_results_list: tool(["List", "Listing", "Listed", "linked results"], "scient-compute"),
@@ -217,6 +218,7 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Preview", "Previewing", "Previewed", "a data view"],
     "scient-compute",
   ),
+  t3_data_save_view: tool(["Save", "Saving", "Saved", "a data view"], "scient-compute"),
   t3_data_materialize_view: tool(
     ["Export", "Exporting", "Exported", "a data view"],
     "scient-compute",
