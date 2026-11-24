@@ -1885,26 +1885,18 @@ effectIt.effect("reads no environment from a macOS platform binary's argv", () =
     expect([...variables.get(200)!]).toEqual([["HOME", "/Users/a"]]);
     expect(variables.get(301)!.get("COMMAND")).toBe("a");
 
-    // The agent CLI starts the tool shell as the command's leader; the shell runs the server.
+    // An unreadable leader names no command: what it inherited cannot be read anywhere else.
     const rows = [
       { pid: 200, ppid: 1, pgid: 200 },
       { pid: 300, ppid: 200, pgid: 300 },
       { pid: 301, ppid: 300, pgid: 300 },
-      { pid: 302, ppid: 301, pgid: 300 },
     ];
     const table = new Map(rows.map((row) => [row.pid, row]));
-    expect([...PortScanner.agentCommandsInGroup(variables, table.get(300)!, table)]).toEqual([
-      ["COMMAND", "a"],
-    ]);
-    // A readable parent that carries the name means the leader only inherited it.
-    const inherited = new Map([
-      ...variables,
-      [200, new Map([...variables.get(200)!, ["COMMAND", "a"]])],
-    ]);
-    expect(PortScanner.agentCommandsInGroup(inherited, table.get(300)!, table).size).toBe(0);
-    // A job whose parent is the unreadable shell cannot be told apart from the command.
-    const job = { pid: 301, ppid: 300, pgid: 301 };
-    expect(PortScanner.agentCommandsInGroup(variables, job, table).size).toBe(0);
+    expect(PortScanner.agentCommandsInGroup(variables, table.get(300)!).size).toBe(0);
+    // Nor does a leader whose parent is unreadable: the parent cannot rule out inheritance.
+    expect(
+      PortScanner.agentCommandsInGroup(variables, { pid: 301, ppid: 300, pgid: 301 }).size,
+    ).toBe(0);
   }),
 );
 // SCIENT-FORK:END macos-unreadable-environment
@@ -1922,18 +1914,19 @@ server.listen(0, "127.0.0.1", () => {
 const AGENT_COMMAND_ENV = "T3CODE_TEST_AGENT_COMMAND";
 
 // SCIENT-FORK:START macos-unreadable-environment — offered upstream.
-// The CLI is node, as agent CLIs are: macOS hides a platform binary's environment, such as bash's.
+// The CLI starts the command as a group leader and names it there. Both are node, whose
+// environment macOS shows; it hides a platform binary's, such as bash's.
 const AGENT_CLI_SCRIPT = `
-require("node:child_process").spawn("bash", ["-c", '"$0" -e "$1" & wait', process.execPath, process.argv[1]], {
+require("node:child_process").spawn(process.execPath, ["-e", process.argv[1]], {
   detached: true,
   env: { ...process.env, ${AGENT_COMMAND_ENV}: "command-live" },
   stdio: ["ignore", "inherit", "ignore"],
-});
+}).once("exit", () => process.exit());
 `;
 
 /**
  * A real HTML server with an agent's environment, started the way an agent CLI starts a command:
- * a detached tool shell, in a group of its own, that names the command and runs the server.
+ * detached, in a group of its own that it leads, named in its environment.
  * Release kills only the pids it started.
  */
 const agentServer = () =>
@@ -2013,7 +2006,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       yield* scanner.stopServer({ pid: job.pid, port: job.port });
       expect(stops).toEqual([["command-live", true]]);
-      // SCIENT-FORK: macos-unreadable-environment — the CLI exits once its tool shell has.
+      // SCIENT-FORK: macos-unreadable-environment — the CLI exits once its command has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
     }).pipe(
