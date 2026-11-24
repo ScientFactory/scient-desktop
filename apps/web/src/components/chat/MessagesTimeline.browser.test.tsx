@@ -887,7 +887,19 @@ describe("MessagesTimeline messages", () => {
 
   it("opens a working parent thread at its end without landing short", async () => {
     setup();
-    const props = baseProps();
+    // SCIENT-FORK:START — Scient opens a thread through its restore (useTimelinePositionRestore.ts),
+    // whose end scroll Legend retargets and corrects within one frame. Switching before the child
+    // has landed counts the child's unfinished end scroll, corrected before any paint; the parent's
+    // opening is observed from the child's positioning receipt instead.
+    const base = baseProps();
+    const childPositioned = Promise.withResolvers<void>();
+    const props = {
+      ...base,
+      onPositionedThreadKeyChange: (key: string | null) => {
+        if (key === base.routeThreadKey) childPositioned.resolve();
+      },
+    };
+    // SCIENT-FORK:END
     const parent = Array.from({ length: 30 }, (_, index) =>
       message(
         `Parent turn ${index}:\n\n${"x ".repeat(200)}`,
@@ -903,6 +915,9 @@ describe("MessagesTimeline messages", () => {
       />,
     );
     expect(screen.text()).toContain("Subagent of");
+    // SCIENT-FORK:START
+    await childPositioned.promise;
+    // SCIENT-FORK:END
     const viewport = props.listRef.current!.getScrollableNode()!;
     const end = () => viewport.scrollHeight - viewport.clientHeight;
     // Distance from the end as each scroll lands, against the content height at that moment.
