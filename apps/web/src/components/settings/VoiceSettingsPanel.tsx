@@ -179,7 +179,7 @@ type ModelCardProps = {
   readonly comparisonLanguages: readonly string[];
   readonly recommendation: SpeechRecommendationRole | undefined;
   readonly recommendationContext?: string | undefined;
-  readonly recommendationLabel?: string | undefined;
+  readonly catalogBadge?: { label: string; variant: "info" | "outline" } | undefined;
   readonly recommendationLanguage?: string | null | undefined;
   readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   readonly busy: boolean;
@@ -309,13 +309,13 @@ function EngineCard(props: ModelCardProps) {
               <span className="text-sm font-medium leading-5">{model.name}</span>
               <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                 <span className="text-xs text-muted-foreground tabular-nums">{size}</span>
-                {props.recommendationLabel ? (
-                  <Badge variant="info" size="sm">
-                    <StarIcon />
-                    {props.recommendationLabel}
+                {props.catalogBadge ? (
+                  <Badge variant={props.catalogBadge.variant} size="sm">
+                    {props.catalogBadge.variant === "info" ? <StarIcon /> : null}
+                    {props.catalogBadge.label}
                   </Badge>
                 ) : null}
-                {props.recommendationContext && !props.recommendationLabel ? (
+                {props.recommendationContext && !props.catalogBadge ? (
                   <Badge variant="outline" size="sm">
                     {props.recommendationContext}
                   </Badge>
@@ -366,7 +366,7 @@ function EngineCard(props: ModelCardProps) {
         <PopoverPopup anchor={infoButton} width="sm" padding="comfortable" align="end">
           <div className="space-y-2">
             <PopoverTitle>{model.name}</PopoverTitle>
-            {props.recommendationContext && props.recommendationLabel ? (
+            {props.recommendationContext && props.catalogBadge ? (
               <Badge variant="outline" size="sm">
                 {props.recommendationContext}
               </Badge>
@@ -877,6 +877,8 @@ function AdvancedSpeechSettings({
   );
 }
 
+const WHISPER_SMALL_MODEL_ID = "handy-computer/whisper-small-gguf";
+
 export function DictationEngineCatalog({
   prepared,
   language,
@@ -921,11 +923,9 @@ export function DictationEngineCatalog({
       [
         recommendedModel,
         recordingModel,
-        ...[
-          MULTILINGUAL_RECORDING_MODEL_ID,
-          HEBREW_RECORDING_MODEL_ID,
-          "handy-computer/whisper-small-gguf",
-        ].map((id) => models.find((model) => model.id === id)),
+        ...[MULTILINGUAL_RECORDING_MODEL_ID, HEBREW_RECORDING_MODEL_ID, WHISPER_SMALL_MODEL_ID].map(
+          (id) => models.find((model) => model.id === id),
+        ),
         ...models,
       ].filter((model) => model !== undefined),
     ),
@@ -935,13 +935,20 @@ export function DictationEngineCatalog({
   );
   const visibleModels = showAllModels ? ordered : defaultModels;
   const hiddenCount = ordered.length - defaultModels.length;
-  const recommendationLabel = (model: EnvironmentSpeechModel) => {
-    if (model.id === HEBREW_RECORDING_MODEL_ID) return gt("Recommended for Hebrew");
-    if (model.id === MULTILINGUAL_RECORDING_MODEL_ID) return gt("Recommended for mixed languages");
+  const catalogBadge = (model: EnvironmentSpeechModel): ModelCardProps["catalogBadge"] => {
+    if (model.id === WHISPER_SMALL_MODEL_ID)
+      return { label: gt("Lightweight multilingual"), variant: "outline" };
+    if (model.id === HEBREW_RECORDING_MODEL_ID)
+      return { label: gt("Recommended for Hebrew"), variant: "info" };
+    if (model.id === MULTILINGUAL_RECORDING_MODEL_ID)
+      return { label: gt("Recommended for mixed languages"), variant: "info" };
     if (model.id === recommendedModel?.id && effectiveLanguage !== "he")
-      return gt("Recommended for {language}", {
-        language: languageLabel(effectiveLanguage, locale),
-      });
+      return {
+        label: gt("Recommended for {language}", {
+          language: languageLabel(effectiveLanguage, locale),
+        }),
+        variant: "info",
+      };
     return undefined;
   };
   return (
@@ -980,7 +987,7 @@ export function DictationEngineCatalog({
               }}
               comparisonLanguages={recommendation?.language ? [recommendation.language] : []}
               recommendation={undefined}
-              recommendationLabel={recommendationLabel(model)}
+              catalogBadge={catalogBadge(model)}
               recommendationContext={
                 recordingModel && recommendedModel && recordingModel.id !== recommendedModel.id
                   ? model.id === recordingModel.id
