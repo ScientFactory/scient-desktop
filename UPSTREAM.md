@@ -2449,9 +2449,9 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   before its group kill. While the server runs, T3's shared descendant poll stops them after the
   CLI exits, so Scient's own sampling was removed. Only the agent's own tree, never terminals.
   Tested in `ClaudeProcessGroup.scient.test.ts`. Reported as pingdotgg/t3code#34459.
-- `ClaudeAdapterV2.ts` (`makeClaudeDescendantPoll`): a failed exit read is retried twice and an unverified cleanup is logged. Tested in `ClaudeAgentSdkQueryRunner.scient.test.ts`.
-- `storageCleanup.ts` (`removeLeftover`): only a missing `gitdir` back-pointer frees leftover metadata; an unreadable one is kept and reported. Tested in `storageCleanup.test.ts`.
-- `McpProviderSessions.ts`: tool-result generations are unique tokens deleted on clear, not per-thread counters kept forever. Tested in `McpProviderSessions.scient.test.ts`.
+- `ClaudeAdapterV2.ts` (`makeClaudeDescendantPoll`): a failed exit read is retried twice and an unverified cleanup is logged. The CLI's pid is a root only as the process (pid and start time) first seen there, and a refresh that waited behind the CLI's exit records nothing, so a reused pid's processes are never stopped. Tested in `ClaudeAgentSdkQueryRunner.scient.test.ts`.
+- `storageCleanup.ts` (`removeLeftover`): only a missing `gitdir` back-pointer frees leftover metadata; an unreadable one is kept and reported. A leftover record holds its admin directory's file identity and back-pointer; the directory is deleted only while it is still that one, after being moved aside and checked again, so a worktree Git creates under the reused name is kept and the record dropped. Tested in `storageCleanup.test.ts`.
+- `McpProviderSessions.ts` and `McpHttpServer.ts` (`withToolResultCapture`): tool-result generations are unique tokens deleted on clear, not per-thread counters kept forever. A generation is issued, and a write naming a provider session accepted, only while that session is the thread's open one, so a call admitted before teardown cannot recreate a closed thread's results. Tested in `McpProviderSessions.scient.test.ts`.
 
 When T3 takes an equal change, use its version and delete the block and its `.scient` test.
 

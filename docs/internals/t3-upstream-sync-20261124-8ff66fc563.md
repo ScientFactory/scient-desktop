@@ -133,31 +133,42 @@ run that started has delivered its queued message (#41307).
 
 ## Scient fixes and cleanups in this alignment
 
+- **Delegated results.** A message, workspace continuation, guest send, provider-initiated turn,
+  pull request wake or link answer that reached a delegated child after it finished, before the
+  parent recorded the result, took over the finished task: the result was lost and the task
+  settled as interrupted. Every command that can start a run on a child now takes the parent's
+  lock first while the child's task is unrecorded, and its dispatch records the finished task and
+  dismisses its open questions before the new run. Replaying unread steers, which can write the
+  parent's task rows, also takes the parent's lock before the child's.
 - **Claude CLI descendants.** T3's shared process-table poll records and stops the CLI's detached
   Bash shells and helpers after it exits. Scient's own per-CLI sampling did the same work a second
   time on macOS and is removed; Scient's watcher for a server that dies stays. A failed read at
-  exit is retried twice and cleanup it could not verify is logged, as Scient's sampling did.
-- **Delegated results.** A message that reached a delegated child just after its wait returned,
-  before the parent recorded the result, took over the finished task: the result was lost and the
-  task settled as interrupted. The dispatch now records the finished task under both threads'
-  locks before the new run starts.
-- **Dev database writes.** `migrate-dev-db` (rebuild and `--drop-resumable`) refuses any database
-  inside the T3 home or a Scient home, every profile included, and hard links to their databases.
-  Scient's managed checkouts under its home stay usable.
+  exit is retried twice and unverified cleanup is logged; the CLI counts as a root only while the
+  same process (pid and start time) is listed, and a refresh that finishes after the exit records
+  nothing.
+- **Dev database writes.** `migrate-dev-db` writes (rebuild and `--drop-resumable`) need a proven
+  scratch destination: inside a Git checkout, such as a worktree's dev home, or the system temp
+  folder, and no hard link to a T3 or Scient home's database. A stopped profile anywhere else is
+  refused.
 - **Install refusals.** Scient's install action waits through T3's failure listener (#41262), which
-  now also keeps a refusal that arrives before the install reply, so the failure toast or summary
-  line shows in either order.
+  also keeps a refusal that arrives before the install reply, so the failure shows in either order.
 - **Reading position.** T3's width-change correction also runs while a thread's open-at-end
   restore is finishing, and decides once per width change, so a wider list that clamps the reader
   to the end turns off neither correction.
 - **TIFF previews.** One stored `BitsPerSample` value, or none, applies to every sample (up to
-  1,024), so two-sample images with alpha (T3's #41196 case) open; a partial list is refused.
-  Scient's decoder does not follow Exif or GPS directories, so T3's pointer-rejection cases have
-  no Scient counterpart.
-- **Storage cleanup (#41386).** Leftover worktree metadata whose back-pointer cannot be read is
-  kept and reported, and retried on the next sweep, instead of deleted.
-- **MCP tool results (#41552).** A thread's result generation is dropped with its session, so the
-  cache no longer keeps one per thread a long-lived server has seen; late writes stay refused.
+  1,024), so two-sample images with alpha (T3's #41196 case) open; a width list shorter than the
+  sample count is refused before decoding. Scient's decoder does not follow Exif or GPS
+  directories, so T3's pointer-rejection cases have no Scient counterpart.
+- **Storage cleanup (#41386).** A leftover worktree admin directory is recorded with its file
+  identity and back-pointer; it is moved aside, checked again and only then deleted, so metadata a
+  reused admin path now belongs to is kept. An unreadable back-pointer keeps the entry for the next
+  sweep.
+- **MCP tool results (#41552).** Result generations are issued and written only for the thread's
+  open session and dropped with it, so the cache no longer keeps one per thread a long-lived server
+  has seen, and a call admitted just before teardown cannot recreate it.
+- **Workspace binding.** Binding evidence uses the configured remote URL with the resolver's rule
+  (#41364) and records the rewritten URL's key as transport, so adding or removing an `insteadOf`
+  mirror rewrite keeps a binding current; bindings stored under the rewritten key still match.
 - **Development runbook.** T3's forge-mirror section no longer tells contributors to repoint
   `origin`.
 - **Tests.** A duplicated workspace read test is removed (its revision check moved into T3's copy)
@@ -165,16 +176,29 @@ run that started has delivered its queued message (#41307).
 
 The marked blocks in T3 files are listed in `UPSTREAM.md` to offer upstream.
 
+## Packaging and signing
+
+- **Single executable (#41326).** T3's CI builds and smoke-tests its single-executable CLI. Scient
+  does not build or ship that executable (its desktop app carries the server as a JavaScript
+  package, covered by the build and desktop smoke), so the step is not taken.
+- **Apple Events (#33869).** The signed macOS entitlements gain
+  `com.apple.security.automation.apple-events`, with Scient's usage text, so terminal and agent
+  commands can ask for Automation consent; macOS shows its own prompt before any app is
+  controlled.
+
 ## Known limits
 
-- **Workspace binding** reads `git remote -v`, which applies `insteadOf` rewrites itself; the
-  resolver's new `insteadOf` handling (#41364) is not needed there.
+- A binding whose old evidence picked a different remote, because a rewrite made the preferred
+  remote's URL a local path, is re-verified once with a new generation.
+- Guest sends, provider-initiated turns, pull request wakes and link answers share the delegated
+  settlement path tested with messages and workspace continuations, without tests of their own.
+- The storage cleanup's move-aside step has not run on Windows.
 
 ## Review
 
-Independent Codex reviews (GPT-6.2 Sol) are in `reviews/t3-sync-4ce9-20261123/`. The first found
-one P1, three P2s and two P3s; its re-check found one P1, four P2s and three P3s. All are fixed
-above.
+Independent Codex reviews (GPT-6.2 Sol) are in `reviews/t3-sync-4ce9-20261123/`: the merge review
+(one P1, three P2s, two P3s), its re-check (one P1, four P2s, three P3s) and a final review of the
+whole branch (one P1, seven P2s, three P3s). All are fixed above.
 
 ## Analytics
 
