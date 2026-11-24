@@ -691,7 +691,10 @@ export function NotebookCell(props: {
           </Button>
         ) : isCode && !outputsFolded ? (
           <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
-            {activity === null && cell.outputs.length > 0 && !producedInLiveSession ? (
+            {activity === null &&
+            cell.outputs.length > 0 &&
+            !producedInLiveSession &&
+            props.place.labelSavedOutputs === true ? (
               <p className="flex flex-wrap items-center gap-x-1.5 px-3 pt-1 text-[11px] leading-4 text-muted-foreground">
                 <span>
                   <T>Saved output</T>

@@ -615,8 +615,9 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
   show it. Use **Cell actions** to collapse a heading's section or hide a cell's outputs. The file
   keeps those folds when you reopen it in Scient or JupyterLab.
 - Point at a cell's number to run it, or choose **Run all**. Cells run in order and stop at the
-  first failure; a summary under the toolbar shows the first failed cell, how many later cells were
-  skipped, and a button to jump directly to it. Click code to edit it at the pointer, or click a
+  first failure. A card beside **Run all** names the failed cell and how many later cells were
+  skipped, with a button to jump to it. Close the card; the alert button beside **Run all** reopens
+  it until the cell runs cleanly. A run that succeeds shows nothing. Click code to edit it at the pointer, or click a
   Text cell to edit its Markdown.
 - If a cell needs setup from earlier cells, select it and choose **Run from top through this cell**
   from the Run menu. When the selected cell reads a name that only an earlier, unrun cell defines,
@@ -624,8 +625,8 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
   name that an earlier cell defines, the error offers that replay if the cell has not run in this
   session, or a jump to the cell if it failed. Full tracebacks stay collapsed under **Details**.
 - Text, figures, observed written file links and errors appear below the cell that produced them.
-  Silent cells show a compact **No output** line, and outputs from an earlier session show when
-  they ran and that they have not run in the current session. Choose **Show outputs** if a cell's
+  Silent cells show a compact **No output** line. Once any cell has run in this session, outputs
+  from an earlier session show when they ran and that they have not run in the current session. Choose **Show outputs** if a cell's
   output is folded.
 - A dot and dimmed output mark a cell whose code changed or whose output may be out of date.
   Scient uses names in the code to guess which cells depend on earlier ones.
@@ -651,7 +652,9 @@ Open a Jupyter notebook (`.ipynb`) to edit its cells and see its saved outputs.
    from top to bottom. It saves the overrides in an `injected-parameters` cell and updates the
    notebook outputs after success. A failed or stopped run keeps the previous outputs.
 
-The fresh run shows the current cell and a **Stop** action. Before replacing the saved outputs,
+While the fresh run goes on, the Run button shows the current cell and **Stop** sits beside it;
+editing resumes when it finishes. Problems, such as a stopped run or outputs that could not be
+saved, open in the same card as a failed **Run all**. Before replacing the saved outputs,
 Scient keeps the current notebook in **Retained file versions**. Choose **Restore…** there to
 restore its source and outputs together.
 

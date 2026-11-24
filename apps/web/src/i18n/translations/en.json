@@ -17883,24 +17883,9 @@
   "f0ae41af155d3954": "Not run in this session",
   "d25e6daf2f07ea16": "{count, plural, one {# line} other {# lines}}",
   "3223063836938dfd": "Hide code",
-  "b413a01e7be2a332": "Stopping notebook…",
-  "796668261d3dc525": "Saving notebook run…",
-  "e45319128c84b38b": [
-    "Cell ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " of ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "25b61317c83e4d0c": "Starting notebook…",
-  "c1b9dfe597af3991": "Editing resumes when the fresh run finishes",
+  "04016f2694b0ba4f": "Cell {cell} of {total}",
+  "e20afbc699f476c2": "Problems in the last run",
+  "388a36d624d81f99": "Editing resumes when the fresh run finishes",
   "50c629be62333640": [
     {
       "i": 1,

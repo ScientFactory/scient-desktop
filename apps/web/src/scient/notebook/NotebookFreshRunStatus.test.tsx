@@ -1,39 +1,47 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
-import { ComputeSessionId, type NotebookFreshRun } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+import { ComputeSessionId } from "@t3tools/contracts";
 
-vi.mock("gt-react", async (importOriginal) =>
-  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
-);
-
-import { NotebookFreshRunStatus } from "./NotebookFreshRunStatus";
+import { notebookFreshRunProblems } from "./NotebookFreshRunStatus";
 
 const runId = ComputeSessionId.make("fresh");
-const render = (job: NotebookFreshRun) =>
-  renderToStaticMarkup(<NotebookFreshRunStatus job={job} running={false} message={null} />);
 
-describe("fresh run status", () => {
-  it("says nothing once a run succeeded", () => {
-    expect(render({ runId, outcome: { _tag: "completed", notebookSaved: true } })).toBe("");
+describe("fresh run problems", () => {
+  it("has nothing to say once a run succeeded or while one runs", () => {
     expect(
-      render({
-        runId,
-        outcome: { _tag: "failed", message: "unused" },
-        sweepSummary: { total: 2, saved: 2, failures: [] },
-      }),
-    ).not.toContain("runs saved");
+      notebookFreshRunProblems(
+        { runId, outcome: { _tag: "completed", notebookSaved: true } },
+        false,
+        null,
+      ),
+    ).toBeNull();
+    expect(
+      notebookFreshRunProblems(
+        {
+          runId,
+          outcome: { _tag: "completed", notebookSaved: true },
+          sweepSummary: { total: 2, saved: 2, failures: [] },
+        },
+        false,
+        null,
+      ),
+    ).toBeNull();
+    expect(notebookFreshRunProblems({ runId }, true, "stale error")).toBeNull();
   });
 
-  it("reports a notebook that could not be saved", () => {
-    expect(
-      render({
+  it("reports a notebook that could not be saved, keyed to its run", () => {
+    const problems = notebookFreshRunProblems(
+      {
         runId,
         outcome: {
           _tag: "completed",
           notebookSaved: false,
           notebookMessage: "The notebook changed during the run.",
         },
-      }),
-    ).toContain("The notebook changed during the run.");
+      },
+      false,
+      null,
+    );
+    expect(problems?.message).toBe("The notebook changed during the run.");
+    expect(problems?.key).toContain("fresh");
   });
 });

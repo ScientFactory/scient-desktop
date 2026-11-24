@@ -81,6 +81,8 @@ export interface NotebookPlace {
   readonly runtimeInspection?: ComputeRuntimeInspection | null | undefined;
   readonly dependencyRecovery?: ComponentProps<typeof ComputeOutputView>["dependencyRecovery"];
   readonly cellRuns?: ReadonlyMap<string, ComputeExecutionRecord> | undefined;
+  /** Whether any cell has output from this session, so saved outputs need telling apart. */
+  readonly labelSavedOutputs?: boolean | undefined;
   readonly onJumpToCell?: ((cellId: string) => void) | undefined;
   /** Adds text from a cell's output to the chat as a quote of that cell, when a chat is open. */
   readonly askAboutCell?: ((cellId: string, text: string) => void) | undefined;

@@ -1,84 +1,82 @@
 import type { NotebookFreshRun } from "@t3tools/contracts";
-import { T, Var } from "gt-react";
-import { Button } from "~/components/ui/button";
+import { T, useGT, Var } from "gt-react";
 
-// Shows a fresh run while it runs and anything that went wrong; a run that succeeded says nothing.
-export function NotebookFreshRunStatus(props: {
-  readonly job: NotebookFreshRun | null;
-  readonly running: boolean;
+/** What a running fresh run is doing, short enough to sit in the Run button. */
+export function useNotebookFreshRunProgress(
+  job: NotebookFreshRun | null,
+  running: boolean,
+): string | null {
+  const gt = useGT();
+  if (!running) return null;
+  const progress = job?.progress;
+  switch (progress?.phase) {
+    case "stopping":
+      return gt("Stopping…");
+    case "saving":
+      return gt("Saving…");
+    case "running":
+      return gt("Cell {cell} of {total}", { cell: progress.cell, total: progress.total });
+    default:
+      return gt("Starting…");
+  }
+}
+
+export interface NotebookFreshRunProblems {
+  readonly key: string;
   readonly message: string | null;
-  readonly onStop?: () => void;
-}) {
-  const { job, running } = props;
+  readonly publicationMessage: string | undefined;
+  readonly sweep: NonNullable<NotebookFreshRun["sweepSummary"]> | undefined;
+}
+
+/** The problems a finished fresh run left, or null when it succeeded. */
+export function notebookFreshRunProblems(
+  job: NotebookFreshRun | null,
+  running: boolean,
+  error: string | null,
+): NotebookFreshRunProblems | null {
+  if (running) return null;
   const outcome = job?.outcome;
   const message =
-    props.message ??
-    (outcome?._tag === "failed" ? outcome.message : (outcome?.notebookMessage ?? null));
+    error ?? (outcome?._tag === "failed" ? outcome.message : (outcome?.notebookMessage ?? null));
   const publicationMessage = outcome?._tag === "completed" ? outcome.message : undefined;
-  const progress = job?.progress;
   const sweep =
-    job?.outcome === undefined || job.sweepSummary?.failures.length === 0
+    outcome === undefined || job?.sweepSummary?.failures.length === 0
       ? undefined
-      : job.sweepSummary;
-  if (!running && message === null && publicationMessage === undefined && sweep === undefined)
-    return null;
+      : job?.sweepSummary;
+  if (message === null && publicationMessage === undefined && sweep === undefined) return null;
+  return { key: `${job?.runId ?? ""}:${message ?? ""}`, message, publicationMessage, sweep };
+}
+
+export function NotebookFreshRunProblemText({
+  problems: { message, publicationMessage, sweep },
+}: {
+  readonly problems: NotebookFreshRunProblems;
+}) {
   return (
-    <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
-      <div role="status" className="min-w-0 tabular-nums">
-        {running ? (
-          <>
-            <p className="font-medium text-foreground">
-              {progress?.phase === "stopping" ? (
-                <T>Stopping notebook…</T>
-              ) : progress?.phase === "saving" ? (
-                <T>Saving notebook run…</T>
-              ) : progress?.phase === "running" ? (
-                <T>
-                  Cell <Var>{progress.cell}</Var> of <Var>{progress.total}</Var>
-                </T>
-              ) : (
-                <T>Starting notebook…</T>
-              )}
-            </p>
-            <p>
-              <T>Editing resumes when the fresh run finishes</T>
-            </p>
-          </>
-        ) : null}
-        {publicationMessage === undefined ? null : <p>{publicationMessage}</p>}
-        {sweep === undefined ? null : (
-          <>
-            <p>
-              <T>
-                <Var>{sweep.saved}</Var> of <Var>{sweep.total}</Var> runs saved
-              </T>
-            </p>
-            <ul className="max-h-20 overflow-auto">
-              {sweep.failures.map(({ parameters, message, index }) => (
-                <li key={index}>
-                  {Object.entries(parameters)
-                    .map(([name, value]) => `${name} = ${value}`)
-                    .join(", ")}{" "}
-                  · {message}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {message !== null &&
-        (sweep === undefined || sweep.failures.every((failure) => failure.message !== message)) ? (
-          <p>{message}</p>
-        ) : null}
-      </div>
-      {running && job && props.onStop ? (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={progress?.phase === "saving" || progress?.phase === "stopping"}
-          onClick={props.onStop}
-        >
-          <T>Stop</T>
-        </Button>
+    <div className="min-w-0 space-y-1 tabular-nums">
+      {publicationMessage === undefined ? null : <p>{publicationMessage}</p>}
+      {sweep === undefined ? null : (
+        <>
+          <p>
+            <T>
+              <Var>{sweep.saved}</Var> of <Var>{sweep.total}</Var> runs saved
+            </T>
+          </p>
+          <ul className="max-h-20 overflow-auto text-muted-foreground">
+            {sweep.failures.map(({ parameters, message: failure, index }) => (
+              <li key={index}>
+                {Object.entries(parameters)
+                  .map(([name, value]) => `${name} = ${value}`)
+                  .join(", ")}{" "}
+                · {failure}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {message !== null &&
+      (sweep === undefined || sweep.failures.every((failure) => failure.message !== message)) ? (
+        <p>{message}</p>
       ) : null}
     </div>
   );

@@ -142,6 +142,8 @@ interface ComputeFileActionsProps {
     readonly runAll: () => void;
     readonly runAllDisabled: boolean;
     readonly menu: ReactNode;
+    /** Replaces the label while a run started elsewhere goes on, such as "Cell 2 of 5". */
+    readonly progress?: { readonly label: string; readonly note: string } | undefined;
   };
   /** Controls placed just before the Run button. */
   readonly leadingActions?: ReactNode;
@@ -1128,20 +1130,23 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       ]
         .filter(Boolean)
         .join(" · ") || undefined;
+    const notebookProgress = notebookRun?.progress;
     const primaryRunTooltip =
-      notebookRun !== undefined
-        ? notebookRun.requiresLiveRuntime && !runtimeToolbar.canRun
-          ? runtimeToolbar.label
-          : notebookRun.label
-        : primaryRunBlocked
-          ? (matlabFileCapability?.reason ?? gt("This definition is called from a script."))
-          : primary.slice === null
-            ? gt("Nothing to run")
-            : !runtimeToolbar.canRun
-              ? runtimeToolbar.label
-              : busy
-                ? gt("Another compute action is finishing")
-                : primary.label;
+      notebookProgress !== undefined
+        ? notebookProgress.note
+        : notebookRun !== undefined
+          ? notebookRun.requiresLiveRuntime && !runtimeToolbar.canRun
+            ? runtimeToolbar.label
+            : notebookRun.label
+          : primaryRunBlocked
+            ? (matlabFileCapability?.reason ?? gt("This definition is called from a script."))
+            : primary.slice === null
+              ? gt("Nothing to run")
+              : !runtimeToolbar.canRun
+                ? runtimeToolbar.label
+                : busy
+                  ? gt("Another compute action is finishing")
+                  : primary.label;
 
     useImperativeHandle(
       ref,
@@ -1313,19 +1318,22 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   focus={notebookRun ? "edge" : undefined}
                   aria-label={
                     notebookRun
-                      ? notebookRun.label
+                      ? (notebookProgress?.label ?? notebookRun.label)
                       : primaryRunBlocked
                         ? gt("MATLAB definition file")
                         : primary.label
                   }
                   disabled={
-                    notebookRun ? notebookRunDisabled : liveRunDisabled || primary.slice === null
+                    notebookRun
+                      ? notebookProgress !== undefined || notebookRunDisabled
+                      : liveRunDisabled || primary.slice === null
                   }
                   onClick={() =>
                     notebookRun ? notebookRun.run() : void run(primary.kind, primary.slice)
                   }
                 >
-                  {operation === primary.kind && !notebookRun ? (
+                  {(operation === primary.kind && !notebookRun) ||
+                  notebookProgress !== undefined ? (
                     <LoaderCircle className="animate-spin" />
                   ) : (
                     <Play />
@@ -1336,7 +1344,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     }
                   >
                     {notebookRun
-                      ? notebookRun.label
+                      ? (notebookProgress?.label ?? notebookRun.label)
                       : primaryRunBlocked
                         ? gt("Definition", { $context: "a MATLAB function definition file" })
                         : primary.label}

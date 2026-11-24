@@ -106,7 +106,9 @@ vi.mock("~/state/use-atom-command", async (original) => ({
             ? savedArtifactsNotebook
             : input.path === "missing-setup.ipynb"
               ? recoveryNotebook
-              : notebook,
+              : input.path === "failed-batch.ipynb"
+                ? failedBatchNotebook
+                : notebook,
         );
     if (command === computeEnvironment.notebookEdit)
       return async () => AsyncResult.success({ revision: "1.1", refused: [] });
@@ -327,6 +329,16 @@ const recoveryNotebook: NotebookView = {
   ],
 };
 
+// The same notebook after Run all recorded the setup cell's failure from this session.
+const failedBatchNotebook: NotebookView = {
+  ...recoveryNotebook,
+  cells: recoveryNotebook.cells.map((entry) =>
+    entry.id === "setup"
+      ? { ...entry, run: { execution: "e1", code: "hash", at: "2026-11-23T20:00:01.000Z", ms: 1 } }
+      : entry,
+  ),
+};
+
 it.each(screenshots ? (["light", "dark"] as const) : (["light"] as const))(
   "replays through a saved missing-name error without running later cells in %s",
   async (theme) => {
@@ -417,8 +429,11 @@ it("replays through the selected cell and labels saved and empty output inline",
   );
   const outputCell = page.elementLocator(document.querySelector('[data-notebook-cell="compute"]')!);
   await expect.element(setupCell.getByText("No output", { exact: true })).toBeVisible();
-  await expect.element(outputCell.getByText("Saved output", { exact: true })).toBeVisible();
-  await outputCell.getByText("Saved output", { exact: true }).click();
+  // Nothing has run in this session, so saved outputs need no label.
+  await expect
+    .element(outputCell.getByText("Saved output", { exact: true }))
+    .not.toBeInTheDocument();
+  await outputCell.click();
   await screen.getByRole("button", { name: "Choose Python code to run" }).click();
   await page.getByRole("menuitem", { name: "Run from top through this cell" }).click();
   await vi.waitFor(() => expect(submitCells).toHaveBeenCalledOnce());
@@ -659,7 +674,7 @@ it("receives a server-started job while idle and stops that job", async () => {
   await expect.element(slider).toBeDisabled();
   await expect.element(screen.getByText("Cell 2 of 4", { exact: true })).toBeVisible();
   await screen.getByRole("button", { name: "Stop" }).click();
-  await expect.element(screen.getByText("The notebook run was stopped.")).toBeVisible();
+  await expect.element(page.getByText("The notebook run was stopped.")).toBeVisible();
   expect(freshStop).toHaveBeenCalledExactlyOnceWith({
     environmentId,
     input: { cwd: "/project", scriptPath: "threshold.ipynb", runId: job.runId },
@@ -714,8 +729,8 @@ it("lets the author choose sweep values and shows the failed settings", async ()
     registry.set(freshRunAtom, AsyncResult.success({ job, settledRunId: job.runId })),
   );
   await expect.element(slider).toBeEnabled();
-  await expect.element(screen.getByText("1 of 2 runs saved", { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("threshold = 0.3 · A cell failed.")).toBeVisible();
+  await expect.element(page.getByText("1 of 2 runs saved", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("threshold = 0.3 · A cell failed.")).toBeVisible();
   expect(freshStart).toHaveBeenCalledExactlyOnceWith({
     environmentId,
     input: {
@@ -733,7 +748,7 @@ it("shows a compact Run all failure summary with jump, skipped count, and observ
     environmentId,
     threadId: threadRef.threadId,
     cwd: "/project",
-    relativePath: "missing-setup.ipynb",
+    relativePath: "failed-batch.ipynb",
   });
   const openFile = vi.fn();
   using _openFile = vi
@@ -749,7 +764,7 @@ it("shows a compact Run all failure summary with jump, skipped count, and observ
     contextId,
     environmentId,
     cwd: "/project",
-    relativePath: "missing-setup.ipynb",
+    relativePath: "failed-batch.ipynb",
     ownerKey: contextId,
   });
   useComputeContextStore.getState().reserveSession({ contextId, sessionId });
@@ -793,7 +808,7 @@ it("shows a compact Run all failure summary with jump, skipped count, and observ
       source: {
         _tag: "document",
         origin: "cell",
-        path: "missing-setup.ipynb",
+        path: "failed-batch.ipynb",
         bufferState: "saved",
         revision: null,
         range: null,
@@ -843,7 +858,7 @@ it("shows a compact Run all failure summary with jump, skipped count, and observ
         <ScientNotebookSurface
           environmentId={environmentId}
           cwd="/project"
-          relativePath="missing-setup.ipynb"
+          relativePath="failed-batch.ipynb"
           threadRef={threadRef}
           fileRevision="1.0"
         />
@@ -851,8 +866,9 @@ it("shows a compact Run all failure summary with jump, skipped count, and observ
     </RegistryContext.Provider>,
   );
 
-  await expect.element(screen.getByText("Cell 1 failed · 2 later cells skipped")).toBeVisible();
-  const jump = screen.getByRole("button", { name: "Jump to cell 1" }).first();
+  // The failure opens its card by itself beside the Run button.
+  await expect.element(page.getByText("Cell 1 failed · 2 later cells skipped")).toBeVisible();
+  const jump = page.getByRole("button", { name: "Jump to cell 1" }).first();
   await expect.element(jump).toBeVisible();
   await jump.click();
   await expect
@@ -868,4 +884,15 @@ it("shows a compact Run all failure summary with jump, skipped count, and observ
   await expect.element(wroteFile).toBeVisible();
   await wroteFile.click();
   expect(openFile).toHaveBeenCalledWith(threadRef, "animation.gif");
+
+  // Jumping closed the card; the alert beside Run reopens it.
+  await expect
+    .element(page.getByText("Cell 1 failed · 2 later cells skipped"))
+    .not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Problems in the last run" }).click();
+  await expect.element(page.getByText("Cell 1 failed · 2 later cells skipped")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect
+    .element(page.getByText("Cell 1 failed · 2 later cells skipped"))
+    .not.toBeInTheDocument();
 });

@@ -7,7 +7,7 @@ import {
   type NotebookFreshRunInput,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { BookOpen, CircleAlert, ListTree, Plus, Square, Variable } from "lucide-react";
+import { BookOpen, ListTree, Plus, Square, Variable } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useStore } from "zustand";
@@ -55,7 +55,12 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { NotebookCell, type NotebookCellEdge, type NotebookCellHandlers } from "./NotebookCell";
 import { NotebookOutline } from "./NotebookOutline";
 import { NotebookFreshRunWarning } from "./NotebookFreshRunWarning";
-import { NotebookFreshRunStatus } from "./NotebookFreshRunStatus";
+import {
+  NotebookFreshRunProblemText,
+  notebookFreshRunProblems,
+  useNotebookFreshRunProgress,
+} from "./NotebookFreshRunStatus";
+import { NotebookRunNotice } from "./NotebookRunNotice";
 import { NotebookSweepDialog } from "./NotebookSweepDialog";
 import {
   notebookParameterChanged,
@@ -216,14 +221,16 @@ export default function ScientNotebookSurface(props: {
     Record<string, string>
   > | null>(null);
   const runningFresh = preparingFresh || fresh.running;
-  const runStatus = (
-    <NotebookFreshRunStatus
-      job={fresh.job}
-      running={runningFresh}
-      message={fresh.error}
-      {...(canStopFresh ? { onStop: () => void fresh.stop() } : {})}
-    />
-  );
+  const freshProgress = useNotebookFreshRunProgress(fresh.job, runningFresh);
+  const freshProblems = notebookFreshRunProblems(fresh.job, runningFresh, fresh.error);
+  const freshPhase = fresh.job?.progress?.phase;
+  const stopFresh =
+    runningFresh && canStopFresh && fresh.job !== null
+      ? {
+          stop: () => void fresh.stop(),
+          disabled: freshPhase === "saving" || freshPhase === "stopping",
+        }
+      : null;
   const draftKey = notebookRunDraftKey(props.environmentId, props.cwd, props.relativePath);
   const draftParameters = useNotebookRunDrafts((state) => state.drafts[draftKey]?.parameters);
   const draftInputs = useNotebookRunDrafts((state) => state.drafts[draftKey]?.inputs);
@@ -312,6 +319,23 @@ export default function ScientNotebookSurface(props: {
     reportFailure: false,
   });
   const cellRuns = latestCellRuns(model.executions, props.relativePath);
+  const liveGeneration = liveSession?.generation ?? null;
+  // Cells whose shown output came from this session, rather than from the file or a fresh run.
+  const shownFromSession = useStore(controller.store, (state) =>
+    liveGeneration === null
+      ? ""
+      : state.order
+          .filter((id) => {
+            const run = state.liveRuns[id];
+            return (
+              run !== undefined &&
+              run.generation === liveGeneration &&
+              state.cells[id]?.run?.execution === run.executionId
+            );
+          })
+          .join("\n"),
+  );
+  const [closedProblem, setClosedProblem] = useState<string | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the notebook on open and whenever the file changes on disk.
   useEffect(() => {
@@ -642,8 +666,27 @@ export default function ScientNotebookSurface(props: {
           <Button size="sm" variant="ghost" focus="edge" onClick={() => setReaderOpen(false)}>
             <T>Back to notebook</T>
           </Button>
+          <div
+            role="status"
+            className="ms-auto flex min-w-0 items-center gap-2 px-2 text-xs text-muted-foreground"
+          >
+            {freshProgress === null ? null : <span className="tabular-nums">{freshProgress}</span>}
+            {freshProblems === null ? null : (
+              <NotebookFreshRunProblemText problems={freshProblems} />
+            )}
+          </div>
+          {stopFresh === null ? null : (
+            <Button
+              size="xs"
+              variant="outline"
+              focus="edge"
+              disabled={stopFresh.disabled}
+              onClick={stopFresh.stop}
+            >
+              {gt("Stop", { $context: "verb, stops running cells" })}
+            </Button>
+          )}
         </div>
-        {runStatus}
         <NotebookReader
           environmentId={props.environmentId}
           threadRef={props.threadRef}
@@ -718,7 +761,7 @@ export default function ScientNotebookSurface(props: {
   );
   const runAllDisabled = busy || restarting || runningFresh;
   const freshRunDisabled = runAllDisabled || !canRerun || inputs === undefined || invalidOverrides;
-  const batchFailure =
+  const sessionFailure =
     busy || runningFresh
       ? null
       : notebookBatchFailureSummary({
@@ -730,6 +773,11 @@ export default function ScientNotebookSurface(props: {
           lastNotebookBatch: liveSession?.lastNotebookBatch,
           liveSessionGeneration: liveSession?.generation ?? null,
         });
+  // A fresh run that replaced the failed cell's output leaves nothing to report.
+  const batchFailure =
+    sessionFailure !== null && shownFromSession.split("\n").includes(sessionFailure.cellId)
+      ? sessionFailure
+      : null;
   // Promoted to the top of the Run menu when the selected cell reads setup that has not run.
   const selectedNeedsSetup =
     selected !== null &&
@@ -757,6 +805,8 @@ export default function ScientNotebookSurface(props: {
     runtimeInspection,
     dependencyRecovery: { contextId, onSettled: model.refresh },
     cellRuns,
+    // Saved outputs need a label only beside outputs from this session.
+    labelSavedOutputs: shownFromSession !== "",
     onJumpToCell: jumpToCell,
     askAboutCell: askAbout === null ? undefined : askAboutCell,
     replay:
@@ -792,6 +842,13 @@ export default function ScientNotebookSurface(props: {
               run: hasParameterChanges ? () => setFreshConfirmation(validOverrides) : runAllCells,
               runAll: runAllCells,
               runAllDisabled,
+              progress:
+                freshProgress === null
+                  ? undefined
+                  : {
+                      label: freshProgress,
+                      note: gt("Editing resumes when the fresh run finishes"),
+                    },
               menu: (
                 <>
                   {selectedNeedsSetup ? runThroughItem : null}
@@ -855,19 +912,6 @@ export default function ScientNotebookSurface(props: {
             }}
             leadingActions={
               <>
-                {busy ? (
-                  <ScientTooltip content={gt("Stop", { $context: "verb, stops running cells" })}>
-                    <Button
-                      size="icon-xs"
-                      variant="outline"
-                      focus="edge"
-                      aria-label={gt("Stop", { $context: "verb, stops running cells" })}
-                      onClick={stop}
-                    >
-                      <Square />
-                    </Button>
-                  </ScientTooltip>
-                ) : null}
                 <ScientTooltip content={gt("Reader view")}>
                   <Button
                     size="icon-xs"
@@ -949,6 +993,62 @@ export default function ScientNotebookSurface(props: {
                     <Variable />
                   </Button>
                 </ScientTooltip>
+                {batchFailure === null && freshProblems === null ? null : (
+                  <NotebookRunNotice
+                    problemKey={`${batchFailure?.batchId ?? ""}|${freshProblems?.key ?? ""}`}
+                    closedFor={closedProblem}
+                    onClosedForChange={setClosedProblem}
+                  >
+                    {(close) => (
+                      <>
+                        {batchFailure === null ? null : (
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                            <p className="font-medium text-destructive">
+                              {batchFailure.skippedCount > 0
+                                ? gt(
+                                    "Cell {cell} failed · {count, plural, one {# later cell skipped} other {# later cells skipped}}",
+                                    {
+                                      cell: batchFailure.cellNumber,
+                                      count: batchFailure.skippedCount,
+                                    },
+                                  )
+                                : gt("Cell {cell} failed", { cell: batchFailure.cellNumber })}
+                            </p>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              focus="edge"
+                              onClick={() => {
+                                close();
+                                jumpToCell(batchFailure.cellId);
+                              }}
+                            >
+                              {gt("Jump to cell {cell}", { cell: batchFailure.cellNumber })}
+                            </Button>
+                          </div>
+                        )}
+                        {freshProblems === null ? null : (
+                          <NotebookFreshRunProblemText problems={freshProblems} />
+                        )}
+                      </>
+                    )}
+                  </NotebookRunNotice>
+                )}
+                {busy || stopFresh !== null ? (
+                  <ScientTooltip content={gt("Stop", { $context: "verb, stops running cells" })}>
+                    <Button
+                      size="icon-xs"
+                      variant="outline"
+                      focus="edge"
+                      aria-label={gt("Stop", { $context: "verb, stops running cells" })}
+                      disabled={!busy && stopFresh?.disabled}
+                      onClick={busy ? stop : stopFresh?.stop}
+                    >
+                      <Square />
+                    </Button>
+                  </ScientTooltip>
+                ) : null}
               </>
             }
           />
@@ -991,33 +1091,6 @@ export default function ScientNotebookSurface(props: {
           />
         </div>
       </div>
-      {batchFailure === null ? null : (
-        <div
-          role="status"
-          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-destructive/5 px-3 py-1.5 text-xs"
-        >
-          <p className="flex min-w-0 items-center gap-1.5 text-destructive">
-            <CircleAlert className="size-3.5 shrink-0" aria-hidden />
-            <span className="truncate font-medium">
-              {batchFailure.skippedCount > 0
-                ? gt(
-                    "Cell {cell} failed · {count, plural, one {# later cell skipped} other {# later cells skipped}}",
-                    { cell: batchFailure.cellNumber, count: batchFailure.skippedCount },
-                  )
-                : gt("Cell {cell} failed", { cell: batchFailure.cellNumber })}
-            </span>
-          </p>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            focus="edge"
-            onClick={() => jumpToCell(batchFailure.cellId)}
-          >
-            {gt("Jump to cell {cell}", { cell: batchFailure.cellNumber })}
-          </Button>
-        </div>
-      )}
       {parameters.length === 0 ? null : (
         <div className="max-h-40 shrink-0 overflow-auto border-b border-border/60">
           <NotebookParameterControls
@@ -1082,7 +1155,6 @@ export default function ScientNotebookSurface(props: {
           </DialogFooter>
         </DialogPopup>
       </Dialog>
-      {runStatus}
       <div className="flex min-h-0 flex-1">
         {dockedOutline && dockOpen ? (
           <nav
