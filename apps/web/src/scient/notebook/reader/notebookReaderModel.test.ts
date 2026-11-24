@@ -62,7 +62,7 @@ it("matches normalized settings and changes only values from this notebook", () 
   const old = { ...alternative, codeSha256: "b".repeat(64) };
   const legacy = { ...alternative, notebookDigestVersion: undefined };
   expect(readerBaseline([old, legacy, alternative], null, currentSource)).toBe(alternative);
-  expect(readerBaseline([old, legacy], null, currentSource)).toBeUndefined();
+  expect(readerBaseline([old], null, currentSource)).toBeUndefined();
   expect(alternativeAt([published, legacy], published, { x: "2" }, currentSource)).toEqual({
     current: null,
     sourceStatus: "unconfirmed",
@@ -85,4 +85,31 @@ it("matches normalized settings and changes only values from this notebook", () 
     "0.6",
     "0.7",
   ]);
+});
+
+it("opens the newest legacy sweep setting and browses retained settings with unconfirmed source", () => {
+  const older = {
+    revision: ComputeResultRevisionId.make("r000000000001"),
+    finishedAt: "2026-11-23T10:00:00Z",
+    parameters: [{ name: "x", source: "override", value: "1" }],
+    values: [{ output: "metrics.json", pointer: "/n", value: "10" }],
+    outputs: [],
+  } satisfies NotebookAlternatives["runs"][number];
+  const newest = {
+    ...older,
+    revision: ComputeResultRevisionId.make("r000000000002"),
+    finishedAt: "2026-11-23T11:00:00Z",
+    parameters: [{ name: "x", source: "override", value: "2" }],
+    values: [{ output: "metrics.json", pointer: "/n", value: "20" }],
+  } satisfies NotebookAlternatives["runs"][number];
+  const runs = [newest, older];
+  const baseline = readerBaseline(runs, null, currentSource);
+  expect(alternativeAt(runs, baseline, {}, currentSource, null)).toEqual({
+    current: newest,
+    sourceStatus: "unconfirmed",
+  });
+  expect(alternativeAt(runs, baseline, { x: "1" }, currentSource, null)).toEqual({
+    current: older,
+    sourceStatus: "unconfirmed",
+  });
 });

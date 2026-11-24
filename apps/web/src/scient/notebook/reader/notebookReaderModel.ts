@@ -47,7 +47,8 @@ export function readerBaseline(
 ): Alternative | undefined {
   return (
     alternatives.find((run) => run.revision === publishedRevision) ??
-    alternatives.find((run) => savedSourceStatus(run, sourceSha256) === "current")
+    alternatives.find((run) => savedSourceStatus(run, sourceSha256) === "current") ??
+    alternatives.find((run) => run.notebookDigestVersion === undefined)
   );
 }
 
@@ -61,6 +62,7 @@ export function alternativeAt(
   baseline: Alternative | undefined,
   pending: Readonly<Record<string, string>>,
   sourceSha256: string | undefined,
+  publishedRevision?: string | null,
 ): {
   readonly current: Alternative | null;
   readonly sourceStatus: ReturnType<typeof savedSourceStatus> | null;
@@ -74,16 +76,20 @@ export function alternativeAt(
   if (sameSetting && baselineStatus === "current") {
     return { current: baseline, sourceStatus: "current" };
   }
+  const browsingLegacySweep =
+    publishedRevision == null && baseline.notebookDigestVersion === undefined;
+  let legacyMatch: Alternative | undefined;
   let sourceStatus: ReturnType<typeof savedSourceStatus> | null = null;
   for (const run of alternatives) {
     if (settingKey(parameterValues(run.parameters)) !== key) continue;
     const status = savedSourceStatus(run, sourceSha256);
     if (status === "current") return { current: run, sourceStatus: status };
+    if (browsingLegacySweep && run.notebookDigestVersion === undefined) legacyMatch ??= run;
     if (sourceStatus !== "earlier") sourceStatus = status;
   }
-  return sameSetting
-    ? { current: baseline, sourceStatus: baselineStatus }
-    : { current: null, sourceStatus };
+  if (sameSetting) return { current: baseline, sourceStatus: baselineStatus };
+  if (legacyMatch !== undefined) return { current: legacyMatch, sourceStatus: "unconfirmed" };
+  return { current: null, sourceStatus };
 }
 
 export function renderAlternativeProse(

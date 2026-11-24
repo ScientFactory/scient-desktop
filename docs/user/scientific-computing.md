@@ -674,10 +674,10 @@ selected revision. If Reader cannot preview a file, choose **Open in file viewer
 saved file is still available.
 
 **Reset** returns to the published run or, if none exists, the newest saved setting that matches
-the current notebook. Reader uses saved linked results. View ordinary cell outputs in the notebook
-editor. Code starts folded; click a cell's language label to see the source saved with that run
-when it is available. The line
-under the parameters shows the saved run's time or tells you when no saved run matches.
+the current notebook. If there is no matching setting, Reader can start with an older setting
+whose source is unconfirmed. View ordinary cell outputs in the notebook editor. Code starts
+folded. Click a cell's language label to see the source saved with that run when available. The
+line under the parameters shows the saved run's time or tells you when no saved run matches.
 When a setting was made with earlier
 code, **Run for this value** saves an alternative while keeping the published setting and notebook
 file in place. Browsing settings uses saved results.

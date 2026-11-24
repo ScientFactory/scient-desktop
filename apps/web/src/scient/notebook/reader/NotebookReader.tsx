@@ -246,16 +246,14 @@ export function NotebookReader(props: {
   );
   const alternatives = notebook.alternatives?.runs ?? [];
   const sourceSha256 = notebook.alternatives?.currentSourceSha256;
-  const baseline = readerBaseline(
-    alternatives,
-    notebook.alternatives?.publishedRevision,
-    sourceSha256,
-  );
+  const publishedRevision = notebook.alternatives?.publishedRevision;
+  const baseline = readerBaseline(alternatives, publishedRevision, sourceSha256);
   const { current: selected, sourceStatus } = alternativeAt(
     alternatives,
     baseline,
     pending,
     sourceSha256,
+    publishedRevision,
   );
   const setting = baseline === undefined ? {} : parameterValues(baseline.parameters);
   const source = selected?.source ?? notebook;
