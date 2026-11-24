@@ -173,7 +173,7 @@ const withInstanceIdentity =
     /** The Codex home whose plugins.cache and config.toml this instance installs into. */
     readonly pluginHome: string;
   }) =>
-  (snapshot: ServerProviderDraft): ServerProvider => ({
+  ({ checkFailure, ...snapshot }: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
     instanceId: input.instanceId,
     driver: DRIVER_KIND,
@@ -187,6 +187,7 @@ const withInstanceIdentity =
       canDisconnect: snapshot.auth.required !== false && snapshot.auth.status === "authenticated",
       operation: null,
       runtime: input.runtime,
+      ...(checkFailure === undefined ? {} : { checkFailure }),
     },
   });
 export const CodexDriver: ScientProviderDriver<

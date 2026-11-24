@@ -299,10 +299,12 @@ describe("Provider lifecycle analytics", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     expect(mapper.observe([provider(operation("failed"))]).map((event) => event.name)).toEqual([
       "provider.installation.observed",
+      "provider.readiness.observed",
     ]);
     mapper.clear();
     expect(mapper.observe([provider(operation("failed"))]).map((event) => event.name)).toEqual([
       "provider.installation.observed",
+      "provider.readiness.observed",
     ]);
   });
 
@@ -334,6 +336,10 @@ describe("Provider lifecycle analytics", () => {
           fromInstalled: false,
           toInstalled: true,
         },
+      },
+      {
+        name: "provider.readiness.observed",
+        properties: { provider: "droid", state: "ready", runtimeSource: "scient_managed" },
       },
       {
         name: "provider.readiness.changed",
@@ -372,6 +378,38 @@ describe("Provider lifecycle analytics", () => {
       {
         name: "provider.runtime.source.changed",
         properties: { provider: "droid", from: "scient_managed", to: "missing" },
+      },
+    ]);
+  });
+
+  it("reports the first live warning after a cached status without counting a transition", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    const base = provider();
+    expect(mapper.observe([{ ...base, probePending: true }])).toEqual([]);
+    expect(mapper.observe([{ ...base, statusFromCache: true }]).map((event) => event.name)).toEqual(
+      ["provider.installation.observed"],
+    );
+    const warning = {
+      ...base,
+      status: "warning",
+      auth: { status: "unauthenticated", detail: "private account details" },
+    } as const;
+    expect(mapper.observe([warning])).toEqual([
+      {
+        name: "provider.readiness.observed",
+        properties: {
+          provider: "droid",
+          state: "warning",
+          runtimeSource: "scient_managed",
+          checkFailure: "not_authenticated",
+        },
+      },
+    ]);
+    expect(mapper.observe([warning])).toEqual([]);
+    expect(mapper.observe([base])).toEqual([
+      {
+        name: "provider.readiness.changed",
+        properties: { provider: "droid", from: "warning", to: "ready" },
       },
     ]);
   });
@@ -416,6 +454,10 @@ describe("Provider lifecycle analytics", () => {
       {
         name: "provider.installation.observed",
         properties: { provider: "droid", installed: true },
+      },
+      {
+        name: "provider.readiness.observed",
+        properties: { provider: "droid", state: "ready", runtimeSource: "scient_managed" },
       },
     ]);
     const events = mapper.observe([missing]);

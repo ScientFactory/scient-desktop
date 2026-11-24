@@ -5955,7 +5955,24 @@ function latexProjectionTransaction(
     .setStoredMarks(selection.empty ? state.storedMarks : null);
 }
 
+export type LatexVisualOpenResult =
+  | { readonly outcome: "editable" | "source-only-content" }
+  | {
+      readonly outcome: "unavailable";
+      readonly reason: "root-unresolved" | "source-truncated" | "source-read-only";
+    }
+  | {
+      readonly outcome: "open-error";
+      readonly reason:
+        | "root-resolution"
+        | "source-read"
+        | "source-assembly"
+        | "projection"
+        | "recovery";
+    };
+
 export interface LatexVisualEditorProps {
+  onOpenResult?: ((result: LatexVisualOpenResult) => void) | undefined;
   /** Confirms accepted reference edits through their owning file sessions. */
   readonly flushReferenceEdits?: (() => Promise<boolean>) | undefined;
   /** The assembled published source when the editor spans more than one file. */
@@ -6108,6 +6125,16 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       },
     );
   }, [prepared, failure, identity, props.source, setupSource, sourceSnapshotId]);
+  const reportOpenFailure = useEffectEvent((reason: "recovery" | "projection") => {
+    props.onOpenResult?.({ outcome: "open-error", reason });
+  });
+  const observingOpen = props.onOpenResult !== undefined;
+  const projectionFailed = prepared?.key !== identity && failure && recoveryPrepared === identity;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the terminal preparation error for the visible opening
+  useEffect(() => {
+    if (observingOpen && (recoveryFailure || projectionFailed))
+      reportOpenFailure(recoveryFailure ? "recovery" : "projection");
+  }, [observingOpen, recoveryFailure, projectionFailed]);
   if (recoveryFailure)
     return (
       <div className="scient-latex-placeholder" role="status">
@@ -7702,6 +7729,17 @@ function LatexVisualEditorReady(
         });
     },
   });
+
+  const reportReadyOpen = useEffectEvent(() => {
+    props.onOpenResult?.({
+      outcome: projection.current.rawBlocks > 0 ? "source-only-content" : "editable",
+    });
+  });
+  const observingOpen = props.onOpenResult !== undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the visible opening once its editor has finished loading
+  useEffect(() => {
+    if (observingOpen && editor && !editor.isDestroyed && !readOnly) reportReadyOpen();
+  }, [observingOpen, editor, readOnly]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the editor instance for callbacks to use
   useLayoutEffect(() => {

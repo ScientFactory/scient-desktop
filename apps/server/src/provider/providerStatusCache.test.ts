@@ -192,6 +192,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       }),
       {
         ...(({ probePending: _probePending, ...rest }) => rest)(fallbackCodex),
+        statusFromCache: true,
         models: [
           ...fallbackCodex.models,
           {

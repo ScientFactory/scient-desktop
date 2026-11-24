@@ -4,7 +4,7 @@ import {
   recordEnvironmentScientAnalyticsEvent,
 } from "@t3tools/client-runtime/state/scient-analytics";
 import type { ScientAnalyticsUiEvent, EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import * as Option from "effect/Option";
 
 import { runtime } from "../../lib/runtime";
@@ -25,28 +25,40 @@ const gate = createAnalyticsClientGate<PreparedConnection>({
 /**
  * Observe current view after consent discovery, not historical clicks. A new `viewKey`, which is
  * never sent, counts the same event again, such as another tab of the same kind.
+ * One-off outcomes can keep their receipt across window visibility and reconnections.
  */
 export function useScientAnalyticsView(
   event: ScientAnalyticsUiEvent | null,
   explicitEnvironmentId?: EnvironmentId | null,
   viewKey?: string,
+  oncePerOpening = false,
 ) {
   const primary = usePrimaryEnvironmentId();
   const environmentId = explicitEnvironmentId === undefined ? primary : explicitEnvironmentId;
   const prepared = usePreparedConnection(environmentId);
   const connection = Option.getOrNull(prepared);
   const eventKey = event === null ? null : JSON.stringify([viewKey ?? null, event]);
+  const sentKey = useRef<string | null>(null);
   const read = useEffectEvent(() => (document.visibilityState === "hidden" ? null : event));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers a view observation with the analytics gate plus a document visibilitychange listener, disposed on unmount
   useEffect(() => {
+    if (sentKey.current !== eventKey) sentKey.current = null;
     if (connection === null || eventKey === null) return;
-    const observation = gate.observeView(connection, () => read());
+    const observation = gate.observeView(
+      connection,
+      () => (oncePerOpening && sentKey.current === eventKey ? null : read()),
+      oncePerOpening
+        ? () => {
+            sentKey.current = eventKey;
+          }
+        : undefined,
+    );
     document.addEventListener("visibilitychange", observation.refresh);
     return () => {
       observation.dispose();
       document.removeEventListener("visibilitychange", observation.refresh);
     };
-  }, [connection, eventKey]);
+  }, [connection, eventKey, oncePerOpening]);
 }
 
 export function beginScientUiOperation(

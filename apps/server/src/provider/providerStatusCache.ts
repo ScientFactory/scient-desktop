@@ -27,6 +27,7 @@ const CLAUDE_AGENT_DRIVER = "claudeAgent";
 const withoutTransientProviderState = (provider: ServerProvider): ServerProvider => {
   const {
     probePending: _probePending,
+    statusFromCache: _statusFromCache,
     updateState: _updateState,
     ...providerWithoutTransientState
   } = provider;
@@ -116,6 +117,7 @@ export const hydrateCachedProvider = (input: {
   } = input.fallbackProvider;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutTransientState,
+    statusFromCache: true,
     models: mergeProviderModels(
       input.fallbackProvider,
       input.fallbackProvider.models,

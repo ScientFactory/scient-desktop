@@ -27,8 +27,15 @@ import {
 } from "./latexSourceEditPlan";
 import { LATEX_COMPILATION_STORAGE_KEY } from "./latexCompilation";
 
-const analyticsView = vi.hoisted(() => vi.fn());
-vi.mock("~/scient/analytics/client", () => ({ useScientAnalyticsView: analyticsView }));
+const { analyticsView, analyticsRecord } = vi.hoisted(() => ({
+  analyticsView: vi.fn(),
+  analyticsRecord: vi.fn(),
+}));
+vi.mock("~/scient/analytics/client", () => ({
+  useScientAnalyticsView: analyticsView,
+  scientAnalyticsProductContext: () => "current-context",
+  recordScientAnalyticsInContext: analyticsRecord,
+}));
 
 const {
   notifyLatexBindingChange,
@@ -62,6 +69,10 @@ const {
   visual: {
     props: null as null | {
       onEdit: (request: LatexVisualEditRequest) => LatexVisualEditOutcome;
+      onOpenResult?:
+        | ((result: import("./LatexVisualEditor").LatexVisualOpenResult) => void)
+        | undefined;
+      onOpenSource: () => void;
       sourceSnapshot: LatexEditorSourceSnapshot;
       selectedPending: boolean;
       disabled: boolean;
@@ -396,18 +407,60 @@ describe("the LaTeX surface on a document session", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
+    const lastView = () => analyticsView.mock.calls.filter((call) => call.length === 2).at(-1);
     await mount(_fixture, "visual");
-    expect(analyticsView).toHaveBeenLastCalledWith(
+    expect(lastView()).toEqual([
       { name: "feature.viewed", properties: { feature: "latex-visual" } },
       environmentId,
-    );
+    ]);
     await mount(_fixture, "source");
-    expect(analyticsView).toHaveBeenLastCalledWith(null, environmentId);
+    expect(lastView()).toEqual([null, environmentId]);
     await mount(_fixture, "split");
-    expect(analyticsView).toHaveBeenLastCalledWith(
+    expect(lastView()).toEqual([
       { name: "feature.viewed", properties: { feature: "latex-visual" } },
       environmentId,
+    ]);
+  });
+
+  it("keeps the first settled result for a visible opening and records a switch from failure to Source", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    analyticsView.mockClear();
+    await mount(_fixture, "visual");
+    const projectProps = visual.props!;
+    const report = projectProps.onOpenResult!;
+    const unavailable = { outcome: "unavailable", reason: "root-unresolved" } as const;
+    await act(async () => {
+      report(unavailable);
+      report({ outcome: "editable" });
+    });
+    expect(analyticsView).toHaveBeenCalledWith(
+      { name: "latex.visual.opened", properties: unavailable },
+      environmentId,
+      expect.any(String),
+      true,
     );
+    expect(analyticsView).not.toHaveBeenCalledWith(
+      { name: "latex.visual.opened", properties: { outcome: "editable" } },
+      environmentId,
+      expect.any(String),
+      true,
+    );
+    expect(visual.props).toBe(projectProps);
+    analyticsRecord.mockClear();
+    analyticsRecord.mockImplementationOnce(() => {
+      throw new Error("Analytics connection closed");
+    });
+    await act(async () => visual.props!.onOpenSource());
+    expect(
+      _fixture.container.querySelector(".scient-latex-surface")?.getAttribute("data-latex-layout"),
+    ).toBe("source");
+    expect(analyticsRecord).toHaveBeenCalledExactlyOnceWith(environmentId, "current-context", {
+      name: "latex.visual.source-fallback",
+      properties: unavailable,
+    });
   });
 
   it.each(["source", "visual"] as const)(

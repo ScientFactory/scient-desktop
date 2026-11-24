@@ -11,7 +11,11 @@ import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPub
 import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
-import { LatexVisualEditor, type LatexVisualEditorProps } from "./LatexVisualEditor";
+import {
+  LatexVisualEditor,
+  type LatexVisualEditorProps,
+  type LatexVisualOpenResult,
+} from "./LatexVisualEditor";
 import type { LatexBuildPageAnchors } from "./latexPageMarkers";
 import { LatexDocumentPreparation } from "./latexOpeningPresentation";
 import {
@@ -63,6 +67,7 @@ interface Props extends Omit<LatexVisualEditorProps, "pageAnchors"> {
   /** The open file is unsaved, saving, or waiting on a conflict or a failed save. */
   selectedPending: boolean;
   fileTruncated: boolean;
+  fileReadOnly?: boolean | undefined;
   onOpenFileSource: (path: string, line?: number) => void;
   /** A save of one of the document's included files reached the disk. */
   onSaved: () => void;
@@ -767,6 +772,33 @@ export function LatexProjectVisualEditor(props: Props) {
     readError ??
     document?.errors[0] ??
     null;
+  let preparationFailure: Extract<LatexVisualOpenResult, { reason: string }>["reason"] | null =
+    null;
+  if (props.fileTruncated) preparationFailure = "source-truncated";
+  else if (ready && props.fileReadOnly) preparationFailure = "source-read-only";
+  else if (!ready && preparationError) {
+    if (root === null) {
+      preparationFailure = props.onRetryRootResolution ? "root-resolution" : "root-unresolved";
+    } else {
+      preparationFailure = readError ? "source-read" : "source-assembly";
+    }
+  }
+  const reportPreparationResult = useEffectEvent(
+    (reason: NonNullable<typeof preparationFailure>) => {
+      props.onOpenResult?.(
+        reason === "source-truncated" ||
+          reason === "source-read-only" ||
+          reason === "root-unresolved"
+          ? { outcome: "unavailable", reason }
+          : { outcome: "open-error", reason },
+      );
+    },
+  );
+  const observingOpen = props.onOpenResult !== undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports a terminal result for a visible opening
+  useEffect(() => {
+    if (observingOpen && preparationFailure) reportPreparationResult(preparationFailure);
+  }, [observingOpen, preparationFailure]);
   return (
     <>
       {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys(), ...includePaths])].map(

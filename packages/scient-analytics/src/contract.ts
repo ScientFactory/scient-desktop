@@ -49,6 +49,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "provider.discovered",
   "provider.installation.observed",
   "provider.installation.changed",
+  "provider.readiness.observed",
   "provider.readiness.changed",
   "provider.runtime.source.changed",
   "provider.lifecycle.started",
@@ -79,6 +80,8 @@ export const ANALYTICS_EVENT_NAMES = [
   "usage.refresh.requested",
   "usage.availability",
   "feature.viewed",
+  "latex.visual.opened",
+  "latex.visual.source-fallback",
   "provider.turn.usage",
   "setting.changed",
   "scient.operation.started",
@@ -491,6 +494,22 @@ const OPERATION_KINDS = new Set([
 ]);
 const TRIGGERS = new Set(["user", "agent", "automation", "other"]);
 const PROVIDER_STATES = new Set(["ready", "warning", "error", "disabled"]);
+const READINESS_PROVIDERS = [
+  "acpRegistry",
+  "antigravity",
+  "claudeAgent",
+  "codex",
+  "cursor",
+  "droid",
+  "fx",
+  "grok",
+  "kiro",
+  "muse",
+  "omp",
+  "opencode",
+  "pi",
+  "scient",
+] as const;
 const STATUS_CHECK_FAILURES = new Set([
   "version_timeout",
   "version_failed",
@@ -500,8 +519,13 @@ const STATUS_CHECK_FAILURES = new Set([
   "command_failed",
   "exit",
   "parse",
+  "not_authenticated",
   "other",
 ]);
+const VISUAL_OPEN_FAILURES = {
+  unavailable: ["root-unresolved", "source-truncated", "source-read-only"],
+  "open-error": ["root-resolution", "source-read", "source-assembly", "projection", "recovery"],
+} as const;
 const DELIVERY_CLASSES = new Set([
   "idle",
   "delivered",
@@ -782,6 +806,11 @@ let readKeys: Set<string> | undefined;
 function property(input: Readonly<Record<string, unknown>>, key: string): unknown {
   readKeys?.add(key);
   return Object.hasOwn(input, key) ? input[key] : undefined;
+}
+
+// These events have a closed payload even though the wire supports inherited properties.
+function restrictProperties(input: Readonly<Record<string, unknown>>) {
+  for (const key of Object.keys(input)) readKeys?.add(key);
 }
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/u;
@@ -1248,6 +1277,26 @@ function normalizeEvent(
           toInstalled: normalizedBoolean(property(input, "toInstalled")),
         },
       };
+    case "provider.readiness.observed": {
+      restrictProperties(input);
+      const state = closedCategory(property(input, "state"), ["ready", "warning", "error"]);
+      const failure = property(input, "checkFailure");
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider: closedCategory(property(input, "provider"), READINESS_PROVIDERS),
+          state,
+          runtimeSource: closedCategory(property(input, "runtimeSource"), [...RUNTIME_SOURCES]),
+          ...(typeof failure === "string" &&
+          STATUS_CHECK_FAILURES.has(failure) &&
+          (state === "error" || state === "warning")
+            ? { checkFailure: failure }
+            : {}),
+        },
+      };
+    }
     case "provider.readiness.changed":
       return {
         name,
@@ -1680,6 +1729,27 @@ function normalizeEvent(
       if (name === "panel.viewed" && Object.hasOwn(input, "fileType"))
         properties.fileType = normalizedFileType(property(input, "fileType"));
       return { name, privacyLevel: "product", priority: "core", properties };
+    }
+    case "latex.visual.opened":
+    case "latex.visual.source-fallback": {
+      restrictProperties(input);
+      const outcome = closedCategory(
+        property(input, "outcome"),
+        name === "latex.visual.opened"
+          ? ["editable", "source-only-content", "unavailable", "open-error"]
+          : ["unavailable", "open-error"],
+      );
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          outcome,
+          ...(outcome === "unavailable" || outcome === "open-error"
+            ? { reason: closedCategory(property(input, "reason"), VISUAL_OPEN_FAILURES[outcome]) }
+            : {}),
+        },
+      };
     }
     case "provider.turn.usage": {
       // The model that did the work, then the one the provider confirmed, then the selected one.
