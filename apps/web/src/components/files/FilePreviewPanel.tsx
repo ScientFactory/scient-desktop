@@ -2157,12 +2157,16 @@ export default function FilePreviewPanel({
       {surface}
     </>
   );
-  const loadingMayOpenEditor =
-    !isHostFile && canWriteFiles && !rendered && !(tableDelimiter && renderTable);
   const computeShowsEditor = useComputeFilePresentationStore(
     (state) =>
       computeContextId === null || state.presentations[computeContextId]?.view !== "results",
   );
+  const loadingMayOpenEditor =
+    !isHostFile &&
+    canWriteFiles &&
+    !rendered &&
+    !(tableDelimiter && renderTable) &&
+    computeShowsEditor;
   // SCIENT-FORK:END
   const focusEditorOnTreeRowClickOrEnter = (event: {
     nativeEvent: Event;

@@ -849,8 +849,11 @@ describe("panel focus while a file opens", () => {
     const presentation = useComputeFilePresentationStore.getState();
     presentation.setFileView(contextId, "results");
     using _view = { [Symbol.dispose]: () => presentation.remove(contextId) };
-    state.file = contents("analysis.py", "print(1)\n");
+    // Still loading: no editor will open in Results, so nothing offers to take its focus.
     await using screen = await render(panel("analysis.py"));
+    expect(screen.container.querySelector("[data-file-content-focus]")).toBeNull();
+    state.file = contents("analysis.py", "print(1)\n");
+    await screen.rerender(panel("analysis.py"));
     await expect.element(screen.getByRole("button", { name: "Results" })).toBeInTheDocument();
     expect(screen.container.querySelector("[data-file-content-focus]")).toBeNull();
 
