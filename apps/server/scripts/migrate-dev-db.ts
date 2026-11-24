@@ -39,7 +39,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDb
 ) {
   override get message(): string {
     // SCIENT-FORK: the guard covers Scient's homes too.
-    return "Refusing to write a database outside a Git checkout or temp folder, or linked to a live one. Use an isolated --base-dir.";
+    return "Refusing to write a database in a T3 or Scient home, outside a Git checkout or temp folder, or linked to a home's database. Use an isolated --base-dir.";
   }
 }
 
@@ -377,9 +377,9 @@ export class MigrateDevDbResumableWorkError extends Schema.TaggedError<MigrateDe
 
 // SCIENT-FORK:START — every write path needs a scratch destination.
 /**
- * Fails unless `databasePath` is scratch: inside a Git checkout (a worktree's dev home) or the
- * system temp folder, and no hard link to a T3 or Scient home's database. A stopped profile can
- * live anywhere, so scratch is proven, not guessed from where homes usually are.
+ * Fails unless `databasePath` is scratch: inside a Git checkout or a temp folder, outside the T3
+ * and Scient homes (their checkouts excepted), and no hard link to a database in those homes.
+ * Paths compare where they lead, so a symlink, `..` or another letter case cannot slip past.
  */
 const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
   databasePath: string,
@@ -388,8 +388,6 @@ const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
-  const environment = yield* HostProcess.Environment;
-  // Where a path leads, so a symlink, `..` or another letter case cannot slip past.
   const resolve = (file: string) =>
     fs.realPath(file).pipe(
       Effect.catch(() =>
@@ -401,28 +399,27 @@ const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
     );
   const comparable = (resolved: string) =>
     platform === "linux" ? resolved : resolved.toLowerCase();
-  const target = yield* resolve(databasePath);
-  const scratchRoots = yield* Effect.forEach(options.scratchRoots ?? [NodeOS.tmpdir()], resolve);
-  const inTemp = scratchRoots.some((root) =>
-    comparable(target).startsWith(`${comparable(root)}${path.sep}`),
-  );
-  let inCheckout = false;
-  if (!inTemp) {
-    for (let dir = path.dirname(target); !inCheckout; dir = path.dirname(dir)) {
-      inCheckout = yield* fs.exists(path.join(dir, ".git")).pipe(Effect.orElseSucceed(() => false));
-      if (path.dirname(dir) === dir) break;
-    }
-  }
-  if (!inTemp && !inCheckout) return yield* new MigrateDevDbSharedHomeError();
-  // A hard link has its own path, so the file itself is compared with every known live database.
-  const expandHome = (home: string) =>
-    home === "~" || home.startsWith("~/") ? path.join(NodeOS.homedir(), home.slice(1)) : home;
-  const homes = [
-    options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"),
+  const target = comparable(yield* resolve(databasePath));
+  const inside = (directory: string) => target.startsWith(`${comparable(directory)}${path.sep}`);
+  const sharedHome = yield* resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const scientHome = yield* resolve(
     options.scientHome ?? path.join(NodeOS.homedir(), SCIENT_DESKTOP_IDENTITY.baseDirName),
-    environment.T3CODE_HOME,
-    environment.SCIENT_NEXT_HOME,
-  ].flatMap((home) => (home ? [path.resolve(expandHome(home))] : []));
+  );
+  // The homes hold every profile, the dev identity's included; checkouts Scient manages there are scratch.
+  if (inside(sharedHome) || (inside(scientHome) && !inside(path.join(scientHome, "worktrees")))) {
+    return yield* new MigrateDevDbSharedHomeError();
+  }
+  const scratchRoots = yield* Effect.forEach(
+    options.scratchRoots ?? [NodeOS.tmpdir(), "/tmp"],
+    resolve,
+  );
+  let scratch = scratchRoots.some(inside);
+  for (let dir = path.dirname(target); !scratch; dir = path.dirname(dir)) {
+    scratch = yield* fs.exists(path.join(dir, ".git")).pipe(Effect.orElseSucceed(() => false));
+    if (path.dirname(dir) === dir) break;
+  }
+  if (!scratch) return yield* new MigrateDevDbSharedHomeError();
+  // A hard link has its own path, so the file is compared with every database in the homes.
   const identity = (file: string) =>
     fs.stat(file).pipe(
       Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
@@ -430,21 +427,27 @@ const refuseLiveDatabase = Effect.fn("refuseLiveDevDatabase")(function* (
     );
   const targetIdentity = yield* identity(databasePath);
   if (Option.isNone(targetIdentity)) return;
-  const liveDatabases = homes.flatMap((home) =>
-    ["userdata", SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName].map((stateDir) =>
-      path.join(home, stateDir, "statev2.sqlite"),
+  const children = (dir: string) =>
+    fs.readDirectory(dir).pipe(
+      Effect.map((names) => names.map((name) => path.join(dir, name))),
+      Effect.orElseSucceed(() => [] as string[]),
+    );
+  const profiles = [sharedHome, scientHome];
+  for (const home of [sharedHome, scientHome]) {
+    for (const child of yield* children(home)) {
+      profiles.push(child, ...(yield* children(child)));
+    }
+  }
+  const live = profiles.flatMap((dir) =>
+    ["statev2.sqlite", "statev2.sqlite-wal", "statev2.sqlite-shm"].map((name) =>
+      path.join(dir, name),
     ),
   );
-  const liveIdentities = yield* Effect.forEach(
-    liveDatabases.flatMap((database) => [database, `${database}-wal`, `${database}-shm`]),
-    identity,
-  );
-  if (
-    liveIdentities.some(
-      (candidate) => Option.isSome(candidate) && candidate.value === targetIdentity.value,
-    )
-  ) {
-    return yield* new MigrateDevDbSharedHomeError();
+  for (const file of live) {
+    const candidate = yield* identity(file);
+    if (Option.isSome(candidate) && candidate.value === targetIdentity.value) {
+      return yield* new MigrateDevDbSharedHomeError();
+    }
   }
 });
 // SCIENT-FORK:END

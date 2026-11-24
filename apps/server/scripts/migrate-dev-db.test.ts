@@ -360,6 +360,29 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  it.effect.each(["userdata", "dev-identity/scient-next-dev"])(
+    "refuses the Scient home's %s database even where scratch is allowed",
+    (stateDir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // The home sits in temp here, which would otherwise count as scratch.
+        const scientHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-scient-" });
+        const options = { sharedHome: "/nonexistent-t3-home", scientHome };
+        const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
+        const live = path.join(scientHome, stateDir, "statev2.sqlite");
+        yield* fs.makeDirectory(path.dirname(live), { recursive: true });
+        yield* fs.copyFile(yield* createFixtureSource(sourceDir), live);
+
+        const pruned = yield* Effect.flip(dropResumableFamilies(live, options));
+        assert.equal(pruned._tag, "MigrateDevDbSharedHomeError");
+        const copy = path.join(sourceDir, "linked.sqlite");
+        yield* fs.link(live, copy);
+        const linked = yield* Effect.flip(dropResumableFamilies(copy, options));
+        assert.equal(linked._tag, "MigrateDevDbSharedHomeError");
+      }),
+  );
+
   it.effect("prunes and rebuilds a worktree's dev home inside a Git checkout", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -371,11 +394,17 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const source = yield* createFixtureSource(sourceDir);
       const devHome = path.join(checkout, ".scient-next");
 
-      const result = yield* runMigrateDevDb(
-        { baseDir: devHome, developmentState: true, source, projects: 1, threadsPerProject: 0 },
-        options,
-      );
+      const input = {
+        baseDir: devHome,
+        developmentState: true,
+        source,
+        projects: 1,
+        threadsPerProject: 0,
+      };
+      const result = yield* runMigrateDevDb(input, options);
       assert.equal(yield* dropResumableFamilies(result.databasePath, options), 0);
+      // A dev home already in use, which the dev runner names as the home, is rebuilt again.
+      yield* runMigrateDevDb(input, options);
     }),
   );
   // SCIENT-FORK:END
