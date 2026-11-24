@@ -153,6 +153,9 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+// SCIENT-FORK:START — Oh My Pi 19.1 reports a bash exit code under details.
+import { withOmpDetailsExitCode } from "./scientOmpCommandIdentity.ts";
+// SCIENT-FORK:END
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
@@ -5556,7 +5559,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 break;
               }
               case "execute": {
-                // SCIENT-FORK:START — command_execution has text output only.
+                // SCIENT-FORK:START — Oh My Pi 19.1 reports the exit code under details; a bash
+                // result with images keeps them on a dynamic card, which has no exit-code field.
+                const exitCode = acpProjectedCommandExitCode(
+                  status,
+                  withOmpDetailsExitCode(rawOutput),
+                );
                 if (
                   toolCall.data.name === "bash" &&
                   Array.isArray(rawOutputRecord?.content) &&
@@ -5567,12 +5575,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     type: "dynamic_tool",
                     toolName: "bash",
                     input: rawInputRecord ?? {},
-                    output: { content: rawOutputRecord.content },
+                    output: {
+                      content: rawOutputRecord.content,
+                      ...(exitCode === undefined ? {} : { exitCode }),
+                    },
                   };
                   break;
                 }
                 // SCIENT-FORK:END
-                const exitCode = acpProjectedCommandExitCode(status, rawOutput);
                 turnItem = {
                   ...base,
                   type: "command_execution",

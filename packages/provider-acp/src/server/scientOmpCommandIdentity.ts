@@ -58,3 +58,16 @@ export function scientOmpCommandIdentity(
     output: command.exitCode === 0 ? output : { ...output, isError: true },
   };
 }
+
+/**
+ * Oh My Pi 19.1 reports a bash call's exit code under `details`; the shell card reads it at the top
+ * level, as other providers send it. A top-level code wins.
+ */
+export function withOmpDetailsExitCode(rawOutput: unknown): unknown {
+  if (!Predicate.isObject(rawOutput) || "exitCode" in rawOutput) return rawOutput;
+  const details = Predicate.isObject(rawOutput.details) ? rawOutput.details : undefined;
+  const exitCode = details?.exitCode;
+  return typeof exitCode === "number" && Number.isInteger(exitCode)
+    ? { ...rawOutput, exitCode }
+    : rawOutput;
+}

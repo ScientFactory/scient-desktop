@@ -6202,8 +6202,9 @@ describe("AcpAdapterV2", () => {
             rawInput: { command: script },
             rawOutput: {
               content,
-              exitCode: status === "failed" ? 1 : 0,
+              // Oh My Pi 19.1 reports the exit code under details, as bash.ts does.
               details: {
+                exitCode: status === "failed" ? 1 : 0,
                 toolCommands: [
                   { tool, mode: "execute", args: {}, exitCode: 0, inner: { content: [] } },
                 ],
@@ -6234,7 +6235,7 @@ describe("AcpAdapterV2", () => {
           type: "dynamic_tool",
           toolName: "bash",
           input: { command: "generate_image --prompt chart" },
-          output: { content: [text, image] },
+          output: { content: [text, image], exitCode: 0 },
         },
       );
     }).pipe(Effect.provide(layerTest)),
