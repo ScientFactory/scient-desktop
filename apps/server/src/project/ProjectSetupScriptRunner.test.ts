@@ -1106,6 +1106,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
     Effect.gen(function* () {
       const result = yield* runObservedSetup(command);
       // SCIENT-FORK:START bash-eval-status
+      assert.isNumber(result.exitCode); // a lost completion marker reports null
       assert.notEqual(result.exitCode, 0);
       if (exitCode !== undefined) assert.equal(result.exitCode, exitCode);
       // SCIENT-FORK:END bash-eval-status
