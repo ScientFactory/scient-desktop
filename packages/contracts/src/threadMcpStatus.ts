@@ -90,13 +90,18 @@ export const isProminentThreadMcpIssue = (server: ThreadMcpServerObservation): b
 
 const LEGACY_MCP_STARTUP_NATIVE_PREFIXES = ["mcp-startup-failed:", "mcp-sign-in:"] as const;
 
+/** A Sign in row the agent asked for when it needed the server; it stays in the chat. */
+export const MCP_SIGN_IN_REQUEST_NATIVE_PREFIX = "mcp-sign-in-request:";
+
 /** Startup and sign-in notices older adapters wrote into the transcript; clients no longer show them. */
 export const isLegacyMcpStartupNotice = (item: {
   readonly mcpSignIn?: unknown;
   readonly nativeItemRef?: { readonly nativeId: string | null } | null | undefined;
 }): boolean => {
-  if (item.mcpSignIn !== undefined) return true;
   const nativeId = item.nativeItemRef?.nativeId;
+  if (typeof nativeId === "string" && nativeId.startsWith(MCP_SIGN_IN_REQUEST_NATIVE_PREFIX))
+    return false;
+  if (item.mcpSignIn !== undefined) return true;
   return (
     typeof nativeId === "string" &&
     LEGACY_MCP_STARTUP_NATIVE_PREFIXES.some((prefix) => nativeId.startsWith(prefix))

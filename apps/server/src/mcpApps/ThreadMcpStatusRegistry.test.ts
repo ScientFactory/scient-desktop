@@ -261,4 +261,49 @@ describe("ThreadMcpStatusRegistry", () => {
       yield* unregister;
     }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
   );
+
+  it.effect("routes the agent's sign-in request to the live session that reported the server", () =>
+    Effect.gen(function* () {
+      const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+      const asked: Array<string> = [];
+      const first = yield* registry.attach({
+        ...attachInput("session-1"),
+        showSignIn: (server) => Effect.sync(() => (asked.push(server), "shown" as const)),
+      });
+      yield* registry.replaceNative(first, [
+        { name: "guru", source: "native", status: "needs-sign-in", action: "sign-in" },
+        { name: "claude.ai Gmail", source: "claudeai", status: "needs-sign-in" },
+        { name: "deepwiki", source: "native", status: "ready" },
+      ]);
+      const request = (server: string) => registry.requestSignIn({ threadId, server });
+
+      expect(yield* request(" GURU ")).toEqual({ _tag: "shown", displayName: "guru" });
+      expect(asked).toEqual(["guru"]);
+      expect(yield* request("claude.ai Gmail")).toEqual({
+        _tag: "claudeai",
+        displayName: "claude.ai Gmail",
+      });
+      expect(yield* request("deepwiki")).toEqual({ _tag: "none" });
+      expect(yield* request("notion")).toEqual({ _tag: "none" });
+      expect(
+        yield* registry.requestSignIn({ threadId: ThreadId.make("other"), server: "guru" }),
+      ).toEqual({ _tag: "none" });
+
+      // Ended: the last report stays, but no session can act on it.
+      yield* registry.detach(first);
+      expect(yield* request("guru")).toEqual({ _tag: "inactive", displayName: "guru" });
+
+      // A replacement session that has not reported yet cannot either; one that can't show a
+      // row sends the user to the server's own row.
+      const second = yield* registry.attach(attachInput("session-2"));
+      expect(yield* request("guru")).toEqual({ _tag: "inactive", displayName: "guru" });
+      yield* registry.replaceNative(second, [
+        { name: "guru", source: "native", status: "needs-sign-in", action: "sign-in" },
+        { name: "zotero", source: "native", status: "checking" },
+      ]);
+      expect(yield* request("guru")).toEqual({ _tag: "card", displayName: "guru" });
+      expect(yield* request("zotero")).toEqual({ _tag: "checking", displayName: "zotero" });
+      expect(asked).toEqual(["guru"]);
+    }).pipe(Effect.provide(ThreadMcpStatusRegistry.layer)),
+  );
 });

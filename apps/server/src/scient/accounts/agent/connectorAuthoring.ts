@@ -21,6 +21,7 @@ import {
   addConnector as addFor,
   changeReport,
   controlConnector as controlFor,
+  isScientConnector,
   listConnectors as listFor,
   testConnector,
 } from "../../extensions/ConnectorAgentControl.ts";
@@ -234,7 +235,7 @@ export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url
 
 /**
  * A sign-in for one of the agent's own MCP servers (not a Scient connector) that this chat
- * reports needs one: the chat shows the user a Sign in button on the request that names it.
+ * reports needs one: the session that reported it puts a Sign in row in the chat.
  */
 export const agentServerSignIn = Effect.fn("AccountsAgent.agentServerSignIn")(function* (
   name: string,
@@ -242,29 +243,49 @@ export const agentServerSignIn = Effect.fn("AccountsAgent.agentServerSignIn")(fu
   const registry = yield* Effect.serviceOption(ThreadMcpStatusRegistry);
   if (Option.isNone(registry)) return undefined;
   const invocation = yield* AgentInvocationContext;
-  const { servers } = yield* registry.value.snapshot(invocation.threadId);
-  const needle = name.trim().toLowerCase();
-  const server = servers.find(
-    (candidate) =>
-      candidate.source !== "managed" &&
-      candidate.status === "needs-sign-in" &&
-      (candidate.name.toLowerCase() === needle || candidate.displayName.toLowerCase() === needle),
-  );
-  if (server === undefined) return undefined;
-  return {
-    connector: server.name,
-    status: "needs-sign-in" as const,
-    message:
-      server.source === "claudeai"
-        ? `${server.displayName} is a claude.ai connector: the user signs in to it in their claude.ai connector settings. Tell them in one short sentence and carry on with whatever does not need it.`
-        : `The user now sees a Sign in button for ${server.displayName} on this request. Tell them in one short sentence, carry on with whatever does not need it, and do not ask again until they send another message. Its tools come once they finish.`,
-  };
+  const outcome = yield* registry.value.requestSignIn({
+    threadId: invocation.threadId,
+    server: name,
+  });
+  if (outcome._tag === "none") return undefined;
+  const server = outcome.displayName;
+  const reply = (status: "ready" | "needs-sign-in", message: string) => ({
+    connector: server,
+    status,
+    message,
+  });
+  switch (outcome._tag) {
+    case "shown":
+      return reply(
+        "needs-sign-in",
+        `The chat now shows the user a Sign in row for ${server}. Tell them in one short sentence, carry on with whatever does not need it, and do not ask again until they send another message. Its tools come once they finish.`,
+      );
+    case "signed-in":
+      return reply("ready", `${server} is connected now: call its tools.`);
+    case "checking":
+      return reply(
+        "needs-sign-in",
+        `${server} is still connecting. Carry on with whatever does not need it and ask again later in this turn if you still need it.`,
+      );
+    case "claudeai":
+      return reply(
+        "needs-sign-in",
+        `${server} is a claude.ai connector: the user signs in to it in their claude.ai connector settings. Tell them in one short sentence and carry on with whatever does not need it.`,
+      );
+    case "inactive":
+    case "card":
+      return reply(
+        "needs-sign-in",
+        `${server} needs the user's sign-in, which they start from the plug button above this chat, under "Optional servers not signed in". Tell them in one short sentence and carry on with whatever does not need it.`,
+      );
+  }
 });
 
 export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(function* (
   input: Input<"scient_connector_control">,
 ) {
-  if (input.action === "sign-in") {
+  // A Scient connector of the same name keeps its own sign-in.
+  if (input.action === "sign-in" && !(yield* isScientConnector(input.connector))) {
     const agentServer = yield* agentServerSignIn(input.connector);
     if (agentServer !== undefined) return agentServer;
   }

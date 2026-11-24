@@ -16,6 +16,8 @@ import * as ServerConfig from "../../../config.ts";
 import * as ThreadMcpStatusRegistry from "../../../mcpApps/ThreadMcpStatusRegistry.ts";
 import * as PreviewManager from "../../../preview/Manager.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
+import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
+import { isScientConnector } from "../../extensions/ConnectorAgentControl.ts";
 import { agentServerSignIn, openForUser } from "./connectorAuthoring.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
 
@@ -64,53 +66,61 @@ describe("a connector's sign-in for the user", () => {
 });
 
 describe("a sign-in the agent asks for on one of its own MCP servers", () => {
-  const reportNeedsSignIn = Effect.gen(function* () {
-    const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
-    const attachment = yield* registry.attach({
-      threadId,
-      providerInstanceId: ProviderInstanceId.make("claude"),
-      providerThreadId: ProviderThreadId.make("pt-1"),
-      providerSessionId: ProviderSessionId.make("provider-session"),
+  const reportNeedsSignIn = (shows: "shown" | "unavailable") =>
+    Effect.gen(function* () {
+      const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+      const attachment = yield* registry.attach({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("claude"),
+        providerThreadId: ProviderThreadId.make("pt-1"),
+        providerSessionId: ProviderSessionId.make("provider-session"),
+        showSignIn: () => Effect.succeed(shows),
+      });
+      yield* registry.replaceNative(attachment, [
+        { name: "guru", source: "native", status: "needs-sign-in", action: "sign-in" },
+        { name: "claude.ai Gmail", source: "claudeai", status: "needs-sign-in" },
+        { name: "deepwiki", source: "native", status: "ready" },
+      ]);
     });
-    yield* registry.replaceNative(attachment, [
-      { name: "guru", source: "native", status: "needs-sign-in", action: "sign-in" },
-      { name: "plugin:design:intercom", source: "native-plugin", status: "needs-sign-in" },
-      { name: "claude.ai Gmail", source: "claudeai", status: "needs-sign-in" },
-      { name: "deepwiki", source: "native", status: "ready" },
-    ]);
-  });
+  const inThisChat = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(AgentInvocationContext, invocation),
+      Effect.provide(ThreadMcpStatusRegistry.layer),
+    );
 
-  it.effect(
-    "tells the agent the user now has a Sign in button, for any server the chat reports",
-    () =>
+  it.effect("tells the agent the chat now shows the user a Sign in row", () =>
+    inThisChat(
       Effect.gen(function* () {
-        yield* reportNeedsSignIn;
+        yield* reportNeedsSignIn("shown");
         expect(yield* agentServerSignIn("Guru")).toMatchObject({
           connector: "guru",
           status: "needs-sign-in",
-          message: expect.stringContaining("Sign in button for guru"),
+          message: expect.stringContaining("Sign in row for guru"),
         });
-        expect(yield* agentServerSignIn("plugin:design:intercom")).toMatchObject({
-          connector: "plugin:design:intercom",
-        });
-        // claude.ai connectors sign in on claude.ai, so no button is promised.
+        // claude.ai connectors sign in on claude.ai, so no row is promised.
         expect((yield* agentServerSignIn("claude.ai Gmail"))?.message).toContain(
           "claude.ai connector settings",
         );
-      }).pipe(
-        Effect.provideService(AgentInvocationContext, invocation),
-        Effect.provide(ThreadMcpStatusRegistry.layer),
-      ),
+      }),
+    ),
   );
 
-  it.effect("leaves Scient connectors and servers that need nothing to the connector tools", () =>
-    Effect.gen(function* () {
-      yield* reportNeedsSignIn;
-      expect(yield* agentServerSignIn("deepwiki")).toBeUndefined();
-      expect(yield* agentServerSignIn("notion")).toBeUndefined();
-    }).pipe(
-      Effect.provideService(AgentInvocationContext, invocation),
-      Effect.provide(ThreadMcpStatusRegistry.layer),
+  it.effect("points to the plug button when the session can't show a row", () =>
+    inThisChat(
+      Effect.gen(function* () {
+        yield* reportNeedsSignIn("unavailable");
+        expect((yield* agentServerSignIn("guru"))?.message).toContain("plug button");
+      }),
+    ),
+  );
+
+  it.effect("leaves servers that need nothing, and unknown names, to the connector tools", () =>
+    inThisChat(
+      Effect.gen(function* () {
+        yield* reportNeedsSignIn("shown");
+        expect(yield* agentServerSignIn("deepwiki")).toBeUndefined();
+        expect(yield* agentServerSignIn("notion")).toBeUndefined();
+      }),
     ),
   );
 
@@ -119,5 +129,29 @@ describe("a sign-in the agent asks for on one of its own MCP servers", () => {
       Effect.map((result) => expect(result).toBeUndefined()),
       Effect.provideService(AgentInvocationContext, invocation),
     ),
+  );
+});
+
+describe("a Scient connector named like one of the agent's own servers", () => {
+  it.effect("keeps its own sign-in", () =>
+    Effect.gen(function* () {
+      expect(yield* isScientConnector("Linear")).toBe(true);
+      expect(yield* isScientConnector("guru")).toBe(false);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ConnectorRuntime)({
+          list: () =>
+            Effect.succeed({
+              connectors: [
+                { connectorId: "con_linear", serverName: "linear", displayName: "Linear" },
+              ],
+            } as never),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("is never assumed where Scient has no connectors", () =>
+    isScientConnector("linear").pipe(Effect.map((found) => expect(found).toBe(false))),
   );
 });

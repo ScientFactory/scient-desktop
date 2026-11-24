@@ -47,7 +47,6 @@ vi.mock("./extensionsState", () => ({
   testConnector: { permissionAtom: () => Atom.make(true) },
 }));
 
-import { SignInRequestAction } from "./ConnectorRecoveryAction";
 import { ExtensionsReceiptIndicator } from "./ExtensionsReceiptIndicator";
 
 const environmentId = EnvironmentId.make("local");
@@ -216,64 +215,5 @@ describe("ExtensionsReceiptIndicator", () => {
     await userEvent.click(ambient!.querySelector("button")!);
     expect(document.querySelector('[data-native-sign-in="linear"]')).not.toBeNull();
     expect(document.querySelector('[data-native-sign-in="plugin:design:figma"]')).not.toBeNull();
-  });
-});
-
-describe("SignInRequestAction", () => {
-  const server = (overrides: Partial<ThreadMcpStatusSnapshot["servers"][number]> = {}) => ({
-    id: "native:guru",
-    name: "guru",
-    displayName: "guru",
-    source: "native" as const,
-    status: "needs-sign-in" as const,
-    observedAt: IsoDateTime.make("2026-11-24T00:00:00.000Z"),
-    action: "sign-in" as const,
-    providerThreadId: ProviderThreadId.make("pt-1"),
-    sessionActive: true,
-    ...overrides,
-  });
-  const snapshot = (servers: ThreadMcpStatusSnapshot["servers"]): ThreadMcpStatusSnapshot => ({
-    threadId,
-    revision: NonNegativeInt.make(1),
-    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-    providerThreadId: ProviderThreadId.make("pt-1"),
-    sessionActive: true,
-    servers,
-  });
-
-  it("offers the sign-in the agent asked for while the chat still reports it is needed", async () => {
-    setup();
-    state.mcpStatus = snapshot([server()]);
-    await using screen = await render(
-      <SignInRequestAction environmentId={environmentId} threadId={threadId} serverName="Guru" />,
-    );
-    expect(screen.container.querySelector('[data-native-sign-in="guru"]')).not.toBeNull();
-    expect(state.mcpStatusAtom).toHaveBeenCalledWith({ environmentId, input: { threadId } });
-
-    // Once signed in, the request row keeps no button.
-    state.mcpStatus = snapshot([server({ status: "ready" })]);
-    await screen.rerender(
-      <SignInRequestAction environmentId={environmentId} threadId={threadId} serverName="Guru" />,
-    );
-    expect(screen.container.querySelector("[data-native-sign-in]")).toBeNull();
-  });
-
-  it("offers no agent sign-in for claude.ai connectors or a session that ended", async () => {
-    setup();
-    state.mcpStatus = snapshot([
-      server({ id: "claudeai:claude.ai Gmail", name: "claude.ai Gmail", source: "claudeai" }),
-      server({ sessionActive: false }),
-    ]);
-    await using screen = await render(
-      <>
-        <SignInRequestAction
-          environmentId={environmentId}
-          threadId={threadId}
-          serverName="claude.ai Gmail"
-        />
-        <SignInRequestAction environmentId={environmentId} threadId={threadId} serverName="guru" />
-      </>,
-    );
-    expect(screen.container.querySelector("[data-native-sign-in]")).toBeNull();
   });
 });

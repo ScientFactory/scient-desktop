@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { connectorRecoveryTarget, signInRequestTarget } from "./ConnectorRecoveryAction";
+import { connectorRecoveryTarget } from "./ConnectorRecoveryAction";
 
 describe("connectorRecoveryTarget", () => {
   it("extracts the connector scient_connector_check names", () => {
@@ -24,35 +24,5 @@ describe("connectorRecoveryTarget", () => {
     ).toBeNull();
     expect(connectorRecoveryTarget("bash", { connector: "cloudflare" })).toBeNull();
     expect(connectorRecoveryTarget("scient_connector_list", null)).toBeNull();
-  });
-});
-
-describe("signInRequestTarget", () => {
-  it("names the server an agent asked the user to sign in to", () => {
-    expect(
-      signInRequestTarget("mcp__scient__scient_connector_control", {
-        connector: " guru ",
-        action: "sign-in",
-      }),
-    ).toBe("guru");
-    expect(
-      signInRequestTarget("scient_connector_control", {
-        connector: "plugin:design:intercom",
-        action: "sign-in",
-      }),
-    ).toBe("plugin:design:intercom");
-  });
-
-  it("ignores other actions, blank names and other tools", () => {
-    expect(
-      signInRequestTarget("scient_connector_control", { connector: "guru", action: "restart" }),
-    ).toBeNull();
-    expect(
-      signInRequestTarget("scient_connector_control", { connector: "  ", action: "sign-in" }),
-    ).toBeNull();
-    expect(
-      signInRequestTarget("scient_connector_check", { connector: "guru", action: "sign-in" }),
-    ).toBeNull();
-    expect(signInRequestTarget("scient_connector_control", null)).toBeNull();
   });
 });

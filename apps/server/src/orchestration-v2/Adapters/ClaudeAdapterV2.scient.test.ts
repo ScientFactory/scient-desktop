@@ -1,4 +1,10 @@
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  isLegacyMcpStartupNotice,
+  MCP_SIGN_IN_REQUEST_NATIVE_PREFIX,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
@@ -1037,6 +1043,74 @@ describe("ClaudeAdapterV2 thread MCP status", () => {
           ),
           [],
         );
+      }),
+    ).pipe(Effect.provide(Layer.merge(adapterServices, ThreadMcpStatusRegistry.layer))),
+  );
+
+  it.effect("puts a Sign in row in the running turn when the agent asks for a server", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const status = { current: [] as ReadonlyArray<McpServerStatus> };
+        const harness = yield* makeWakeHarnessWithOptions({
+          mcpServerStatus: Effect.sync(() => status.current),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-mcp-sign-in-request"),
+            text: "Search my wiki.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000009201",
+            session_id: WAKE_NATIVE_SESSION,
+            mcp_servers: [
+              { name: "guru", status: "pending", source: "user" },
+              { name: "notion", status: "pending", source: "user" },
+            ],
+          }),
+        );
+        const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+        const signInRows = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem]
+              : [],
+          );
+
+        // Still settling when asked: the session reads its servers again before answering.
+        status.current = [
+          { name: "guru", status: "needs-auth", scope: "user" },
+          { name: "notion", status: "connected", scope: "user" },
+        ];
+        assert.deepStrictEqual(
+          yield* registry.requestSignIn({ threadId: harness.threadId, server: "Guru" }),
+          { _tag: "shown", displayName: "guru" },
+        );
+        assert.deepStrictEqual(
+          yield* registry.requestSignIn({ threadId: harness.threadId, server: "notion" }),
+          { _tag: "none" },
+        );
+        const row = (yield* Queue.take(harness.systemNoticeReceipts)).turnItem;
+        assert.deepStrictEqual(row.type === "system_notice" ? row.mcpSignIn : undefined, {
+          server: "guru",
+        });
+        assert.ok(row.nativeItemRef?.nativeId?.startsWith(MCP_SIGN_IN_REQUEST_NATIVE_PREFIX));
+        assert.strictEqual(isLegacyMcpStartupNotice(row), false);
+
+        // Signed in meanwhile: the agent is told to go ahead, and no new row appears.
+        status.current = [{ name: "guru", status: "connected", scope: "user" }];
+        assert.deepStrictEqual(
+          yield* registry.requestSignIn({ threadId: harness.threadId, server: "guru" }),
+          { _tag: "signed-in", displayName: "guru" },
+        );
+        assert.strictEqual(signInRows().length, 1);
       }),
     ).pipe(Effect.provide(Layer.merge(adapterServices, ThreadMcpStatusRegistry.layer))),
   );
