@@ -22152,5 +22152,23 @@
   "b62d0f87e5795776": "Kann den Agenten verwenden",
   "4e953cff0756d467": "Abgelaufen",
   "af96d13065c3b2ce": "Noch {days} T.",
-  "e5efdfa2c982cace": "Der Server konnte nicht erreicht werden. Versuche es erneut."
+  "e5efdfa2c982cace": "Der Server konnte nicht erreicht werden. Versuche es erneut.",
+  "4f248c2c1a6d41b0": "{name} konnte nicht hinzugefügt werden",
+  "9bd7a4d7ec9db71c": "Prüfe deine Verbindung und versuche es erneut.",
+  "ba7fb80123d3bb5c": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " wurde hinzugefügt. Führe den Code erneut aus, um es zu verwenden."
+  ],
+  "8944454ead63843d": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hinzufügen"
+  ]
 }

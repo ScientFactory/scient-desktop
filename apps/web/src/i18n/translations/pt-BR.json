@@ -22153,5 +22153,23 @@
   "b62d0f87e5795776": "Pode usar o agente",
   "4e953cff0756d467": "Expirado",
   "af96d13065c3b2ce": "{days} d restantes",
-  "e5efdfa2c982cace": "Não foi possível alcançar o servidor. Tente novamente."
+  "e5efdfa2c982cace": "Não foi possível alcançar o servidor. Tente novamente.",
+  "4f248c2c1a6d41b0": "Não foi possível adicionar {name}",
+  "9bd7a4d7ec9db71c": "Verifique sua conexão e tente novamente.",
+  "ba7fb80123d3bb5c": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " adicionado. Execute novamente para usá-lo."
+  ],
+  "8944454ead63843d": [
+    "Adicionar ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

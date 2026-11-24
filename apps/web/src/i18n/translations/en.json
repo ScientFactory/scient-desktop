@@ -22167,5 +22167,24 @@
   "b62d0f87e5795776": "Can use agent",
   "4e953cff0756d467": "Expired",
   "af96d13065c3b2ce": "{days}d left",
-  "e5efdfa2c982cace": "Could not reach the server. Try again."
+  "e5efdfa2c982cace": "Could not reach the server. Try again.",
+  "4f248c2c1a6d41b0": "Unable to add {name}",
+  "9bd7a4d7ec9db71c": "Check your connection and try again.",
+  "ba7fb80123d3bb5c": [
+    "Added ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Run again to use it."
+  ],
+  "8944454ead63843d": [
+    "Add ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

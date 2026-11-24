@@ -22164,5 +22164,23 @@
   "b62d0f87e5795776": "Kan använda agenten",
   "4e953cff0756d467": "Utgången",
   "af96d13065c3b2ce": "{days} d kvar",
-  "e5efdfa2c982cace": "Kunde inte nå servern. Försök igen."
+  "e5efdfa2c982cace": "Kunde inte nå servern. Försök igen.",
+  "4f248c2c1a6d41b0": "Det gick inte att lägga till {name}",
+  "9bd7a4d7ec9db71c": "Kontrollera anslutningen och försök igen.",
+  "ba7fb80123d3bb5c": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " har lagts till. Kör igen för att använda det."
+  ],
+  "8944454ead63843d": [
+    "Lägg till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

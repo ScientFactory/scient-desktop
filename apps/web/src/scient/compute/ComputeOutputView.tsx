@@ -28,7 +28,10 @@ import { ComputeRichOutput, type ComputeRichDisplay } from "./ComputeRichOutput"
 import { renderTerminalText } from "./computeTerminalText";
 import { ComputeTerminalOutput } from "./ComputeTerminalOutput";
 import { computeDependencyRecovery, managedDependencyRuntime } from "./computeDependencyRecovery";
-import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryAction";
+import {
+  ComputeAddPackageAction,
+  ComputeDependencyRecoveryAction,
+} from "./ComputeDependencyRecoveryAction";
 import type { ComputeContextId } from "./computeContextStore";
 
 import type { NotebookDefiningCell } from "../notebook/notebookRunSummary";
@@ -234,6 +237,10 @@ function ComputeDiagnostic(props: {
           session: props.session,
           inspection: props.runtimeInspection,
         });
+  const canAddPackages =
+    props.runtimeInspection?.languages
+      .find((language) => language.descriptor.languageId === props.session.languageId)
+      ?.descriptor.capabilities.includes("packages") === true;
   const { summary, traceback } = computeDiagnosticSummary(diagnostic);
   const fullText = [summary, traceback].filter(Boolean).join("\n");
   const missingName = extractUndefinedName(diagnostic.errorName, diagnostic.message);
@@ -262,6 +269,13 @@ function ComputeDiagnostic(props: {
                     {props.session.runtime.languageVersion}
                   </span>
                 ) : null}
+                {props.dependencyRecovery !== undefined && canAddPackages ? (
+                  <ComputeAddPackageAction
+                    contextId={props.dependencyRecovery.contextId}
+                    sessionId={props.session.sessionId}
+                    distribution={recovery.distribution}
+                  />
+                ) : null}
                 {managed !== null && props.dependencyRecovery !== undefined ? (
                   <ComputeDependencyRecoveryAction
                     contextId={props.dependencyRecovery.contextId}
@@ -270,7 +284,7 @@ function ComputeDiagnostic(props: {
                     executable={managed.executable}
                     onSettled={props.dependencyRecovery.onSettled}
                   />
-                ) : (
+                ) : props.dependencyRecovery !== undefined ? null : (
                   <Button
                     size="xs"
                     variant="outline"

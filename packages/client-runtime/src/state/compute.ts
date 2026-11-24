@@ -536,6 +536,16 @@ export function createComputeEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.cwd, input.languageId, input.executable]),
       },
     }),
+    addPythonLibrary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:add-python-library",
+      tag: WS_METHODS.computeAddPythonLibrary,
+      scheduler: runtimeScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.cwd, input.sessionId, input.distribution]),
+      },
+    }),
     startSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:start-session",
       tag: WS_METHODS.computeStartSession,

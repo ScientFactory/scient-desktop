@@ -22155,5 +22155,23 @@
   "b62d0f87e5795776": "Peut utiliser l’agent",
   "4e953cff0756d467": "Expiré",
   "af96d13065c3b2ce": "{days} j restants",
-  "e5efdfa2c982cace": "Impossible de joindre le serveur. Réessayez."
+  "e5efdfa2c982cace": "Impossible de joindre le serveur. Réessayez.",
+  "4f248c2c1a6d41b0": "Impossible d’ajouter {name}",
+  "9bd7a4d7ec9db71c": "Vérifiez votre connexion et réessayez.",
+  "ba7fb80123d3bb5c": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a été ajouté. Relancez pour l’utiliser."
+  ],
+  "8944454ead63843d": [
+    "Ajouter ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

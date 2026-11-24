@@ -1,7 +1,8 @@
-import { T, useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { ComputeSessionId, type ComputeSessionRecord } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
@@ -15,6 +16,56 @@ import {
   useComputeContextStore,
   type ComputeContextId,
 } from "./computeContextStore";
+
+/**
+ * Adds a reviewed package beside the session's Python, never into it. The session keeps its
+ * variables and finds the package on its next run, so nothing restarts.
+ */
+export function ComputeAddPackageAction(props: {
+  readonly contextId: ComputeContextId;
+  readonly sessionId: ComputeSessionId;
+  readonly distribution: string;
+}) {
+  const gt = useGT();
+  const [state, setState] = useState<"idle" | "adding" | "added">("idle");
+  const addLibrary = useAtomCommand(computeEnvironment.addPythonLibrary, { reportFailure: false });
+
+  const add = async () => {
+    const owner = getComputeContext(props.contextId);
+    if (!owner || state !== "idle") return;
+    setState("adding");
+    const result = await addLibrary({
+      environmentId: owner.environmentId,
+      input: { cwd: owner.cwd, sessionId: props.sessionId, distribution: props.distribution },
+    });
+    if (result._tag === "Success") return setState("added");
+    setState("idle");
+    const cause = squashAtomCommandFailure(result);
+    toastManager.add({
+      type: "error",
+      title: gt("Unable to add {name}", { name: props.distribution }),
+      description:
+        cause instanceof Error ? cause.message : gt("Check your connection and try again."),
+    });
+  };
+
+  if (state === "added")
+    return (
+      <span className="text-[11px] text-muted-foreground">
+        <T>
+          Added <Var>{props.distribution}</Var>. Run again to use it.
+        </T>
+      </span>
+    );
+  return (
+    <Button size="xs" variant="outline" disabled={state === "adding"} onClick={() => void add()}>
+      {state === "adding" ? <LoaderCircle className="animate-spin" /> : null}
+      <T>
+        Add <Var>{props.distribution}</Var>
+      </T>
+    </Button>
+  );
+}
 
 /** One click replaces this tab's session with managed Python; never an installer or a retry. */
 export function ComputeDependencyRecoveryAction(props: {

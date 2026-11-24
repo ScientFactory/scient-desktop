@@ -77,7 +77,11 @@ describe("dependency recovery guidance", () => {
   it("offers only an observed alternative, without changing the runtime", () => {
     const data = inspection();
     const before = structuredClone(data);
-    expect(recover(data)).toEqual({ moduleName: "pandas", managedHasPackage: true });
+    expect(recover(data)).toEqual({
+      moduleName: "pandas",
+      distribution: "pandas",
+      managedHasPackage: true,
+    });
     expect(data).toEqual(before);
   });
   it("does not infer package presence from the managed installation alone", () => {
@@ -120,16 +124,22 @@ describe("dependency recovery guidance", () => {
       }),
     ).toBeNull();
   });
-  it.each(["yaml", "PIL", "sklearn", "skimage", "Bio"])(
-    "recognizes reviewed import spelling %s without claiming an unobserved distribution",
-    (moduleName) => {
+  it.each([
+    ["yaml", "pyyaml"],
+    ["PIL", "pillow"],
+    ["sklearn", "scikit-learn"],
+    ["cv2", "opencv-python"],
+    ["Bio", "biopython"],
+  ])(
+    "names the package to add for import %s without claiming it is installed",
+    (moduleName, distribution) => {
       expect(
         computeDependencyRecovery({
           diagnostic: { ...diagnostic, message: `No module named '${moduleName}'` },
           session,
           inspection: inspection(),
         }),
-      ).toEqual({ moduleName, managedHasPackage: false });
+      ).toEqual({ moduleName, distribution, managedHasPackage: false });
     },
   );
   it("requires a usable, catalogued, different managed environment", () => {
@@ -262,6 +272,6 @@ describe("dependency recovery guidance", () => {
         ],
       },
     });
-    expect(result).toEqual({ moduleName, managedHasPackage: true });
+    expect(result).toEqual({ moduleName, distribution, managedHasPackage: true });
   });
 });

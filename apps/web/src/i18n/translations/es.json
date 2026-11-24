@@ -22151,5 +22151,24 @@
   "b62d0f87e5795776": "Puede usar el agente",
   "4e953cff0756d467": "Caducado",
   "af96d13065c3b2ce": "Quedan {days} d",
-  "e5efdfa2c982cace": "No se pudo acceder al servidor. Vuelve a intentarlo."
+  "e5efdfa2c982cace": "No se pudo acceder al servidor. Vuelve a intentarlo.",
+  "4f248c2c1a6d41b0": "No se pudo añadir {name}",
+  "9bd7a4d7ec9db71c": "Comprueba tu conexión e inténtalo de nuevo.",
+  "ba7fb80123d3bb5c": [
+    "Se añadió ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Vuelve a ejecutar para usarlo."
+  ],
+  "8944454ead63843d": [
+    "Añadir ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

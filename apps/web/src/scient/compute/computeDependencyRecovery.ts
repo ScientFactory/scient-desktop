@@ -4,8 +4,10 @@ import type {
   ComputeSessionRecord,
 } from "@t3tools/contracts";
 
-// Import names are not distribution names. This reviewed allowlist is only for
-// contextual guidance, never an instruction to install an arbitrary error string.
+// Import names are not distribution names, and an unknown name is often the
+// person's own module: PyPI may well have an unrelated package by that name.
+// So the app offers to add only these reviewed packages; an agent, which can
+// read the code, handles any other.
 const PYTHON_IMPORT_DISTRIBUTIONS: ReadonlyMap<string, string> = new Map([
   ...[
     "numpy",
@@ -34,12 +36,101 @@ const PYTHON_IMPORT_DISTRIBUTIONS: ReadonlyMap<string, string> = new Map([
     "tifffile",
     "imagecodecs",
     "pyfaidx",
+    "polars",
+    "duckdb",
+    "networkx",
+    "numba",
+    "numexpr",
+    "joblib",
+    "tqdm",
+    "xlrd",
+    "lxml",
+    "altair",
+    "bokeh",
+    "plotnine",
+    "patsy",
+    "pingouin",
+    "lifelines",
+    "linearmodels",
+    "arviz",
+    "pymc",
+    "emcee",
+    "corner",
+    "lmfit",
+    "iminuit",
+    "uncertainties",
+    "pint",
+    "mpmath",
+    "cvxpy",
+    "pulp",
+    "optuna",
+    "shap",
+    "xgboost",
+    "lightgbm",
+    "catboost",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "tensorflow",
+    "keras",
+    "jax",
+    "transformers",
+    "datasets",
+    "tokenizers",
+    "nltk",
+    "spacy",
+    "gensim",
+    "hdbscan",
+    "astropy",
+    "shapely",
+    "geopandas",
+    "pyproj",
+    "rasterio",
+    "netCDF4",
+    "pydicom",
+    "nibabel",
+    "nilearn",
+    "dipy",
+    "mne",
+    "neo",
+    "quantities",
+    "brian2",
+    "pysam",
+    "anndata",
+    "scanpy",
+    "mdtraj",
+    "ase",
+    "pymatgen",
+    "rdkit",
+    "igraph",
+    "leidenalg",
+    "librosa",
+    "soundfile",
+    "pyreadstat",
+    "pyreadr",
+    "sqlalchemy",
+    "ipywidgets",
   ].map((name): [string, string] => [name, name]),
   ["sklearn", "scikit-learn"],
   ["skimage", "scikit-image"],
+  ["skbio", "scikit-bio"],
+  ["sksurv", "scikit-survival"],
+  ["skopt", "scikit-optimize"],
   ["yaml", "pyyaml"],
   ["PIL", "pillow"],
   ["Bio", "biopython"],
+  ["cv2", "opencv-python"],
+  ["bs4", "beautifulsoup4"],
+  ["dateutil", "python-dateutil"],
+  ["docx", "python-docx"],
+  ["pptx", "python-pptx"],
+  ["fitz", "pymupdf"],
+  ["pywt", "pywavelets"],
+  ["umap", "umap-learn"],
+  ["community", "python-louvain"],
+  ["MDAnalysis", "mdanalysis"],
+  ["SimpleITK", "simpleitk"],
+  ["tables", "tables"],
 ]);
 
 /** A conservative hint, not a diagnosis or proof that switching will fix a run. */
@@ -50,7 +141,11 @@ export function computeDependencyRecovery(input: {
   >;
   readonly session: Pick<ComputeSessionRecord, "languageId" | "runtime">;
   readonly inspection: ComputeRuntimeInspection | null;
-}): { readonly moduleName: string; readonly managedHasPackage: boolean } | null {
+}): {
+  readonly moduleName: string;
+  readonly distribution: string;
+  readonly managedHasPackage: boolean;
+} | null {
   if (input.session.languageId !== "python" || input.diagnostic.errorName !== "ModuleNotFoundError")
     return null;
   // Accept only the canonical whole top-level-module message. Missing
@@ -64,6 +159,7 @@ export function computeDependencyRecovery(input: {
 
   return {
     moduleName,
+    distribution,
     managedHasPackage: managedDependencyRuntime({ ...input, moduleName }) !== null,
   };
 }
