@@ -479,25 +479,25 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 42],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 48],
-    ["docs PR", "docs/operations/00_development.md", "pull_request", false, 42],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 40],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 46],
+    ["docs PR", "docs/operations/00_development.md", "pull_request", false, 40],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 56],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 55],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 54],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 53],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      59,
+      57,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 51],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 43],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 49],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 41],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/00_development.md", "push", false, 64],
-    ["nightly", "docs/operations/00_development.md", "schedule", false, 63],
+    ["main push", "docs/operations/00_development.md", "push", false, 62],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 61],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(
@@ -517,6 +517,37 @@ describe("CI workflow decisions", () => {
       }
     },
   );
+
+  it("runs the performance checks first on the last shard, and its tests whatever they found", () => {
+    type Step = { name?: string; id?: string; if?: string; run?: string; env?: object };
+    for (const [id, checks] of [
+      ["test_web", ["Boot the built web client", "Test scientific editor performance"]],
+      ["test_server", ["Test compute session Python bridge", "Test scientific server performance"]],
+    ] as const) {
+      const steps = workflow.jobs[id]!.steps! as Array<Step>;
+      const at = (name: string) => steps.findIndex((step) => step.name === name);
+      const clear = at("Clear what the performance checks cached");
+      for (const name of checks) {
+        expect(steps[at(name)]!.if, name).toContain("matrix.shard == strategy.job-total");
+        expect(at(name), name).toBeGreaterThan(at("Install missing Chromium system dependencies"));
+        expect(at(name), name).toBeLessThan(clear);
+      }
+      expect(steps[clear]!.if).toBe("${{ !cancelled() && matrix.shard == strategy.job-total }}");
+      expect(clear).toBeLessThan(at("Test"));
+      expect(steps[at("Test")]!.if).toBe(
+        "${{ !cancelled() && steps.browser.outcome == 'success' }}",
+      );
+      expect(steps.find((step) => step.id === "browser")!.name).toBe(
+        "Install missing Chromium system dependencies",
+      );
+    }
+    expect(
+      (workflow.jobs.test_web!.steps! as Array<Step>).find(
+        (step) => step.name === "Test scientific editor performance",
+      )!.env,
+    ).toEqual({ SCIENT_MARKDOWN_PERF_STRICT: "1" });
+    expect(Object.keys(workflow.jobs).filter((id) => id.includes("performance"))).toEqual([]);
+  });
 
   it("installs CI-script dependencies before Node tests and always tests every workspace", () => {
     const steps = workflow.jobs.lint!.steps!;

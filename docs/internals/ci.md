@@ -39,8 +39,10 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   roughly three times larger on a runner with half the vCPUs.
 - **Test Web**: twelve shards of `vp run --filter @t3tools/web test --shard N/12`, each on its own
   runner, covering both unit tests and `*.browser.test.{ts,tsx}` in headless Chromium. This keeps
-  the large web suite from competing with other workspace packages. **Test Web performance** runs
-  beside them: it builds and boots the production web client and runs the editor timing budgets. The Test step sets
+  the large web suite from competing with other workspace packages. The last shard first builds
+  and boots the production web client and runs the editor timing budgets, on the runner's clean
+  start, then clears what they cached and runs its tests whatever they found, so a failure names
+  its own step and the shard's tests still report. The Test step sets
   `SCIENT_BROWSER_LIFECYCLE_DIAGNOSTICS`, so the Playwright provider
   (`apps/web/src/testUtils/browserLifecycleDiagnostics.ts`) records page close/crash, navigation
   category, browser disconnect and browser-API socket open/close/error as fixed event names and
@@ -52,8 +54,8 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
 - **Test Server**: sixteen shards of `vp run --filter t3 test --shard N/16 --fileParallelism
   --maxWorkers=4`. The server config keeps `fileParallelism: false` for local runs; CI runs four
   files at a time, each in its own process, and spends no Electron download on these shards.
-  **Test Server performance** runs beside them: the compute session Python bridge tests and the
-  server timing budgets. Both suites split by the durations of recent main runs (see
+  The last shard first runs the compute session Python bridge tests and the server timing
+  budgets the same way. Both suites split by the durations of recent main runs (see
   [Shard weights](#shard-weights)). Chromium is installed explicitly for the server browser integration tests. Exactly one shard writes the thread transfer budget
   report; a presence-gated upload keeps a single `thread-transfer-results` artifact, the exact name
   [`thread-transfer-report.yml`](../../.github/workflows/thread-transfer-report.yml) resolves when
