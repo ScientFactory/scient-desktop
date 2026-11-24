@@ -8,6 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -305,10 +306,11 @@ const spawnGit = Effect.fnUntraced(function* (input: SpawnInput) {
               child.kill("SIGKILL");
             }
           } else if (child.pid !== undefined) {
-            NodeChildProcess.spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-              windowsHide: true,
-              timeout: 5_000,
-            });
+            NodeChildProcess.spawnSync(
+              windowsSystem32Path(input.env, "taskkill.exe"),
+              ["/PID", String(child.pid), "/T", "/F"],
+              { windowsHide: true, timeout: 5_000 },
+            );
             child.kill("SIGKILL");
           }
           child.stdin.destroy();

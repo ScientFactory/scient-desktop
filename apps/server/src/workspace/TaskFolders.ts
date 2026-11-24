@@ -181,13 +181,15 @@ export class TaskFolders extends Context.Service<
       readonly newBranch: string;
       readonly exactName?: boolean;
     }) => Effect.Effect<{ readonly branch: string }, TaskFolderError>;
-    /** Puts back whatever is missing; `recreate` checks a branch out again at a path. */
+    // SCIENT-FORK:START task-folder-restore-setup
+    /** Puts back whatever is missing, and says whether it rebuilt anything; `recreate` checks a branch out again at a path. */
     readonly restore: <E>(input: {
       readonly taskFolder: TaskFolder;
       /** The thread's branch, for a project that lays its folder out with its own command. */
       readonly branch: string;
       readonly recreate: (checkout: TaskFolderCheckout) => Effect.Effect<void, E>;
-    }) => Effect.Effect<void, TaskFolderError | E>;
+    }) => Effect.Effect<boolean, TaskFolderError | E>;
+    // SCIENT-FORK:END task-folder-restore-setup
     // SCIENT-FORK:START task-folder-rewind
     /** Whether the folder is a worktree of the repository, registered at that path: what `restore` keeps. */
     readonly isLinkedCheckout: (checkout: TaskFolderCheckout) => Effect.Effect<boolean>;
@@ -1428,6 +1430,8 @@ const make = Effect.gen(function* () {
     recreate,
   }) {
     const restoreFailed = fail("create", "Could not restore the worktrees");
+    // SCIENT-FORK: task-folder-restore-setup
+    let rebuilt = false;
     // A project that lays its own folder out rebuilds it; whatever is still missing after that
     // comes back as a plain checkout below.
     const layout = yield* worktreeLayout(taskFolder.projectRoot);
@@ -1436,6 +1440,8 @@ const make = Effect.gen(function* () {
       exists,
     );
     if (layout !== null && present.includes(false)) {
+      // SCIENT-FORK: task-folder-restore-setup
+      rebuilt = true;
       yield* fileSystem
         .makeDirectory(taskFolder.root, { recursive: true })
         .pipe(Effect.mapError(restoreFailed));
@@ -1460,6 +1466,8 @@ const make = Effect.gen(function* () {
       yield* fileSystem
         .makeDirectory(path.dirname(checkout.worktreePath), { recursive: true })
         .pipe(Effect.mapError(restoreFailed));
+      // SCIENT-FORK: task-folder-restore-setup
+      rebuilt = true;
       yield* recreate(checkout);
     });
     if (taskFolder.projectIsWorktree) {
@@ -1473,6 +1481,8 @@ const make = Effect.gen(function* () {
         (yield* trackedFolders(project)).map((folder) => path.resolve(folder.path)),
         isRepository,
       );
+      // SCIENT-FORK: task-folder-restore-setup
+      rebuilt = true;
       // A recorded repository the project no longer tracks still gets its worktree, never a link.
       yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, [
         ...tracked,
@@ -1484,6 +1494,8 @@ const make = Effect.gen(function* () {
     )) {
       yield* recreateMissing(repository);
     }
+    // SCIENT-FORK: task-folder-restore-setup
+    return rebuilt;
   });
 
   return TaskFolders.of({

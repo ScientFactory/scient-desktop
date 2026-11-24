@@ -992,3 +992,39 @@ it.live("restores a recorded repository the project stopped tracking as its work
     }),
   ),
 );
+
+// SCIENT-FORK:START task-folder-restore-setup
+it.live("reports a restore that rebuilt a checkout, so its setup runs again", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const shop = path.join(tmp, "shop");
+      const web = yield* repository("shop/web");
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(web);
+      const { taskFolder } = yield* create("feature");
+      const taskFolders = yield* TaskFolders.TaskFolders;
+
+      const intact = yield* taskFolders.restore({
+        taskFolder,
+        branch: "feature",
+        recreate: () => Effect.die("nothing is missing"),
+      });
+      assert.isFalse(intact);
+
+      const webWorktree = path.join(taskFolder.root, "web");
+      yield* fileSystem.remove(webWorktree, { recursive: true });
+      const rebuilt = yield* taskFolders.restore({
+        taskFolder,
+        branch: "feature",
+        recreate: ({ repositoryPath, worktreePath }) =>
+          run(repositoryPath, "worktree", "prune").pipe(
+            Effect.andThen(run(repositoryPath, "worktree", "add", "-q", worktreePath, "feature")),
+          ),
+      });
+      assert.isTrue(rebuilt);
+      assert.equal(yield* run(webWorktree, "symbolic-ref", "--short", "HEAD"), "feature");
+    }),
+  ),
+);
+// SCIENT-FORK:END task-folder-restore-setup
