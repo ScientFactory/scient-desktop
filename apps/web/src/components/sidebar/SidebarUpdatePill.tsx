@@ -613,6 +613,7 @@ function SidebarUpdateControl({
           <SidebarOtherUpdates
             placement="rail"
             servers={everything.otherServers}
+            current={everything.machines}
             updateAll={updateOthers}
           />,
           railOtherUpdatesSlot,
@@ -635,6 +636,7 @@ function SidebarUpdateControl({
       <SidebarOtherUpdates
         placement="footer"
         servers={everything.otherServers}
+        current={everything.machines}
         updateAll={updateOthers}
       />
     );
@@ -773,7 +775,11 @@ function SidebarUpdateControl({
     <>
       {/* SCIENT-FORK:START — in the header the circle is in the rail. */}
       {inHeader ? null : (
-        <SidebarOtherUpdates servers={everything.otherServers} updateAll={updateOthers} />
+        <SidebarOtherUpdates
+          servers={everything.otherServers}
+          current={everything.machines}
+          updateAll={updateOthers}
+        />
       )}
       {/* SCIENT-FORK:END */}
       <Popover

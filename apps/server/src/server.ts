@@ -1044,6 +1044,7 @@ export const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(ServerHttp.layerApiBodyLimit),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
+    ServerHttp.layerDesktopReadinessProofRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     // SCIENT-FORK:START — signed-URL requests that match no route are traced and logged redacted too.

@@ -1256,6 +1256,7 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
         branch: "task",
         projectStart: { refName: "main", baseRefName: "main" },
         startFromOrigin: false,
+        projectCommands: true,
       });
       const root = taskFolder.root;
       // A nested worktree's uncommitted work must survive its thread's cleanup.
@@ -1359,6 +1360,7 @@ const taskFolderCleanupFixture = Effect.gen(function* () {
     branch: "task",
     projectStart: { refName: "main", baseRefName: "main" },
     startFromOrigin: false,
+    projectCommands: true,
   });
   fixture.setTaskFolders(taskFolders);
   fixture.setThreads([shell({ branch: "task", worktreePath: taskFolder.root })]);
@@ -1461,6 +1463,45 @@ it.live("leaves a task folder whose project has a teardown command to the user",
   runCleanupTest(
     Effect.gen(function* () {
       const { service, fs, repo, root } = yield* taskFolderCleanupFixture;
+      yield* fs.writeFileString(
+        `${repo}/t3.json`,
+        JSON.stringify({
+          worktreeLayout: {
+            create: 'mkdir -p "$T3_WORKTREE_PROJECT_PATH"',
+            remove: 'touch "$T3_PROJECT_ROOT/torn-down" && rm -rf "$T3_WORKTREE_ROOT"',
+          },
+        }),
+      );
+
+      const report = yield* service.runNow;
+
+      expect(taskFolderEntries(report, root)).toEqual([
+        {
+          path: root,
+          outcome: "kept",
+          reason: "Its project has a teardown command, so it is removed only when you remove it",
+        },
+      ]);
+      expect(yield* fs.exists(`${repo}/torn-down`)).toBe(false);
+      expect(yield* fs.readFileString(`${root}/dist/api/tracked.txt`)).toBe("original\n");
+      expect(yield* fs.readFileString(`${root}/dist/web/tracked.txt`)).toBe("original\n");
+    }),
+  ),
+);
+
+// A fenced link's request may not run the project's commands, but a folder laid out for one
+// before that rule is still the project's to tear down: it stays, and the command never runs.
+it.live("leaves a fenced link's task folder whose project has a teardown command", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, root, setThreads } = yield* taskFolderCleanupFixture;
+      setThreads([
+        shell({
+          branch: "task",
+          worktreePath: root,
+          linkOrigin: { sessionId: "laptop", label: "laptop", access: "auto" },
+        }),
+      ]);
       yield* fs.writeFileString(
         `${repo}/t3.json`,
         JSON.stringify({
@@ -3936,6 +3977,38 @@ describe("storage cleanup reports and local file policies", () => {
         });
         expect(report.bytesFreed).toBe(0);
         expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.effect("removes an eligible worktree whose ignored files take over 30 seconds to walk", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fs = yield* FileSystem.FileSystem;
+        const walking = yield* Deferred.make<void>();
+        let slowPath: string | undefined;
+        // Stands in for a flat Bun or npm node_modules with hundreds of thousands of files.
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            lstat: (target) =>
+              Effect.gen(function* () {
+                if (target === slowPath) {
+                  yield* Deferred.succeed(walking, undefined);
+                  yield* Effect.sleep("31 seconds");
+                }
+                return yield* fs.lstat(target);
+              }),
+          }),
+        );
+        yield* fs.makeDirectory(`${fixture.worktree}/node_modules/pkg`, { recursive: true });
+        yield* fs.writeFileString(`${fixture.worktree}/node_modules/pkg/index.js`, "export {};\n");
+        slowPath = `${yield* fs.realPath(fixture.worktree)}/node_modules`;
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(walking);
+        yield* TestClock.adjust("31 seconds");
+        expect((yield* Fiber.join(run)).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(fixture.worktree)).toBe(false);
       }),
     ),
   );

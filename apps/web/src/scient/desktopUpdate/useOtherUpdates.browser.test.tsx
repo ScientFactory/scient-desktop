@@ -78,6 +78,8 @@ vi.mock("~/state/server", () => ({
       }
       return atom;
     },
+    // A Retry reads the server's version at the click; these servers report none.
+    configValueAtom: () => Atom.make(null),
     settingsValueAtom: (id: string) => {
       let atom = testState.serverSettings.get(id);
       if (!atom) {
@@ -213,7 +215,7 @@ function Probe({
   _fixture,
   servers,
 }: { servers: ReadonlyArray<OtherServerUpdate> } & { _fixture: _Fixture }) {
-  const value = useOtherUpdates(servers);
+  const value = useOtherUpdates(servers, []);
   useLayoutEffect(() => {
     _fixture.publishCurrent(value);
   });

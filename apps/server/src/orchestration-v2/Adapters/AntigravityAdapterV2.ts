@@ -52,6 +52,7 @@ import {
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
+  makeAntigravityUpdateStepsPlans,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
@@ -222,6 +223,7 @@ export function makeAntigravityAcpAdapterFlavor(
         .pipe(Effect.provideService(Scope.Scope, scope));
       // Repair keeps state across updates, so each runtime must have one session-update handler.
       const reads = makeAntigravityReadRepair();
+      const plans = makeAntigravityUpdateStepsPlans();
       // Served reads are reported from the read handler, so they take turns with agent updates.
       const updates = yield* Semaphore.make(1);
       let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
@@ -265,35 +267,38 @@ export function makeAntigravityAcpAdapterFlavor(
           ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
-          return runtime.handleSessionUpdate((notification) =>
-            updates.withPermit(
-              // SCIENT-FORK:START — challenges are kept and scrubbed before anything projects them.
-              Effect.gen(function* () {
-                const { notifications, candidate } = pluginSignIns.observe({
-                  generation,
-                  notification: reads.repair(notification),
-                });
-                // Only the installed plugin's own CLI and OAuth client earn a sign-in notice.
-                const verified =
-                  candidate === undefined || pluginsDirectory === undefined
-                    ? undefined
-                    : yield* verifyPluginSignIn({ pluginsDirectory, candidate }).pipe(
-                        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
-                        Effect.provideService(Path.Path, options.path),
-                      );
-                if (candidate !== undefined && verified !== undefined) {
-                  pluginSignIns.admit(candidate, {
-                    attemptId: yield* options.random.uuidV4(),
-                    displayName: verified.displayName,
-                    programs: verified.programs,
-                    now: yield* Clock.currentTimeMillis,
-                  });
-                }
-                yield* Effect.forEach(notifications, handler, { discard: true });
-              }),
-              // SCIENT-FORK:END
-            ),
-          );
+          return runtime.handleSessionUpdate((notification) => {
+            const update = plans(reads.repair(notification));
+            return update === undefined
+              ? Effect.void
+              : updates.withPermit(
+                  // SCIENT-FORK:START — challenges are kept and scrubbed before anything projects them.
+                  Effect.gen(function* () {
+                    const { notifications, candidate } = pluginSignIns.observe({
+                      generation,
+                      notification: update,
+                    });
+                    // Only the installed plugin's own CLI and OAuth client earn a sign-in notice.
+                    const verified =
+                      candidate === undefined || pluginsDirectory === undefined
+                        ? undefined
+                        : yield* verifyPluginSignIn({ pluginsDirectory, candidate }).pipe(
+                            Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+                            Effect.provideService(Path.Path, options.path),
+                          );
+                    if (candidate !== undefined && verified !== undefined) {
+                      pluginSignIns.admit(candidate, {
+                        attemptId: yield* options.random.uuidV4(),
+                        displayName: verified.displayName,
+                        programs: verified.programs,
+                        now: yield* Clock.currentTimeMillis,
+                      });
+                    }
+                    yield* Effect.forEach(notifications, handler, { discard: true });
+                  }),
+                  // SCIENT-FORK:END
+                );
+          });
         },
         start: () =>
           runtime.start().pipe(

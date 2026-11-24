@@ -1,16 +1,19 @@
 import type { EnvironmentId, RuntimeMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { use } from "react";
 import { T, useGT, useMessages } from "gt-react";
 // SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
-import { useRef, useState } from "react";
+import { useRef } from "react";
 // SCIENT-FORK:END
 
 import { shortcutLabelForCommand } from "../keybindings";
 import { useManagedPolicy } from "../state/managedPolicy";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { HiddenThreadContext } from "./chat/backgroundThread";
 import { ComposerControl } from "./chat/ComposerControl";
 import { ComposerPermissionsSection } from "./chat/ComposerFooterControls";
 import { focusRequestedPermission, useComposerMenuProps } from "./chat/composerEventScope";
+import { useComposerMenuState } from "./chat/useComposerMenuState";
 import {
   resolveCompatibleRuntimeMode,
   resolveRuntimeModeOptions,
@@ -38,17 +41,17 @@ export function ComposerContextPermissions(props: {
   );
   const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId), messages);
   const composerMenuProps = useComposerMenuProps();
+  const [open, setOpen] = useComposerMenuState(use(HiddenThreadContext));
   // SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
-  const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // SCIENT-FORK:END
   const { icon: Icon } = runtimeModeConfig[mode];
   const label = messages(runtimeModeConfig[mode].label);
   return (
     <Menu
-      // SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
       open={open}
       onOpenChange={setOpen}
+      // SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
       onOpenChangeComplete={(isOpen) => focusRequestedPermission(isOpen, triggerRef.current)}
       // SCIENT-FORK:END
     >

@@ -469,11 +469,42 @@ function testPlacement(ctx) {
     : ctx.upstream;
   const baseUpstreamPaths =
     baseUpstream === ctx.upstream ? ctx.upstreamPaths : treePaths(ctx.run, baseUpstream);
+  // An alignment merges T3 before it records the new boundary: a merge parent in official
+  // T3 history (the ref CI verifies provenance against, or a local upstream ref) is T3's.
+  const tip = ctx.head ?? commit(ctx.run, "HEAD");
+  const official = ["refs/remotes/upstream-verification/main", "refs/remotes/upstream/main"]
+    .map((ref) => {
+      try {
+        return commit(ctx.run, ref);
+      } catch {
+        return null;
+      }
+    })
+    .filter((sha) => sha !== null);
+  const isAncestor = (ancestor, descendant) => {
+    try {
+      ctx.run(["merge-base", "--is-ancestor", ancestor, descendant]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let upstream = ctx.upstream;
+  const merges = official.length
+    ? ctx.run(["rev-list", "--merges", "--parents", `${ctx.base}..${tip}`]).split("\n")
+    : [];
+  for (const line of merges) {
+    for (const parent of line.split(" ").slice(1))
+      if (official.some((ref) => isAncestor(parent, ref)) && isAncestor(upstream, parent))
+        upstream = parent;
+  }
+  const upstreamPaths =
+    upstream === ctx.upstream ? ctx.upstreamPaths : treePaths(ctx.run, upstream);
   for (const path of ctx.changed) {
     if (
       path.startsWith(".repos/") ||
       !t3TestFile(path) ||
-      !ctx.upstreamPaths.has(path) ||
+      !upstreamPaths.has(path) ||
       !ctx.paths.has(path)
     )
       continue;
@@ -484,11 +515,11 @@ function testPlacement(ctx) {
     const base = countTitles(baseTests);
     const baseUnmarked = countTitles(baseTests.filter(({ marked }) => !marked));
     const previous = titlesAt(baseUpstream, baseUpstreamPaths, path);
-    const upstream = titlesAt(ctx.upstream, ctx.upstreamPaths, path);
+    const t3 = titlesAt(upstream, upstreamPaths, path);
     const added = [];
     let dropped = 0;
-    for (const title of new Set([...head.keys(), ...base.keys(), ...upstream.keys()])) {
-      const [h, hU, b, bU, p, u] = [head, headUnmarked, base, baseUnmarked, previous, upstream].map(
+    for (const title of new Set([...head.keys(), ...base.keys(), ...t3.keys()])) {
+      const [h, hU, b, bU, p, u] = [head, headUnmarked, base, baseUnmarked, previous, t3].map(
         (m) => m.get(title) ?? 0,
       );
       // Unmarked occurrences beyond what the base had unmarked or T3 has now are new.
