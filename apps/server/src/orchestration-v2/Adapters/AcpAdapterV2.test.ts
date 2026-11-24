@@ -6183,6 +6183,80 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  // SCIENT-FORK:START — exercise the bash fallback through the ACP session update harness.
+  it.effect("keeps the outer diagnostic and images on OMP bash fallback cards", () =>
+    Effect.gen(function* () {
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({ T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "execute" }),
+      });
+      yield* harness.startTurn(1);
+      yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call",
+        ),
+        Stream.runHead,
+      );
+      const shell = "scient_connector_list\nprintf diagnostic >&2\nexit 1";
+      const image = { type: "image", mimeType: "image/png", data: "AAAA" };
+      const text = { type: "text", text: "Generated image" };
+      for (const [id, script, tool, status, content] of [
+        ["mixed", shell, "scient_connector_list", "failed", [{ type: "text", text: "diagnostic" }]],
+        ["image", "generate_image --prompt chart", "generate_image", "completed", [text, image]],
+      ] as const) {
+        yield* harness.emitUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: id,
+            name: "bash",
+            title: "bash",
+            kind: "execute",
+            status,
+            rawInput: { command: script },
+            rawOutput: {
+              content,
+              // Oh My Pi 19.1 reports the exit code under details, as bash.ts does.
+              details: {
+                exitCode: status === "failed" ? 1 : 0,
+                toolCommands: [
+                  { tool, mode: "execute", args: {}, exitCode: 0, inner: { content: [] } },
+                ],
+              },
+            },
+          },
+        });
+      }
+      const events = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn_item.updated"),
+        Stream.takeUntil((event) => event.turnItem.nativeItemRef?.nativeId === "image"),
+        Stream.runCollect,
+      );
+      const items = events.map((event) => event.turnItem);
+      assert.deepInclude(
+        items.find((item) => item.nativeItemRef?.nativeId === "mixed"),
+        {
+          type: "command_execution",
+          input: shell,
+          status: "failed",
+          exitCode: 1,
+          output: "diagnostic",
+        },
+      );
+      assert.deepInclude(
+        items.find((item) => item.nativeItemRef?.nativeId === "image"),
+        {
+          type: "dynamic_tool",
+          toolName: "bash",
+          input: { command: "generate_image --prompt chart" },
+          output: { content: [text, image], exitCode: 0 },
+        },
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+  // SCIENT-FORK:END
+
   it.effect(
     "holds the inactivity timeout while a tool runs and restarts it when the tool ends",
     () =>
