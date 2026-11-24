@@ -81,8 +81,8 @@ NodeTest.test(
   },
 );
 
-// Before the shard counts fell, ci.yml ran 12 web and 16 server shards.
-const OLD = { web: 12, server: 16 };
+// A wider matrix than today's, as ci.yml ran before its shard counts fell.
+const OLD = { web: 16, server: 16 };
 const old = (suite, runId, seconds, passed = OLD[suite]) =>
   ran(
     runId,
@@ -108,7 +108,7 @@ NodeTest.test("a run from a wider matrix, before the shard count fell, is not us
 });
 
 NodeTest.test("a partial run from the wider matrix is not taken for a complete new one", () => {
-  // Shards 1-8 passed and 9-12 failed: exactly today's eight reports, from another matrix.
+  // Today's shards passed and the higher ones failed: exactly today's reports, from another matrix.
   NodeAssert.deepEqual(recentWeights([old("web", 2, 40, SHARDS.web)]).web, null);
   // The same eight reports, with the higher-numbered artifacts missing or unreadable.
   const missing = old("web", 2, 40);
@@ -129,7 +129,7 @@ NodeTest.test("reads each suite's shard count from a run's own workflow", () => 
   const range = (count) => Array.from({ length: count }, (_, index) => index + 1);
   const workflow = (web, server) =>
     `jobs:\n  test_web:\n${matrix(web)}  # between\n  test_server:\n${matrix(server)}  check:\n    needs: [test_web]\n`;
-  NodeAssert.deepEqual(matrixShards(workflow(range(12), range(16))), OLD);
+  NodeAssert.deepEqual(matrixShards(workflow(range(16), range(16))), OLD);
   NodeAssert.deepEqual(matrixShards(workflow(range(8), [1, 2, 4])), { web: 8, server: null });
   NodeAssert.deepEqual(matrixShards("jobs:\n  test:\n" + matrix(range(6))), {
     web: null,

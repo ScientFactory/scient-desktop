@@ -38,7 +38,7 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   plugin; and `Test 6` runs desktop with its Electron runtime, browser secret helper libraries and
   export smokes. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.
-- **Test Web**: eight shards of `vp run --filter @t3tools/web test --shard N/8`, each on its own
+- **Test Web**: twelve shards of `vp run --filter @t3tools/web test --shard N/12`, each on its own
   runner, covering both unit tests and `*.browser.test.{ts,tsx}` in headless Chromium. This keeps
   the large web suite from competing with other workspace packages. The last shard first builds
   and boots the production web client and runs the editor timing budgets, on the runner's clean

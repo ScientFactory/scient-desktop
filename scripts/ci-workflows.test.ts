@@ -479,25 +479,25 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 32],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 38],
-    ["docs PR", "docs/operations/00_development.md", "pull_request", false, 32],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 36],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 42],
+    ["docs PR", "docs/operations/00_development.md", "pull_request", false, 36],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 46],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 45],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 50],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 49],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      49,
+      53,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 41],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 33],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 45],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 37],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/00_development.md", "push", false, 54],
-    ["nightly", "docs/operations/00_development.md", "schedule", false, 53],
+    ["main push", "docs/operations/00_development.md", "push", false, 58],
+    ["nightly", "docs/operations/00_development.md", "schedule", false, 57],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/00_development.md", "push", true, 9],
   ] as const)(
