@@ -876,6 +876,8 @@ const make = Effect.gen(function* () {
     { readonly result: ComputeRuntimeInspectionResult; readonly at: number }
   >();
   const INSPECTION_STALE_MS = 30_000;
+  /** Explicit refreshes per inspection key, so an older inspection cannot overwrite a newer one. */
+  const inspectionRequests = new Map<string, number>();
 
   const inspectionSnapshot = Effect.fn("ComputeSessionService.inspectionSnapshot")(function* (
     key: string,
@@ -883,11 +885,21 @@ const make = Effect.gen(function* () {
     refresh: boolean,
   ) {
     const now = yield* Clock.currentTimeMillis;
+    // An explicit refresh starts its own inspection rather than joining one begun before it.
+    if (refresh) inspections.forget(key);
+    const asked = (inspectionRequests.get(key) ?? 0) + (refresh ? 1 : 0);
+    inspectionRequests.set(key, asked);
     const store = inspections.get(
       key,
       inspect.pipe(
         Effect.tap((result) =>
-          Effect.sync(() => inspectionSnapshots.set(key, { result, at: now })),
+          Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              // A newer refresh owns the snapshot.
+              if ((inspectionRequests.get(key) ?? 0) === asked)
+                inspectionSnapshots.set(key, { result, at });
+            }),
+          ),
         ),
       ),
     );

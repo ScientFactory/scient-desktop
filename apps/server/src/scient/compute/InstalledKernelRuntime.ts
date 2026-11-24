@@ -125,15 +125,19 @@ const installedSpecs = Effect.fn("InstalledKernelRuntime.installedSpecs")(functi
  * The languages with a setup entry, then any other kernel language installed now. The first group
  * is bound whether or not it is installed, so its kernel is found without a restart.
  */
-export const kernelLanguages = Effect.fn("InstalledKernelRuntime.languages")(function* (
-  projectRoot: string | null = null,
-) {
-  const specs = yield* installedSpecs(projectRoot).pipe(
-    Effect.map((installed) => installed.specs),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("installed Jupyter kernels are unavailable", { cause }).pipe(Effect.as([])),
-    ),
-  );
+/** Whether a kernel lives inside the project; across Windows drives it never does. */
+export function kernelInProject(
+  platform: NodeJS.Platform,
+  projectRoot: string,
+  resourceDir: string,
+): boolean {
+  const path = pathModule(platform);
+  const relative = path.relative(projectRoot, resourceDir);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+/** Languages with a setup Scient knows, plus any other language an installed kernel speaks. */
+function languagesOf(specs: ReadonlyArray<InstalledKernelSpec>) {
   const languages = new Map(
     Object.entries(KERNEL_LANGUAGES).flatMap(([languageId, known]) =>
       known.setup === undefined ? [] : [[languageId, known.name] as const],
@@ -153,6 +157,18 @@ export const kernelLanguages = Effect.fn("InstalledKernelRuntime.languages")(fun
       ...(known?.setup ? { setup: known.setup } : {}),
     };
   });
+}
+
+export const kernelLanguages = Effect.fn("InstalledKernelRuntime.languages")(function* (
+  projectRoot: string | null = null,
+) {
+  const specs = yield* installedSpecs(projectRoot).pipe(
+    Effect.map((installed) => installed.specs),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("installed Jupyter kernels are unavailable", { cause }).pipe(Effect.as([])),
+    ),
+  );
+  return languagesOf(specs);
 });
 
 function runtimeError(
@@ -233,6 +249,19 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
     },
   ): Effect.fn.Return<ComputeRuntimeBinding> {
     const known = new Map<string, InstalledKernelSpec>();
+    /** A discovered kernel as installed now, so a removed or edited one never runs from memory. */
+    const installed = (context: DiscoveryContext, resourceDir: string) => {
+      if (!known.has(resourceDir)) return undefined;
+      const path = pathModule(context.platform);
+      const spec = readInstalledKernelSpecs(context, [path.dirname(resourceDir)]).find(
+        (candidate) =>
+          candidate.resourceDir === resourceDir &&
+          computeLanguageIdFromName(candidate.language) === language.languageId,
+      );
+      if (spec === undefined) known.delete(resourceDir);
+      else known.set(resourceDir, spec);
+      return spec;
+    };
 
     const specsFor = Effect.fn("InstalledKernelRuntime.specs")(function* (
       projectRoot: string | null,
@@ -250,9 +279,8 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       projectRoot: string | null,
       context: DiscoveryContext,
     ): ComputeRuntimeProfile => {
-      const path = pathModule(context.platform);
       const inProject =
-        projectRoot !== null && !path.relative(projectRoot, spec.resourceDir).startsWith("..");
+        projectRoot !== null && kernelInProject(context.platform, projectRoot, spec.resourceDir);
       return {
         languageId: language.languageId,
         source: inProject ? "project" : "conventional",
@@ -287,7 +315,7 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
     const verify: ComputeLanguageAdapter["verify"] = Effect.fn("InstalledKernelRuntime.verify")(
       function* (request) {
         const context = yield* discoveryContext;
-        const spec = known.get(request.profile.executable);
+        const spec = installed(context, request.profile.executable);
         const unusable = (message: string) => ({
           profile: request.profile,
           readiness: "unusable" as const,
@@ -323,7 +351,7 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       "InstalledKernelRuntime.assess",
     )(function* (profile) {
       const context = yield* discoveryContext;
-      const spec = known.get(profile.executable);
+      const spec = installed(context, profile.executable);
       const problem =
         spec === undefined
           ? "This kernel is no longer installed."
@@ -361,11 +389,12 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
     const prepareLaunch: ComputeLanguageAdapter["prepareLaunch"] = Effect.fn(
       "InstalledKernelRuntime.prepareLaunch",
     )(function* (request) {
-      const spec = known.get(request.profile.executable);
+      const context = yield* discoveryContext;
+      const spec = installed(context, request.profile.executable);
       if (spec === undefined)
         return yield* runtimeError("prepare", "This kernel is no longer installed.");
       const host = yield* input.host.executable(yield* input.configuredExecutable("python"));
-      const launch = kernelLaunch(yield* discoveryContext, spec);
+      const launch = kernelLaunch(context, spec);
       const plan = yield* Effect.try({
         try: () =>
           buildLaunchPlan(

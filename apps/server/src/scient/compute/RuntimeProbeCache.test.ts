@@ -57,9 +57,31 @@ describe("runtime probe cache", () => {
       yield* cache.get("/py", probe);
       yield* cache.get("/py", probe);
       expect(runs).toBe(1);
-      cache.clear();
+      yield* TestClock.adjust("31 seconds");
       yield* cache.get("/py", probe);
       expect(runs).toBe(2);
+      cache.clear();
+      yield* cache.get("/py", probe);
+      expect(runs).toBe(3);
+    }),
+  );
+
+  it.effect("does not let a probe begun before a refresh answer or fill it", () =>
+    Effect.gen(function* () {
+      const cache = makeRuntimeProbeCache<string>();
+      const gate = yield* Deferred.make<void>();
+      const started = yield* Deferred.make<void>();
+      const before = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(gate)),
+        Effect.as("old"),
+      );
+      const stale = yield* cache.get("/py", before).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      cache.clear();
+      expect(yield* cache.get("/py", Effect.succeed("new"))).toBe("new");
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(stale);
+      expect(yield* cache.get("/py", Effect.succeed("probed again"))).toBe("new");
     }),
   );
 });
