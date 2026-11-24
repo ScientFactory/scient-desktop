@@ -22,6 +22,7 @@ import {
   SIGNED_RANGE,
   fixtureBytes,
   hiddenIdFixture,
+  rightAlignedFixture,
 } from "./docxJob.testkit.ts";
 import { runDocxTrackedReplacement, type DocxJobResult } from "./DocxTrackedReplacementJob.ts";
 import { OfficeRenderer, makeOfficeRenderer, probeOfficeVersion } from "./OfficeRenderer.ts";
@@ -58,6 +59,15 @@ const pagesWith = (layout: PdfLayout, text: string) =>
   layout.pages.flatMap((items, index) =>
     items.some((item) => item.str.includes(text)) ? [index + 1] : [],
   );
+
+function lineRightEdge(layout: PdfLayout, page: number, text: string): number {
+  const items = layout.pages[page - 1]!;
+  const anchor = items.find((item) => item.str.includes(text));
+  if (anchor === undefined) throw new Error(`Could not locate "${text}" on page ${page}.`);
+  return Math.max(
+    ...items.filter((item) => Math.abs(item.y - anchor.y) < 1).map((item) => item.x + item.width),
+  );
+}
 
 const evidence: Record<string, unknown> = {
   platform: `${platform}-${HostProcess.Architecture.defaultValue()}`,
@@ -151,15 +161,25 @@ describe.skipIf(soffice === null)("tracked replacement with the pinned LibreOffi
       ),
   );
 
-  it.effect("replaces a Hebrew word in a right-to-left paragraph", () =>
+  it.effect("replaces a Hebrew word and keeps its line at the right margin", () =>
     withRenderer(
       Effect.gen(function* () {
-        const result = yield* runDocxTrackedReplacement(fixtureBytes(), {
+        const source = yield* rightAlignedFixture;
+        const result = yield* runDocxTrackedReplacement(source, {
           ...HEBREW_WORD,
           ...REVIEW,
         });
         expect(result.checks.filter((check) => !check.passed)).toEqual([]);
-        record("hebrew-word", result, {});
+        const original = yield* readPdfLayout(result.sourcePdf);
+        const edited = yield* readPdfLayout(result.candidatePdf);
+        const rightEdges = {
+          source: lineRightEdge(original, result.editPage, HEBREW_WORD.find),
+          candidate: lineRightEdge(edited, result.editPage, HEBREW_WORD.replace),
+        };
+        // The fixture's A4 page and right margin put the text edge at 532.95 points.
+        expect(Math.abs(rightEdges.source - 532.95)).toBeLessThan(4);
+        expect(Math.abs(rightEdges.candidate - 532.95)).toBeLessThan(4);
+        record("hebrew-word", result, { rightEdges });
       }),
     ),
   );

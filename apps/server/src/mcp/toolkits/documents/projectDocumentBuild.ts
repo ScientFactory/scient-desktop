@@ -343,10 +343,14 @@ export const resolveProjectPdfOutput = Effect.fn("ProjectDocumentBuild.resolvePd
 
 export const resolveProjectDocxOutput = Effect.fn("ProjectDocumentBuild.resolveDocxOutput")(
   function* (root: string, outputPathInput: string) {
-    return yield* resolveProjectOutputFile(root, outputPathInput, {
+    const output = yield* resolveProjectOutputFile(root, outputPathInput, {
       extension: ".docx",
       label: "Word",
     });
+    if (output.expectedRevision !== null) {
+      return yield* boundaryError("invalid-output-path", "Choose a new path for the Word copy.");
+    }
+    return { ...output, expectedRevision: null };
   },
 );
 

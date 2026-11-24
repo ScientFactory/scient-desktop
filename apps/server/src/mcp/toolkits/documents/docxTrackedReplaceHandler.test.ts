@@ -315,12 +315,26 @@ describe("Word tracked replacement tool", () => {
         .provide(replaceDocxTextForInvocation(input(revision, { outputPath: "docs/report.docx" })))
         .pipe(Effect.flip);
       expect(inPlace.code).toBe("invalid-output-path");
+      const alias = "docs/source-alias.docx";
+      yield* Effect.promise(() =>
+        NodeFSP.link(NodePath.join(root, "docs/report.docx"), NodePath.join(root, alias)),
+      );
+      const aliased = yield* h
+        .provide(replaceDocxTextForInvocation(input(revision, { outputPath: alias })))
+        .pipe(Effect.flip);
+      expect(aliased.code).toBe("invalid-output-path");
       const escaping = yield* h
         .provide(replaceDocxTextForInvocation(input(revision, { outputPath: "../outside.docx" })))
         .pipe(Effect.flip);
       expect(escaping.code).toBe("invalid-output-path");
       expect(h.render).not.toHaveBeenCalled();
+      expect(h.store.beginProduction).not.toHaveBeenCalled();
       expect(yield* sourceRevision(root)).toBe(revision);
+      expect(
+        yield* Effect.promise(async () =>
+          bytesRevision(await NodeFSP.readFile(NodePath.join(root, alias))),
+        ),
+      ).toBe(revision);
     }),
   );
 

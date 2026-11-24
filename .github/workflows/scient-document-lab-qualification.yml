@@ -13,7 +13,12 @@ on:
     paths:
       - "apps/server/src/scient/documents/docxJob/**"
       - "apps/server/src/mcp/toolkits/documents/docxTrackedReplace*"
+      - "apps/server/src/mcp/toolkits/documents/projectDocumentBuild.ts"
+      - "apps/server/src/mcp/McpHttpServer.ts"
+      - "apps/server/src/scient/documents/documentExport/**"
+      - "apps/server/src/workspace/WorkspaceFileSystem.ts"
       - "scripts/document-lab-office.mjs"
+      - "pnpm-lock.yaml"
       - ".github/workflows/scient-document-lab-qualification.yml"
 
 permissions:
@@ -31,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025, macos-26]
+        os: [ubuntu-24.04, windows-2025, macos-26, macos-26-intel]
     defaults:
       run:
         shell: bash

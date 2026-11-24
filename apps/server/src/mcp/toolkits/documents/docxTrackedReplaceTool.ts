@@ -116,7 +116,7 @@ export class ScientDocxTrackedReplaceToolError extends Schema.TaggedError<Scient
 
 const ScientDocxTrackedReplaceTool = Tool.make("scient_docx_tracked_replace", {
   description:
-    "Make one tracked text replacement in a new copy of a project Word file and save the copy and its PDF. Pass the source's sha256 revision. The text must occur once, inside one run. Scient checks the copy against the source and the PDF against the source's own render, and saves nothing if a check fails. Development preview for trusted files.",
+    "Make one tracked text replacement in a new copy of a project Word file and save the copy and its PDF. Pass the source's sha256 revision. The text must occur once, inside one run. Scient checks package preservation and PDF text and page placement. Inspect right-to-left alignment and visual reading order in the PDF separately. Development preview for trusted files.",
   parameters: ScientDocxTrackedReplaceInput,
   success: ScientDocxTrackedReplaceResult,
   failure: ScientDocxTrackedReplaceToolError,

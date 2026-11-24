@@ -80,6 +80,35 @@ describe("tracked replacement in an existing bilingual Word file", () => {
     }),
   );
 
+  it("warns about adjacent punctuation when the paragraph inherits RTL", () => {
+    const namespace = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+    const document = (properties: string, text: string) =>
+      `<w:document ${namespace}><w:body><w:p><w:pPr>${properties}</w:pPr><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`;
+    const defaults =
+      "<w:docDefaults><w:pPrDefault><w:pPr><w:bidi/></w:pPr></w:pPrDefault></w:docDefaults>";
+    const styles = `<w:styles ${namespace}>
+      <w:style w:type="paragraph" w:styleId="Base"><w:pPr><w:bidi/></w:pPr></w:style>
+      <w:style w:type="paragraph" w:styleId="Hebrew"><w:basedOn w:val="Base"/></w:style>
+    </w:styles>`;
+    const edit = { find: "בדיקה", replace: "check", ...REVIEW };
+    const style = '<w:pStyle w:val="Hebrew"/>';
+    const text = "נערכה בדיקה, והתוצאה נשמרה";
+    expect(applyTrackedReplacement(document(style, text), edit, styles)).toMatchObject({
+      _tag: "edited",
+      neutralAtRightToLeftEdge: true,
+    });
+    expect(
+      applyTrackedReplacement(
+        document("", text),
+        edit,
+        `<w:styles ${namespace}>${defaults}</w:styles>`,
+      ),
+    ).toMatchObject({ _tag: "edited", neutralAtRightToLeftEdge: true });
+    expect(
+      applyTrackedReplacement(document(style + '<w:bidi w:val="off"/>', text), edit, styles),
+    ).toMatchObject({ _tag: "edited", neutralAtRightToLeftEdge: false });
+  });
+
   it.effect("refuses edits it cannot make exactly", () =>
     Effect.gen(function* () {
       const xml = partText(yield* fixtureEntries(), MAIN_PART)!;
@@ -120,6 +149,16 @@ describe("tracked replacement in an existing bilingual Word file", () => {
             xml.replace(
               "<w:body>",
               '<w:body><w:p><w:r><w:instrText xml:space="preserve"> INCLUDEPICTURE "http://example.test/a.png" </w:instrText></w:r></w:p>',
+            ),
+          ),
+        ),
+      ).toBe("external-fields");
+      expect(
+        refuseUnsupportedInput(
+          withMainPart(entries, (xml) =>
+            xml.replace(
+              "<w:body>",
+              '<w:body xmlns:word="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><word:fldChar word:fldCharType="begin"/></w:r><w:r><word:instrText>INCLUDE</word:instrText></w:r><w:r><word:instrText>PICTURE</word:instrText></w:r><w:r><word:fldChar word:fldCharType="separate"/></w:r><w:r><word:fldChar word:fldCharType="end"/></w:r></w:p>',
             ),
           ),
         ),

@@ -187,12 +187,6 @@ export const replaceDocxTextForInvocation = Effect.fn("ScientDocxTrackedReplace.
   const pdfOutput = yield* resolveProjectPdfOutput(root, input.pdfOutputPath).pipe(
     Effect.mapError(boundaryError),
   );
-  if (docxOutput.outputPath.toLowerCase() === located.sourcePath.toLowerCase())
-    return yield* toolError(
-      "invalid-output-path",
-      "outputPath must be a new copy, not the source file.",
-    );
-
   const epoch = workspace
     .getMutationEpoch({ cwd: root })
     .pipe(
@@ -278,7 +272,7 @@ export const replaceDocxTextForInvocation = Effect.fn("ScientDocxTrackedReplace.
     );
 
   const write = (
-    output: typeof docxOutput,
+    output: typeof docxOutput | typeof pdfOutput,
     bytes: Uint8Array,
     expectedMutationEpoch: string | undefined,
   ) =>

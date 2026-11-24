@@ -65,6 +65,18 @@ export const hiddenIdFixture = Effect.gen(function* () {
   );
 });
 
+export const rightAlignedFixture = Effect.gen(function* () {
+  const entries = yield* fixtureEntries();
+  return yield* writeDocxPackage(
+    withMainPart(entries, (xml) =>
+      xml
+        .replaceAll('<w:jc w:val="right"/>', '<w:jc w:val="start"/>')
+        .replace(`<w:t>${DATED_ID.find}</w:t>`, `<w:t>\u200e${DATED_ID.find}\u200e</w:t>`)
+        .replace(`<w:t>${SIGNED_RANGE}</w:t>`, `<w:t>\u200e${SIGNED_RANGE}\u200e</w:t>`),
+    ),
+  );
+});
+
 export const TINY_EDIT = { find: "REF-1", replace: "REF-2" };
 export const TINY_SOURCE_PDF = NodeURL.fileURLToPath(
   new URL("./fixtures/tiny-source.pdf", import.meta.url),

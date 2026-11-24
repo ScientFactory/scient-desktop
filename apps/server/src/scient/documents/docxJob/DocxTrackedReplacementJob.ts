@@ -77,13 +77,15 @@ export const runDocxTrackedReplacement = Effect.fn("DocxTrackedReplacement.run")
   const shape = yield* Effect.try({
     try: () => {
       const refusal = refuseUnsupportedInput(entries);
-      return refusal === null ? { xml: partText(entries, MAIN_PART)! } : { refusal };
+      return refusal === null
+        ? { xml: partText(entries, MAIN_PART)!, styles: partText(entries, "word/styles.xml") }
+        : { refusal };
     },
     catch: (cause) =>
       jobError("unsupported-input", isOoxmlShapeError(cause) ? "malformed-part" : "unreadable"),
   });
   if ("refusal" in shape) return yield* jobError("unsupported-input", shape.refusal);
-  const edit = applyTrackedReplacement(shape.xml, request);
+  const edit = applyTrackedReplacement(shape.xml, request, shape.styles);
   if (edit._tag === "refused") return yield* jobError("unsupported-edit", edit.reason);
 
   const candidateDocx = yield* writeDocxPackage(
@@ -131,8 +133,7 @@ export const runDocxTrackedReplacement = Effect.fn("DocxTrackedReplacement.run")
     editPage: placement.editPage,
     fonts: { source: sourceLayout.fonts, candidate: candidateLayout.fonts },
     producer: candidateLayout.producer,
-    // Word and LibreOffice may draw such a character on the far side of the run; the checks read
-    // text order, not glyph sides, so this is left for a person to look at in the PDF.
+    // PDF text checks cannot establish how directional boundaries were drawn.
     warnings: edit.neutralAtRightToLeftEdge ? ["bidi-neutral-at-edge"] : [],
   } satisfies DocxJobResult;
 });

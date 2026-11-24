@@ -1,4 +1,4 @@
-import { SaxesParser } from "saxes";
+import { SaxesParser, type SaxesTagNS } from "saxes";
 
 import type { DocxEntry } from "./docxPackage.ts";
 import {
@@ -67,6 +67,69 @@ const safeTokens = (xml: string): ReadonlyArray<XmlToken> | null => {
 };
 
 const EXTERNAL_FIELD = /\b(?:INCLUDEPICTURE|INCLUDETEXT|LINK|DDE|DDEAUTO|IMPORT)\b/iu;
+const STRICT_W_NS = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+const RELATIONSHIP_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+const isWordNamespace = (uri: string) => uri === W_NS || uri === STRICT_W_NS;
+const wordAttribute = (element: SaxesTagNS, name: string) =>
+  Object.values(element.attributes).find(
+    (attribute) => attribute.local === name && attribute.uri === element.uri,
+  )?.value;
+
+function scanPartForExternalContent(xml: string): DocxInputRefusal | null {
+  const parser = new SaxesParser({ xmlns: true });
+  const fields: (string[] | null)[] = [];
+  let instruction: string[] | null = null;
+  let refusal: DocxInputRefusal | null = null;
+  const checkField = (text: string) => {
+    if (EXTERNAL_FIELD.test(text)) refusal ??= "external-fields";
+  };
+  const collectText = (text: string) => instruction?.push(text);
+  parser.on("doctype", () => {
+    refusal ??= "malformed-part";
+  });
+  parser.on("opentag", (element) => {
+    if (element.uri === RELATIONSHIP_NS && element.local === "Relationship") {
+      if (
+        element.attributes.TargetMode?.value.toLowerCase() === "external" &&
+        !/\/hyperlink$/u.test(element.attributes.Type?.value ?? "")
+      )
+        refusal ??= "external-resources";
+    }
+    if (!isWordNamespace(element.uri)) return;
+    if (element.local === "altChunk" || element.local === "subDoc") {
+      refusal ??= "embedded-documents";
+    } else if (element.local === "fldSimple") {
+      checkField(wordAttribute(element, "instr") ?? "");
+    } else if (element.local === "fldChar") {
+      const type = wordAttribute(element, "fldCharType");
+      if (type === "begin") fields.push([]);
+      if (type === "separate") {
+        checkField(fields.pop()?.join("") ?? "");
+        fields.push(null);
+      }
+      if (type === "end") checkField(fields.pop()?.join("") ?? "");
+    } else if (element.local === "instrText") {
+      instruction = [];
+    }
+  });
+  parser.on("text", collectText);
+  parser.on("cdata", collectText);
+  parser.on("closetag", (element) => {
+    if (!isWordNamespace(element.uri) || element.local !== "instrText" || instruction === null)
+      return;
+    const field = fields.at(-1);
+    if (field != null) field.push(instruction.join(""));
+    else checkField(instruction.join(""));
+    instruction = null;
+  });
+  try {
+    parser.write(xml).close();
+  } catch {
+    return "malformed-part";
+  }
+  for (const field of fields) checkField(field?.join("") ?? "");
+  return refusal;
+}
 
 /**
  * Which inputs this operation accepts at all: a plain .docx whose main part is
@@ -110,30 +173,9 @@ export function refuseUnsupportedInput(entries: ReadonlyArray<DocxEntry>): DocxI
     const name = entry.name.toLowerCase();
     if (!name.endsWith(".rels") && !(name.startsWith("word/") && name.endsWith(".xml"))) continue;
     const xml = partText(entries, entry.name);
-    const tokens = xml === null ? null : safeTokens(xml);
-    if (tokens === null) return "malformed-part";
-    let instruction = false;
-    for (const token of tokens) {
-      if (token.kind === "open" || token.kind === "empty") {
-        if (
-          token.name === "Relationship" &&
-          token.attributes.get("TargetMode") === "External" &&
-          !/\/hyperlink$/u.test(token.attributes.get("Type") ?? "")
-        )
-          return "external-resources";
-        if (token.name === "w:altChunk" || token.name === "w:subDoc") return "embedded-documents";
-        if (
-          token.name === "w:fldSimple" &&
-          EXTERNAL_FIELD.test(token.attributes.get("w:instr") ?? "")
-        )
-          return "external-fields";
-        instruction = token.kind === "open" && token.name === "w:instrText";
-      } else if (token.kind === "text") {
-        if (instruction && EXTERNAL_FIELD.test(token.text)) return "external-fields";
-      } else if (token.kind === "close") {
-        instruction = false;
-      }
-    }
+    if (xml === null) return "malformed-part";
+    const refusal = scanPartForExternalContent(xml);
+    if (refusal !== null) return refusal;
   }
   return null;
 }
@@ -155,7 +197,56 @@ interface ParagraphText {
   readonly openIndex: number;
   readonly segments: ReadonlyArray<TextSegment>;
   readonly text: string;
-  readonly rightToLeft: boolean;
+  readonly rightToLeft?: boolean;
+  readonly styleId?: string;
+}
+
+const bidiEnabled = (value: string | undefined) =>
+  value !== "0" && value !== "false" && value !== "off";
+
+function inheritedParagraphDirection(stylesXml: string, styleId: string | undefined): boolean {
+  const styles = new Map<string, { basedOn?: string; rightToLeft?: boolean }>();
+  let defaultStyle: string | undefined;
+  let defaultDirection = false;
+  let currentStyle: { basedOn?: string; rightToLeft?: boolean } | undefined;
+  const ancestors: string[] = [];
+  const parser = new SaxesParser({ xmlns: true });
+  parser.on("opentag", (element) => {
+    const name = isWordNamespace(element.uri) ? element.local : "";
+    const parent = ancestors.at(-1);
+    const grandparent = ancestors.at(-2);
+    if (name === "style" && parent === "styles") {
+      const id = wordAttribute(element, "styleId");
+      if (id !== undefined && wordAttribute(element, "type") === "paragraph") {
+        currentStyle = {};
+        styles.set(id, currentStyle);
+        const isDefault = wordAttribute(element, "default");
+        if (isDefault !== undefined && bidiEnabled(isDefault)) defaultStyle = id;
+      }
+    } else if (name === "basedOn" && parent === "style" && currentStyle !== undefined) {
+      const value = wordAttribute(element, "val");
+      if (value !== undefined) currentStyle.basedOn = value;
+    } else if (name === "bidi" && parent === "pPr") {
+      const direction = bidiEnabled(wordAttribute(element, "val"));
+      if (grandparent === "style" && currentStyle !== undefined)
+        currentStyle.rightToLeft = direction;
+      if (grandparent === "pPrDefault" && ancestors.at(-3) === "docDefaults")
+        defaultDirection = direction;
+    }
+    ancestors.push(name);
+  });
+  parser.on("closetag", () => {
+    if (ancestors.pop() === "style" && ancestors.at(-1) === "styles") currentStyle = undefined;
+  });
+  parser.write(stylesXml).close();
+  const visited = new Set<string>();
+  for (let id = styleId ?? defaultStyle; id !== undefined && !visited.has(id);) {
+    visited.add(id);
+    const style = styles.get(id);
+    if (style?.rightToLeft !== undefined) return style.rightToLeft;
+    id = style?.basedOn;
+  }
+  return defaultDirection;
 }
 
 const HIDDEN_ANCESTORS = new Set(["w:del", "w:moveFrom", "mc:Fallback"]);
@@ -213,8 +304,13 @@ function paragraphTexts(
 ): ReadonlyArray<ParagraphText> {
   const stack: string[] = [];
   const runs: (RunInfo | null)[] = [];
-  const open: { openIndex: number; segments: TextSegment[]; text: string; rightToLeft: boolean }[] =
-    [];
+  const open: {
+    openIndex: number;
+    segments: TextSegment[];
+    text: string;
+    rightToLeft?: boolean;
+    styleId?: string;
+  }[] = [];
   const done: ParagraphText[] = [];
   let fieldDepth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
@@ -225,13 +321,14 @@ function paragraphTexts(
         if (type === "begin") fieldDepth += 1;
         else if (type === "end") fieldDepth = Math.max(0, fieldDepth - 1);
       }
-      if (token.name === "w:bidi" && stack.at(-1) === "w:pPr" && stack.at(-2) === "w:p") {
+      const paragraph = open.at(-1);
+      if (paragraph !== undefined && stack.at(-1) === "w:pPr" && stack.at(-2) === "w:p") {
         const value = token.attributes.get("w:val");
-        if (open.length > 0) open.at(-1)!.rightToLeft = value !== "0" && value !== "false";
+        if (token.name === "w:bidi") paragraph.rightToLeft = bidiEnabled(value);
+        if (token.name === "w:pStyle" && value !== undefined) paragraph.styleId = value;
       }
       if (token.kind === "empty") continue;
-      if (token.name === "w:p")
-        open.push({ openIndex: index, segments: [], text: "", rightToLeft: false });
+      if (token.name === "w:p") open.push({ openIndex: index, segments: [], text: "" });
       if (token.name === "w:r") {
         const editable =
           stack.at(-1) === "w:p" &&
@@ -283,7 +380,7 @@ export type TrackedReplacementEdit =
       readonly xml: string;
       readonly deletionId: string;
       readonly insertionId: string;
-      /** The replacement begins or ends with a direction-neutral character in an RTL paragraph. */
+      /** The edit touches a punctuation, symbol or number boundary in an RTL paragraph. */
       readonly neutralAtRightToLeftEdge: boolean;
     };
 
@@ -291,6 +388,7 @@ export type TrackedReplacementEdit =
 export function applyTrackedReplacement(
   xml: string,
   request: TrackedReplacementRequest,
+  stylesXml: string | null = null,
 ): TrackedReplacementEdit {
   const tokens = safeTokens(xml);
   const root = tokens?.find((token) => token.kind === "open");
@@ -320,6 +418,15 @@ export function applyTrackedReplacement(
   const maxId = maxRevisionId(tokens);
   if (maxId + 2 > MAX_REVISION_ID) return { _tag: "refused", reason: "revision-ids-exhausted" };
 
+  const rightToLeft =
+    paragraph.rightToLeft ??
+    (stylesXml !== null && inheritedParagraphDirection(stylesXml, paragraph.styleId));
+  const hasUnstableEdge = (text: string) =>
+    /^[\p{P}\p{S}\p{N}]|[\p{P}\p{S}\p{N}]$/u.test(text.trim());
+  const afterMatch = at + request.find.length;
+  const neighboringStart = paragraph.text.slice(0, at).trimEnd();
+  const neighboringEnd = paragraph.text.slice(afterMatch).trimStart();
+
   const runOpen = tokens[segment.run.openIndex]!;
   const runClose = tokens[segment.run.closeIndex]!;
   const runStart = xml.slice(runOpen.start, runOpen.end);
@@ -343,7 +450,11 @@ export function applyTrackedReplacement(
     deletionId,
     insertionId,
     neutralAtRightToLeftEdge:
-      paragraph.rightToLeft && /^[^\p{L}\p{N}]|[^\p{L}\p{N}]$/u.test(request.replace),
+      rightToLeft &&
+      (hasUnstableEdge(request.find) ||
+        hasUnstableEdge(request.replace) ||
+        /[\p{P}\p{S}\p{N}]$/u.test(neighboringStart) ||
+        /^[\p{P}\p{S}\p{N}]/u.test(neighboringEnd)),
   };
 }
 

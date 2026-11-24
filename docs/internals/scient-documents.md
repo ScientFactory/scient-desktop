@@ -174,13 +174,14 @@ source, enforces the revision, stages private copies, runs LibreOffice, checks t
 results and publishes them. Only that tool is new; the preview runtime and skills
 are unchanged.
 
-- **Opt-in, same on all three platforms.** Run
+- **Opt-in tool setup.** Run
   `node scripts/document-lab-office.mjs setup` in a candidate checkout. It
   downloads the LibreOffice build pinned in
   `apps/server/src/scient/documents/docxJob/officeToolchainManifest.ts`, rejects
   any other size or digest and unpacks it without a system install. On macOS it
   copies the app out of the DMG, on Windows it uses an administrative MSI unpack,
-  and on Linux it extracts the debs. `--use-installed` records an existing install
+  and on Linux it requires `dpkg-deb` and the LibreOffice runtime libraries.
+  `--use-installed` records an existing install
   that prints the pinned version, marked `host-install` because its bytes were not
   digest-checked. At start the server registers the tool only in a desktop dev
   candidate with a valid receipt, and only after the engine prints the pinned
@@ -191,7 +192,7 @@ are unchanged.
   `documentExport/verifiedWorkspaceRead.ts`. Windows has no handle-bound read, so
   the existing rule for unbound reads applies: only bytes equal to the revision
   the caller already holds are used. The source is re-read and compared under the
-  publication fence. It is never written.
+  publication fence. The Word copy is published only to a new path.
 - **Accepted inputs and edits.** Plain `.docx` only. The job refuses macros,
   external relationships other than hyperlinks, fields that include or link
   outside content, and `altChunk`/`subDoc`. The text must occur exactly once and
@@ -214,14 +215,20 @@ are unchanged.
   LibreOffice's render of the source: same page count, the deletion where the
   original text was, the insertion beside it, earlier pages identical, the same
   text sequence plus the insertion, and all fonts embedded. If any check fails,
-  nothing is published. The checks read text order and positions, not glyph
-  sides. A replacement that starts or ends with punctuation in an RTL paragraph
-  returns the `bidi-neutral-at-edge` warning for a person to inspect. Fonts come
+  nothing is published. Inspect paragraph alignment and the displayed reading
+  order in the exported PDF. The `bidi-neutral-at-edge` warning highlights
+  edits near punctuation, symbols or numbers in an RTL paragraph, including
+  direction inherited through paragraph styles or document defaults. Fonts come
   from the host, so renders differ between platforms; each render is compared
   only with the source rendered on the same host.
 - **Qualification.** `DocxTrackedReplacement.integration.test.ts` runs the
   bilingual fixture against the real engine when `SCIENT_DOCUMENT_LAB_SOFFICE`
-  is set. The Scient Document Lab Qualification workflow provisions the pinned
-  build on macOS, Windows and Linux and runs it there. `node
+  is set. The fixture includes comments, an equation, tracked edits, a
+  multipage RTL table with a repeated header, and deliberately preserved
+  layout defects in the Hebrew paragraph alignment and signed range. A
+  corrected control verifies that the edited Hebrew line stays at the right
+  margin and produces a PDF for visual inspection. The
+  qualification workflow covers Apple Silicon and Intel macOS, Windows x64,
+  and Ubuntu x64. `node
   scripts/document-lab-office.mjs qualify --soffice <path> --evidence <dir>`
   reproduces it locally.
