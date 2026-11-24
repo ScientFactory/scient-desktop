@@ -586,7 +586,7 @@ it("exports the revision pinned by a result card or selected in comparison", asy
     await enlarge.click();
     const plot = page.getByRole("dialog", { name: "Expanded image preview" });
     await expect.element(plot).toBeVisible();
-    await plot.getByRole("button", { name: "Back, close image preview" }).click();
+    await plot.getByRole("button", { name: "Close image preview" }).click();
     const from = compare.getByRole("grid", { name: "From", exact: true });
     const to = compare.getByRole("grid", { name: "To", exact: true });
     await expect.element(from).toBeInTheDocument();
