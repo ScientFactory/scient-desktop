@@ -31,6 +31,7 @@ import {
   type DiscoveryContext,
 } from "./RuntimeDiscovery.ts";
 import { PRIVATE_KERNEL_STARTER, kernelPrograms } from "./KernelSpecs.ts";
+import { PYTHON_LIBRARIES_VARIABLE } from "./PythonLibraries.ts";
 import { readPythonFacts } from "./RuntimeFacts.ts";
 import { makeRuntimeProbeCache, type RuntimeProbeCache } from "./RuntimeProbeCache.ts";
 
@@ -446,6 +447,11 @@ export function makePythonRuntimeAdapter(
         realExecutable: string,
         version: string,
       ) => Effect.Effect<string, ComputeRuntimeError>;
+      /** The folder of libraries Scient added for this environment, which its kernel reads last. */
+      readonly libraries?: (
+        prefix: string,
+        version: string,
+      ) => Effect.Effect<string, ComputeRuntimeError>;
     };
   } = {},
 ): ComputeLanguageAdapter {
@@ -686,7 +692,16 @@ export function makePythonRuntimeAdapter(
     const probe = yield* readProbe(executable).pipe(
       Effect.mapError((cause) => runtimeError("prepare", cause.message, cause)),
     );
-    if (checkReadiness(probe).readiness === "ready") return yield* launchPlan(request);
+    const libraries =
+      host.libraries === undefined
+        ? {}
+        : {
+            [PYTHON_LIBRARIES_VARIABLE]: yield* host.libraries(probe.prefix, probe.version),
+          };
+    if (checkReadiness(probe).readiness === "ready") {
+      const plan = yield* launchPlan(request);
+      return { ...plan, environment: { ...plan.environment, ...libraries } };
+    }
     const ownKernel = probe.packages.ipykernel;
     const argv =
       typeof ownKernel === "string" && meetsPythonMinimumVersion(ownKernel, MIN_IPYKERNEL_VERSION)
@@ -703,6 +718,7 @@ export function makePythonRuntimeAdapter(
     });
     return {
       ...plan,
+      environment: { ...plan.environment, ...libraries },
       kernel: {
         argv,
         language: "python",

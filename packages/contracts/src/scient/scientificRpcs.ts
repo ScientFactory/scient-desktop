@@ -60,6 +60,7 @@ import {
   ComputeSubmitProjectCellsInput,
   ComputeSubmitProjectExecutionInput,
   ComputeVerifyRuntimeInput,
+  ComputeAddPythonLibraryInput,
 } from "../scientCompute.ts";
 import {
   ComputeResultsError,
@@ -160,6 +161,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeManagedRuntimeStatus: "compute.managedRuntimeStatus",
   computeManageRuntime: "compute.manageRuntime",
   computeCancelManagedRuntime: "compute.cancelManagedRuntime",
+  computeAddPythonLibrary: "compute.addPythonLibrary",
   computeStartSession: "compute.startSession",
   computeListSessions: "compute.listSessions",
   computeGetSession: "compute.getSession",
@@ -328,6 +330,14 @@ const WsComputeVerifyRuntimeRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeV
   success: ComputeRuntimeVerification,
   error: ComputeRpcError,
 });
+
+const WsComputeAddPythonLibraryRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeAddPythonLibrary,
+  {
+    payload: ComputeAddPythonLibraryInput,
+    error: ComputeRpcError,
+  },
+);
 
 const WsComputeManagedRuntimeStatusRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.computeManagedRuntimeStatus,
@@ -742,6 +752,7 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeManagedRuntimeStatusRpc,
   WsComputeManageRuntimeRpc,
   WsComputeCancelManagedRuntimeRpc,
+  WsComputeAddPythonLibraryRpc,
   WsComputeStartSessionRpc,
   WsComputeListSessionsRpc,
   WsComputeGetSessionRpc,

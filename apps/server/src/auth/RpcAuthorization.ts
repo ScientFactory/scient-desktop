@@ -344,6 +344,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computeManagedRuntimeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.computeManageRuntime]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeCancelManagedRuntime]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeAddPythonLibrary]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeStartSession]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeListSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.computeGetSession]: AuthOrchestrationReadScope,

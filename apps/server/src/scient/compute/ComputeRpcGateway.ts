@@ -16,6 +16,7 @@ import {
 } from "@scientfactory/compute";
 import {
   ComputeGatewayError,
+  type ComputeAddPythonLibraryInput,
   type ComputeInspectRuntimesInput,
   type ComputeListProjectExecutionsInput,
   type ComputeListProjectOutputsInput,
@@ -71,6 +72,7 @@ type ComputeGatewayService = Pick<
   | "managedRuntimeStatus"
   | "manageRuntime"
   | "cancelManagedRuntime"
+  | "addPythonLibrary"
   | "startSession"
   | "listSessions"
   | "getSession"
@@ -407,6 +409,17 @@ export function makeComputeRpcGateway(input: {
     request: ComputeManagedRuntimeStatusInput,
   ) {
     return yield* input.compute.cancelManagedRuntime(request.languageId);
+  });
+
+  const addPythonLibrary = Effect.fn("ComputeRpcGateway.addPythonLibrary")(function* (
+    request: ComputeAddPythonLibraryInput,
+  ) {
+    const project = yield* projectFor("manage", request.cwd);
+    return yield* input.compute.addPythonLibrary({
+      projectId: project.projectId,
+      sessionId: request.sessionId,
+      distribution: request.distribution,
+    });
   });
 
   const startSession = Effect.fn("ComputeRpcGateway.startSession")(function* (
@@ -931,6 +944,7 @@ export function makeComputeRpcGateway(input: {
     managedRuntimeStatus,
     manageRuntime,
     cancelManagedRuntime,
+    addPythonLibrary: inWorkspace("manage", addPythonLibrary),
     startSession: inWorkspace("start", startSession),
     listSessions: inWorkspace("list", listSessions),
     getSession: inWorkspace("get", getSession),

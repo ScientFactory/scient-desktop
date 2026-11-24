@@ -67,6 +67,8 @@ import {
 import { workspaceScopeForTest } from "../projectScope/WorkspaceBindingTestUtils.ts";
 import { withoutComputeWorkspaceOwners } from "./ComputeWorkspaceLifetime.ts";
 import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
+import { PRIVATE_KERNEL_STARTER } from "./KernelSpecs.ts";
+import type { PythonLibraries } from "./PythonLibraries.ts";
 import {
   ComputeProjectOutputObserver,
   type ComputeProjectOutputObserverPort,
@@ -363,6 +365,7 @@ interface HarnessOptions {
   readonly service?: Partial<ComputeSessionServiceOptions>;
   readonly toolkitSupport?: ComputeRuntimeBinding["toolkitSupport"];
   readonly managedRuntime?: ComputeRuntimeBinding["managedRuntime"];
+  readonly libraries?: ComputeRuntimeBinding["libraries"];
   readonly connection?: "detected";
   readonly failConnection?: boolean;
 }
@@ -428,6 +431,7 @@ const harness = (options: HarnessOptions = {}) =>
           transport,
           toolkitSupport: options.toolkitSupport,
           managedRuntime: options.managedRuntime,
+          ...(options.libraries === undefined ? {} : { libraries: options.libraries }),
         },
         ...(options.additionalBindings ?? []),
       ]),
@@ -2133,6 +2137,67 @@ describe("compute run dispatch attribution", () => {
 });
 
 describe("compute session startup", () => {
+  it.effect(
+    "adds a package where the session's kernel reads, for that project's session only",
+    () =>
+      Effect.gen(function* () {
+        const installs: Array<Parameters<PythonLibraries["install"]>[0]> = [];
+        const test = yield* harness({
+          adapter: {
+            prepareLaunch: (request) =>
+              Effect.succeed({
+                executable: "/bridge/python",
+                args: [],
+                cwd: request.cwd,
+                environment: { ...request.environment, SCIENT_PYTHON_LIBRARIES: "/compute/added" },
+                kernel: {
+                  argv: [
+                    request.profile.executable,
+                    "-c",
+                    PRIVATE_KERNEL_STARTER,
+                    "/compute/kernel",
+                  ],
+                  language: "python",
+                  interruptMode: "signal",
+                  variablesExpression: null,
+                  pythonFeatures: true,
+                },
+              }),
+          },
+          libraries: {
+            folder: () => Effect.succeed("/compute/added"),
+            install: (target: Parameters<PythonLibraries["install"]>[0]) =>
+              Effect.sync(() => {
+                installs.push(target);
+                return { added: [] };
+              }),
+          } as unknown as PythonLibraries,
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* service.startSession(startInput());
+            yield* waitForSession("ready");
+            const add = (projectId: ComputeProjectId) =>
+              service.addPythonLibrary({
+                projectId,
+                sessionId: SESSION_ID,
+                distribution: "pandas",
+              });
+            expect((yield* Effect.flip(add(OTHER_PROJECT_ID))).reason).toBe("session-not-running");
+            yield* add(PROJECT_ID);
+            expect(installs).toEqual([
+              {
+                executable: PROFILE.executable,
+                folder: "/compute/added",
+                privateFolder: "/compute/kernel",
+                distribution: "pandas",
+              },
+            ]);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
   it.effect(
     "does not release host capacity or acknowledge shutdown after process cleanup fails",
     () =>

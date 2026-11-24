@@ -122,6 +122,27 @@ import math
 import os
 import sys
 
+# Packages Scient added for this Python come after the person's own. Each addition is one folder,
+# published whole, so before each cell any new one is appended in the order it was added.
+_scient_libraries = os.environ.get("SCIENT_PYTHON_LIBRARIES")
+if _scient_libraries:
+    def _scient_add_libraries(*_args):
+        try:
+            names = sorted(os.listdir(_scient_libraries))
+        except OSError:
+            return
+        added = False
+        for name in names:
+            path = os.path.join(_scient_libraries, name)
+            if not name.startswith(".") and path not in sys.path and os.path.isdir(path):
+                sys.path.append(path)
+                added = True
+        if added:
+            __import__("importlib").invalidate_caches()
+
+    _scient_add_libraries()
+    get_ipython().events.register("pre_run_cell", _scient_add_libraries)
+
 def table_preview(frame):
     try:
         import pandas as pd

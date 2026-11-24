@@ -317,6 +317,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computeManagedRuntimeStatus]: "compute",
   [WS_METHODS.computeManageRuntime]: "compute",
   [WS_METHODS.computeCancelManagedRuntime]: "compute",
+  [WS_METHODS.computeAddPythonLibrary]: "compute",
   [WS_METHODS.computeStartSession]: "compute",
   [WS_METHODS.computeListSessions]: "compute",
   [WS_METHODS.computeGetSession]: "compute",

@@ -159,6 +159,7 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
     managedRuntimeStatus: () => Effect.succeed(managedRuntime),
     manageRuntime: () => Effect.succeed(managedRuntime),
     cancelManagedRuntime: () => Effect.succeed(managedRuntime),
+    addPythonLibrary: () => Effect.void,
     startSession: (input) => Effect.succeed(record(input.projectId, input.sessionId)),
     listSessions: () => Effect.succeed([]),
     getSession: () => Effect.succeed(null),

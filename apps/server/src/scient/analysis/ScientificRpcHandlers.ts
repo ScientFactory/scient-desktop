@@ -143,6 +143,10 @@ export const makeScientificRpcHandlers = ({
         computeGateway.cancelManagedRuntime(input),
         { "rpc.aggregate": "compute" },
       ),
+    [WS_METHODS.computeAddPythonLibrary]: (input) =>
+      observeRpcEffect(WS_METHODS.computeAddPythonLibrary, computeGateway.addPythonLibrary(input), {
+        "rpc.aggregate": "compute",
+      }),
     [WS_METHODS.computeStartSession]: (input) =>
       observeRpcEffect(WS_METHODS.computeStartSession, computeGateway.startSession(input), {
         "rpc.aggregate": "compute",

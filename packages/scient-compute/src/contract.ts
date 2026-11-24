@@ -267,6 +267,8 @@ export const ComputeCapability = Schema.Literals([
   "variables",
   "tables",
   "stdin",
+  /** Scient can add a missing package beside the runtime, for a live session's next run. */
+  "packages",
 ]);
 export type ComputeCapability = typeof ComputeCapability.Type;
 

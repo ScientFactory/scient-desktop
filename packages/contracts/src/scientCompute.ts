@@ -230,6 +230,19 @@ export const ComputeManagedRuntimeStatusInput = Schema.Struct({
 });
 export type ComputeManagedRuntimeStatusInput = typeof ComputeManagedRuntimeStatusInput.Type;
 
+/** A package name as an index lists it: no versions, extras, URLs or options. */
+const PythonDistributionName = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/u),
+);
+
+/** Adds a package beside a live session's Python, never into it; its next run finds it. */
+export const ComputeAddPythonLibraryInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  distribution: PythonDistributionName,
+});
+export type ComputeAddPythonLibraryInput = typeof ComputeAddPythonLibraryInput.Type;
+
 export const ComputeStartProjectSessionInput = Schema.Struct({
   cwd: ComputeCwd,
   sessionId: ComputeSessionId,

@@ -132,6 +132,8 @@ import {
 } from "./ComputeWorkspaceAdmission.ts";
 import { withComputeWorkspaceReservation } from "./ComputeWorkspaceLifetime.ts";
 import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
+import { privateKernelFolder } from "./KernelSpecs.ts";
+import { PYTHON_LIBRARIES_VARIABLE, type PythonLibraries } from "./PythonLibraries.ts";
 import { chooseRuntime, orderByChoice, type RuntimeChoice } from "./RuntimeSelection.ts";
 import { discoveryContext, pathModule } from "./RuntimeDiscovery.ts";
 import { ToolDiscovery } from "./ToolDiscovery.ts";
@@ -193,6 +195,8 @@ export interface ComputeRuntimeBinding {
   readonly lateBindings?: (
     projectRoot: string | null,
   ) => Effect.Effect<ReadonlyArray<ComputeRuntimeBinding>>;
+  /** Libraries Scient adds to a Python on demand; Python only. */
+  readonly libraries?: PythonLibraries;
   readonly toolkitSupport?:
     | {
         readonly descriptors: ReadonlyArray<ComputeToolkitDescriptor>;
@@ -425,6 +429,12 @@ interface LiveComputeSession {
   cleanup: Deferred.Deferred<void, ComputeOperationError> | null;
   startupFiber: Fiber.Fiber<void, ComputeOperationError> | null;
   packageEvidence?: ComputeRuntimePackageEvidence;
+  /** Where packages Scient adds for this Python session go, as its kernel was launched. */
+  pythonPackages?: {
+    readonly executable: string;
+    readonly folder: string;
+    readonly privateFolder: string | null;
+  };
   /** Orders short wire dispatch against stop/restart admission, never output draining. */
   readonly dispatchLock: Semaphore.Semaphore;
   readonly mutation: Semaphore.Semaphore;
@@ -492,6 +502,12 @@ export class ComputeSessionService extends Context.Service<
     readonly cancelManagedRuntime: (
       languageId: ComputeLanguageId,
     ) => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
+    /** Adds a package beside the Python a live session runs, for its next run. */
+    readonly addPythonLibrary: (input: {
+      readonly projectId: ComputeProjectId;
+      readonly sessionId: ComputeSessionId;
+      readonly distribution: string;
+    }) => Effect.Effect<void, ComputeOperationError>;
     readonly startSession: (
       input: ComputeStartSessionInput,
     ) => Effect.Effect<ComputeSessionRecord, ComputeOperationError>;
@@ -963,6 +979,39 @@ const make = Effect.gen(function* () {
       ),
     );
   };
+
+  /** The session's Python and the folders its kernel was launched with, never the caller's. */
+  const addPythonLibrary = Effect.fn("ComputeSessionService.addPythonLibrary")(function* (input: {
+    readonly projectId: ComputeProjectId;
+    readonly sessionId: ComputeSessionId;
+    readonly distribution: string;
+  }) {
+    const live = (yield* Ref.get(sessionsRef)).get(sessionKey(input.projectId, input.sessionId));
+    // A session being stopped stays listed until its cleanup ends, so read its state under the
+    // same lock Stop takes; an add admitted before Stop may finish on its own.
+    const ready =
+      live !== undefined &&
+      (yield* live.mutation.withPermits(1)(Ref.get(live.recordRef))).status === "ready";
+    if (!ready)
+      return yield* computeError("manage", "session-not-running", "This session is not running.");
+    const target = live.pythonPackages;
+    const libraries = bindings.find(
+      (candidate) => candidate.adapter.languageId === live.adapter.languageId,
+    )?.libraries;
+    if (libraries === undefined || target === undefined)
+      return yield* computeError(
+        "manage",
+        "capability-missing",
+        "Scient cannot add packages to this session.",
+      );
+    yield* libraries
+      .install({ ...target, distribution: input.distribution })
+      .pipe(
+        Effect.mapError((cause) =>
+          computeError("manage", "operation-failed", shortText(cause.message), cause),
+        ),
+      );
+  });
 
   const managedRuntimeStatus = (languageId: ComputeLanguageId) =>
     managedController(languageId).pipe(Effect.flatMap((controller) => controller.status()));
@@ -2960,6 +3009,13 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError((cause) => computeError("start", "runtime-unusable", cause.message, cause)),
       );
+    const packagesFolder = launch.environment[PYTHON_LIBRARIES_VARIABLE];
+    if (packagesFolder !== undefined)
+      live.pythonPackages = {
+        executable: verification.profile.executable,
+        folder: packagesFolder,
+        privateFolder: privateKernelFolder(launch.kernel?.argv ?? []),
+      };
     // A fingerprint is a nicety rather than a precondition: a session whose
     // environment cannot be summarized is still a session a user can work in.
     const environmentFingerprint = yield* binding.adapter
@@ -4391,6 +4447,7 @@ const make = Effect.gen(function* () {
     managedRuntimeStatus,
     manageRuntime,
     cancelManagedRuntime,
+    addPythonLibrary,
     startSession: scopedStart,
     submitExecution: guarded("submit", submitExecution),
     submitExecutions: guarded("submit", submitExecutions),

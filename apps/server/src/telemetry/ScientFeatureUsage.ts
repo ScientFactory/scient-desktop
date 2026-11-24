@@ -80,6 +80,7 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.computeReadTable]: () => use("compute.table.view"),
   [WS_METHODS.computeSaveOutput]: () => use("compute.output.save"),
   [WS_METHODS.computeSaveConsoleNotebook]: () => use("compute.console.save_notebook"),
+  [WS_METHODS.computeAddPythonLibrary]: () => use("compute.library.add"),
   [WS_METHODS.computeManageRuntime]: (payload) =>
     use("compute.runtime.manage", literal(payload, "action")),
   [WS_METHODS.dataReadFileTable]: () => use("data.table.open"),
