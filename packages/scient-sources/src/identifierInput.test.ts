@@ -8,6 +8,7 @@ import {
 } from "./identifierInput.ts";
 
 describe("detectSourceIdentifier", () => {
+  // The pasted-list test below reads a bare arXiv ID and a hyphenated ISBN-10.
   it.each([
     ["10.1000/ABC.123", { scheme: "doi", value: "10.1000/abc.123" }],
     ["doi: 10.1000/abc.123.", { scheme: "doi", value: "10.1000/abc.123" }],
@@ -15,13 +16,11 @@ describe("detectSourceIdentifier", () => {
     ["10.1000/(abc)123)", { scheme: "doi", value: "10.1000/(abc)123" }],
     ["arXiv:1706.03762v7", { scheme: "arxiv", value: "1706.03762" }],
     ["https://arxiv.org/pdf/1706.03762v2.pdf", { scheme: "arxiv", value: "1706.03762" }],
-    ["2401.01234", { scheme: "arxiv", value: "2401.01234" }],
     ["arXiv:math.GT/0309136", { scheme: "arxiv", value: "math.gt/0309136" }],
     ["PMID: 31452104", { scheme: "pmid", value: "31452104" }],
     ["https://pubmed.ncbi.nlm.nih.gov/31452104/", { scheme: "pmid", value: "31452104" }],
     ["31452104", { scheme: "pmid", value: "31452104" }],
     ["ISBN 978-0-262-03384-8", { scheme: "isbn", value: "9780262033848" }],
-    ["0-262-03384-4", { scheme: "isbn", value: "9780262033848" }],
     ["080442957X", { scheme: "isbn", value: "9780804429573" }],
   ])("reads %s", (text, expected) => {
     expect(detectSourceIdentifier(text)).toEqual(expected);
