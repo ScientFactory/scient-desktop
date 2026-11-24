@@ -103,6 +103,8 @@ export const NotebookOutputView = Schema.Struct({
   bytes: Schema.Number,
   /** The nbformat output as JSON, or null when it is large enough to load on demand. */
   json: Schema.NullOr(Schema.String),
+  /** For an output loaded on demand: the version of the cell's outputs it belongs to. */
+  token: Schema.optional(Schema.String),
 });
 export type NotebookOutputView = typeof NotebookOutputView.Type;
 
@@ -182,6 +184,8 @@ export const NotebookView = Schema.Struct({
   language: Schema.String,
   cells: Schema.Array(NotebookCellView),
   alternatives: Schema.optional(NotebookAlternatives),
+  /** Why the last save failed. Scient keeps trying until a save succeeds. */
+  saveProblem: Schema.optional(Schema.String),
 });
 export type NotebookView = typeof NotebookView.Type;
 
@@ -197,10 +201,15 @@ export const NotebookReadOutputInput = Schema.Struct({
   ...NotebookAddress,
   cellId: CellId,
   index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** The output's `token`. A cell whose outputs changed since then answers `stale`. */
+  token: Schema.optional(Schema.String),
 });
 export type NotebookReadOutputInput = typeof NotebookReadOutputInput.Type;
 
-export const NotebookOutputJson = Schema.Struct({ json: Schema.NullOr(Schema.String) });
+export const NotebookOutputJson = Schema.Struct({
+  json: Schema.NullOr(Schema.String),
+  stale: Schema.optional(Schema.Boolean),
+});
 export type NotebookOutputJson = typeof NotebookOutputJson.Type;
 
 export const NotebookEdit = Schema.Union([
@@ -237,6 +246,10 @@ export type NotebookEdit = typeof NotebookEdit.Type;
 export const NotebookEditInput = Schema.Struct({
   ...NotebookAddress,
   edits: Schema.Array(NotebookEdit).check(Schema.isMaxLength(1024)),
+  /** Names this batch, so a batch sent again after a lost reply is applied once. */
+  requestId: Schema.optional(Schema.String),
+  /** Answers once the notebook is saved, with `saveProblem` if it could not be. */
+  durable: Schema.optional(Schema.Boolean),
 });
 export type NotebookEditInput = typeof NotebookEditInput.Type;
 
@@ -244,6 +257,10 @@ export const NotebookEditResult = Schema.Struct({
   revision: Schema.String,
   /** Cells whose source moved on from an edit's `base`. Those edits changed nothing. */
   refused: Schema.Array(CellId),
+  /** Cells an undo could no longer bring back; the editor reads the notebook again. */
+  expired: Schema.optional(Schema.Array(CellId)),
+  /** Why the last save failed. Scient keeps trying until a save succeeds. */
+  saveProblem: Schema.optional(Schema.String),
 });
 export type NotebookEditResult = typeof NotebookEditResult.Type;
 

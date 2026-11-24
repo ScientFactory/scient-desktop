@@ -301,7 +301,12 @@ function StoredOutputs(props: {
   readonly definingCell: (name: string) => NotebookDefiningCell | null;
 }) {
   const { controller, cell, near, place } = props;
-  const [loaded, setLoaded] = useState<ReadonlyArray<NotebookOutput> | null>(null);
+  // Kept with the outputs they were read for, so a refreshed cell never shows the previous ones.
+  const [read, setRead] = useState<{
+    readonly from: NotebookCellView["outputs"];
+    readonly outputs: ReadonlyArray<NotebookOutput>;
+  } | null>(null);
+  const loaded = read?.from === cell.outputs ? read.outputs : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- large stored outputs come from the server when their cell is on screen.
   useEffect(() => {
     if (!near || cell.outputs.length === 0) return;
@@ -310,11 +315,12 @@ function StoredOutputs(props: {
       cell.outputs.map((output, index) => controller.readOutput(cell.id, index, output)),
     ).then((outputs) => {
       if (cancelled) return;
-      setLoaded(
-        outputs.flatMap((json) =>
+      setRead({
+        from: cell.outputs,
+        outputs: outputs.flatMap((json) =>
           json === null ? [] : [JSON.parse(json) as Readonly<Record<string, unknown>>],
         ),
-      );
+      });
     });
     return () => {
       cancelled = true;

@@ -459,6 +459,8 @@ const NotebookResult = Schema.Struct({
   images: Schema.optional(Schema.Array(ComputeToolImage)),
   /** Cells left as they were because someone changed them after the read. */
   refused: Schema.optional(Schema.Array(Schema.String)),
+  /** Why the edits are not on disk yet. They are kept, and saving is tried again. */
+  saveProblem: Schema.optional(Schema.String),
 });
 
 const NotebookEditOperation = Schema.Union([

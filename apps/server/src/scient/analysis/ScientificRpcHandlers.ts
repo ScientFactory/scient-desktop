@@ -17,6 +17,7 @@ import {
   readNotebookWithAlternatives,
 } from "../notebook/notebookReader.ts";
 import type { makeNotebookRuns } from "../notebook/notebookRuns.ts";
+import { deliverWaitingRuns } from "../notebook/NotebookRunRecorder.ts";
 import type * as NotebookStore from "../notebook/NotebookStore.ts";
 import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
@@ -357,7 +358,19 @@ export const makeScientificRpcHandlers = ({
     [WS_METHODS.notebookRead]: (input) =>
       observeRpcEffect(
         WS_METHODS.notebookRead,
-        readNotebookWithAlternatives(input, notebooks.read, notebookReader),
+        readNotebookWithAlternatives(input, notebooks.read, notebookReader).pipe(
+          Effect.tap((view) =>
+            view === null
+              ? Effect.void
+              : deliverWaitingRuns(
+                  computeGateway,
+                  notebooks,
+                  computeNotebookOutputs,
+                  input,
+                  view,
+                ).pipe(Effect.ignore, Effect.forkDetach),
+          ),
+        ),
         {
           "rpc.aggregate": "workspace",
         },

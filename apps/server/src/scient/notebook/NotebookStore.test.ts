@@ -1,12 +1,14 @@
 import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ComputeExecutionId, ComputeSessionId } from "@t3tools/contracts";
+import { ComputeExecutionId, ComputeSessionId, NotebookError } from "@t3tools/contracts";
 import { notebookCodeHash } from "@t3tools/shared/notebookStaleness";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -40,16 +42,30 @@ const notebook = {
 
 const path = "study.ipynb";
 
+/** Set to make every write fail, as a full disk would. */
+let refuseWrites = false;
+/** Completed by the next write that succeeds. */
+let written: Deferred.Deferred<void> | undefined;
 const files = Layer.effect(
   WorkspaceFileSystem.WorkspaceFileSystem,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return {
       writeBinaryFile: (input: { cwd: string; relativePath: string; bytes: Uint8Array }) =>
-        fs.writeFile(`${input.cwd}/${input.relativePath}`, input.bytes).pipe(Effect.orDie),
+        refuseWrites
+          ? Effect.fail(new NotebookError({ message: "No space left on device" }))
+          : fs
+              .writeFile(`${input.cwd}/${input.relativePath}`, input.bytes)
+              .pipe(
+                Effect.orDie,
+                Effect.andThen(
+                  written === undefined ? Effect.void : Deferred.succeed(written, undefined),
+                ),
+              ),
     } as never;
   }),
 );
+
 const paths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
   resolveRelativePathWithinRoot: (input: { workspaceRoot: string; relativePath: string }) =>
     Effect.succeed({
@@ -593,6 +609,99 @@ describe("NotebookStore", () => {
         });
         yield* store.flush({ cwd, path });
         expect((yield* onDisk).cells[1]).toEqual(notebook.cells[1]);
+      }),
+    ),
+  );
+
+  it.effect("applies a batch sent again after a lost reply only once", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        const batch = {
+          cwd,
+          path,
+          requestId: "batch-1",
+          edits: [
+            { _tag: "insert", cellId: "new", afterCellId: null, cellType: "code", source: "x" },
+            { _tag: "move", cellId: "second", offset: -1 },
+          ],
+        } as const;
+        yield* store.edit(batch);
+        yield* store.edit(batch);
+        yield* store.flush({ cwd, path });
+        expect((yield* onDisk).cells.map((cell) => cell.id)).toEqual([
+          "new",
+          "title",
+          "second",
+          "first",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("reports a save that failed and saves on its own once writing works again", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            refuseWrites = false;
+            written = undefined;
+          }),
+        );
+        const problem = store.read({ cwd, path }).pipe(Effect.map((view) => view?.saveProblem));
+        refuseWrites = true;
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-source", cellId: "second", source: "kept" }],
+        });
+        yield* Effect.flip(store.flush({ cwd, path }));
+        expect(yield* problem).toContain("No space left on device");
+
+        refuseWrites = false;
+        written = yield* Deferred.make<void>();
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(written);
+        expect((yield* onDisk).cells[2]?.source).toEqual(["kept"]);
+        // Waits for that save to finish, which clears the problem.
+        yield* store.flush({ cwd, path });
+        expect(yield* problem).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("keeps one owner for a notebook opened while others hold undo history", () =>
+    scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, store, onDisk } = yield* fixture;
+        for (const other of ["a", "b", "c", "d"]) {
+          yield* fs.writeFileString(`${cwd}/${other}.ipynb`, JSON.stringify(notebook));
+          yield* store.edit({
+            cwd,
+            path: `${other}.ipynb`,
+            edits: [{ _tag: "delete", cellId: "first" }],
+          });
+          yield* store.flush({ cwd, path: `${other}.ipynb` });
+        }
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-source", cellId: "first", source: "a = 2" }],
+        });
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-source", cellId: "second", source: "b = 3" }],
+        });
+        yield* store.flush({ cwd, path });
+        const saved = yield* onDisk;
+        expect(saved.cells.map((cell) => cell.source.join(""))).toEqual([
+          "# Title",
+          "a = 2",
+          "b = 3",
+        ]);
       }),
     ),
   );

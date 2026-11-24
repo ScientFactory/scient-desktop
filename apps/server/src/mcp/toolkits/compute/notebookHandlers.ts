@@ -162,38 +162,7 @@ const requireNotebook = Effect.fn("ScientComputeToolkit.requireNotebook")(functi
   return view;
 });
 
-/** Writes results of runs that finished while no notebook was open to record them. */
-const recordSettledRuns = Effect.fn("ScientComputeToolkit.recordSettledRuns")(function* (
-  scope: AgentScope,
-  path: string,
-  view: NotebookView,
-) {
-  const waiting = new Map(
-    view.cells.flatMap((cell) =>
-      cell.pendingExecution === null ? [] : [[cell.pendingExecution, cell.id] as const],
-    ),
-  );
-  if (waiting.size === 0) return;
-  const sessions = yield* scope.gateway
-    .listSessions({ cwd: scope.cwd })
-    .pipe(Effect.mapError(notebookFailed));
-  for (const session of sessions) {
-    if (session.owner?._tag !== "file" || session.owner.path !== path) continue;
-    const executions = yield* scope.gateway
-      .listExecutions({ cwd: scope.cwd, sessionId: session.sessionId, limit: RUN_HISTORY_LIMIT })
-      .pipe(Effect.mapError(notebookFailed));
-    const settled = executions
-      .filter(
-        (execution) =>
-          waiting.has(execution.request.executionId) &&
-          execution.result !== null &&
-          TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status),
-      )
-      .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt));
-    for (const execution of settled) yield* recordRun(scope, path, waiting, execution);
-  }
-});
-
+/** Writes a settled run's results into its cell, so the run tool can answer with them. */
 const recordRun = Effect.fn("ScientComputeToolkit.recordNotebookRun")(function* (
   scope: AgentScope,
   path: string,
@@ -232,10 +201,18 @@ const figuresOf = Effect.fn("ScientComputeToolkit.notebookFigures")(function* (
       if (images.length >= MAXIMUM_IMAGES) return images;
       const mediaType = IMAGE_TYPES.find((type) => output.mediaTypes.includes(type));
       if (mediaType === undefined) continue;
-      const stored = yield* scope.gateway
-        .readNotebookOutput({ cwd: scope.cwd, path, cellId: cell.id, index })
-        .pipe(Effect.mapError(notebookFailed));
-      const parsed = stored.json === null ? null : Option.getOrNull(decodeOutput(stored.json));
+      const json =
+        output.json ??
+        (yield* scope.gateway
+          .readNotebookOutput({
+            cwd: scope.cwd,
+            path,
+            cellId: cell.id,
+            index,
+            ...(output.token === undefined ? {} : { token: output.token }),
+          })
+          .pipe(Effect.mapError(notebookFailed))).json;
+      const parsed = json === null ? null : Option.getOrNull(decodeOutput(json));
       const data = isRecord(parsed) && isRecord(parsed.data) ? parsed.data[mediaType] : undefined;
       if (data !== undefined) images.push({ mediaType, data: text(data).replaceAll(/\s/gu, "") });
     }
@@ -320,7 +297,6 @@ export const readScientNotebook = Effect.fn("ScientComputeToolkit.notebookRead")
       ...(images.length === 0 ? {} : { images }),
     };
   }
-  yield* recordSettledRuns(scope, input.path, yield* requireNotebook(scope, input.path));
   return describeNotebook(
     yield* requireNotebook(scope, input.path),
     input.cells === undefined ? undefined : new Set(input.cells),
@@ -382,11 +358,8 @@ export const editScientNotebook = Effect.fn("ScientComputeToolkit.notebookEdit")
 }) {
   const scope = yield* agentScope();
   const edits = input.edits.map(notebookEdit);
-  const { refused } = yield* scope.gateway
-    .editNotebook({ cwd: scope.cwd, path: input.path, edits })
-    .pipe(Effect.mapError(notebookFailed));
-  yield* scope.gateway
-    .flushNotebook({ cwd: scope.cwd, path: input.path })
+  const { refused, saveProblem } = yield* scope.gateway
+    .editNotebook({ cwd: scope.cwd, path: input.path, edits, durable: true })
     .pipe(Effect.mapError(notebookFailed));
   return {
     ...describeNotebook(
@@ -394,6 +367,7 @@ export const editScientNotebook = Effect.fn("ScientComputeToolkit.notebookEdit")
       new Set(edits.flatMap((edit) => ("cellId" in edit ? [edit.cellId] : []))),
     ),
     ...(refused.length > 0 ? { refused } : {}),
+    ...(saveProblem === undefined ? {} : { saveProblem }),
   };
 });
 

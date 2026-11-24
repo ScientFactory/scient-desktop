@@ -3668,7 +3668,7 @@ describe("compute session execution", () => {
           yield* waitForExecution(ComputeExecutionId.make("execution-2"), "succeeded");
           expect((yield* outputsOf(first)).outputs).toEqual([streamOutput(0, "1\n")]);
 
-          yield* service.settledRunRecorded(first);
+          yield* service.settledRunRecorded(SESSION_ID, first);
           yield* submit("print(1)", "execution-3");
           yield* waitForExecution(ComputeExecutionId.make("execution-3"), "succeeded");
           expect((yield* outputsOf(first)).outputs[0]).toMatchObject({

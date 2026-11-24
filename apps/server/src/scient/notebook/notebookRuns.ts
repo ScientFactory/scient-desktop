@@ -10,6 +10,7 @@ import {
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,
   type ComputeExecutionRecord,
+  type ComputeNotebookOutputsResult,
   type ComputeResultParameter,
   type ComputeResultsRerunResult,
   type NotebookFreshRunInput,
@@ -297,15 +298,29 @@ export function makeNotebookRuns(deps: {
               total: cells.length,
             },
           });
-          const output = alternative
-            ? Effect.succeed({ outputs: [], executionCount: null, truncated: false })
-            : deps.notebookOutputs({ ...sessionAddress, executionId });
+          const copied = deps.notebookOutputs({ ...sessionAddress, executionId }).pipe(
+            Effect.filterOrFail(
+              (copy) => copy.incomplete !== true,
+              () => new ComputeResultsError({ message: "A cell's output could not be read." }),
+            ),
+          );
+          const output: Effect.Effect<
+            ComputeNotebookOutputsResult,
+            Effect.Error<typeof copied>
+          > = alternative
+            ? Effect.succeed<ComputeNotebookOutputsResult>({
+                outputs: [],
+                executionCount: null,
+                truncated: false,
+              })
+            : copied;
           return output.pipe(
-            Effect.catch((cause) =>
+            // Saving the notebook without this cell's output would misstate the run.
+            Effect.tapError((cause) =>
               Effect.logWarning("Notebook display output could not be copied", {
                 executionId,
                 cause,
-              }).pipe(Effect.as({ outputs: [], executionCount: null, truncated: true })),
+              }),
             ),
             Effect.map((output) => ({
               _tag: "run-result" as const,
@@ -315,7 +330,7 @@ export function makeNotebookRuns(deps: {
               executionCount: output.executionCount ?? execution.result?.executionCount ?? null,
               truncated: output.truncated || execution.result?.truncated === true,
             })),
-            Effect.ensuring(gateway.settledRunRecorded(executionId)),
+            Effect.ensuring(gateway.settledRunRecorded(sessionId, executionId)),
           );
         }),
         Stream.runCollect,
@@ -379,7 +394,13 @@ export function makeNotebookRuns(deps: {
       }
 
       // Copy each cell's transcript while later cells run. Once copied, storage can reclaim it.
-      const results = yield* Fiber.join(captured);
+      const results = yield* Fiber.join(captured).pipe(Effect.orElseSucceed(() => null));
+      if (results === null) {
+        return {
+          _tag: "failed" as const,
+          message: "A cell's output could not be copied. The notebook was left as it was.",
+        };
+      }
       if (!report({ progress: { phase: "saving", cell: cells.length, total: cells.length } })) {
         return { _tag: "failed" as const, message: "The notebook run was stopped." };
       }
@@ -501,9 +522,13 @@ export function makeNotebookRuns(deps: {
 
           Effect.ignore,
           Effect.andThen(
-            Effect.forEach(cells, (cell) => gateway.settledRunRecorded(cell.executionId), {
-              discard: true,
-            }),
+            Effect.forEach(
+              cells,
+              (cell) => gateway.settledRunRecorded(sessionId, cell.executionId),
+              {
+                discard: true,
+              },
+            ),
           ),
           Effect.andThen(
             Effect.promise(() =>

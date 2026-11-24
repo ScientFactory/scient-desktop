@@ -182,7 +182,13 @@ outputs load when their cell nears the view.
 A run belongs to its cell on the server. `compute.submitCells` admits a run's cells under one lock
 with `source.cell` set, a cell that does not succeed cancels later queued cells of that notebook,
 and each cell durably expects its run (`metadata.scient.pending`), so results reach the file after a
-tab switch or reload. Out-of-date cells come from `@t3tools/shared/notebookStaleness`: a code hash
+tab switch or reload. `NotebookRunRecorder` delivers settled cell runs outside fresh notebook jobs, which copy their own
+cells: the session keeps a run's transcript until the notebook holding the result is saved, the cell
+is gone from the saved file, or the file is gone, and a failed delivery is retried. A run cancelled
+before it started clears its cell's pending marker. Stopping the server leaves deliveries
+unacknowledged; when the editor next reads a notebook with pending cells, the server delivers those
+runs from stored history. A save that fails is retried and reported as the notebook's `saveProblem`.
+The agent's notebook read never writes; its run tool records its own cells so it can answer with them. Out-of-date cells come from `@t3tools/shared/notebookStaleness`: a code hash
 for edits, and a name-based hint for cells reading from something that changed since.
 
 The outline comes from Markdown cell source. Fold edits preserve JupyterLab metadata and keep

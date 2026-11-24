@@ -393,6 +393,8 @@ export const ComputeNotebookOutputsResult = Schema.Struct({
   executionCount: Schema.NullOr(Schema.Int),
   /** Part of this run's output was not kept, so `outputs` may be missing what it printed. */
   truncated: Schema.Boolean,
+  /** Some of what the run showed could not be read back; this copy must not replace a cell's. */
+  incomplete: Schema.optional(Schema.Boolean),
 });
 export type ComputeNotebookOutputsResult = typeof ComputeNotebookOutputsResult.Type;
 

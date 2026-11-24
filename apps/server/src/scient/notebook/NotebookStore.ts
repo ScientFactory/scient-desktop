@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- a notebook is held as its bytes, keyed by size and mtime.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import {
   NotebookError,
@@ -20,6 +21,7 @@ import {
 import { readNotebookParameters } from "@t3tools/shared/notebookParameters";
 import { notebookCodeHash } from "@t3tools/shared/notebookStaleness";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -47,11 +49,32 @@ import { NOTEBOOK_DIGEST_VERSION } from "./notebookRevisionSource.ts";
 
 /** Typing settles for this long before the file is written. */
 const SAVE_DELAY = Duration.millis(400);
+/** A save that failed is tried again after this, doubling each time up to half a minute. */
+const retryDelay = (failures: number) =>
+  Duration.millis(Math.min(30_000, 1000 * 2 ** (failures - 1)));
+/** Deleted cells kept for undo: this many per notebook, for this many notebooks. */
+const MAX_DELETED_CELLS = 32;
+const MAX_UNDO_NOTEBOOKS = 16;
+/** Batches remembered per notebook, so one sent again after a lost reply is not applied twice. */
+const MAX_RECEIPTS = 64;
 /** A notebook's first read stays small however many outputs it stores. */
 const INLINE_BUDGET_BYTES = 4 * 1024 * 1024;
 const MAX_OPEN_NOTEBOOKS = 4;
 
 const fail = (message: string) => new NotebookError({ message });
+
+/** A notebook address runs can report to: relative, inside the project, naming a file. */
+export const notebookPathAllowed = (path: string) => {
+  const normal = NodePath.posix.normalize(path.replaceAll("\\", "/"));
+  return (
+    !NodePath.posix.isAbsolute(normal) &&
+    !/^[A-Za-z]:/u.test(normal) &&
+    normal !== "." &&
+    normal !== ".." &&
+    !normal.startsWith("../") &&
+    !normal.endsWith("/")
+  );
+};
 const describe = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -107,6 +130,20 @@ function cellFolds(fields: NotebookCellRecord["fields"]): NotebookFold[] {
   return folded;
 }
 
+/**
+ * Names one version of a cell's outputs. Outputs are replaced whenever they change, so a stored
+ * output read later can be checked against the version its reader was shown.
+ */
+const outputTokens = new WeakMap<Buffer, string>();
+function outputsToken(outputs: Buffer): string {
+  let token = outputTokens.get(outputs);
+  if (token === undefined) {
+    token = NodeCrypto.randomUUID();
+    outputTokens.set(outputs, token);
+  }
+  return token;
+}
+
 function cellView(cell: NotebookCellRecord, budget: { left: number }): NotebookCellView {
   const { fields } = cell;
   const source = notebookSourceCell(cell);
@@ -123,14 +160,16 @@ function cellView(cell: NotebookCellRecord, budget: { left: number }): NotebookC
       const bytes = output.range.end - output.range.start;
       const inline = bytes <= INLINE_OUTPUT_BYTES && bytes <= budget.left;
       if (inline) budget.left -= bytes;
+      const stored = cell.outputs;
       return {
         outputType: output.outputType,
         mediaTypes: output.mediaTypes,
         bytes,
-        json:
-          inline && cell.outputs !== null
-            ? cell.outputs.toString("utf8", output.range.start, output.range.end)
-            : null,
+        ...(stored === null
+          ? { json: null }
+          : inline
+            ? { json: stored.toString("utf8", output.range.start, output.range.end) }
+            : { json: null, token: outputsToken(stored) }),
       };
     }),
   };
@@ -145,7 +184,12 @@ interface RunResult {
   readonly run: NotebookCellRun;
   readonly truncated: boolean;
 }
-type StoreEdit = Exclude<NotebookEdit, { _tag: "restore-file-version" }> | RunResult;
+/** An undo carries the cell it puts back, so replaying it over a changed file still can. */
+type Restore = Extract<NotebookEdit, { _tag: "restore" }> & { readonly cell?: NotebookCellRecord };
+type StoreEdit =
+  | Exclude<NotebookEdit, { _tag: "restore-file-version" | "restore" }>
+  | Restore
+  | RunResult;
 
 /** Output that was not kept is not a run that printed nothing: what was saved stays, as its run's. */
 function keepSavedOutput(cell: NotebookCellRecord, execution: string): NotebookCellRecord {
@@ -270,14 +314,36 @@ function applyEdit(
         saved: null,
       }));
     case "insert":
+      // Cell IDs are random, so one already here is this insert, sent again.
+      if (index.cells.some((cell) => cell.id === edit.cellId)) return index;
       return { ...index, cells: insertAfter(index.cells, edit.afterCellId, newCell(edit)) };
     case "delete": {
       const cell = index.cells.find((entry) => entry.id === edit.cellId);
-      if (cell !== undefined) removed.set(cell.id, cell);
+      if (cell !== undefined) {
+        // Its own copy, so undo does not keep the whole file's buffer alive.
+        removed.set(cell.id, {
+          ...cell,
+          outputs: cell.outputs === null ? null : Buffer.from(cell.outputs),
+          saved: null,
+          ...(cell.rawFields === undefined
+            ? {}
+            : {
+                rawFields: new Map(
+                  [...cell.rawFields].map(([key, raw]) => [
+                    key,
+                    { ...raw, bytes: Buffer.from(raw.bytes) },
+                  ]),
+                ),
+              }),
+        });
+        if (removed.size > MAX_DELETED_CELLS) removed.delete(removed.keys().next().value ?? "");
+      }
       return { ...index, cells: index.cells.filter((entry) => entry.id !== edit.cellId) };
     }
     case "restore": {
-      const cell = removed.get(edit.cellId);
+      // A cell already in the notebook, someone else's undo for one, stays as it is.
+      if (index.cells.some((entry) => entry.id === edit.cellId)) return index;
+      const cell = edit.cell ?? removed.get(edit.cellId);
       if (cell === undefined) return index;
       removed.delete(edit.cellId);
       return { ...index, cells: insertAfter(index.cells, edit.afterCellId, cell) };
@@ -452,10 +518,36 @@ interface OpenNotebook {
   fileBytes: Buffer;
   /** Edits and run results not yet on disk, replayed if the file changes underneath them. */
   pending: ReadonlyArray<StoreEdit>;
-  timer: Fiber.Fiber<void> | null;
+  /** Saves the pending edits once typing settles, and keeps trying until they are on disk. */
+  saver: Fiber.Fiber<void> | null;
+  editedAt: number;
+  /** Why the last save failed, until one succeeds. */
+  saveProblem: string | null;
+  /**
+   * A write whose outcome is unknown: the bytes and how many pending edits they hold. If the file
+   * later reads as these bytes, those edits are written and must not be replayed.
+   */
+  attempted: {
+    readonly bytes: Buffer;
+    readonly index: NotebookIndex;
+    readonly edits: number;
+  } | null;
+  /** Requests using this notebook now. Only an unused, settled notebook leaves memory. */
+  users: number;
+  /** The cells each recent batch refused, by its request ID; kept per file, like undo. */
+  readonly receipts: Map<string, EditOutcome>;
 }
 
-const revisionOf = (notebook: OpenNotebook) => `${notebook.loadId}.${notebook.version}`;
+/** Revisions from an earlier server never match this one's. */
+const serverEpoch = NodeCrypto.randomUUID().slice(0, 8);
+/** What a batch did that its sender must hear: edits refused, and undos that came too late. */
+interface EditOutcome {
+  readonly refused: ReadonlyArray<string>;
+  readonly expired: ReadonlyArray<string>;
+}
+
+const revisionOf = (notebook: OpenNotebook) =>
+  `${serverEpoch}.${notebook.loadId}.${notebook.version}`;
 
 function notebookView(notebook: OpenNotebook): NotebookView {
   const budget = { left: INLINE_BUDGET_BYTES };
@@ -506,6 +598,7 @@ function notebookView(notebook: OpenNotebook): NotebookView {
     revision: revisionOf(notebook),
     language: notebook.index.language,
     cells,
+    ...(notebook.saveProblem === null ? {} : { saveProblem: notebook.saveProblem }),
   };
 }
 
@@ -519,7 +612,31 @@ export const makeNotebookStore = Effect.gen(function* () {
   const notebooks = new Map<string, OpenNotebook>();
   const opening = yield* Semaphore.make(1);
   const freshRuns = new Set<string>();
+  /**
+   * What a notebook leaving memory must keep: deleted cells for undo and recent batch receipts,
+   * by path, for the notebooks most recently given either.
+   */
+  const kept = new Map<
+    string,
+    {
+      readonly removed: Map<string, NotebookCellRecord>;
+      readonly receipts: Map<string, EditOutcome>;
+    }
+  >();
+  const storeScope = yield* Effect.scope;
   let loads = 0;
+
+  /** Lets go of notebooks nobody is using and nothing is waiting to save. */
+  const evictIdle = () => {
+    for (const [path, candidate] of notebooks) {
+      if (notebooks.size <= MAX_OPEN_NOTEBOOKS) break;
+      if (candidate.users !== 0 || candidate.pending.length !== 0) continue;
+      notebooks.delete(path);
+      if (candidate.removed.size === 0 && candidate.receipts.size === 0) continue;
+      kept.set(path, { removed: candidate.removed, receipts: candidate.receipts });
+      if (kept.size > MAX_UNDO_NOTEBOOKS) kept.delete(kept.keys().next().value ?? "");
+    }
+  };
 
   const fileState = (absolutePath: string) =>
     Effect.tryPromise({
@@ -536,10 +653,18 @@ export const makeNotebookStore = Effect.gen(function* () {
     });
 
   /** Brings an open notebook up to date with the file, keeping edits not yet written. */
-  const refresh = Effect.fn("NotebookStore.refresh")(function* (notebook: OpenNotebook) {
+  const refresh = Effect.fn("NotebookStore.refresh")(function* (
+    notebook: OpenNotebook,
+    force = false,
+  ) {
     const state = yield* fileState(notebook.absolutePath);
-    if (state.mtimeMs === notebook.mtimeMs && state.size === notebook.size) return;
-    const { fileBytes, index: read } = yield* readNotebookFile(notebook.absolutePath);
+    if (!force && state.mtimeMs === notebook.mtimeMs && state.size === notebook.size) return;
+    const { fileBytes, index: fromFile } = yield* readNotebookFile(notebook.absolutePath);
+    const attempted = notebook.attempted;
+    notebook.attempted = null;
+    const written = attempted !== null && attempted.bytes.equals(fileBytes);
+    const read = written ? attempted.index : fromFile;
+    if (written) notebook.pending = notebook.pending.slice(attempted.edits);
     const replayed = replayPending(read, notebook.pending, notebook.removed);
     notebook.index = replayed.index;
     notebook.pending = replayed.pending;
@@ -560,14 +685,20 @@ export const makeNotebookStore = Effect.gen(function* () {
     if (existing !== undefined) {
       notebooks.delete(absolutePath);
       notebooks.set(absolutePath, existing);
-      yield* existing.lock.withPermits(1)(refresh(existing));
+      existing.users += 1;
+      yield* existing.lock
+        .withPermits(1)(refresh(existing))
+        .pipe(Effect.onError(() => Effect.sync(() => (existing.users -= 1))));
       return existing;
     }
     return yield* opening.withPermits(1)(
       Effect.gen(function* () {
         // Another window may have opened it while this one waited.
         const opened = notebooks.get(absolutePath);
-        if (opened !== undefined) return opened;
+        if (opened !== undefined) {
+          opened.users += 1;
+          return opened;
+        }
         const state = yield* fileState(absolutePath);
         const { fileBytes, index } = yield* readNotebookFile(absolutePath);
         const notebook: OpenNotebook = {
@@ -575,7 +706,7 @@ export const makeNotebookStore = Effect.gen(function* () {
           relativePath,
           absolutePath,
           lock: yield* Semaphore.make(1),
-          removed: new Map(),
+          removed: kept.get(absolutePath)?.removed ?? new Map(),
           loadId: (loads += 1),
           index,
           version: 0,
@@ -583,16 +714,16 @@ export const makeNotebookStore = Effect.gen(function* () {
           size: state.size,
           fileBytes,
           pending: [],
-          timer: null,
+          saver: null,
+          editedAt: 0,
+          saveProblem: null,
+          attempted: null,
+          users: 1,
+          receipts: kept.get(absolutePath)?.receipts ?? new Map(),
         };
+        kept.delete(absolutePath);
         notebooks.set(absolutePath, notebook);
-        for (const [path, candidate] of notebooks) {
-          if (notebooks.size <= MAX_OPEN_NOTEBOOKS) break;
-          // Undo must still find a deleted cell, so those notebooks stay open.
-          if (candidate.pending.length === 0 && candidate.removed.size === 0) {
-            notebooks.delete(path);
-          }
-        }
+        evictIdle();
         return notebook;
       }),
     );
@@ -604,75 +735,156 @@ export const makeNotebookStore = Effect.gen(function* () {
     keepPreviousVersion = false,
   ) {
     const bytes = notebookBytes(index);
-    yield* workspaceFileSystem.writeBinaryFile({
-      cwd: notebook.cwd,
-      relativePath: notebook.relativePath,
-      bytes,
-      // A writer that gets in after the last read is found here, not overwritten.
-      expectedRevision: bytesRevision(notebook.fileBytes),
-      ...(keepPreviousVersion ? { keepPreviousVersion: true } : {}),
-    });
-    const state = yield* fileState(notebook.absolutePath);
+    yield* workspaceFileSystem
+      .writeBinaryFile({
+        cwd: notebook.cwd,
+        relativePath: notebook.relativePath,
+        bytes,
+        // A writer that gets in after the last read is found here, not overwritten.
+        expectedRevision: bytesRevision(notebook.fileBytes),
+        ...(keepPreviousVersion ? { keepPreviousVersion: true } : {}),
+      })
+      .pipe(
+        // A write can fail after the bytes landed; then it happened, and must not be replayed.
+        Effect.catch((error) =>
+          Effect.promise(() => NodeFSP.readFile(notebook.absolutePath).catch(() => null)).pipe(
+            Effect.flatMap((onDisk) => {
+              if (onDisk?.equals(bytes)) return Effect.void;
+              // Unreadable now: the next read of the file decides whether this write landed.
+              if (onDisk === null)
+                notebook.attempted = { bytes, index, edits: notebook.pending.length };
+              return Effect.fail(error);
+            }),
+          ),
+        ),
+      );
+    // The file holds these edits now, so nothing may replay them, whatever happens next.
+    notebook.attempted = null;
     notebook.index = index;
     notebook.fileBytes = bytes;
     notebook.pending = [];
-    notebook.mtimeMs = state.mtimeMs;
-    notebook.size = state.size;
+    const state = yield* fileState(notebook.absolutePath).pipe(Effect.option);
+    notebook.mtimeMs = state._tag === "Some" ? state.value.mtimeMs : -1;
+    notebook.size = state._tag === "Some" ? state.value.size : -1;
   });
 
+  const noteSaveProblem = (notebook: OpenNotebook, problem: string | null) =>
+    Effect.sync(() => {
+      if (notebook.saveProblem === problem) return;
+      notebook.saveProblem = problem;
+      notebook.version += 1;
+    });
+
+  /** Writes pending edits now. Its outcome, success or failure, is the notebook's save state. */
   const save = (notebook: OpenNotebook) =>
-    notebook.lock.withPermits(1)(
-      Effect.gen(function* () {
-        if (notebook.pending.length === 0) return;
-        yield* refresh(notebook);
-        yield* publish(notebook).pipe(
-          Effect.catchTags({
-            WorkspaceFileTargetChangedError: () =>
-              refresh(notebook).pipe(Effect.andThen(publish(notebook))),
-          }),
+    notebook.lock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          if (notebook.pending.length === 0) return;
+          yield* refresh(notebook);
+          yield* publish(notebook).pipe(
+            Effect.catchTags({
+              WorkspaceFileTargetChangedError: () =>
+                refresh(notebook, true).pipe(Effect.andThen(publish(notebook))),
+              WorkspaceFileRevisionConflictError: () =>
+                refresh(notebook, true).pipe(Effect.andThen(publish(notebook))),
+            }),
+          );
+        }).pipe(
           Effect.mapError((cause) => fail(`This notebook could not be saved: ${describe(cause)}`)),
+        ),
+      )
+      .pipe(
+        Effect.tapError((error) => noteSaveProblem(notebook, error.message)),
+        Effect.tap(() => noteSaveProblem(notebook, null)),
+      );
+
+  const saveWhenSettled = Effect.fn("NotebookStore.saveWhenSettled")(function* (
+    notebook: OpenNotebook,
+  ) {
+    let failures = 0;
+    while (notebook.pending.length > 0) {
+      yield* Effect.sleep(failures === 0 ? SAVE_DELAY : retryDelay(failures));
+      const quiet = (yield* Clock.currentTimeMillis) - notebook.editedAt;
+      if (failures === 0 && quiet < Duration.toMillis(SAVE_DELAY)) continue;
+      failures = yield* Effect.uninterruptible(save(notebook)).pipe(
+        Effect.as(0),
+        Effect.catch((error) => Effect.logError(error.message).pipe(Effect.as(failures + 1))),
+      );
+    }
+    evictIdle();
+  });
+
+  const scheduleSave = (notebook: OpenNotebook) =>
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        notebook.editedAt = yield* Clock.currentTimeMillis;
+        if (notebook.saver !== null) return;
+        notebook.saver = yield* saveWhenSettled(notebook).pipe(
+          Effect.ensuring(Effect.sync(() => (notebook.saver = null))),
+          Effect.forkIn(storeScope),
         );
       }),
     );
 
-  const scheduleSave = Effect.fn("NotebookStore.scheduleSave")(function* (notebook: OpenNotebook) {
-    if (notebook.timer !== null) yield* Fiber.interrupt(notebook.timer);
-    notebook.timer = yield* Effect.sleep(SAVE_DELAY).pipe(
-      Effect.andThen(Effect.uninterruptible(save(notebook))),
-      Effect.catch((error) => Effect.logError(error.message)),
-      Effect.forkDetach,
+  /** Opens a notebook for one request, which keeps it in memory until the request ends. */
+  const openFor = (address: { readonly cwd: string; readonly path: string }) =>
+    Effect.acquireRelease(open(address), (notebook) =>
+      Effect.sync(() => {
+        notebook.users -= 1;
+        evictIdle();
+      }),
     );
-  });
 
   yield* Effect.addFinalizer(() =>
-    Effect.forEach([...notebooks.values()], (notebook) => Effect.ignore(save(notebook)), {
-      discard: true,
-    }),
+    Effect.forEach(
+      [...notebooks.values()],
+      (notebook) =>
+        (notebook.saver === null ? Effect.void : Fiber.interrupt(notebook.saver)).pipe(
+          Effect.andThen(Effect.ignore(save(notebook))),
+        ),
+      { discard: true },
+    ),
   );
 
   const read = Effect.fn("NotebookStore.read")(function* (request: NotebookReadInput) {
-    const notebook = yield* open(request);
+    const notebook = yield* openFor(request);
     return revisionOf(notebook) === request.knownRevision ? null : notebookView(notebook);
-  });
+  }, Effect.scoped);
 
   const readOutput = Effect.fn("NotebookStore.readOutput")(function* (
     request: NotebookReadOutputInput,
   ) {
-    const notebook = yield* open(request);
+    const notebook = yield* openFor(request);
     const cell = notebook.index.cells.find((entry) => entry.id === request.cellId);
     const range = cell?.outputIndex[request.index]?.range;
+    if (cell?.outputs == null || range === undefined)
+      return (
+        request.token === undefined ? { json: null } : { json: null, stale: true }
+      ) satisfies NotebookOutputJson;
+    // The cell's outputs changed since its reader was shown them, so this index means another output.
+    if (request.token !== undefined && request.token !== outputsToken(cell.outputs))
+      return { json: null, stale: true } satisfies NotebookOutputJson;
     return {
-      json:
-        cell?.outputs === null || cell?.outputs === undefined || range === undefined
-          ? null
-          : cell.outputs.toString("utf8", range.start, range.end),
+      json: cell.outputs.toString("utf8", range.start, range.end),
     } satisfies NotebookOutputJson;
-  });
+  }, Effect.scoped);
 
   const edit = Effect.fn("NotebookStore.edit")(function* (request: NotebookEditInput) {
-    const notebook = yield* open(request);
-    const refused = yield* notebook.lock.withPermits(1)(
+    const notebook = yield* openFor(request);
+    const outcome = yield* notebook.lock.withPermits(1)(
       Effect.gen(function* () {
+        const pendingBefore = notebook.pending.length;
+        const answered =
+          request.requestId === undefined ? undefined : notebook.receipts.get(request.requestId);
+        if (answered !== undefined) return answered;
+        const remember = (outcome: EditOutcome) => {
+          if (request.requestId === undefined) return outcome;
+          notebook.receipts.set(request.requestId, outcome);
+          if (notebook.receipts.size > MAX_RECEIPTS)
+            notebook.receipts.delete(notebook.receipts.keys().next().value ?? "");
+          return outcome;
+        };
         if (
           freshRuns.has(notebook.absolutePath) &&
           request.edits.some((edit) => edit._tag !== "set-fold")
@@ -710,25 +922,51 @@ export const makeNotebookStore = Effect.gen(function* () {
           notebook.mtimeMs = state.mtimeMs;
           notebook.removed.clear();
           notebook.version += 1;
-          return [];
+          return remember({ refused: [], expired: [] });
         }
         const refused: string[] = [];
+        const expired: string[] = [];
         for (const change of request.edits) {
           if (change._tag === "restore-file-version") continue;
           if (sourceMovedOn(notebook.index, change)) {
             refused.push((change as Extract<NotebookEdit, { _tag: "set-source" }>).cellId);
             continue;
           }
-          notebook.index = applyEdit(notebook.index, change, notebook.removed);
-          notebook.pending = [...notebook.pending, change];
+          const record =
+            change._tag === "restore" ? notebook.removed.get(change.cellId) : undefined;
+          if (
+            change._tag === "restore" &&
+            record === undefined &&
+            !notebook.index.cells.some((cell) => cell.id === change.cellId)
+          ) {
+            expired.push(change.cellId);
+            continue;
+          }
+          const applied = (
+            record === undefined ? change : { ...change, cell: record }
+          ) as StoreEdit;
+          notebook.index = applyEdit(notebook.index, applied, notebook.removed);
+          notebook.pending = [...notebook.pending, applied];
         }
-        notebook.version += 1;
-        return refused;
-      }),
+        if (request.edits.length > 0) notebook.version += 1;
+        // A worker owns every pending edit before anything can interrupt this request.
+        if (notebook.pending.length > pendingBefore) yield* scheduleSave(notebook);
+        return remember({ refused, expired });
+      }).pipe(Effect.uninterruptible),
     );
-    yield* scheduleSave(notebook);
-    return { revision: revisionOf(notebook), refused };
-  });
+    const saveProblem = request.durable
+      ? yield* save(notebook).pipe(
+          Effect.as(undefined),
+          Effect.catch((error) => Effect.succeed(error.message)),
+        )
+      : (notebook.saveProblem ?? undefined);
+    return {
+      revision: revisionOf(notebook),
+      refused: outcome.refused,
+      ...(outcome.expired.length === 0 ? {} : { expired: outcome.expired }),
+      ...(saveProblem === undefined ? {} : { saveProblem }),
+    };
+  }, Effect.scoped);
 
   const recordRun = Effect.fn("NotebookStore.recordRun")(function* (
     request: NotebookRecordRunInput,
@@ -736,7 +974,7 @@ export const makeNotebookStore = Effect.gen(function* () {
       request: ComputeNotebookOutputsInput,
     ) => Effect.Effect<ComputeNotebookOutputsResult, { readonly message: string }>,
   ) {
-    const notebook = yield* open(request);
+    const notebook = yield* openFor(request);
     const known = notebook.index.cells.find((cell) => cell.id === request.cellId);
     if (known === undefined) return { revision: revisionOf(notebook), cell: null };
     if (cellRun(known.fields)?.execution === request.executionId) {
@@ -751,46 +989,82 @@ export const makeNotebookStore = Effect.gen(function* () {
       executionId: request.executionId,
     }).pipe(Effect.mapError((cause) => fail(`A run's output could not be read: ${cause.message}`)));
     const recorded = yield* notebook.lock.withPermits(1)(
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const cell = notebook.index.cells.find((entry) => entry.id === request.cellId);
         const last = cell === undefined ? null : cellRun(cell.fields);
-        // The server and an open notebook both record a run, and a result never replaces a newer one.
-        if (cell === undefined || (last !== null && last.at >= request.run.at)) return cell ?? null;
+        // The server and an open notebook both record a run, and a result never replaces a newer
+        // one. Of two that finished in the same millisecond, the run the cell expects wins.
+        if (
+          cell === undefined ||
+          (last !== null &&
+            (last.at > request.run.at ||
+              (last.at === request.run.at &&
+                pendingExecution(cell.fields) !== request.executionId)))
+        )
+          return cell ?? null;
+        // An unreadable copy keeps the cell's saved output, as a run whose output was not kept does.
         const edit: RunResult = {
           _tag: "run-result",
           cellId: request.cellId,
-          outputs: result.outputs,
+          outputs: result.incomplete ? [] : result.outputs,
           executionCount: request.executionCount ?? result.executionCount,
           run: request.run,
-          truncated: result.truncated,
+          truncated: result.truncated || result.incomplete === true,
         };
         notebook.index = applyEdit(notebook.index, edit, notebook.removed);
         notebook.pending = [...notebook.pending, edit];
         notebook.version += 1;
+        yield* scheduleSave(notebook);
         return notebook.index.cells.find((cell) => cell.id === request.cellId) ?? null;
-      }),
+      }).pipe(Effect.uninterruptible),
     );
-    yield* scheduleSave(notebook);
     return {
       revision: revisionOf(notebook),
       cell: recorded === null ? null : cellView(recorded, { left: INLINE_BUDGET_BYTES }),
     };
-  });
+  }, Effect.scoped);
+
+  /** A run cancelled before it started leaves its cell as it was, no longer waiting for it. */
+  const forgetRun = Effect.fn("NotebookStore.forgetRun")(function* (request: {
+    readonly cwd: string;
+    readonly path: string;
+    readonly cellId: string;
+    readonly executionId: string;
+  }) {
+    const notebook = yield* openFor(request);
+    yield* notebook.lock.withPermits(1)(
+      Effect.gen(function* () {
+        const cell = notebook.index.cells.find((entry) => entry.id === request.cellId);
+        if (cell === undefined || pendingExecution(cell.fields) !== request.executionId) return;
+        const edit: RunResult = {
+          _tag: "run-result",
+          cellId: request.cellId,
+          outputs: [],
+          executionCount: null,
+          run: { execution: request.executionId, code: "", at: "", ms: null },
+          truncated: true,
+        };
+        notebook.index = applyEdit(notebook.index, edit, notebook.removed);
+        notebook.pending = [...notebook.pending, edit];
+        notebook.version += 1;
+        yield* scheduleSave(notebook);
+      }).pipe(Effect.uninterruptible),
+    );
+  }, Effect.scoped);
 
   /** Writes anything still waiting, for a caller that next reads the file itself. */
   const flush = Effect.fn("NotebookStore.flush")(function* (address: {
     readonly cwd: string;
     readonly path: string;
   }) {
-    const notebook = yield* open(address);
-    if (notebook.timer !== null) yield* Fiber.interrupt(notebook.timer);
+    const notebook = yield* openFor(address);
     yield* save(notebook);
-  });
+  }, Effect.scoped);
 
   const reserveFreshRun = (address: NotebookReadInput) =>
     Effect.acquireRelease(
       Effect.gen(function* () {
-        const notebook = yield* open(address);
+        const notebook = yield* openFor(address);
         const path = notebook.absolutePath;
         if (freshRuns.has(path)) return yield* fail("This notebook already has a fresh run.");
         freshRuns.add(path);
@@ -806,7 +1080,7 @@ export const makeNotebookStore = Effect.gen(function* () {
     address: NotebookReadInput,
   ) {
     yield* flush(address);
-    const notebook = yield* open(address);
+    const notebook = yield* openFor(address);
     return yield* notebook.lock.withPermits(1)(
       Effect.gen(function* () {
         yield* refresh(notebook);
@@ -820,7 +1094,7 @@ export const makeNotebookStore = Effect.gen(function* () {
         };
       }),
     );
-  });
+  }, Effect.scoped);
 
   const saveFreshRun = Effect.fn("NotebookStore.saveFreshRun")(function* (
     request: NotebookReadInput & {
@@ -834,7 +1108,7 @@ export const makeNotebookStore = Effect.gen(function* () {
       readonly results: ReadonlyArray<RunResult>;
     },
   ) {
-    const notebook = yield* open(request);
+    const notebook = yield* openFor(request);
     yield* notebook.lock.withPermits(1)(
       Effect.gen(function* () {
         yield* refresh(notebook);
@@ -953,9 +1227,19 @@ export const makeNotebookStore = Effect.gen(function* () {
         notebook.version += 1;
       }).pipe(Effect.uninterruptible),
     );
-  });
+  }, Effect.scoped);
 
-  return { read, readOutput, edit, recordRun, flush, reserveFreshRun, freshSnapshot, saveFreshRun };
+  return {
+    read,
+    readOutput,
+    edit,
+    recordRun,
+    forgetRun,
+    flush,
+    reserveFreshRun,
+    freshSnapshot,
+    saveFreshRun,
+  };
 });
 
 export class NotebookStore extends Context.Service<

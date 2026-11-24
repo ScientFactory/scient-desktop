@@ -365,6 +365,8 @@ export interface ComputeSettledRun {
   readonly execution: ComputeExecutionRecord;
   /** The session as it was when the run settled: its language and runtime. */
   readonly session: ComputeSessionRecord;
+  /** A fresh notebook job's run, whose job copies its output into the notebook. */
+  readonly notebookJob: boolean;
   readonly packageEvidence?: ComputeRuntimePackageEvidence;
 }
 
@@ -565,7 +567,10 @@ export class ComputeSessionService extends Context.Service<
     /** Every run that has finished, for work that must happen with no client attached. */
     readonly settledRuns: Stream.Stream<ComputeSettledRun>;
     /** The notebook has what a run left, so its output can give way to newer runs. */
-    readonly settledRunRecorded: (executionId: ComputeExecutionId) => Effect.Effect<void>;
+    readonly settledRunRecorded: (
+      sessionId: ComputeSessionId,
+      executionId: ComputeExecutionId,
+    ) => Effect.Effect<void>;
     /** Runs executing or waiting in any session. */
     readonly activeWork: Effect.Effect<number>;
   }
@@ -612,7 +617,10 @@ const make = Effect.gen(function* () {
   const notifications = yield* makeComputeSessionNotifications;
   const settledRuns = yield* PubSub.unbounded<ComputeSettledRun>();
   /** Finished notebook runs whose notebook has not taken their output yet. */
-  const unrecordedRuns = new Set<ComputeExecutionId>();
+  /** Runs whose output a notebook still needs, by session and execution. */
+  const unrecordedRuns = new Set<string>();
+  const runKey = (sessionId: ComputeSessionId, executionId: ComputeExecutionId) =>
+    `${sessionId}\u0000${executionId}`;
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const sessionKey = (projectId: ComputeProjectId, sessionId: ComputeSessionId): string =>
@@ -1190,13 +1198,14 @@ const make = Effect.gen(function* () {
     if (status !== undefined && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status)) {
       const { source } = execution.request;
       if (source?._tag === "document" && source.cell !== undefined)
-        unrecordedRuns.add(execution.request.executionId);
+        unrecordedRuns.add(runKey(live.sessionId, execution.request.executionId));
       yield* PubSub.publish(settledRuns, {
         projectId: live.projectId,
         root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
         workspace: live.workspaceReceipt,
         execution,
         session: yield* Ref.get(live.recordRef),
+        notebookJob: live.startRequest.notebookRun !== undefined,
         ...(live.packageEvidence === undefined ? {} : { packageEvidence: live.packageEvidence }),
       });
     }
@@ -1694,7 +1703,7 @@ const make = Effect.gen(function* () {
         result.outputCount === 0 ||
         (result.truncated && result.outputCount === 1) ||
         request.executionId === running ||
-        unrecordedRuns.has(request.executionId) ||
+        unrecordedRuns.has(runKey(live.sessionId, request.executionId)) ||
         !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(result.status)
       )
         continue;
@@ -4264,9 +4273,12 @@ const make = Effect.gen(function* () {
           );
         return yield* action(input);
       });
-  const settledRunRecorded = (executionId: ComputeExecutionId): Effect.Effect<void> =>
+  const settledRunRecorded = (
+    sessionId: ComputeSessionId,
+    executionId: ComputeExecutionId,
+  ): Effect.Effect<void> =>
     Effect.sync(() => {
-      unrecordedRuns.delete(executionId);
+      unrecordedRuns.delete(runKey(sessionId, executionId));
     });
   const activeWork = Effect.gen(function* () {
     let count = 0;

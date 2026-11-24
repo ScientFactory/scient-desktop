@@ -157,12 +157,15 @@ function useNotebookController(props: {
         });
         return result._tag === "Success" ? result.value : "failed";
       },
-      readOutput: async (cellId, index) => {
-        const result = await readOutput({ environmentId, input: { cwd, path, cellId, index } });
+      readOutput: async (cellId, index, token) => {
+        const result = await readOutput({
+          environmentId,
+          input: { cwd, path, cellId, index, ...(token === undefined ? {} : { token }) },
+        });
         return result._tag === "Success" ? result.value : null;
       },
-      edit: async (edits) => {
-        const result = await edit({ environmentId, input: { cwd, path, edits } });
+      edit: async (request) => {
+        const result = await edit({ environmentId, input: { cwd, path, ...request } });
         return result._tag === "Success" ? result.value : null;
       },
       recordRun: async (input) => {
@@ -353,19 +356,24 @@ export default function ScientNotebookSurface(props: {
 
   const runCells = useStableCallback((cellIds: ReadonlyArray<string>, runAll: boolean = false) => {
     if (runningFresh) return;
-    const { cells } = controller.store.getState();
-    const runnable = cellIds.flatMap((id) => {
-      const cell = cells[id];
-      return cell?.cellType === "code" && cell.source.trim() !== ""
-        ? [{ id, code: cell.source }]
-        : [];
-    });
-    if (runnable.length === 0) return;
-    const ids = runnable.map((cell) => cell.id);
+    const runnableNow = () => {
+      const { cells } = controller.store.getState();
+      return cellIds.flatMap((id) => {
+        const cell = cells[id];
+        return cell?.cellType === "code" && cell.source.trim() !== ""
+          ? [{ id, code: cell.source }]
+          : [];
+      });
+    };
+    const ids = runnableNow().map((cell) => cell.id);
+    if (ids.length === 0) return;
     setSubmitting((waiting) => new Set([...waiting, ...ids]));
+    // The code runs as the server holds it once everything typed has reached it.
     void controller
       .flush()
-      .then(() => actions.current?.runCells(runnable, runAll))
+      .then((delivered) =>
+        delivered ? actions.current?.runCells(runnableNow(), runAll) : undefined,
+      )
       .finally(() =>
         setSubmitting((waiting) => {
           const next = new Set(waiting);
@@ -504,6 +512,11 @@ export default function ScientNotebookSurface(props: {
     const removed = controller.remove(cellId);
     if (removed === null) return;
     deleted.current.push({ cellId, after: removed.after });
+    // The server keeps this many deleted cells for undo.
+    if (deleted.current.length > 32) {
+      const expired = deleted.current.shift();
+      if (expired !== undefined) controller.forgetRemoved(expired.cellId);
+    }
     focusCell(next, "cell");
     toastManager.add({
       type: "info",
@@ -645,8 +658,7 @@ export default function ScientNotebookSurface(props: {
     controller.stopEditing();
     setPreparingFresh(true);
     void (async () => {
-      await controller.flush();
-      if (controller.saveIsFailing()) return;
+      if (!(await controller.flush())) return;
       await fresh.start({ ...settings, inputs });
     })().finally(() => setPreparingFresh(false));
   };

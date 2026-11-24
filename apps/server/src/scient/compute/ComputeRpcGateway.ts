@@ -53,6 +53,7 @@ import {
   ComputeWorkspaceAdmission,
   type ComputeWorkspaceReceipt,
 } from "./ComputeWorkspaceAdmission.ts";
+import { notebookPathAllowed } from "../notebook/NotebookStore.ts";
 
 interface BoundComputeProject {
   readonly projectId: ComputeProjectId;
@@ -831,6 +832,12 @@ export function makeComputeRpcGateway(input: {
       readonly notebookRun?: ComputeSubmitProjectCellsInput["cells"][number]["executionId"];
     },
   ) {
+    if (!notebookPathAllowed(request.path))
+      return yield* gatewayError(
+        "submit",
+        "source-invalid",
+        "This notebook is outside the project.",
+      );
     const project = yield* projectFor("submit", request.cwd);
     const session = yield* input.compute.getSession({
       projectId: project.projectId,
