@@ -794,13 +794,32 @@ describe("Scient tests placed in T3's test files", () => {
     const f = placementFixture();
     f.git("checkout", "--quiet", "-b", "t3", f.upstream);
     f.writeTests('it("a new T3 case", () => {});');
-    f.commit();
+    const t3 = f.commit();
     f.git("checkout", "--quiet", "main");
     f.git("merge", "--quiet", "--no-ff", "-X", "theirs", "-m", "merge T3", "t3");
     const merged = f.git("rev-parse", "HEAD");
+    // Outside official T3 history the merged commit is no authority.
+    expect(f.inspect(["--base", f.base, "--head", merged]).checks[0].status).toBe("review-needed");
+    f.git("update-ref", "refs/remotes/upstream-verification/main", t3);
     expect(f.inspect(["--base", f.base, "--head", merged]).checks[0].status).toBe("passed");
     f.writeTests('it("a new T3 case", () => {});', 'it("a Scient case", () => {});');
     expect(f.inspect(["--base", f.base]).checks[0].status).toBe("review-needed");
+  });
+
+  it("does not take a PR's own head as T3 when CI merges it into a newer main", () => {
+    const f = placementFixture();
+    f.git("update-ref", "refs/remotes/upstream-verification/main", f.upstream);
+    f.git("checkout", "--quiet", "-b", "pr");
+    f.writeTests('it("a Scient case", () => {});');
+    f.commit();
+    f.git("checkout", "--quiet", "main");
+    f.write("elsewhere.ts", "export const moved = true;\n");
+    const advanced = f.commit();
+    f.git("merge", "--quiet", "--no-ff", "-m", "GitHub's merge of the PR", "pr");
+    const synthetic = f.git("rev-parse", "HEAD");
+    expect(f.inspect(["--base", advanced, "--head", synthetic]).checks[0].status).toBe(
+      "review-needed",
+    );
   });
 
   it("counts a second test with a T3 test's title as new", () => {

@@ -469,9 +469,18 @@ function testPlacement(ctx) {
     : ctx.upstream;
   const baseUpstreamPaths =
     baseUpstream === ctx.upstream ? ctx.upstreamPaths : treePaths(ctx.run, baseUpstream);
-  // An alignment merges T3 before it records the new boundary: a merge parent that does
-  // not contain the base is T3's, and its tests are T3's too.
+  // An alignment merges T3 before it records the new boundary: a merge parent in official
+  // T3 history (the ref CI verifies provenance against, or a local upstream ref) is T3's.
   const tip = ctx.head ?? commit(ctx.run, "HEAD");
+  const official = ["refs/remotes/upstream-verification/main", "refs/remotes/upstream/main"]
+    .map((ref) => {
+      try {
+        return commit(ctx.run, ref);
+      } catch {
+        return null;
+      }
+    })
+    .filter((sha) => sha !== null);
   const isAncestor = (ancestor, descendant) => {
     try {
       ctx.run(["merge-base", "--is-ancestor", ancestor, descendant]);
@@ -481,11 +490,13 @@ function testPlacement(ctx) {
     }
   };
   let upstream = ctx.upstream;
-  for (const line of ctx
-    .run(["rev-list", "--merges", "--parents", `${ctx.base}..${tip}`])
-    .split("\n")) {
-    for (const parent of line.split(" ").slice(2))
-      if (!isAncestor(ctx.base, parent) && isAncestor(upstream, parent)) upstream = parent;
+  const merges = official.length
+    ? ctx.run(["rev-list", "--merges", "--parents", `${ctx.base}..${tip}`]).split("\n")
+    : [];
+  for (const line of merges) {
+    for (const parent of line.split(" ").slice(1))
+      if (official.some((ref) => isAncestor(parent, ref)) && isAncestor(upstream, parent))
+        upstream = parent;
   }
   const upstreamPaths =
     upstream === ctx.upstream ? ctx.upstreamPaths : treePaths(ctx.run, upstream);
