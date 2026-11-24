@@ -1,5 +1,5 @@
 import { languageLabel } from "../../lib/languageLabel";
-import { TranscriptionSelect } from "../../scient/voice/TranscriptionSelect";
+import { VoiceLanguagePicker } from "../../scient/voice/VoiceLanguagePicker";
 import { WordsSettingsSection } from "~/scient/transcription/WordsPanel";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -35,6 +35,8 @@ import { createModelSelection, pickModelSelection } from "@t3tools/shared/model"
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
 import {
   cloudSpeechLanguages,
+  HEBREW_RECORDING_MODEL_ID,
+  MULTILINGUAL_RECORDING_MODEL_ID,
   recommendSpeechModels,
   recordingSpeechModelIds,
   chooseSetupSpeechModel,
@@ -177,6 +179,7 @@ type ModelCardProps = {
   readonly comparisonLanguages: readonly string[];
   readonly recommendation: SpeechRecommendationRole | undefined;
   readonly recommendationContext?: string | undefined;
+  readonly recommendationLabel?: string | undefined;
   readonly recommendationLanguage?: string | null | undefined;
   readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   readonly busy: boolean;
@@ -305,17 +308,13 @@ function EngineCard(props: ModelCardProps) {
               <span className="text-sm font-medium leading-5">{model.name}</span>
               <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                 <span className="text-xs text-muted-foreground tabular-nums">{size}</span>
-                {props.recommendation === "recommended" ? (
+                {props.recommendationLabel ? (
                   <Badge variant="info" size="sm">
                     <StarIcon />
-                    {props.recommendationLanguage
-                      ? gt("Recommended for {language}", {
-                          language: languageLabel(props.recommendationLanguage, locale),
-                        })
-                      : gt("Recommended")}
+                    {props.recommendationLabel}
                   </Badge>
                 ) : null}
-                {props.recommendationContext && props.recommendation !== "recommended" ? (
+                {props.recommendationContext && !props.recommendationLabel ? (
                   <Badge variant="outline" size="sm">
                     {props.recommendationContext}
                   </Badge>
@@ -357,7 +356,7 @@ function EngineCard(props: ModelCardProps) {
         <PopoverPopup anchor={infoButton} width="sm" padding="comfortable" align="end">
           <div className="space-y-2">
             <PopoverTitle>{model.name}</PopoverTitle>
-            {props.recommendationContext && props.recommendation === "recommended" ? (
+            {props.recommendationContext && props.recommendationLabel ? (
               <Badge variant="outline" size="sm">
                 {props.recommendationContext}
               </Badge>
@@ -883,10 +882,7 @@ export function DictationEngineCatalog({
     )
     .filter((model) => model !== undefined);
   const recordingModel =
-    recordingChoices.find((model) => model.state === "installed") ??
-    (effectiveLanguage === "he"
-      ? (recordingChoices[1] ?? recordingChoices[0])
-      : recordingChoices[0]);
+    recordingChoices.find((model) => model.state === "installed") ?? recordingChoices[0];
   const recommendedModel = recommendation?.model;
   const ordered = recommendedModel
     ? [recommendedModel, ...models.filter(({ id }) => id !== recommendedModel.id)]
@@ -896,9 +892,19 @@ export function DictationEngineCatalog({
     model.state !== "downloadable" ||
     model.id === recommendedModel?.id ||
     model.id === recordingModel?.id ||
+    (effectiveLanguage === "he" && model.id === HEBREW_RECORDING_MODEL_ID) ||
     model.id === requestedDownload;
   const visibleModels = showAllModels ? ordered : ordered.filter(featured);
   const hiddenCount = ordered.length - ordered.filter(featured).length;
+  const recommendationLabel = (model: EnvironmentSpeechModel) => {
+    if (model.id === HEBREW_RECORDING_MODEL_ID) return gt("Recommended for Hebrew");
+    if (model.id === MULTILINGUAL_RECORDING_MODEL_ID) return gt("Recommended for mixed languages");
+    if (model.id === recommendedModel?.id && effectiveLanguage !== "he")
+      return gt("Recommended for {language}", {
+        language: languageLabel(effectiveLanguage, locale),
+      });
+    return undefined;
+  };
   return (
     <>
       <SettingsRow
@@ -911,16 +917,11 @@ export function DictationEngineCatalog({
           ),
         })}
         control={
-          <TranscriptionSelect
+          <VoiceLanguagePicker
             label={gt("Compare languages")}
             value={compareLanguage}
-            options={[
-              { value: "", label: gt("Compare languages") },
-              ...[...new Set(models.flatMap((model) => model.languages))].sort().map((value) => ({
-                value,
-                label: languageLabel(value, locale),
-              })),
-            ]}
+            languages={models.flatMap((model) => model.languages)}
+            special={{ value: "", label: gt("Clear comparison"), clearOnly: true }}
             onChange={setCompareLanguage}
           />
         }
@@ -939,8 +940,8 @@ export function DictationEngineCatalog({
                     : model.state,
               }}
               comparisonLanguages={recommendation?.language ? [recommendation.language] : []}
-              recommendation={model.id === recommendedModel?.id ? "recommended" : undefined}
-              recommendationLanguage={recommendation?.language}
+              recommendation={undefined}
+              recommendationLabel={recommendationLabel(model)}
               recommendationContext={
                 recordingModel && recommendedModel && recordingModel.id !== recommendedModel.id
                   ? model.id === recordingModel.id

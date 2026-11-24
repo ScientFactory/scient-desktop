@@ -1,4 +1,5 @@
 import { TranscriptionSelect } from "./TranscriptionSelect";
+import { VoiceLanguagePicker } from "./VoiceLanguagePicker";
 import { CloudDictationSettings } from "./cloudDictation";
 import { DictationChoices } from "./DictationChoices";
 import { DictationInputSettings } from "../../components/settings/DictationInputSettings";
@@ -16,22 +17,19 @@ import { WordsSettingsSection } from "../transcription/WordsPanel";
 // SCIENT-OWNED: Transcription settings for Scient dictation.
 import { T, useGT } from "gt-react";
 
-import { CheckIcon, Mic2Icon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { Mic2Icon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   AuthSettingsWriteScope,
   type EnvironmentId,
-  VOICE_LANGUAGE_NAMES,
+  VOICE_TRANSCRIPTION_LANGUAGE_CODES,
   ProviderInstanceId,
-  type VoiceLanguagePreference,
 } from "@t3tools/contracts";
 
 import { useChatGptDictation } from "./chatGptDictation";
 import { describeVoiceError } from "./voiceErrorPresentation";
 import { getVoiceBridge } from "./voiceClient";
-import { Badge } from "../../components/ui/badge";
-import { Popover, PopoverTrigger, PopoverPopup } from "../../components/ui/popover";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import {
@@ -94,128 +92,6 @@ function TranscriptionPrivacy({ environmentId }: { environmentId: EnvironmentId 
         />
       ))}
     </>
-  );
-}
-
-const PRIMARY_VOICE_LANGUAGES = [
-  "auto",
-  "en",
-  "he",
-] as const satisfies ReadonlyArray<VoiceLanguagePreference>;
-const MORE_VOICE_LANGUAGES = [
-  "ar",
-  "zh",
-  "fr",
-  "de",
-  "it",
-  "ja",
-  "ko",
-  "pt",
-  "ru",
-  "es",
-] as const satisfies ReadonlyArray<VoiceLanguagePreference>;
-
-function isPrimaryVoiceLanguage(language: VoiceLanguagePreference): boolean {
-  return language === "auto" || language === "en" || language === "he";
-}
-
-function VoiceLanguagePicker({
-  value,
-  onChange,
-}: {
-  readonly value: VoiceLanguagePreference;
-  readonly onChange: (language: VoiceLanguagePreference) => void;
-}): ReactNode {
-  const gt = useGT();
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [moreLanguagesOpen, setMoreLanguagesOpen] = useState(!isPrimaryVoiceLanguage(value));
-
-  const selectLanguage = (language: VoiceLanguagePreference): void => {
-    onChange(language);
-    setPickerOpen(false);
-    if (isPrimaryVoiceLanguage(language)) setMoreLanguagesOpen(false);
-  };
-
-  return (
-    <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-      <PopoverTrigger
-        render={<Button aria-label={gt("Choose voice language")} size="sm" variant="outline" />}
-      >
-        {VOICE_LANGUAGE_NAMES[value]}
-        <ChevronDownIcon className="size-3.5 stroke-[2.5] opacity-70" />
-      </PopoverTrigger>
-      <PopoverPopup
-        align="start"
-        className="w-56 max-w-[calc(100vw-1rem)]"
-        padding="none"
-        side="bottom"
-        sideOffset={4}
-      >
-        <div className="p-1">
-          <div className="space-y-0.5">
-            {PRIMARY_VOICE_LANGUAGES.map((language) => {
-              const selected = value === language;
-              return (
-                <Button
-                  key={language}
-                  aria-pressed={selected}
-                  className="w-full justify-start"
-                  onClick={() => selectLanguage(language)}
-                  size="sm-multiline"
-                  variant={selected ? "selected" : "ghost-muted"}
-                >
-                  <span className="flex min-w-0 flex-1 items-center gap-2">
-                    <span>{VOICE_LANGUAGE_NAMES[language]}</span>
-                    {language === "auto" ? (
-                      <Badge size="sm" variant="info">
-                        <T>Recommended</T>
-                      </Badge>
-                    ) : null}
-                  </span>
-                  {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
-                </Button>
-              );
-            })}
-            <div className="mt-1 border-border/60 border-t pt-1">
-              <Button
-                aria-expanded={moreLanguagesOpen}
-                className="w-full justify-start"
-                onClick={() => setMoreLanguagesOpen((open) => !open)}
-                size="xs"
-                variant="ghost-muted"
-              >
-                <span className="flex-1 text-left">
-                  <T>More languages</T>
-                </span>
-                <ChevronRightIcon
-                  className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
-                />
-              </Button>
-              {moreLanguagesOpen ? (
-                <div className="mt-0.5 space-y-0.5">
-                  {MORE_VOICE_LANGUAGES.map((language) => {
-                    const selected = value === language;
-                    return (
-                      <Button
-                        key={language}
-                        aria-pressed={selected}
-                        className="w-full justify-start"
-                        onClick={() => selectLanguage(language)}
-                        size="xs"
-                        variant={selected ? "selected" : "ghost-muted"}
-                      >
-                        <span className="flex-1 text-left">{VOICE_LANGUAGE_NAMES[language]}</span>
-                        {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
-                      </Button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </PopoverPopup>
-    </Popover>
   );
 }
 
@@ -303,6 +179,9 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           title={gt("Language", { $context: "voice dictation language" })}
           control={
             <VoiceLanguagePicker
+              label={gt("Choose voice language")}
+              languages={VOICE_TRANSCRIPTION_LANGUAGE_CODES}
+              special={{ value: "auto", label: gt("Automatic"), recommended: true }}
               value={languagePreference}
               onChange={(language) => updateClientSettings({ voiceLanguagePreference: language })}
             />

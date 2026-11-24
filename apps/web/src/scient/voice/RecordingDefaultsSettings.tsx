@@ -2,11 +2,12 @@ import type { RecordingEngineSelection } from "@t3tools/contracts";
 import { useCloudRecordingChoices } from "./cloudDictation";
 import { useChatGptDictation } from "./chatGptDictation";
 import { TranscriptionSelect } from "./TranscriptionSelect";
+import { VoiceLanguagePicker } from "./VoiceLanguagePicker";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   AuthSettingsWriteScope,
   DEFAULT_RECORDING_DEFAULTS,
-  VOICE_LANGUAGE_NAMES,
+  VOICE_TRANSCRIPTION_LANGUAGE_CODES,
 } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { useState } from "react";
@@ -49,8 +50,6 @@ export function RecordingDefaultsSettings({
       : model.languages.includes(language),
   );
   const labels = { off: gt("Off"), quick: gt("Quick"), thorough: gt("Thorough") };
-  const languageName = (code: string) =>
-    VOICE_LANGUAGE_NAMES[code as keyof typeof VOICE_LANGUAGE_NAMES] ?? code;
 
   const selected =
     defaults.engines?.[language] ??
@@ -72,10 +71,7 @@ export function RecordingDefaultsSettings({
   const options = [
     {
       value: "",
-      label:
-        language === "auto"
-          ? gt("Recommended for each language")
-          : gt("Recommended for {language}", { language: languageName(language) }),
+      label: gt("Recommended engine"),
       disabled: false,
     },
   ];
@@ -125,17 +121,15 @@ export function RecordingDefaultsSettings({
       <SettingsRow
         title={gt("Default engine")}
         description={gt(
-          "Set a transcription engine for each language for lessons, meetings, and other recordings.",
+          "Used when an agent starts a transcription. Choose a language or use automatic detection.",
         )}
         control={
           <div className="flex flex-wrap justify-end gap-2">
-            <TranscriptionSelect
+            <VoiceLanguagePicker
               label={gt("Recording language")}
               value={language}
-              options={Object.entries(VOICE_LANGUAGE_NAMES).map(([value, label]) => ({
-                value,
-                label: value === "auto" ? gt("Any language") : label,
-              }))}
+              languages={VOICE_TRANSCRIPTION_LANGUAGE_CODES}
+              special={{ value: "auto", label: gt("Automatic detection") }}
               onChange={setLanguage}
             />
             <TranscriptionSelect

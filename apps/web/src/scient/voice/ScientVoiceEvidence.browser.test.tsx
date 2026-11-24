@@ -146,6 +146,21 @@ vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
             supportsTranslation: true,
             supportsStreaming: false,
           },
+          {
+            id: "vladkens/ivrit-whisper-large-v3-turbo-gguf",
+            name: "ivrit.ai Whisper Large V3 Turbo",
+            description: "Hebrew recording transcription",
+            size: 845_000_000,
+            languages: ["he"],
+            accuracy: 4,
+            speed: 2,
+            recommended: true,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: false,
+            supportsTranslation: false,
+            supportsStreaming: false,
+          },
         ],
       }),
   };
@@ -321,7 +336,9 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
       .toHaveTextContent("Automatic");
     await expect.element(screen.getByRole("button", { name: "Choose a saved key…" })).toBeVisible();
     await expect.element(screen.getByText("25 languages")).not.toBeInTheDocument();
-    await expect.element(screen.getByText("for recordings", { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByText("Recommended for mixed languages", { exact: true }))
+      .toBeVisible();
     await expect
       .element(screen.getByRole("button", { name: "Download Whisper Large v3" }))
       .toBeVisible();
@@ -562,4 +579,88 @@ it("offers ready local, cloud and ChatGPT recording routes and keeps downloadabl
   expect(
     [...document.querySelectorAll('[role="option"]')].map((option) => option.textContent),
   ).not.toContain("Whisper Large v3");
+});
+
+it("shares searchable language menus, with the search beside the trigger on either side", async () => {
+  const previous = getClientSettings();
+  __setClientSettingsForTests({ ...previous, voiceLanguagePreference: "auto" });
+  try {
+    await page.viewport(1000, 850);
+    await using screen = await render(<ScientVoiceSettingsPanel />);
+    const voice = screen.getByRole("button", { name: "Choose voice language" });
+    const comparison = screen.getByRole("button", { name: "Compare languages" });
+    const recording = screen.getByRole("button", { name: "Recording language" });
+    const recommended = page.getByRole("button", { name: "Automatic Recommended" });
+    const more = page.getByRole("button", { name: "More languages" });
+
+    await voice.click();
+    await expect.element(recommended).toBeVisible();
+    const voicePopup = page.getByRole("dialog", { name: "Choose voice language" });
+    const voiceSearch = voicePopup.getByRole("searchbox", { name: "Search languages" });
+    await expect.element(voiceSearch).toHaveFocus();
+    await expect.element(voicePopup).toHaveAttribute("data-side", "bottom");
+    expect(voiceSearch.element().getBoundingClientRect().bottom).toBeLessThan(
+      recommended.element().getBoundingClientRect().top,
+    );
+    expect(
+      [...voicePopup.element().querySelectorAll("button")].map((button) => button.textContent),
+    ).toEqual(["AutomaticRecommended", "French", "English", "Hebrew", "Arabic", "More languages"]);
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(voicePopup.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/dictation-language-menu.png` });
+    }
+    await more.click();
+    const list = more.element().parentElement!.parentElement!;
+    expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+    const searchTop = () => voiceSearch.element().getBoundingClientRect().top;
+    const originalSearchTop = searchTop();
+    list.scrollTop = list.scrollHeight;
+    expect(searchTop()).toBe(originalSearchTop);
+    await voiceSearch.fill("Tibetan");
+    await expect.element(page.getByRole("button", { name: "Tibetan", exact: true })).toBeVisible();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(voice).toHaveTextContent("Tibetan");
+    expect(getClientSettings().voiceLanguagePreference).toBe("bo");
+
+    await comparison.element().scrollIntoView({ block: "end" });
+    await comparison.click();
+    const comparePopup = page.getByRole("dialog", { name: "Compare languages" });
+    const compareSearch = comparePopup.getByRole("searchbox", { name: "Search languages" });
+    await expect.element(compareSearch).toHaveFocus();
+    await expect.element(comparePopup).toHaveAttribute("data-side", "top");
+    const french = comparePopup.getByRole("button", { name: "French" });
+    expect(compareSearch.element().getBoundingClientRect().top).toBeGreaterThan(
+      french.element().getBoundingClientRect().bottom,
+    );
+    await expect.element(recommended).not.toBeInTheDocument();
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(comparePopup.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/compare-language-menu.png` });
+    }
+    await compareSearch.fill("zzzz");
+    await expect.element(comparePopup.getByText("No languages found")).toBeVisible();
+    await compareSearch.fill("עברית");
+    await page.getByRole("button", { name: "Hebrew", exact: true }).click();
+    const hebrewCard = screen.getByRole("button", {
+      name: "Open details for ivrit.ai Whisper Large V3 Turbo",
+    });
+    await expect.element(hebrewCard.getByText("Recommended for Hebrew")).toBeVisible();
+    expect(screen.getByText("Recommended for Hebrew", { exact: true }).all()).toHaveLength(1);
+
+    await comparison.click();
+    await page.getByRole("button", { name: "Clear comparison" }).click();
+    await expect.element(comparison).toHaveTextContent("Compare languages");
+
+    await page.viewport(420, 850);
+    await recording.click();
+    const recordingPopup = page.getByRole("dialog", { name: "Recording language" });
+    await expect
+      .element(recordingPopup.getByRole("button", { name: "Automatic detection" }))
+      .toBeVisible();
+    await recordingPopup.getByRole("searchbox", { name: "Search languages" }).fill("Bashkir");
+    await page.getByRole("button", { name: "Bashkir", exact: true }).click();
+    await expect.element(recording).toHaveTextContent("Bashkir");
+  } finally {
+    await act(() => __setClientSettingsForTests(previous));
+  }
 });

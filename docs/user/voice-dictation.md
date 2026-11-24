@@ -68,8 +68,12 @@ on the computer running the Scient server, including for cloud transcription.
 Put `ffmpeg` and `ffprobe` on that computer's PATH and restart Scient. For a
 remote environment, install them on the remote host and restart its server.
 
-In **Settings → Voice & Transcription → Recordings**, choose a model for each language
-or use the recommended recording models. The dictation model is set separately.
+Under **Settings → Voice & Transcription → Recordings**, **Default engine** sets
+the engine an agent uses when it starts a transcription without choosing one.
+Pick the recording language on the left, or choose **Automatic detection** for
+jobs that let the engine detect the language. Choose an engine on the right or
+leave **Recommended engine** selected. When you start a job from the Recordings
+page, choose the engine in the transcription dialog.
 Thorough correction still requires an estimate before each job.
 
 For a selected project, enter a notes recipe to generate `notes.md` beside the
