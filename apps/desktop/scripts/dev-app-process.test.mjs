@@ -284,4 +284,25 @@ describe("createWatchedFileStamps", () => {
     NodeFS.rmSync(bundlePath);
     assert.isTrue(stamps.changed(bundlePath));
   });
+
+  it("ignores a rebuild that rewrites identical bytes", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "watched-stamps-"));
+    roots.push(root);
+    const bundlePath = NodePath.join(root, "main.cjs");
+    NodeFS.writeFileSync(bundlePath, "same build");
+    const stamps = createWatchedFileStamps([bundlePath]);
+
+    const later = new Date("2030-01-01T00:00:00Z");
+    NodeFS.writeFileSync(bundlePath, "same build");
+    NodeFS.utimesSync(bundlePath, later, later);
+    assert.isFalse(stamps.changed(bundlePath));
+
+    NodeFS.writeFileSync(bundlePath, "next build");
+    assert.isTrue(stamps.changed(bundlePath));
+
+    NodeFS.rmSync(bundlePath);
+    assert.isTrue(stamps.changed(bundlePath));
+    NodeFS.writeFileSync(bundlePath, "next build");
+    assert.isTrue(stamps.changed(bundlePath));
+  });
 });

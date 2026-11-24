@@ -1,4 +1,5 @@
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -269,10 +270,13 @@ export function createCoalescedRestartScheduler({
   };
 }
 
-// Windows reports reads (last-access and attribute updates) through fs.watch, so
-// Electron loading its own bundle looked like a rebuild and restarted it. A watched
-// file counts as changed only when its size or modification time differs.
-export function createWatchedFileStamps(filePaths, { stat = NodeFS.statSync } = {}) {
+// fs.watch also reports reads (Windows) and identical rewrites (bundler config
+// reloads), which restarted the app. A file changes only when its size or mtime
+// differs and its bytes differ too.
+export function createWatchedFileStamps(
+  filePaths,
+  { stat = NodeFS.statSync, readFile = NodeFS.readFileSync } = {},
+) {
   const stampOf = (filePath) => {
     try {
       const stats = stat(filePath);
@@ -282,12 +286,24 @@ export function createWatchedFileStamps(filePaths, { stat = NodeFS.statSync } = 
       throw error;
     }
   };
+  const digestOf = (filePath) => {
+    try {
+      return NodeCrypto.createHash("sha256").update(readFile(filePath)).digest("hex");
+    } catch (error) {
+      if (error?.code === "ENOENT") return "missing";
+      throw error;
+    }
+  };
   const stamps = new Map(filePaths.map((filePath) => [filePath, stampOf(filePath)]));
+  const digests = new Map(filePaths.map((filePath) => [filePath, digestOf(filePath)]));
   return {
     changed(filePath) {
       const next = stampOf(filePath);
       if (stamps.get(filePath) === next) return false;
       stamps.set(filePath, next);
+      const nextDigest = next === "missing" ? "missing" : digestOf(filePath);
+      if (digests.get(filePath) === nextDigest) return false;
+      digests.set(filePath, nextDigest);
       return true;
     },
   };
