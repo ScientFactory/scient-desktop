@@ -195,6 +195,7 @@ import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptSt
 import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
+  readHandoffItemsSinceContextBoundary,
   readPortableForkItems,
   readRunForkAncestorItems,
   visibleConversationItems,
@@ -908,6 +909,8 @@ function delegatedTasksStopEffect(command: {
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+/** How long automatic settlement waits for a queued turn to start. */
+export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "Scient could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
 
@@ -3122,7 +3125,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A run queued before a fresh run started is bound to the conversation that run left behind.
       const followsLatestContext =
         !freshContext &&
-        (followsCurrent || providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
+        (followsCurrent ||
+          storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
+          providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
       const targetProviderThread = followsLatestContext
         ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId &&
           !providerThreadPredatesBoundary(activeProviderThread, contextBoundary)
@@ -3138,10 +3143,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedProviderThread: OrchestrationV2ProviderThread = targetProviderThread ?? {
         id: idAllocator.derive.providerThread({
           driver: targetAdapter.driver,
-          // The queue reserved `pending:<run>` for this run; another run may have taken it.
+          // The queue reserved `pending:<run>` for this run; another run may have taken it. An edit
+          // that moved the run to another instance of the same driver must not replace that row.
           nativeThreadId: freshContext
             ? `pending:${queuedRun.id}:fresh`
-            : `pending:${queuedRun.id}`,
+            : storedProviderThread.providerInstanceId === queuedRun.providerInstanceId
+              ? `pending:${queuedRun.id}`
+              : `pending:${queuedRun.id}:${queuedRun.providerInstanceId}`,
         }),
         driver: targetAdapter.driver,
         providerInstanceId: queuedRun.providerInstanceId,
@@ -10523,16 +10531,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const mergeBackDeltaItems =
       mergeBackSourceProjection === null || mergeBackSourceRun === null
         ? []
-        : visibleConversationItems<ContextHandoffItem>(
-            mergeBackSourceProjection,
-            yield* readHandoffItems(
+        : yield* Effect.gen(function* () {
+            const sourceRuns = mergeBackSourceProjection.runs.filter(
+              (run) => run.ordinal <= mergeBackSourceRun.ordinal,
+            );
+            const rawItems: ReadonlyArray<ContextHandoffItem> = yield* readHandoffItems(
               mergeBackSourceProjection.thread.id,
-              mergeBackSourceProjection.runs
-                .filter((run) => run.ordinal <= mergeBackSourceRun.ordinal)
-                .map((run) => run.id),
+              sourceRuns.map((run) => run.id),
               true,
-            ),
-          );
+            );
+            // SCIENT-FORK: portable history may be body-less candidates.
+            const { items } = yield* readHandoffItemsSinceContextBoundary(
+              projectionStore,
+              mergeBackSourceProjection.thread.id,
+              sourceRuns,
+              rawItems,
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorProjectionError({
+                    threadId: mergeBackSourceProjection.thread.id,
+                    cause,
+                  }),
+              ),
+            );
+            return visibleConversationItems<ContextHandoffItem>(mergeBackSourceProjection, items);
+          });
     const mergeBackHandoff =
       pendingMergeBackTransfer === undefined ||
       mergeBackSourceProjection === null ||
@@ -12800,15 +12824,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         for (const question of approvalTurnItem.questions) {
           const answer = answers?.[question.id];
+          if (
+            question.multiSelect === true &&
+            question.required !== true &&
+            Array.isArray(answer) &&
+            answer.length === 0
+          ) {
+            replies.push(`${question.question}\nNone selected`);
+            continue;
+          }
           const answered = isMessageQuestionAnswer(answer);
-          // Clients send "" for a skipped optional question, such as an attachment-only answer.
-          if (!answered && question.required === false) continue;
-          if (!answered) {
+          // Clients send "" for a skipped optional question or an attachment-only answer.
+          if (!answered && !command.attachmentsByQuestionId?.[question.id]?.length) {
+            if (question.required === false) continue;
             return yield* new OrchestratorDispatchError({
               commandId: command.commandId,
               commandType: command.type,
               cause: "Answer each question before sending.",
             });
+          }
+          if (!answered) {
+            replies.push(question.question);
+            continue;
           }
           const text = typeof answer === "string" ? answer : answer.join(", ");
           replies.push(`${question.question}\n${text.trim()}`);
@@ -13007,7 +13044,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           messageId: MessageId.make(`async-answer:${command.requestId}`),
           text: replies.join("\n\n"),
-          attachments: [],
+          attachments: Object.values(command.attachmentsByQuestionId ?? {}).flat(),
           createdBy: "user" as const,
           creationSource: "server" as const,
           dispatchMode,
@@ -13723,10 +13760,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "A guest's message cannot be edited. Cancel it instead.",
       });
     }
+    const modelSelection = command.modelSelection ?? queuedRunModelSelection(projection, queuedRun);
     yield* ensureGoalCommandSupported(
       command,
       { text: command.text, attachments: command.attachments ?? queuedMessage.attachments },
-      queuedRunModelSelection(projection, queuedRun).instanceId,
+      modelSelection.instanceId,
     );
     const editProblem =
       queuedRun.outputSchema === undefined
@@ -13753,10 +13791,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Math.max(DateTime.toEpochMillis(now), DateTime.toEpochMillis(queuedMessage.updatedAt) + 1),
     );
     const emitEvent = emit(events, command);
+    let updatedRun =
+      command.modelSelection === undefined
+        ? queuedRun
+        : { ...queuedRun, modelSelection, providerInstanceId: modelSelection.instanceId };
+    if (
+      updatedRun.steerWhenReadyRunId !== undefined &&
+      (isSlashCommand({
+        text: command.text,
+        attachments: command.attachments ?? queuedMessage.attachments,
+      }) ||
+        (yield* limitForbidsParkedSteer))
+    ) {
+      const { steerWhenReadyRunId: _, ...queued } = updatedRun;
+      updatedRun = queued;
+    }
+    if (updatedRun !== queuedRun) {
+      yield* emitEvent({
+        type: "run.updated",
+        threadId: command.threadId,
+        runId: queuedRun.id,
+        ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
+        providerInstanceId: updatedRun.providerInstanceId,
+        occurredAt: now,
+        payload: updatedRun,
+      });
+    }
     const editedAttachments =
       command.attachments === undefined ? {} : { attachments: command.attachments };
+    const { followsThreadSelection: _followsThreadSelection, ...pinnedMessage } = queuedMessage;
     const editedMessage = {
-      ...queuedMessage,
+      ...(command.modelSelection === undefined ? queuedMessage : pinnedMessage),
       text: command.text,
       ...editedAttachments,
       ...(command.selectedScientSkillNames === undefined
@@ -13796,26 +13861,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: queuedRun.providerInstanceId,
         occurredAt: now,
         payload: withoutGuestAttribution(editedItem),
-      });
-    }
-    // A command cannot steer, so an edit into one keeps it queued where it is.
-    if (
-      queuedRun.steerWhenReadyRunId !== undefined &&
-      (isSlashCommand({
-        text: command.text,
-        attachments: command.attachments ?? queuedMessage.attachments,
-      }) ||
-        (yield* limitForbidsParkedSteer))
-    ) {
-      const { steerWhenReadyRunId: _, ...queued } = queuedRun;
-      yield* emitEvent({
-        type: "run.updated",
-        threadId: command.threadId,
-        runId: queuedRun.id,
-        ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
-        providerInstanceId: queuedRun.providerInstanceId,
-        occurredAt: now,
-        payload: queued,
       });
     }
     // Thread deletion only cleans files the thread still references.
@@ -16317,7 +16362,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const stopDelegatedTasks =
       (yield* DelegatedStopHandledByCaller) === command.threadId ||
       !projection.subagents.some(
-        (task) => task.origin === "app_owned" && task.childThreadId !== null,
+        (task) =>
+          task.origin === "app_owned" &&
+          (task.childThreadId !== null || task.remoteChild !== undefined),
       )
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
@@ -17742,6 +17789,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             commandType: command.type,
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
+          });
+        }
+        // The completion reaction starts or holds the queue just after a run ends; settling
+        // first would cancel an automatic wake it was about to start.
+        const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+        const endedAt = latestExecutedRun(runs)?.completedAt;
+        if (
+          endedAt != null &&
+          runs.some((run) => run.status === "queued") &&
+          Math.abs(DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(endedAt)) <
+            QUEUED_TURN_START_GRACE_MS
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} has a queued run that may still start.`,
           });
         }
         yield* dispatchThreadMutation(

@@ -479,7 +479,7 @@ describe("ssh tunnel scripts", () => {
     const packageSpec = scientServerPackageSpec("0.6.21");
     const launch = SshTunnel.buildRemoteLaunchScript({ packageSpec });
     const pairing = SshTunnel.buildRemotePairingScript(stateKey, { packageSpec });
-    const stop = SshTunnel.buildRemoteStopScript(stateKey);
+    const stop = SshTunnel.buildRemoteStopScript(stateKey, null);
 
     assert.include(launch, 'DEFAULT_SERVER_HOME="$HOME/.scient-next"');
     assert.include(launch, 'STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/$STATE_KEY"');
@@ -585,15 +585,15 @@ describe("ssh tunnel scripts", () => {
       "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(stateKey),
+      SshTunnel.buildRemoteStopScript(stateKey, null),
       'if [ "$REMOTE_MANAGED" != "external" ] && managed_server_running "$REMOTE_PID"',
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(stateKey),
+      SshTunnel.buildRemoteStopScript(stateKey, null),
       'kill "$REMOTE_PID" 2>/dev/null || true',
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(stateKey),
+      SshTunnel.buildRemoteStopScript(stateKey, null),
       'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"',
     );
     assert.include(
@@ -2046,6 +2046,62 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live(
+    "another desktop with the same connection details neither owns nor stops the server",
+    () =>
+      Effect.gen(function* () {
+        const { fs, home, fakeServer, sshAsLocalShell, stateDir } =
+          yield* prepare("an unrelated process");
+        const launch = (launcherId: string) =>
+          SshTunnel.launchOrReuseRemoteServer(
+            target,
+            undefined,
+            { nodeScriptPath: fakeServer },
+            launcherId,
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+        const runtimePid = fs
+          .readFileString(`${home}/.t3/userdata/server-runtime.json`)
+          .pipe(Effect.map((runtime) => Number(JSON.parse(runtime).pid)));
+
+        assert.equal((yield* launch("a".repeat(32))).remoteServerKind, "managed");
+        const serverPid = yield* runtimePid;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              process.kill(serverPid, "SIGKILL");
+            } catch {}
+          }),
+        );
+
+        const otherDesktop = yield* launch("b".repeat(32));
+        assert.equal(
+          yield* fs.readFileString(`${stateDir}/launcher`),
+          `${"a".repeat(32)}\n`,
+          "the second desktop recorded itself as the server's launcher",
+        );
+        assert.equal(otherDesktop.remoteServerKind, "external");
+
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({
+            resolveCliRunner: Effect.succeed(ARCHIVE),
+            resolveLauncherId: Effect.succeed("b".repeat(32)),
+          }),
+        );
+        yield* Effect.flatMap(SshTunnel.SshEnvironmentManager, (manager) =>
+          manager.disconnectEnvironment(target),
+        ).pipe(Effect.provide(layer));
+        assert.isTrue(
+          yield* isRunning(serverPid),
+          "the second desktop's disconnect stopped the server the first desktop launched",
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live.each(staleIds)("disconnecting does not signal %s named by the managed pid file", (kind) =>
     Effect.gen(function* () {
       const { fs, holder, sshAsLocalShell, staleId, stateDir } = yield* prepare(kind);
@@ -2690,6 +2746,7 @@ const canBind = (port) =>
       for (const version of versions) {
         const runtimeDir = `${home}/.scient-next/runtime/versions/${version}`;
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
+        // The runner gets only HOME, so `node` would resolve on sh's default PATH, which may not have it.
         yield* fs.writeFileString(
           `${runtimeDir}/t3`,
           `#!/bin/sh\nexec '${process.execPath}' '${fakeT3}' '${version}' "$@"\n`,

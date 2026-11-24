@@ -28,6 +28,7 @@ import { FetchHttpClient } from "effect/http";
 
 import * as OwnedLocalEndpoints from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
 
@@ -1829,12 +1830,17 @@ effectIt.effect.each(["linux", "darwin"] as const)(
 effectIt.effect("stops only a job's own process group", () =>
   Effect.sync(() => {
     const serverPid = 100;
+    const launcherPid = 150;
     const rows = [
       { pid: 10, ppid: 1, pgid: 10 }, // `vp run dev`, whose job holds this server
       { pid: 20, ppid: 10, pgid: 10 }, // the web dev server in the same job
       { pid: serverPid, ppid: 10, pgid: 10 },
-      { pid: 200, ppid: serverPid, pgid: 200 }, // agent CLI
+      { pid: launcherPid, ppid: serverPid, pgid: 10 }, // Linux ProcessLauncher worker
+      { pid: 200, ppid: serverPid, pgid: 200 }, // direct agent CLI
       { pid: 210, ppid: 200, pgid: 200 }, // a server it spawned without a group of its own
+      { pid: 250, ppid: launcherPid, pgid: 250 }, // launcher-spawned agent CLI (e.g. agy acp)
+      { pid: 260, ppid: 250, pgid: 250 }, // a server in the launcher-spawned agent CLI's group
+      { pid: 270, ppid: 250, pgid: 270 }, // a job started by the launcher-spawned agent CLI
       { pid: 300, ppid: 200, pgid: 300 }, // agent tool shell
       { pid: 400, ppid: 300, pgid: 400 }, // `npm run dev &`
       { pid: 401, ppid: 400, pgid: 400 },
@@ -1842,10 +1848,11 @@ effectIt.effect("stops only a job's own process group", () =>
       { pid: 600, ppid: 500, pgid: 600 }, // terminal job
     ];
     const table = new Map(rows.map((row) => [row.pid, row]));
-    expect(PortScanner.stoppableProcessGroup(table, 401, serverPid)).toBe(400);
-    expect(PortScanner.stoppableProcessGroup(table, 600, serverPid)).toBe(600);
-    for (const pid of [20, 210, 500, 999]) {
-      expect(PortScanner.stoppableProcessGroup(table, pid, serverPid)).toBeNull();
+    expect(PortScanner.stoppableProcessGroup(table, 401, serverPid, launcherPid)).toBe(400);
+    expect(PortScanner.stoppableProcessGroup(table, 600, serverPid, launcherPid)).toBe(600);
+    expect(PortScanner.stoppableProcessGroup(table, 270, serverPid, launcherPid)).toBe(270);
+    for (const pid of [20, 150, 210, 250, 260, 500, 999]) {
+      expect(PortScanner.stoppableProcessGroup(table, pid, serverPid, launcherPid)).toBeNull();
     }
     // The tool shell is the command; its `npm run dev &` job only inherited the name.
     const variables = new Map([
@@ -1861,43 +1868,230 @@ effectIt.effect("stops only a job's own process group", () =>
   }),
 );
 
-// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
-effectIt.effect("reads no environment from a macOS platform binary's argv", () =>
-  Effect.sync(() => {
-    // `ps -E` appends no environment to `/bin/bash`, whose argv spells the assignment out.
-    const withEnvironment = [
-      "  200 /usr/local/bin/codex app-server HOME=/Users/a",
-      "  300 /bin/bash -c COMMAND=b npm run dev & wait",
-      "  301 /usr/local/bin/node /usr/local/bin/npm run dev COMMAND=a HOME=/Users/a",
-      "  302 /usr/local/bin/node vite COMMAND=a HOME=/Users/a",
-    ].join("\n");
-    const withoutEnvironment = [
-      "  200 /usr/local/bin/codex app-server",
-      "  300 /bin/bash -c COMMAND=b npm run dev & wait",
-      "  301 /usr/local/bin/node /usr/local/bin/npm run dev",
-      "  302 /usr/local/bin/node vite",
-    ].join("\n");
-    const variables = PortScanner.parsePsEnvironmentVariables(withEnvironment, withoutEnvironment, [
-      "COMMAND",
-      "HOME",
-    ]);
-    expect([...variables.keys()]).toEqual([200, 301, 302]);
-    expect([...variables.get(200)!]).toEqual([["HOME", "/Users/a"]]);
-    expect(variables.get(301)!.get("COMMAND")).toBe("a");
+effectIt.effect(
+  "excludes Linux agent CLIs spawned through ProcessLauncher (including after restarts) while keeping their dev servers",
+  () => {
+    let launcherPid = 9_000;
+    const firstDevPort = 43_201;
+    const secondDevPort = 43_202;
+    let lsofStdout =
+      `p4300\ncagy\nn127.0.0.1:43200\n` +
+      `p4301\ncclaude\nn127.0.0.1:43199\n` +
+      `p4242\ncnode\nn127.0.0.1:${firstDevPort}\n`;
+    const procFiles: Record<string, string> = {
+      "/proc/4300/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agy\0`,
+      "/proc/4300/stat": `4300 (agy) S ${launcherPid} 4300 4300 0`,
+      "/proc/4301/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-claude\0`,
+      "/proc/4301/stat": `4301 (claude) S ${process.pid} 4301 4301 0`,
+      "/proc/4242/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agy\0`,
+      "/proc/4242/stat": "4242 (node) S 4300 4300 4300 0",
+    };
+    const missing = FileSystem.makeNoop({});
+    const layer = layerScanner.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procFiles[path];
+              return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              input.command === "lsof"
+                ? Effect.succeed(processOutput(lsofStdout))
+                : Effect.succeed(
+                    processOutput(
+                      `${launcherPid} ${process.pid} ${process.pid}\n` +
+                        `4300 ${launcherPid} 4300\n` +
+                        "4242 4300 4300\n",
+                    ),
+                  ),
+          }),
+          Layer.succeed(ProcessLauncher.ProcessLauncher, {
+            currentPid: Effect.sync(() => launcherPid),
+          }),
+          Layer.succeed(HostProcess.Platform, "linux"),
+          // SCIENT-FORK: listener scans consult the protected endpoint registry.
+          TestOwnedLocalEndpointsLive,
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.reject(new Error()))),
+          ),
+        ),
+      ),
+    );
 
-    // An unreadable leader names no command: what it inherited cannot be read anywhere else.
-    const rows = [
-      { pid: 200, ppid: 1, pgid: 200 },
-      { pid: 300, ppid: 200, pgid: 300 },
-      { pid: 301, ppid: 300, pgid: 300 },
-    ];
-    const table = new Map(rows.map((row) => [row.pid, row]));
-    expect(PortScanner.agentCommandsInGroup(variables, table.get(300)!).size).toBe(0);
-    // Nor does a leader whose parent is unreadable: the parent cannot rule out inheritance.
-    expect(
-      PortScanner.agentCommandsInGroup(variables, { pid: 301, ppid: 300, pgid: 301 }).size,
-    ).toBe(0);
-  }),
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      // SCIENT-FORK:START explicit-url-authority — only declared URLs are listed or stopped.
+      const urls = [43_199, 43_200, firstDevPort].map((port) => `http://localhost:${port}/`);
+      yield* scanner.subscribe({ configuredUrls: urls, initialSnapshot: [] }, () => Effect.void);
+      expect(yield* scanner.scan(urls)).toMatchObject([
+        { port: firstDevPort, pid: 4242, agent: { threadId: "thread-agy" } },
+      ]);
+      // SCIENT-FORK:END explicit-url-authority
+
+      // Refuses to stop a server sharing the ProcessLauncher-spawned agent CLI's process group.
+      const stop = yield* Effect.flip(scanner.stopServer({ pid: 4242, port: firstDevPort }));
+      expect(stop.reason).toBe("shared-group");
+
+      // After ProcessLauncher restarts with a new helper PID, new agent CLIs are still excluded.
+      launcherPid = 9_001;
+      procFiles["/proc/4400/environ"] = `${PortScanner.AGENT_THREAD_ENV}=thread-agy-2\0`;
+      procFiles["/proc/4400/stat"] = `4400 (agy) S ${launcherPid} 4400 4400 0`;
+      procFiles["/proc/4401/environ"] = `${PortScanner.AGENT_THREAD_ENV}=thread-agy-2\0`;
+      procFiles["/proc/4401/stat"] = "4401 (node) S 4400 4401 4401 0";
+      lsofStdout = `p4400\ncagy\nn127.0.0.1:43210\np4401\ncnode\nn127.0.0.1:${secondDevPort}\n`;
+
+      // SCIENT-FORK: Scient lists only declared URLs.
+      const secondUrls = [43_210, secondDevPort].map((port) => `http://localhost:${port}/`);
+      expect(yield* scanner.scan(secondUrls)).toMatchObject([
+        { port: secondDevPort, pid: 4401, agent: { threadId: "thread-agy-2" } },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect.each([
+  {
+    case: "its parent's arguments",
+    leader: { command: "node server.js", env: "COMMAND=cmd-a" },
+    parent: { command: "/bin/bash -c set -m; COMMAND=cmd-a node server.js & wait", env: "" },
+    stops: ["cmd-a"],
+  },
+  {
+    case: "its own arguments",
+    leader: { command: "node server.js COMMAND=cmd-a", env: "" },
+    parent: { command: "/bin/bash -c node server.js & wait", env: "" },
+    stops: [],
+  },
+])("on macOS, a stop names the command in the leader's environment, not $case", (scenario) => {
+  const port = 43_127;
+  // macOS `ps -E` prints the environment after the arguments; plain `ps` prints only the arguments.
+  const command = (row: { command: string; env: string }, withEnvironment: boolean) =>
+    withEnvironment
+      ? `${row.command} PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-a ${row.env}`.trim()
+      : row.command;
+  const layer = layerScanner.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command === "lsof") {
+              return Effect.succeed(processOutput(`p4242\ncnode\nn127.0.0.1:${port}\n`));
+            }
+            if (input.args[0] === "-A") {
+              return Effect.succeed(
+                processOutput(`4242 4300 4242\n4300 4200 4300\n4200 ${process.pid} 4200\n`),
+              );
+            }
+            const withEnvironment = input.args.includes("-E");
+            const withParent = input.args.includes("pid=,ppid=,command=");
+            return Effect.succeed(
+              processOutput(
+                `  4242${withParent ? " 4300" : ""} ${command(scenario.leader, withEnvironment)}\n` +
+                  `  4300${withParent ? " 4200" : ""} ${command(scenario.parent, withEnvironment)}\n`,
+              ),
+            );
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        // SCIENT-FORK: listener scans consult the protected endpoint registry.
+        TestOwnedLocalEndpointsLive,
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const signal = vi.spyOn(ProcessGroup, "signalProcessGroup").mockImplementation(() => {
+      throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => signal.mockRestore()));
+    const scanner = yield* PortScanner.PortDiscovery;
+    scanner.trackAgent();
+    const stops: string[] = [];
+    yield* scanner.watchAgentCommandStops({
+      variable: "COMMAND",
+      onStop: (stopped) => Effect.sync(() => stops.push(stopped)),
+      onStopAbandoned: () => Effect.void,
+    });
+    // SCIENT-FORK:START explicit-url-authority — only declared URLs are listed or stopped.
+    const configuredUrls = [`http://localhost:${port}/`];
+    yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
+    expect(yield* scanner.scan(configuredUrls)).toMatchObject([
+      { pid: 4242, agent: { threadId: "thread-a" } },
+    ]);
+    // SCIENT-FORK:END explicit-url-authority
+    yield* scanner.stopServer({ pid: 4242, port });
+    expect(signal).toHaveBeenCalledExactlyOnceWith(4242, "SIGTERM");
+    expect(stops).toEqual(scenario.stops);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+// SCIENT-FORK:START macos-unreadable-environment — offered upstream.
+effectIt.effect(
+  "on macOS, a stop names no command when the leader's parent has no readable environment",
+  () => {
+    const port = 43_128;
+    // `ps -E` appends no environment to `/bin/bash`, a platform binary, so the parent is
+    // unreadable and cannot rule out that the leader inherited the name from it.
+    const layer = layerScanner.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerNoProc,
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              if (input.command === "lsof") {
+                return Effect.succeed(processOutput(`p4242\ncnode\nn127.0.0.1:${port}\n`));
+              }
+              if (input.args[0] === "-A") {
+                return Effect.succeed(
+                  processOutput(`4242 4300 4242\n4300 4200 4300\n4200 ${process.pid} 4200\n`),
+                );
+              }
+              const withEnvironment = input.args.includes("-E");
+              const withParent = input.args.includes("pid=,ppid=,command=");
+              const environment = ` PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-a COMMAND=cmd-a`;
+              return Effect.succeed(
+                processOutput(
+                  `  4242${withParent ? " 4300" : ""} node server.js${withEnvironment ? environment : ""}\n` +
+                    `  4300${withParent ? " 4200" : ""} /bin/bash -c COMMAND=cmd-a node server.js & wait\n`,
+                ),
+              );
+            },
+          }),
+          Layer.succeed(HostProcess.Platform, "darwin"),
+          TestOwnedLocalEndpointsLive,
+          FetchHttpClient.layer,
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const signal = vi.spyOn(ProcessGroup, "signalProcessGroup").mockImplementation(() => {
+        throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => signal.mockRestore()));
+      const scanner = yield* PortScanner.PortDiscovery;
+      scanner.trackAgent();
+      const stops: string[] = [];
+      yield* scanner.watchAgentCommandStops({
+        variable: "COMMAND",
+        onStop: (stopped) => Effect.sync(() => stops.push(stopped)),
+        onStopAbandoned: () => Effect.void,
+      });
+      const configuredUrls = [`http://localhost:${port}/`];
+      yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
+      expect(yield* scanner.scan(configuredUrls)).toMatchObject([
+        { pid: 4242, agent: { threadId: "thread-a" } },
+      ]);
+      yield* scanner.stopServer({ pid: 4242, port });
+      expect(signal).toHaveBeenCalledExactlyOnceWith(4242, "SIGTERM");
+      expect(stops).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
 );
 // SCIENT-FORK:END macos-unreadable-environment
 

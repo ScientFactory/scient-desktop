@@ -35,6 +35,7 @@ import {
 } from "./scient-fork/ContextHistoryCandidates.ts";
 // SCIENT-FORK:END
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
+import { contextBoundaryOrdinal, turnItemsSinceContextBoundary } from "./contextBoundary.ts";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
@@ -198,19 +199,53 @@ const forkHistoryRunIds = (
     ? [null]
     : []),
 ];
+
+/**
+ * `turnItemsSinceContextBoundary` for history that may be body-less candidates, which lack the
+ * prompt fields the boundary reads: those prompts are read on their own.
+ */
+export const readHandoffItemsSinceContextBoundary = Effect.fn(
+  "orchestrationV2.contextHandoff.readHandoffItemsSinceContextBoundary",
+)(function* <Item extends ContextHandoffItem>(
+  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+  threadId: ThreadId,
+  throughRuns: ReadonlyArray<OrchestrationV2Run>,
+  items: ReadonlyArray<Item>,
+) {
+  const freshRunIds = throughRuns.filter((run) => run.freshContext === true).map((run) => run.id);
+  if (freshRunIds.length === 0) return { boundary: 0, items };
+  const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+    turnItemRunIds: freshRunIds,
+    turnItemTypes: ["user_message"],
+  });
+  const boundary = contextBoundaryOrdinal({ runs: throughRuns, turnItems });
+  if (boundary === 0) return { boundary, items };
+  const kept = new Set(throughRuns.filter((run) => run.ordinal >= boundary).map((run) => run.id));
+  return {
+    boundary,
+    items: items.filter((item) => item.runId !== null && kept.has(item.runId)),
+  };
+});
 // SCIENT-FORK:END
 
-/** Visible rows of `source`'s own runs through `throughRun`, plus its imported rows. */
+/** Visible rows of `source`'s own runs through `throughRun` since its latest `/clear` boundary. */
 const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHistoryItems")(
   function* (
     projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
     source: ForkHistorySource,
     throughRun: Pick<OrchestrationV2Run, "ordinal"> | null,
   ) {
+    // SCIENT-FORK: a null `throughRun` reads only the runless history.
+    const throughRuns =
+      throughRun === null ? [] : source.runs.filter((run) => run.ordinal <= throughRun.ordinal);
     const { turnItems } = yield* projectionStore.getThreadRecords(source.thread.id, ["turnItems"], {
       turnItemRunIds: forkHistoryRunIds(source, throughRun),
     });
-    return visibleConversationItems(source, turnItems);
+    const bounded = turnItemsSinceContextBoundary({ runs: throughRuns, turnItems });
+    return {
+      items: visibleConversationItems(source, bounded.turnItems),
+      cleared: bounded.boundary > 0,
+    };
   },
 );
 
@@ -237,7 +272,9 @@ export const readRunForkAncestorItems = Effect.fn(
       .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
     const forkRun = source?.runs.find((run) => run.id === runId);
     if (source === null || forkRun === undefined) break;
-    segments.unshift(yield* readOwnHistoryItems(projectionStore, source, forkRun));
+    const own = yield* readOwnHistoryItems(projectionStore, source, forkRun);
+    segments.unshift(own.items);
+    if (own.cleared) break;
     current = source.thread;
   }
   return segments.flat();
@@ -265,11 +302,12 @@ export const readForkHistoryItems = Effect.fn(
   source: ForkHistorySource,
   throughRun: Pick<OrchestrationV2Run, "ordinal"> | null,
 ) {
+  const own = yield* readOwnHistoryItems(projectionStore, source, throughRun);
+  if (own.cleared) return own.items;
   const inherited = yield* readInheritedHandoffItems(projectionStore, source.thread);
   // SCIENT-FORK:START — copied frozen rows are also the thread's own runless rows.
   const inheritedIds = new Set<string>(inherited.map((item) => item.id));
-  const own = yield* readOwnHistoryItems(projectionStore, source, throughRun);
-  return [...inherited, ...own.filter((item) => !inheritedIds.has(item.id))];
+  return [...inherited, ...own.items.filter((item) => !inheritedIds.has(item.id))];
   // SCIENT-FORK:END
 });
 
@@ -287,12 +325,20 @@ export const readPortableForkItems = Effect.fn(
   bounded: boolean,
 ) {
   if (!bounded) return yield* readForkHistoryItems(projectionStore, source, throughRun);
-  const inherited = yield* readRunForkAncestorItems(projectionStore, source.thread);
-  const own = yield* projectionStore.getContextHistoryCandidates(
+  const candidates = yield* projectionStore.getContextHistoryCandidates(
     source.thread.id,
     forkHistoryRunIds(source, throughRun),
   );
-  return [...inherited, ...visibleConversationItems(source, own)];
+  const own = yield* readHandoffItemsSinceContextBoundary(
+    projectionStore,
+    source.thread.id,
+    throughRun === null ? [] : source.runs.filter((run) => run.ordinal <= throughRun.ordinal),
+    candidates,
+  );
+  const ownItems = visibleConversationItems(source, own.items);
+  if (own.boundary > 0) return ownItems;
+  const inherited = yield* readRunForkAncestorItems(projectionStore, source.thread);
+  return [...inherited, ...ownItems];
 });
 // SCIENT-FORK:END
 

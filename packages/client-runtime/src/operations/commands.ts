@@ -307,6 +307,7 @@ export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
+  readonly modelSelection?: ModelSelection;
   readonly runId: RunId;
   readonly text: string;
   /** Omitted retains the selection; [] clears it. */
@@ -1357,6 +1358,7 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     threadId: input.threadId,
     runId: input.runId,
     text: input.text,
+    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
     ...(input.selectedScientSkillNames === undefined
       ? {}
       : { selectedScientSkillNames: input.selectedScientSkillNames }),

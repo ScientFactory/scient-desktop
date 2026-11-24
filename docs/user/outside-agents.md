@@ -54,7 +54,10 @@ without a code starts at **Read only**:
 - **Supervised** through **Full access** also let it start, message and stop
   threads in every project, and change your Library as an agent in a thread can.
   A thread it starts or steers cannot run with more permissions than the mode
-  you chose.
+  you chose. [Workflow runs](workflows.md) choose their own modes, so only
+  **Full access** (or the highest mode your organization's policy allows) can
+  start, answer, resume or cancel them, change what workflows store, or read
+  webhook paths. Lower modes can still read runs.
 
 ## What outside agents can call
 
