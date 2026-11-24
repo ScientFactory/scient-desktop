@@ -363,7 +363,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
   // regression: a sign-in that replaces the account mid-probe must not label the old
   // account's catalog with the new identity.
   it.effect.each(["unchanged", "during-probe"] as const)(
-    "retained managed machinery keeps its account label and token together: %s",
+    "managed catalog keeps its account label and token together: %s",
     checkManagedAccount,
   );
 

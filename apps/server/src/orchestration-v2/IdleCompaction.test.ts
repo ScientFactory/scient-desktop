@@ -280,7 +280,6 @@ it.effect("sends /compact as T3 Code once the cache is about to expire", () =>
       }),
       Layer.mock(ServerSettings.ServerSettingsService)({
         getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: true }),
-        committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
       }),
       Layer.mock(Orchestrator.OrchestratorV2)({
         streamDomainEvents: Stream.fromQueue(events),
@@ -434,7 +433,6 @@ describe("IdleCompactionService", () => {
                   }
                 : {},
             }),
-            committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
           }),
         );
         yield* Effect.gen(function* () {
@@ -527,7 +525,6 @@ describe("IdleCompactionService", () => {
             ...DEFAULT_SERVER_SETTINGS,
             idleCompaction: "beforeCacheExpires",
           }),
-          committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
         }),
       );
       yield* Effect.gen(function* () {

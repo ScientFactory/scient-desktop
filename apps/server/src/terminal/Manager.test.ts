@@ -2916,10 +2916,7 @@ it.layer(
         ready: Effect.void,
         getSettings: Effect.fail(settingsError),
         updateSettings: () => Effect.fail(settingsError),
-        ...ServerSettings.customModelsTestMethods,
-
         updateProviderInstance: () => Effect.fail(settingsError),
-        removeProjectSettingsOverrides: () => Effect.fail(settingsError),
         withSettingsSnapshot: () => Effect.fail(settingsError),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),

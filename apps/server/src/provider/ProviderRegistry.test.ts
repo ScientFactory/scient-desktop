@@ -257,9 +257,6 @@ const makeWorkspaceRescanHarness = Effect.gen(function* () {
           listUnavailable: Effect.succeed([]),
           streamChanges: Stream.fromPubSub(changes),
           subscribeChanges: PubSub.subscribe(changes),
-          // SCIENT-FORK:START — Scient's registry can rebuild an instance in place.
-          rebuildInstance: () => Effect.die("Unexpected instance rebuild in rescan fixture"),
-          // SCIENT-FORK:END
         }),
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-workspace-rescan-" })),
@@ -457,8 +454,6 @@ function makeMutableServerSettingsService(
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
 
     return {
-      ...ServerSettingsModule.customModelsTestMethods,
-      committedCustomModels: () => Ref.getUnsafe(settingsRef).customModels,
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
@@ -483,7 +478,6 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
-      removeProjectSettingsOverrides: () => Effect.die("Unexpected project settings removal"),
       withSettingsSnapshot: (use) => Ref.get(settingsRef).pipe(Effect.flatMap(use)),
       get streamChanges() {
         return Stream.fromPubSub(changes);
@@ -597,7 +591,6 @@ const buildRegistryOverSnapshot = Effect.fn("buildRegistryOverSnapshot")(functio
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-    rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
   });
   const scope = yield* Scope.make();
   yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
@@ -1882,8 +1875,6 @@ it.layer(
                 listUnavailable: Effect.succeed([]),
                 streamChanges: Stream.empty,
                 subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-                rebuildInstance: () =>
-                  Effect.die("Unexpected instance rebuild in snapshot fixture"),
               },
             );
             // SCIENT-FORK:START — shared/scientModel.ts publishes the automatic choice to every client.
@@ -2201,7 +2192,6 @@ it.layer(
                 Effect.succeed(id === instance.instanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
               listUnavailable: Effect.succeed([]),
-              rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
               streamChanges: Stream.empty,
               subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
             },
@@ -2318,7 +2308,6 @@ it.layer(
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
               subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-              rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             },
           );
 
@@ -2684,7 +2673,6 @@ it.layer(
               Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
             listInstances: Effect.succeed(instances),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
           },
@@ -2856,8 +2844,6 @@ it.layer(
                 Effect.succeed(requestedId === instanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
               listUnavailable: Effect.succeed([]),
-              rebuildInstance: () =>
-                Effect.die("Unexpected instance rebuild in shared scan fixture"),
               streamChanges: Stream.empty,
               subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
             },
@@ -2979,8 +2965,6 @@ it.layer(
                 Layer.provideMerge(
                   Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
                     getInstance: (id) => Effect.succeed(instances.find((i) => i.instanceId === id)),
-                    // SCIENT-FORK: Scient's registry also rebuilds one instance on request.
-                    rebuildInstance: () => Effect.void,
                     listInstances: Effect.succeed(instances),
                     listUnavailable: Effect.succeed([]),
                     streamChanges: Stream.fromPubSub(changes),
@@ -3064,7 +3048,6 @@ it.layer(
               Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
           },
@@ -3233,7 +3216,6 @@ it.layer(
               Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
                 getInstance: (instanceId) =>
                   Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
-                rebuildInstance: () => Effect.void,
                 listInstances: Effect.succeed(instances),
                 listUnavailable: Effect.succeed([]),
                 streamChanges: Stream.empty,
@@ -3481,7 +3463,6 @@ it.layer(
               ),
             listInstances: Ref.get(instancesRef),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.fromPubSub(registryChanges),
             subscribeChanges: PubSub.subscribe(registryChanges),
           },
@@ -3712,9 +3693,6 @@ it.layer(
                 listUnavailable: Effect.succeed([]),
                 streamChanges: Stream.fromPubSub(changes),
                 subscribeChanges: PubSub.subscribe(changes),
-                // SCIENT-FORK:START — Scient's registry can rebuild an instance in place.
-                rebuildInstance: () => Effect.die("Unexpected instance rebuild in label fixture"),
-                // SCIENT-FORK:END
               }),
             ),
             Layer.provideMerge(
@@ -3953,7 +3931,6 @@ it.layer(
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
           },
         );
         const scope = yield* Scope.make();
@@ -4051,7 +4028,6 @@ it.layer(
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
           },
         );
         const scope = yield* Scope.make();
@@ -4245,7 +4221,6 @@ it.layer(
               Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
             listInstances: Effect.succeed(instances),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
           },
@@ -4370,7 +4345,6 @@ it.layer(
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
           },
         );
         const scope = yield* Scope.make();
@@ -4479,7 +4453,6 @@ it.layer(
               Effect.succeed(instances.find((instance) => instance.instanceId === requestedId)),
             listInstances: Effect.succeed(instances),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
           },
@@ -4595,8 +4568,6 @@ it.layer(
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
               subscribeChanges: PubSub.subscribe(changes),
-              // SCIENT-FORK: Scient's registry also rebuilds one instance.
-              rebuildInstance: () => Effect.die("Unexpected instance rebuild"),
             },
           );
           const scope = yield* Scope.make();
@@ -4725,7 +4696,6 @@ it.layer(
               Effect.succeed(requestedId === instanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
           },
@@ -4858,7 +4828,6 @@ it.layer(
               Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
               PubSub.subscribe(pubsub),
@@ -4969,7 +4938,6 @@ it.layer(
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
               PubSub.subscribe(pubsub),
             ),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in this fixture"),
           },
         );
         const writeStarted = yield* Deferred.make<void>();
@@ -5162,7 +5130,6 @@ it.layer(
                 Effect.succeed(instanceId === openCodeInstanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
               listUnavailable: Effect.succeed([]),
-              rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
               streamChanges: Stream.empty,
               subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
                 PubSub.subscribe(pubsub),
@@ -5268,7 +5235,6 @@ it.layer(
               Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
               PubSub.subscribe(pubsub),
@@ -5391,7 +5357,6 @@ it.layer(
               return yield* Ref.get(instancesRef);
             }),
             listUnavailable: Effect.succeed([]),
-            rebuildInstance: () => Effect.die("Unexpected instance rebuild in snapshot fixture"),
             streamChanges: Stream.fromPubSub(changes),
             subscribeChanges: PubSub.subscribe(changes),
           },

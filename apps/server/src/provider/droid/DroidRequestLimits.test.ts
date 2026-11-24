@@ -22,6 +22,7 @@ import * as ServerConfig from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
+import { customModelMethods } from "../../scientServerSettings.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { DroidAcpRuntimeInput } from "../acp/DroidAcpSupport.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
@@ -419,7 +420,7 @@ describe("Droid per-turn request limits", () => {
         const config = yield* ServerConfig.ServerConfig;
         yield* settings.start;
         const pi = ProviderInstanceId.make("pi");
-        yield* settings.saveCustomModel({
+        yield* customModelMethods(settings).saveCustomModel({
           revision: 0,
           connection: {
             id: "reload",

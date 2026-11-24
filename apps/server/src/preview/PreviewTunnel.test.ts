@@ -68,8 +68,6 @@ const makeSettings = Effect.fn(function* (
     set,
     layer: Layer.mock(ServerSettingsService, {
       managedPolicy,
-      // SCIENT-FORK: Scient's settings service also reports the committed custom models.
-      committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
       getSettings: Ref.get(current).pipe(
         Effect.tap(() => {
           const change = pendingChange;

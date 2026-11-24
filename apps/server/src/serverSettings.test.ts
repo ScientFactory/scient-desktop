@@ -44,6 +44,7 @@ import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { customModelSecretName } from "./customModels.ts";
+import { customModelMethods } from "./scientServerSettings.ts";
 import * as Stream from "effect/Stream";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -332,7 +333,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const service = yield* ServerSettingsModule.ServerSettingsService;
         const config = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
-        const saved = yield* service.saveCustomModel({
+        const saved = yield* customModelMethods(service).saveCustomModel({
           revision: 0,
           connection: modelConnection,
           apiKey: Redacted.make("fixture-key"),
@@ -345,7 +346,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         for (let n = 0; n < 3; n++) {
           assert.deepEqual((yield* service.getSettings).customModels, saved);
-          const resolved = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+          const resolved = yield* customModelMethods(service).resolveCustomModels(
+            ProviderInstanceId.make("pi"),
+          );
           assert.deepEqual(resolved[0]?.models, saved.connections[0]?.models);
         }
         const persisted = yield* decodeSettingsJson(yield* fs.readFileString(config.settingsPath));
@@ -397,7 +400,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           );
         let saved = yield* Effect.gen(function* () {
           const service = yield* ServerSettingsModule.ServerSettingsService;
-          return yield* service.saveCustomModel({
+          return yield* customModelMethods(service).saveCustomModel({
             revision: 0,
             connection: {
               ...modelConnection,
@@ -451,7 +454,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         yield* Effect.gen(function* () {
           const service = yield* ServerSettingsModule.ServerSettingsService;
           assert.deepEqual((yield* service.getSettings).customModels, saved);
-          const resolved = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+          const resolved = yield* customModelMethods(service).resolveCustomModels(
+            ProviderInstanceId.make("pi"),
+          );
           assert.equal(resolved.length, 1);
           assert.deepEqual(resolved[0]!.models, saved.connections[0]!.models);
           assert.equal(fetch.mock.calls.length, lookupCount);
@@ -476,7 +481,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         );
         yield* Effect.gen(function* () {
           const service = yield* ServerSettingsModule.ServerSettingsService;
-          const saved = yield* service.saveCustomModel({
+          const saved = yield* customModelMethods(service).saveCustomModel({
             revision: 0,
             connection: {
               ...modelConnection,
@@ -493,7 +498,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             apiKey: Redacted.make("fixture-recheck-key"),
           });
           const original = saved.connections[0]!;
-          const rechecked = yield* service.saveCustomModel({
+          const rechecked = yield* customModelMethods(service).saveCustomModel({
             revision: saved.revision,
             connection: original,
             refreshModelId: "model",
@@ -508,14 +513,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           assert.equal(refreshedEvidence?.contextWindow, originalEvidence?.contextWindow);
           assert.equal(
             Redacted.value(
-              (yield* service.resolveCustomModels(ProviderInstanceId.make("pi")))[0]!.apiKey!,
+              (yield* customModelMethods(service).resolveCustomModels(
+                ProviderInstanceId.make("pi"),
+              ))[0]!.apiKey!,
             ),
             "fixture-recheck-key",
           );
           fetch.mockImplementation(async () => {
             throw new Error("Synthetic unavailable endpoint");
           });
-          const retained = yield* service.saveCustomModel({
+          const retained = yield* customModelMethods(service).saveCustomModel({
             revision: rechecked.revision,
             connection: rechecked.connections[0]!,
             refreshModelId: "model",
@@ -563,25 +570,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       yield* Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
         const connection = { ...modelConnection, baseUrl: "https://example.test/v1" };
-        const saved = yield* service.saveCustomModel({
+        const saved = yield* customModelMethods(service).saveCustomModel({
           revision: 0,
           connection,
           apiKey: Redacted.make("first-synthetic-key"),
         });
         blockNextRead = true;
-        const reading = yield* service
+        const reading = yield* customModelMethods(service)
           .resolveCustomModels(ProviderInstanceId.make("pi"))
           .pipe(Effect.forkChild);
         yield* Deferred.await(entered);
         const writing = yield* Deferred.succeed(writeStarted, undefined).pipe(
           Effect.andThen(
             action === "rotate"
-              ? service.saveCustomModel({
+              ? customModelMethods(service).saveCustomModel({
                   revision: saved.revision,
                   connection,
                   apiKey: Redacted.make("second-synthetic-key"),
                 })
-              : service.removeCustomModel({
+              : customModelMethods(service).removeCustomModel({
                   revision: saved.revision,
                   connectionId: connection.id,
                 }),
@@ -594,7 +601,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(original.credentialError, undefined);
         assert.equal(Redacted.value(original.apiKey!), "first-synthetic-key");
         yield* Fiber.join(writing);
-        const next = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+        const next = yield* customModelMethods(service).resolveCustomModels(
+          ProviderInstanceId.make("pi"),
+        );
         if (action === "remove") assert.isEmpty(next);
         else assert.equal(Redacted.value(next[0]!.apiKey!), "second-synthetic-key");
       }).pipe(Effect.provide(makeServerSettingsLayer(secretLayer)));
@@ -624,7 +633,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           const service = yield* ServerSettingsModule.ServerSettingsService;
           const config = yield* ServerConfig.ServerConfig;
           const fs = yield* FileSystem.FileSystem;
-          const saving = yield* service
+          const saving = yield* customModelMethods(service)
             .saveCustomModel({
               revision: 0,
               connection: modelConnection,
@@ -633,7 +642,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             .pipe(Effect.result, Effect.forkChild);
           yield* Effect.promise(() => requested.promise);
           assert.equal((yield* service.getSettings).customModels.revision, 0);
-          yield* service.saveCustomModel({
+          yield* customModelMethods(service).saveCustomModel({
             revision: 0,
             connection: { ...modelConnection, id: "other", models: [] },
           });
@@ -667,10 +676,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       };
       const outcomes = yield* Effect.all(
         [
-          service
+          customModelMethods(service)
             .saveCustomModel({ revision: 0, connection, apiKey: Redacted.make("first-secret") })
             .pipe(Effect.exit),
-          service
+          customModelMethods(service)
             .saveCustomModel({ revision: 0, connection, apiKey: Redacted.make("second-secret") })
             .pipe(Effect.exit),
         ],
@@ -691,7 +700,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       if ((yield* HostProcess.Platform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
       yield* service.updateSettings({ enableProviderUpdateChecks: false });
       assert.deepEqual((yield* service.getSettings).customModels, saved);
-      yield* service.removeCustomModel({ revision: 1, connectionId: "fixture" });
+      yield* customModelMethods(service).removeCustomModel({
+        revision: 1,
+        connectionId: "fixture",
+      });
       assert.equal(yield* fs.exists(keyFile), false);
       assert.deepEqual((yield* service.getSettings).customModels, { revision: 2, connections: [] });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -5031,7 +5043,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         },
       });
 
-      yield* serverSettings.removeProjectSettingsOverrides([deletedProject]);
+      yield* serverSettings.removeProjectSettingsOverrides!([deletedProject]);
 
       const persisted = yield* decodeServerSettings(
         JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath)),

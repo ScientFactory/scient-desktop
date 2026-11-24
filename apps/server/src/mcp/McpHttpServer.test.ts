@@ -54,7 +54,6 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerHttp from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -70,8 +69,6 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
-import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
-import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { FEEDBACK_CLI_CLIENT_LABEL } from "../feedback/FeedbackReport.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
 import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
@@ -110,8 +107,7 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
-const TestLayer = McpHttpServer.layerPreviewToolkit.pipe(
-  Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
+const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
@@ -308,7 +304,7 @@ it.effect("rejects a metadata-only response when the screenshot is saved", () =>
         { type: "text", text: expect.stringContaining("did not contain requested PNG pixels") },
       ]);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 const layerRecordingTools = (calls: Array<unknown>) => {
@@ -357,12 +353,9 @@ const layerRecordingTools = (calls: Array<unknown>) => {
           namedProjectsRoot: process.cwd(),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-        // SCIENT-FORK:START — Scient's project tools also read custom models and clone progress.
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
-        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({}),
+        // SCIENT-FORK: Scient's project tools also read clone progress.
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
-        // SCIENT-FORK:END
         Layer.mock(DocumentText.DocumentText)({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" }),
@@ -422,7 +415,7 @@ it.effect.each([{}, { includeImage: false }])(
           },
         });
       }),
-    ).pipe(Effect.provide(TestLayer)),
+    ).pipe(Effect.provide(layerTest)),
 );
 
 const tabId = PreviewTabId.make("tab-mcp-test");
@@ -459,7 +452,7 @@ it.effect.each([
         { type: "text", text: `Preview snapshot failed: ${advice}` },
       ]);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("tells the agent how to recover when no preview host can run the snapshot", () =>
@@ -474,7 +467,7 @@ it.effect("tells the agent how to recover when no preview host can run the snaps
     expect(snapshot.structuredContent).toMatchObject({
       error: { _tag: "PreviewAutomationNoAvailableHostError" },
     });
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each([
@@ -580,7 +573,7 @@ it.effect.each([
       expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
       expect(requests).toBe(7);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("saves the uncapped screenshot while the agent sees the capped one", () =>
@@ -631,7 +624,7 @@ it.effect("saves the uncapped screenshot while the agent sees the capped one", (
         data: new Uint8Array(Buffer.from(capped, "base64")),
       });
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("names the screenshot destination when saving it fails", () =>
@@ -652,7 +645,7 @@ it.effect("names the screenshot destination when saving it fails", () =>
         error: { _tag: "PreviewScreenshotSaveError", message: text.slice(25) },
       });
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("refuses preview tools to a client outside a thread before they run", () =>
@@ -672,7 +665,7 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
         Effect.provideService(McpSchema.McpServerClient, client),
       );
     expect(click.message).toContain("Tool 'preview_act' not found");
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("rejects non-boolean snapshot image options before selecting a browser host", () =>
@@ -706,7 +699,7 @@ it.effect("rejects non-boolean snapshot image options before selecting a browser
       });
       // SCIENT-FORK:END
     }
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("saves the snapshot PNG on request and reports its path", () =>
@@ -745,7 +738,7 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       expect(others).toEqual([]);
       expect(only?.type === "text" ? decodeJsonText(only.text) : null).toEqual(saved);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("treats null snapshot options like omitted ones", () =>
@@ -760,7 +753,7 @@ it.effect("treats null snapshot options like omitted ones", () =>
       // Without an image or a save, the browser skips the PNG encode.
       expect(inputs).toEqual([{ pixelsRequired: false }, { pixelsRequired: false }]);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("advertises the compact input schema for every registered tool", () =>
@@ -772,7 +765,7 @@ it.effect("advertises the compact input schema for every registered tool", () =>
     for (const { tool } of server.tools) {
       expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(tools[tool.name]!));
     }
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("checks each preview_act action against that action's own input", () =>
@@ -795,7 +788,7 @@ it.effect("checks each preview_act action against that action's own input", () =
       yield* callTool("preview_act", { action: "type", selector: "#name", text: "Ada" });
       expect(inputs.at(-2)).toEqual({ selector: "#name", text: "Ada" });
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("rejects a hand-registered tool's undeclared argument before asking the browser", () =>
@@ -811,7 +804,7 @@ it.effect("rejects a hand-registered tool's undeclared argument before asking th
         { type: "text", text: expect.stringContaining('Unknown argument "includeImages"') },
       ]);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("decodes null optional arguments the way it decodes omitted ones", () => {
@@ -1042,7 +1035,7 @@ it.effect("returns server ARIA refs to agents in text and structured results", (
         ),
       ).toBe(true);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("bounds large ARIA trees without dropping every server locator", () =>
@@ -1074,7 +1067,7 @@ it.effect("bounds large ARIA trees without dropping every server locator", () =>
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
       );
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>
@@ -1121,7 +1114,7 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
         omitted: expect.arrayContaining(["60 older console entries"]),
       });
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 // regression: #10501 keep preview snapshots usable by the agent
@@ -1155,7 +1148,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
       expect(noticeText).toContain("url or title after 2048 characters");
       expect(noticeText).toContain("console entries text after 500 characters");
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 // regression: #13558 preview snapshots overflowed the agent's tool output
@@ -1189,7 +1182,7 @@ it.effect("bounds page text made of wide characters before dropping locators", (
         "visibleText after 4000 characters",
       );
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("sheds log entries before locators when every list is full", () =>
@@ -1250,7 +1243,7 @@ it.effect("sheds log entries before locators when every list is full", () =>
       expect(noticeText).toContain("40 of 40 actionTimeline");
       expect(noticeText).not.toContain("accessibilityTree");
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("terminates HTTP MCP sessions with DELETE", () =>
@@ -1281,7 +1274,6 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
               ),
           }),
         ),
-        Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
       );
       yield* HttpRouter.serve(layerServer, {
         disableListenLog: true,
@@ -1476,7 +1468,7 @@ it.effect("registers annotated tools and preserves authenticated request context
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize fallback", () =>
@@ -1515,9 +1507,6 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
-        // SCIENT-FORK:START — Scient's MCP transport resolves workspace bindings per request.
-        Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
-        // SCIENT-FORK:END
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (presented) =>
@@ -1711,14 +1700,10 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         ),
       );
       const traced = recordSpans();
-      yield* HttpRouter.serve(
-        serverLayer.pipe(
-          Layer.provide(
-            Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map())),
-          ),
-        ),
-        { disableListenLog: true, disableLogger: true },
-      ).pipe(Layer.build, Effect.withTracer(traced.tracer));
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+        Effect.withTracer(traced.tracer),
+      );
       const httpClient = yield* HttpClient.HttpClient;
       const call = (token: string | undefined) =>
         Effect.gen(function* () {
@@ -1858,9 +1843,6 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
         McpHttpServer.layerMcpTransport(Layer.empty).pipe(
           Layer.provide(McpOAuth.layerMcpClientAuthenticator),
           Layer.provide(ServerSettings.layerTest()),
-          Layer.provide(
-            Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map())),
-          ),
         ),
         { disableListenLog: true, disableLogger: true },
       ).pipe(Layer.build);
@@ -1943,8 +1925,6 @@ it.effect("gives outside clients an upload URL on the origin their request reach
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        // SCIENT-FORK: Scient's attachment tools resolve the caller's project workspace.
-        Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: () => Effect.undefined,
@@ -2079,9 +2059,6 @@ it.effect("hides tools for links and refuses another environment while the beta 
       ).pipe(
         Layer.provide(Layer.succeedContext(settingsContext)),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        // SCIENT-FORK:START — Scient's MCP transport resolves workspace bindings per request.
-        Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
-        // SCIENT-FORK:END
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (presented) => Effect.succeed(presented === token ? scope : undefined),
@@ -2195,9 +2172,6 @@ it.effect("hides agent feedback tools from every client, even with the setting o
       ).pipe(
         Layer.provide(Layer.succeedContext(settingsContext)),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        // SCIENT-FORK:START — Scient's MCP transport resolves workspace bindings per request.
-        Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
-        // SCIENT-FORK:END
         Layer.provide(Layer.mock(Feedback.FeedbackService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -2325,11 +2299,6 @@ it.effect(
           McpHttpServer.layerPullRequestsToolkit,
         ).pipe(
           Layer.provide(ServerSettings.layerTest()),
-          // SCIENT-FORK:START — Scient's MCP transport resolves workspace bindings per request.
-          Layer.provide(
-            Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map())),
-          ),
-          // SCIENT-FORK:END
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
               resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -2486,11 +2455,6 @@ it.effect(
                 ),
             }),
           ),
-          // SCIENT-FORK:START — Scient's MCP transport resolves workspace bindings per request.
-          Layer.provide(
-            Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map())),
-          ),
-          // SCIENT-FORK:END
         );
         yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
           Layer.build,
@@ -2623,8 +2587,6 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        // SCIENT-FORK: the Scient transport resolves workspace bindings for each session.
-        Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),

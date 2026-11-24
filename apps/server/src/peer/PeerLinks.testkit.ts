@@ -37,10 +37,6 @@ import * as PeerClientPairing from "./PeerClientPairing.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
-// SCIENT-FORK:START — Scient's MCP protocol resolves workspace bindings per request.
-import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
-import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
-// SCIENT-FORK:END
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 class PeerTestApi extends HttpApi.make("environment")
@@ -146,9 +142,6 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
         Layer.provide(AuthHttp.layerAuthenticatedAuth),
       ),
       McpHttpServer.layerMcpTransport(tools).pipe(
-        // SCIENT-FORK:START — Scient's MCP protocol resolves workspace bindings per request.
-        Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
-        // SCIENT-FORK:END
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: () => Effect.undefined,

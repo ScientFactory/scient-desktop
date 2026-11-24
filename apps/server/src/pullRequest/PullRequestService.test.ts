@@ -334,7 +334,6 @@ function makeService(input: {
       Layer.mergeAll(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
-          committedCustomModels: () => (input.settings ?? DEFAULT_SERVER_SETTINGS).customModels,
         }),
         Layer.succeed(
           PullRequestProviderRegistry.PullRequestProviderRegistry,

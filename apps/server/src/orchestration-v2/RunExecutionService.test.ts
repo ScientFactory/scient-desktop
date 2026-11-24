@@ -3,7 +3,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 import { assert, it } from "@effect/vitest";
 import {
-  DEFAULT_SERVER_SETTINGS,
   CheckpointScopeId,
   ChatAttachmentId,
   ChatFileAttachment,
@@ -1695,7 +1694,6 @@ it.effect.each(
           scenario === "start-guard" || handoffInterruption
             ? ServerSettings.layerTest()
             : Layer.mock(ServerSettings.ServerSettingsService)({
-                committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
                 getSettings:
                   scenario === "interruption"
                     ? Effect.interrupt

@@ -347,7 +347,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       // rematerialized even though its settings envelope did not change.
       // The explicit rebuild must replace only that instance and preserve
       // every unrelated instance and its live scope.
-      yield* registry.rebuildInstance(personalId);
+      yield* registry.rebuildInstance!(personalId);
       const rebuiltPersonal = yield* registry.getInstance(personalId);
       const unchangedWork = yield* registry.getInstance(workId);
       expect(rebuiltPersonal).toBeDefined();
