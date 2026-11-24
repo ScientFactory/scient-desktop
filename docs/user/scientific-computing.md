@@ -598,7 +598,8 @@ absolute tolerance `1e-12` and relative tolerance `1e-9` by default. You can cha
 Strings, booleans, nulls and pairs of integer values must match exactly. Figures are compared by
 hash and shown alongside the verdict. If values and other files match but the original inputs
 changed or their coverage is incomplete, Scient reports **Outputs matched · original inputs
-unconfirmed**.
+unconfirmed**. Recorded directory listings and saved-view glob membership also leave the
+original inputs unconfirmed.
 
 Agents can use `scient_results_export` and `scient_results_verify` with folders inside the
 current project. For export, pass a script or notebook path for the newest revision, or an exact

@@ -34,6 +34,8 @@ const InputCoverage = Schema.Struct({
   truncated: Schema.Boolean,
   readsOutsideProject: Schema.NullOr(Size),
   unresolvedViewInputs: Size,
+  directoryListings: Schema.optional(Size),
+  savedViewGlobs: Schema.optional(Size),
 });
 
 export const ResultHandoffManifest = Schema.Struct({

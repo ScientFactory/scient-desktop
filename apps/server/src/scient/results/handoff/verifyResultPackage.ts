@@ -410,6 +410,8 @@ export const verifyResultPackage = Effect.fn("ResultHandoff.verifyPackage")(func
       !inputCoverage.truncated &&
       inputCoverage.readsOutsideProject === 0 &&
       inputCoverage.unresolvedViewInputs === 0 &&
+      inputCoverage.directoryListings === 0 &&
+      inputCoverage.savedViewGlobs === 0 &&
       manifest.inputs.every(
         (file) =>
           file.sha256 !== null &&

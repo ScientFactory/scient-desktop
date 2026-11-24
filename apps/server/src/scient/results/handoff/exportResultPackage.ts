@@ -156,6 +156,9 @@ function readme(manifest: Omit<ResultHandoffManifest, "documentation">): string 
     ...(manifest.inputCoverage?.unresolvedViewInputs
       ? [`Unresolved saved-view inputs (${manifest.inputCoverage.unresolvedViewInputs}).`]
       : []),
+    ...(manifest.inputCoverage?.directoryListings || manifest.inputCoverage?.savedViewGlobs
+      ? ["Directory listings and saved-view glob membership remain unconfirmed."]
+      : []),
     ...(manifest.inputTracking === "not-tracked" ||
     manifest.inputsTruncated ||
     manifest.inputCoverage?.readsOutsideProject === null
@@ -354,6 +357,8 @@ export async function exportResultPackage(options: {
                 revision.inputs.outsideDataPaths?.length ?? 0,
               ),
         unresolvedViewInputs: revision.inputs.unresolvedViewInputs?.length ?? 0,
+        directoryListings: revision.inputs.directories?.length ?? 0,
+        savedViewGlobs: revision.inputs.globs?.length ?? 0,
       },
       outputs,
       outputsOmitted: revision.omitted + skippedOutputs.length,

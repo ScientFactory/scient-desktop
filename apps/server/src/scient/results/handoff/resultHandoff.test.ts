@@ -483,6 +483,69 @@ it.effect(
         verdict: "Outputs matched · original inputs unconfirmed",
         inputCoverage,
       });
+
+      const listedFolder = yield* Effect.promise(async () => {
+        const reader = makeResultsReader(layout, "project", root);
+        const revision = (await reader.revisions()).find((record) => record.revision === newer)!;
+        const names = ["a.csv", "b.csv"];
+        const paths = names.map((name) => `members/${name}`);
+        await NodeFSP.mkdir(NodePath.join(root, "members"));
+        await Promise.all(
+          paths.map((path) => NodeFSP.writeFile(NodePath.join(root, path), originalTable)),
+        );
+        const stat = await NodeFSP.stat(NodePath.join(root, "members", "a.csv"), { bigint: true });
+        const { folder } = await exportResultPackage({
+          reader,
+          revision: {
+            ...revision,
+            inputs: {
+              ...revision.inputs,
+              files: [
+                {
+                  path: "members/a.csv",
+                  size: Number(stat.size),
+                  modifiedAtNs: stat.mtimeNs.toString(),
+                  sha256: hashBytes(originalTable),
+                  changedDuringRun: false,
+                },
+              ],
+              directoryListingVersion: 3,
+              directories: [
+                {
+                  path: "members",
+                  sha256: hashBytes(JSON.stringify(names)),
+                  changedDuringRun: false,
+                },
+              ],
+              globs: [
+                {
+                  path: "members/*.csv",
+                  sha256: hashBytes(JSON.stringify(paths)),
+                  changedDuringRun: false,
+                },
+              ],
+            },
+          },
+          projectRoot: root,
+          destination: temp,
+          includeInputs: ["members/a.csv"],
+          createdAt: "2026-11-23T00:02:00Z",
+          scientVersion: "0.0.0-test",
+        });
+        return folder;
+      });
+      const listing = yield* verifyResultPackage(process, {
+        packageFolder: listedFolder,
+        allowExecution: true,
+      });
+      expect(listing.report).toMatchObject({
+        status: "outputs-matched-inputs-unconfirmed",
+        verdict: "Outputs matched · original inputs unconfirmed",
+        inputCoverage: { directoryListings: 1, savedViewGlobs: 1 },
+        files: expect.arrayContaining([{ path: "members/a.csv", status: "matched" }]),
+        outputs: [{ path: "table.csv", status: "matched" }],
+      });
+      expect(listing.report.files.some((file) => file.path === "members/b.csv")).toBe(false);
     }),
 );
 
