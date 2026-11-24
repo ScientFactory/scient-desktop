@@ -102,16 +102,20 @@ export const scientReplayStatePaths = (path: Path.Path, stateDir: string) => ({
   documentArtifactsDir: path.join(stateDir, "document-artifacts"),
 });
 
-/** Services T3's harness layers need in Scient, built from those layers' leaves. */
-const layerBase = (options: ScientReplayOptions) =>
+/** What the whole replay runtime reads in Scient; a test's fork Git replaces T3's double. */
+const layerRuntimeBase = (options: ScientReplayOptions) =>
   Layer.mergeAll(
     options.providerRegistryLayer ?? layerRecordedProviderRegistry,
-    options.contextHandoffPolicy === "byte"
-      ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
-      : Layer.empty,
     attachmentReconciliationLayer,
     LegacyV1ThreadImporter.layer,
+    options.forkGitWorkflowLayer ?? Layer.empty,
   );
+
+/** Only context handoff and turn start read the byte policy, not the orchestrator's sources. */
+const layerUpperBase = (options: ScientReplayOptions) =>
+  options.contextHandoffPolicy === "byte"
+    ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
+    : Layer.empty;
 
 /** Scient's orchestration services, which also need the harness's session manager. */
 const layerServices = (options: ScientReplayOptions) => {
@@ -131,31 +135,39 @@ const layerServices = (options: ScientReplayOptions) => {
     attachmentRollbackPruneLayer,
     threadFileReleaseLayer,
     options.resourceCleanupLayer ?? Layer.empty,
-    options.forkGitWorkflowLayer ?? Layer.empty,
   );
 };
 
 /**
- * Everything Scient adds under one replay runtime, from the harness's own (memoized) layers.
- * A layer keeps its first build's context: `upper` sees only Scient's base and `shared`,
- * never `leaves` (the session manager reads config and settings optionally).
+ * Puts Scient's services under T3's replay runtime from the harness's own memoized layers,
+ * exporting only them, `shared`, `upper` and `leaves`, so a caller's registry, Git or database
+ * still wins. `upper` never sees `leaves`: the session manager reads config optionally.
  */
-export const scientReplayLayer = <A, E1, R1, B, E2, R2, C, E3, R3>(
-  layers: {
-    readonly leaves: Layer.Layer<A, E1, R1>;
-    readonly shared: Layer.Layer<C, E3, R3>;
-    readonly upper: Layer.Layer<B, E2, R2>;
-  },
-  options: ScientReplayOptions,
-) => {
-  const { leaves, shared, upper } = layers;
-  const base = layerBase(options).pipe(Layer.provide(leaves));
-  return layerServices(options).pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(upper.pipe(Layer.provideMerge(Layer.merge(base, shared))), leaves),
-    ),
-  );
-};
+export const withScientServices =
+  <A, E1, R1, B, E2, R2, C, E3, R3, D, E4, R4>(
+    layers: {
+      readonly leaves: Layer.Layer<A, E1, R1>;
+      readonly database: Layer.Layer<D, E4, R4>;
+      readonly shared: Layer.Layer<C, E3, R3>;
+      readonly upper: Layer.Layer<B, E2, R2>;
+    },
+    options: ScientReplayOptions,
+  ) =>
+  <ROut, E, RIn>(runtime: Layer.Layer<ROut, E, RIn>) => {
+    const { leaves, database, shared, upper } = layers;
+    const base = layerRuntimeBase(options).pipe(Layer.provide(Layer.merge(leaves, database)));
+    const exported = layerServices(options).pipe(
+      Layer.provideMerge(LegacyV1ThreadImporter.layer),
+      Layer.provide(database),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          upper.pipe(Layer.provide(layerUpperBase(options)), Layer.provideMerge(shared)),
+          leaves,
+        ),
+      ),
+    );
+    return runtime.pipe(Layer.provideMerge(exported), Layer.provide(base));
+  };
 
 /** Wraps the harness's real event sink when a test observes or gates it. */
 export const decorateEventSink =

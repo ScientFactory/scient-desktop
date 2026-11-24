@@ -664,29 +664,26 @@ export function layerWithRegistry<Error>(
     ThreadCommandExecutor.layer,
   ).pipe(
     // SCIENT-FORK:START — Scient's orchestration services, from this harness's own layers.
-    Layer.provideMerge(
-      ScientReplay.scientReplayLayer(
-        {
-          leaves: Layer.mergeAll(
-            layerStores,
-            layerDatabase,
-            layerServerConfig,
-            layerServerSettings,
-            layerEventSinkProvided,
-          ),
-          shared: layerMcpProviderSessions,
-          upper: Layer.mergeAll(
-            layerProviderSessionManagerProvided,
-            layerProviderTurnStartServiceProvided,
-            layerCheckpointServiceProvided,
-            layerCheckpointStore,
-            layerCommandReceiptStoreProvided,
-            layerRuntime,
-            ThreadCommandExecutor.layer,
-          ),
-        },
-        options,
-      ),
+    ScientReplay.withScientServices(
+      {
+        leaves: Layer.mergeAll(
+          layerStores,
+          layerServerConfig,
+          layerServerSettings,
+          layerEventSinkProvided,
+        ),
+        database: layerDatabase,
+        shared: layerMcpProviderSessions,
+        upper: Layer.mergeAll(
+          layerProviderSessionManagerProvided,
+          layerProviderTurnStartServiceProvided,
+          layerCheckpointServiceProvided,
+          layerCheckpointStore,
+          layerCommandReceiptStoreProvided,
+          ThreadCommandExecutor.layer,
+        ),
+      },
+      options,
     ),
     // SCIENT-FORK:END
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
