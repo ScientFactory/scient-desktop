@@ -4,6 +4,8 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "@effect/vitest";
 import * as YAML from "yaml";
 
+import { PROOFS } from "../.github/scripts/compute-roles.mjs";
+
 const workflow = (name: string): unknown =>
   YAML.parse(NodeFS.readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"));
 
@@ -169,8 +171,8 @@ describe("Compute CI suite selection", () => {
       expect(leg.target, String(leg.runner)).toBe(evaluate(target, { matrix: leg }));
   });
 
-  // Each role is its begin step, its own steps and its end step; every own step runs once the role
-  // began, whatever an earlier role did.
+  // Each role is its begin step, exactly the proofs compute-roles.mjs requires of it and its end
+  // step; every proof runs once the role began, whatever an earlier role did.
   const expectRoles = (steps: Array<Step>, roles: Array<string>) => {
     for (const role of roles) {
       const begin = steps.findIndex((step) => step.id === role);
@@ -180,9 +182,11 @@ describe("Compute CI suite selection", () => {
       expect(steps[finish]!.run).toMatch(new RegExp(`compute-roles\\.mjs end ${role}\\b`));
       expect(steps[finish]!.if).toBe(`\${{ !cancelled() && steps.${role}.outcome != 'skipped' }}`);
       const own = steps.slice(begin + 1, finish);
-      expect(own.length, role).toBeGreaterThan(0);
+      expect(
+        own.map((step) => step.id),
+        role,
+      ).toEqual(PROOFS[role]);
       for (const step of own) {
-        expect(step.id?.split("-")[0], step.name).toBe(role);
         expect(step.if, step.name).toBe(
           `\${{ !cancelled() && steps.${role}.outcome == 'success' }}`,
         );
@@ -250,8 +254,19 @@ describe("Compute CI suite selection", () => {
       with: step.with,
       "working-directory": step["working-directory"],
     });
-    const proofs = steps.filter((step) => /^(?!end-)[a-z]+-/.test(step.id ?? ""));
-    expect(proofs.length).toBeGreaterThan(15);
+    // R and Julia's setup, then every proof each role requires: a proof deleted from the Mac job
+    // fails here rather than leaving nothing to compare.
+    const proofs = [
+      "languages-python",
+      "languages-r",
+      "languages-julia",
+      ...roles.flatMap((role) => PROOFS[role]!),
+    ].map((id) => {
+      const step = steps.find((candidate) => candidate.id === id);
+      expect(step, id).toBeDefined();
+      return step!;
+    });
+    expect(proofs.length).toBe(17);
     for (const step of proofs) {
       const role = step.id!.split("-")[0]!;
       const original = jobs[source[role]!]!.steps.find((other) => other.name === step.name);

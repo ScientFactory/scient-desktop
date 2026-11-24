@@ -1,7 +1,7 @@
 // SCIENT-FORK:START — Compute roles that share one runner, each from a clean start: `begin` gives a
 // role its own temporary files, R library and owner mark; `end` stops what it owns, puts per-user
-// state back and checks shared packages unchanged; `summary` names failed roles. Steps of role `r`
-// have ids `r` (begin), `r-*` and `end-r`; STEPS is the job's toJSON(steps).
+// state back and checks shared packages unchanged; `summary` names roles that failed or skipped a
+// proof. Steps of role `r` have ids `r` (begin), PROOFS[r] and `end-r`; STEPS is toJSON(steps).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -15,6 +15,22 @@ export const ROLES = {
   kernels: "Real R and Julia kernels",
   managed: "Managed Python toolkits",
   python: "Real Python kernels",
+};
+
+// Every step a role must run, by id, besides its begin and end steps.
+export const PROOFS = {
+  people: ["people-run"],
+  files: ["files-run"],
+  kernels: ["kernels-install", "kernels-run"],
+  managed: ["managed-seal", "managed-target", "managed-recipes", "managed-bench"],
+  python: [
+    "python-setup-310",
+    "python-install-310",
+    "python-run-310",
+    "python-setup-312",
+    "python-install-312",
+    "python-run-312",
+  ],
 };
 
 // Where tools keep per-user state; an entry a role adds directly inside one is removed after it.
@@ -571,18 +587,18 @@ export async function end(role, args, env, system = host) {
   if (problems.length) throw new Error(`${label}: ${problems.join("; ")}`);
 }
 
-/** Each expected role's result: passed, failed (with its failed steps) or did not run. */
+/** Each expected role's result: passed, failed (with its failed steps), or missing proofs. */
 export function summarize(expected, steps) {
   return expected.map((role) => {
+    const required = [role, ...(PROOFS[role] ?? []), `end-${role}`];
     const own = Object.entries(steps).filter(
-      ([id]) => id === role || id.startsWith(`${role}-`) || id === `end-${role}`,
+      ([id]) => required.includes(id) || id.startsWith(`${role}-`),
     );
     const failed = own.filter(([, step]) => step.outcome === "failure").map(([id]) => id);
-    const ran =
-      steps[role]?.outcome !== undefined &&
-      steps[role].outcome !== "skipped" &&
-      own.every(([, step]) => step.outcome !== "skipped");
-    return { role, label: ROLES[role] ?? role, ran, failed };
+    const missing = required.filter(
+      (id) => steps[id]?.outcome === undefined || steps[id].outcome === "skipped",
+    );
+    return { role, label: ROLES[role] ?? role, ran: missing.length === 0, failed, missing };
   });
 }
 
@@ -590,15 +606,18 @@ export function summary(env) {
   const expected = (env.EXPECTED ?? "").split(/\s+/).filter(Boolean);
   const results = summarize(expected, JSON.parse(env.STEPS || "{}"));
   const lines = ["| Role | Result |", "| --- | --- |"];
-  for (const { label, ran, failed } of results) {
-    const result = failed.length ? `failed: ${failed.join(", ")}` : ran ? "passed" : "did not run";
-    lines.push(`| ${label} | ${result} |`);
-    if (failed.length || !ran) console.log(`::error title=${label}::${result}`);
+  for (const { label, failed, missing } of results) {
+    const result = [
+      ...(failed.length ? [`failed: ${failed.join(", ")}`] : []),
+      ...(missing.length ? [`did not run: ${missing.join(", ")}`] : []),
+    ].join("; ");
+    lines.push(`| ${label} | ${result || "passed"} |`);
+    if (result) console.log(`::error title=${label}::${result}`);
   }
   if (env.GITHUB_STEP_SUMMARY)
     NodeFS.appendFileSync(env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
   console.log(lines.join("\n"));
-  // A failed role already failed its own step; a role that never ran fails here.
+  // A failed step already failed the job; a role or proof that never ran fails here.
   if (results.some((result) => !result.ran)) process.exitCode = 1;
 }
 

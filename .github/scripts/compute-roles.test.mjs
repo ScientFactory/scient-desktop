@@ -7,6 +7,7 @@ import * as NodeTest from "node:test";
 
 import {
   OWNER_VARIABLE,
+  PROOFS,
   ROLES,
   addedEntries,
   begin,
@@ -156,19 +157,18 @@ NodeTest.test("names package additions, removals and version changes", () => {
   );
 });
 
+// Every step of each role, as toJSON(steps) reports them when all ran.
+const allSteps = (roles, outcome = "success") =>
+  Object.fromEntries(
+    roles.flatMap((role) => [role, ...PROOFS[role], `end-${role}`].map((id) => [id, { outcome }])),
+  );
+
 NodeTest.test("names failed roles and roles that did not run", () => {
   const steps = {
     vp: { outcome: "success" },
-    people: { outcome: "success" },
+    ...allSteps(["people", "files", "kernels"]),
     "people-run": { outcome: "failure" },
-    "end-people": { outcome: "success" },
-    files: { outcome: "success" },
-    "files-run": { outcome: "success" },
-    "end-files": { outcome: "success" },
-    kernels: { outcome: "success" },
-    "kernels-install": { outcome: "success" },
     "kernels-run": { outcome: "skipped" },
-    "end-kernels": { outcome: "success" },
     managed: { outcome: "skipped" },
   };
   NodeAssert.deepEqual(
@@ -182,6 +182,30 @@ NodeTest.test("names failed roles and roles that did not run", () => {
       ["managed", false, []],
       ["python", false, []],
     ],
+  );
+});
+
+NodeTest.test("a role whose begin and end ran misses each proof it did not run", () => {
+  const roles = ["people", "files", "kernels", "managed", "python"];
+  const complete = summarize(roles, allSteps(roles));
+  NodeAssert.deepEqual(
+    complete.map(({ ran, failed, missing }) => [ran, failed, missing]),
+    roles.map(() => [true, [], []]),
+  );
+  for (const role of roles)
+    for (const proof of PROOFS[role]) {
+      const steps = allSteps(roles);
+      delete steps[proof];
+      const result = summarize(roles, steps).find((entry) => entry.role === role);
+      NodeAssert.deepEqual([result.ran, result.missing], [false, [proof]], proof);
+    }
+  // Only begin and end: every proof is missing.
+  NodeAssert.deepEqual(
+    summarize(["managed"], {
+      managed: { outcome: "success" },
+      "end-managed": { outcome: "success" },
+    })[0].missing,
+    PROOFS.managed,
   );
 });
 
