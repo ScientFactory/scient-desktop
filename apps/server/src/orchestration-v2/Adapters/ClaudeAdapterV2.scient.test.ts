@@ -30,6 +30,7 @@ import {
   DEFAULT_CLAUDE_SETTINGS,
   makeClaudeTestTurnInput,
 } from "./ClaudeAdapterV2.fixture.ts";
+import * as ThreadMcpStatusRegistry from "../../mcpApps/ThreadMcpStatusRegistry.ts";
 import {
   awaitUntil,
   claudeSdkFrame,
@@ -942,6 +943,102 @@ describe("ClaudeAdapterV2 provider-native inventory (NativeInventory)", () => {
         assert.deepStrictEqual(reports, []);
       }),
     ).pipe(Effect.provide(adapterServices)),
+  );
+});
+
+describe("ClaudeAdapterV2 thread MCP status", () => {
+  it.effect("reports native MCP health on the thread status and adds no sign-in rows", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const turnEndStatus: ReadonlyArray<McpServerStatus> = [
+          { name: "github", status: "needs-auth", scope: "user" },
+          { name: "sentry", status: "failed", scope: "project", error: "spawn ENOENT" },
+          { name: "claude.ai Gmail", status: "needs-auth", scope: "claudeai" },
+          { name: "scient", status: "connected", source: "dynamic" },
+          { name: "linear", status: "failed", source: "dynamic", error: "handshake failed" },
+        ];
+        // The inventory report follows the status publication for the same sample.
+        const sampled = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          mcpServerStatus: Effect.succeed(turnEndStatus),
+          onNativeInventory: (inventory) =>
+            (inventory.mcpServers ?? []).some((server) => server.status === "needs-auth")
+              ? Deferred.succeed(sampled, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-claude-thread-mcp-status"),
+          threadId: harness.threadId,
+          providerSessionId: "mcp-session-claude-thread-mcp-status",
+          providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer thread-mcp-status-token",
+          capabilities: new Set(),
+          connectors: [
+            {
+              connectorId: "connector-linear",
+              serverName: "linear",
+              displayName: "Linear",
+              url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+            },
+          ],
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-thread-mcp-status"),
+            text: "List my issues.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000009101",
+            session_id: WAKE_NATIVE_SESSION,
+            mcp_servers: [
+              { name: "github", status: "pending", source: "user" },
+              { name: "sentry", status: "pending", source: "project" },
+              { name: "scient", status: "connected", source: "dynamic" },
+              { name: "linear", status: "pending", source: "dynamic" },
+            ],
+          }),
+        );
+        const registry = yield* ThreadMcpStatusRegistry.ThreadMcpStatusRegistry;
+        const initial = yield* registry.snapshot(harness.threadId);
+        assert.deepStrictEqual(
+          initial.servers.map((server) => [server.name, server.status]),
+          [
+            ["github", "checking"],
+            ["sentry", "checking"],
+          ],
+        );
+
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000009102", result: "Done." }),
+        );
+        yield* Deferred.await(sampled);
+        const settled = yield* registry.snapshot(harness.threadId);
+        assert.deepStrictEqual(
+          settled.servers.map((server) => [server.name, server.source, server.status]),
+          [
+            ["github", "native", "needs-sign-in"],
+            ["sentry", "native", "unreachable"],
+            ["claude.ai Gmail", "claudeai", "needs-sign-in"],
+          ],
+        );
+        assert.deepStrictEqual(
+          harness.events.filter(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+          ),
+          [],
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(adapterServices, ThreadMcpStatusRegistry.layer))),
   );
 });
 

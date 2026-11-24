@@ -313,6 +313,7 @@ import { ScientAccountsLayerLive } from "./scient/accounts/AccountsLayers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions.
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
+import * as ThreadMcpStatusRegistry from "./mcpApps/ThreadMcpStatusRegistry.ts";
 import * as ConnectorProxyRoute from "./scient/extensions/connectors/ConnectorProxyRoute.ts";
 import * as ConnectorCallbackRoute from "./scient/extensions/connectors/ConnectorCallbackRoute.ts";
 // SCIENT-FORK:END
@@ -896,9 +897,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(
     ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
   ),
-  // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
-  // reference, so the runtime layer shares it.
-  Layer.provideMerge(ProviderInstallationGate.layer),
+  // One gate and MCP status registry for the server, below hydration so adapters share them.
+  Layer.provideMerge(Layer.merge(ProviderInstallationGate.layer, ThreadMcpStatusRegistry.layer)),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),

@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadMcpStatusRegistry from "./ThreadMcpStatusRegistry.ts";
 // SCIENT-FORK:START — a chat sign-in refreshes the instance's Extensions inventory.
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 // SCIENT-FORK:END
@@ -41,6 +42,17 @@ const isSignInError = Schema.is(ProviderMcpSignInError);
 const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const threadMcpStatus = yield* Effect.serviceOption(
+    ThreadMcpStatusRegistry.ThreadMcpStatusRegistry,
+  );
+  const markSignedIn = (input: ProviderMcpSignInStartInput) =>
+    Option.isSome(threadMcpStatus)
+      ? threadMcpStatus.value.markSignInCompleted({
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          server: input.server,
+        })
+      : Effect.void;
   // SCIENT-FORK:START — the agent keeps the new credential; re-read the servers it lists.
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serviceScope = yield* Effect.scope;
@@ -92,8 +104,11 @@ const make = Effect.gen(function* () {
         providerThread,
         server: input.server,
       });
-      // SCIENT-FORK: see refreshInventory.
-      if (authorizationUrl === null) yield* refreshInventory(providerThread);
+      if (authorizationUrl === null) {
+        yield* markSignedIn(input);
+        // SCIENT-FORK: see refreshInventory.
+        yield* refreshInventory(providerThread);
+      }
       return {
         authorizationUrl,
         signedInAt: authorizationUrl === null ? DateTime.formatIso(yield* DateTime.now) : null,
@@ -113,6 +128,7 @@ const make = Effect.gen(function* () {
         server: input.server,
         callbackUrl: input.callbackUrl,
       });
+      yield* markSignedIn(input);
       // SCIENT-FORK: see refreshInventory.
       yield* refreshInventory(providerThread);
       return { signedInAt: DateTime.formatIso(yield* DateTime.now) };
