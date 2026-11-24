@@ -161,6 +161,36 @@ vi.mock("@t3tools/client-runtime/voice-input", async (original) => {
             supportsTranslation: false,
             supportsStreaming: false,
           },
+          {
+            id: "handy-computer/whisper-small-gguf",
+            name: "Whisper Small",
+            description: "Wide language support in a relatively small model.",
+            size: 269_751_136,
+            languages: ["en", "fr", "he"],
+            accuracy: 3,
+            speed: 2,
+            recommended: false,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: true,
+            supportsTranslation: true,
+            supportsStreaming: false,
+          },
+          {
+            id: "handy-computer/canary-180m-flash-gguf",
+            name: "Canary 180M Flash",
+            description: "Compact multilingual model",
+            size: 218_447_648,
+            languages: ["de", "en", "es", "fr"],
+            accuracy: 3,
+            speed: 3,
+            recommended: false,
+            state: "downloadable",
+            active: false,
+            supportsLanguageDetection: false,
+            supportsTranslation: true,
+            supportsStreaming: false,
+          },
         ],
       }),
   };
@@ -342,6 +372,10 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
     await expect
       .element(screen.getByRole("button", { name: "Download Whisper Large v3" }))
       .toBeVisible();
+    expect(screen.getByRole("button", { name: /^Open details for / }).all()).toHaveLength(4);
+    await expect
+      .element(screen.getByRole("button", { name: "Download Whisper Small" }))
+      .toBeVisible();
     expect(screen.container.querySelector(".bg-warning")).toBeNull();
     if (screenshots) {
       await page.screenshot({ path: `${screenshots}/settings-${theme}.png` });
@@ -359,6 +393,15 @@ it.each(["light", "dark"])("shows dictation surfaces in %s", async (theme) => {
           .element()
           .closest("section")!,
       });
+    }
+
+    if (theme === "light") {
+      const canary = screen.getByRole("button", { name: "Download Canary 180M Flash" });
+      await expect.element(canary).not.toBeInTheDocument();
+      await screen.getByRole("button", { name: /Show 1 more model/ }).click();
+      await expect.element(canary).toBeVisible();
+      await screen.getByRole("button", { name: "Show fewer models" }).click();
+      await expect.element(canary).not.toBeInTheDocument();
     }
 
     const details = screen.getByRole("button", { name: "Details for Parakeet TDT 0.6B v3" });
@@ -639,6 +682,34 @@ it("shares searchable language menus, with the search beside the trigger on eith
     }
     await compareSearch.fill("zzzz");
     await expect.element(comparePopup.getByText("No languages found")).toBeVisible();
+    await compareSearch.fill("Sinhala");
+    await comparePopup.getByRole("button", { name: "Sinhala", exact: true }).click();
+
+    await page.viewport(1000, 360);
+    screen.container.querySelector<HTMLElement>("[data-settings-page-scroll]")!.style.maxWidth =
+      "36rem";
+    await comparison.element().scrollIntoView({ block: "center" });
+    await comparison.click();
+    await expect.element(compareSearch).toHaveFocus();
+    if (screenshots) {
+      await expect.poll(() => getComputedStyle(comparePopup.element()).opacity).toBe("1");
+      await page.screenshot({ path: `${screenshots}/compare-short-window.png` });
+    }
+    await expect
+      .poll(
+        () => {
+          const popup = comparePopup.element();
+          const trigger = comparison.element().getBoundingClientRect();
+          const menu = popup.getBoundingClientRect();
+          const side = popup.getAttribute("data-side");
+          if (side === "top") return Math.abs(trigger.top - menu.bottom - 4);
+          if (side === "bottom") return Math.abs(menu.top - trigger.bottom - 4);
+          return Infinity;
+        },
+        { timeout: 1500 },
+      )
+      .toBeLessThan(2);
+
     await compareSearch.fill("עברית");
     await page.getByRole("button", { name: "Hebrew", exact: true }).click();
     const hebrewCard = screen.getByRole("button", {

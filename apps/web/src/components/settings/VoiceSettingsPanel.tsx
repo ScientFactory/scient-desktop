@@ -884,18 +884,25 @@ export function DictationEngineCatalog({
   const recordingModel =
     recordingChoices.find((model) => model.state === "installed") ?? recordingChoices[0];
   const recommendedModel = recommendation?.model;
-  const ordered = recommendedModel
-    ? [recommendedModel, ...models.filter(({ id }) => id !== recommendedModel.id)]
-    : models;
-  // Installed and recommended models come first; the rest of the catalog waits behind one button.
-  const featured = (model: (typeof models)[number]) =>
-    model.state !== "downloadable" ||
-    model.id === recommendedModel?.id ||
-    model.id === recordingModel?.id ||
-    (effectiveLanguage === "he" && model.id === HEBREW_RECORDING_MODEL_ID) ||
-    model.id === requestedDownload;
-  const visibleModels = showAllModels ? ordered : ordered.filter(featured);
-  const hiddenCount = ordered.length - ordered.filter(featured).length;
+  const ordered = [
+    ...new Set(
+      [
+        recommendedModel,
+        recordingModel,
+        ...[
+          MULTILINGUAL_RECORDING_MODEL_ID,
+          HEBREW_RECORDING_MODEL_ID,
+          "handy-computer/whisper-small-gguf",
+        ].map((id) => models.find((model) => model.id === id)),
+        ...models,
+      ].filter((model) => model !== undefined),
+    ),
+  ];
+  const defaultModels = ordered.filter(
+    (model, index) => index < 4 || model.state !== "downloadable" || model.id === requestedDownload,
+  );
+  const visibleModels = showAllModels ? ordered : defaultModels;
+  const hiddenCount = ordered.length - defaultModels.length;
   const recommendationLabel = (model: EnvironmentSpeechModel) => {
     if (model.id === HEBREW_RECORDING_MODEL_ID) return gt("Recommended for Hebrew");
     if (model.id === MULTILINGUAL_RECORDING_MODEL_ID) return gt("Recommended for mixed languages");

@@ -90,8 +90,9 @@ export function VoiceLanguagePicker<Language extends string>({
         <ChevronDownIcon className="size-3.5 stroke-[2.5] opacity-70" />
       </PopoverTrigger>
       <PopoverPopup
-        align="end"
+        align="start"
         aria-label={label}
+        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
         className="group/languages w-56 max-w-[calc(100vw-1rem)]"
         initialFocus={search}
         padding="none"
