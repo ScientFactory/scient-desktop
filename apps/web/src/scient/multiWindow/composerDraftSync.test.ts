@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   openAppWindow,
@@ -17,6 +17,13 @@ import {
   DraftId,
   type ComposerFileAttachment,
 } from "../../composerDraftStore";
+
+// Each window reloads the draft store and its own modules; the immutable contracts module is
+// evaluated once and shared, as it would be by any two copies of the same app build.
+const shared = vi.hoisted(() => ({
+  contracts: undefined as Promise<typeof import("@t3tools/contracts")> | undefined,
+}));
+vi.mock(import("@t3tools/contracts"), (importOriginal) => (shared.contracts ??= importOriginal()));
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 
