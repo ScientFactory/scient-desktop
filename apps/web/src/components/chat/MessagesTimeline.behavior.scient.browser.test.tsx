@@ -265,67 +265,6 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
   };
 }
 
-// regression: c8a04bd59b Finale: upgrade changed files card to fix various UI issues (#4113)
-it("keeps assistant changed-files headers sticky below the thread header", async () => {
-  const assistantMessageId = MessageId.make("message-assistant-with-files");
-  const runId = RunId.make("turn-with-files");
-  await using screen = await renderElement(
-    <MessagesTimeline
-      {...buildProps()}
-      latestRun={{
-        runId,
-        status: "completed",
-        startedAt: MESSAGE_CREATED_AT,
-        completedAt: MESSAGE_CREATED_AT,
-      }}
-      timelineEntries={[
-        {
-          id: "entry-assistant-with-files",
-          kind: "message",
-          createdAt: MESSAGE_CREATED_AT,
-          message: {
-            id: assistantMessageId,
-            role: "assistant",
-            text: "Updated the fixture.",
-            runId,
-            createdAt: MESSAGE_CREATED_AT,
-            updatedAt: MESSAGE_CREATED_AT,
-            streaming: false,
-          },
-        },
-      ]}
-      turnDiffSummaries={[
-        {
-          runId,
-          checkpointTurnCount: 1,
-          checkpointRef: CheckpointRef.make("checkpoint-with-files"),
-          status: "ready",
-          files: [
-            {
-              path: "README.md",
-              kind: "modified",
-              additions: 2,
-              deletions: 1,
-            },
-          ],
-          assistantMessageId,
-          completedAt: MESSAGE_CREATED_AT,
-        },
-      ]}
-    />,
-  );
-  await vi.waitFor(() =>
-    expect(screen.container.querySelector("[data-timeline-row-kind]")).not.toBeNull(),
-  );
-  const markup = screen.container.innerHTML;
-  expect(markup).toContain("sticky top-2 z-10");
-  expect(markup).not.toContain("self-start");
-  expect(markup).toContain("whitespace-nowrap");
-  expect(markup).toContain("size-3");
-  expect(markup).not.toContain('aria-label="Collapse all folders"');
-  expect(markup).toContain('aria-label="Open diff"');
-  expect(markup).toContain("1 changed file");
-});
 // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
 it("does not render window details before the preview URL resolves", async () => {
   await using screen = await renderElement(

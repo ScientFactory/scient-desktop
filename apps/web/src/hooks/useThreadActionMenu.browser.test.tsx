@@ -156,6 +156,7 @@ async function selectMarkUnread(_fixture: _Fixture) {
   expect(boundary.show).toHaveBeenCalledWith(
     expect.arrayContaining([expect.objectContaining({ id: "mark-unread" })]),
     { x: 1, y: 2 },
+    undefined,
   );
 }
 
