@@ -2413,71 +2413,84 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect.each(
-      (["all", "targeted", "workspace", "workspace-fresh", "background"] as const).map((mode) => ({
-        caseTitle: `provider refresh asks the registry to invalidate model caches before probing (${mode})`,
-        mode,
-      })),
-    )("$caseTitle", ({ mode }) => {
-      // The registry owns what invalidation clears (ProviderRegistry.test.ts); the server only
-      // scopes it to the request and runs it before the probe.
-      const instanceId = ProviderInstanceId.make("codex_work");
-      const cwd = "/synthetic/provider-refresh";
-      const workspaceScoped = mode === "workspace" || mode === "workspace-fresh";
-      const targeted = mode === "targeted" || workspaceScoped;
-      const calls: string[] = [];
-      const invalidations: unknown[] = [];
-      const probe = (kind: string) =>
-        Effect.sync(() => {
-          calls.push(kind);
-          return [];
-        });
-      return Effect.gen(function* () {
-        yield* buildAppUnderTest({
-          layers: {
-            providerRegistry: {
-              invalidateModelCaches: (input) =>
-                Effect.sync(() => {
-                  calls.push("invalidate");
-                  invalidations.push(input);
-                }),
-              refresh: () => probe("refresh"),
-              refreshInstance: () => probe("refreshInstance"),
-              refreshWorkspaceSnapshot: () => probe("refreshWorkspaceSnapshot"),
+    it.effect(
+      "provider refresh asks the registry to invalidate model caches before probing",
+      () => {
+        // The registry owns what invalidation clears (ProviderRegistry.test.ts); the server only
+        // scopes it to the request and runs it before the probe.
+        const instanceId = ProviderInstanceId.make("codex_work");
+        const cwd = "/synthetic/provider-refresh";
+        const calls: string[] = [];
+        const invalidations: unknown[] = [];
+        const probe = (kind: string) =>
+          Effect.sync(() => {
+            calls.push(kind);
+            return [];
+          });
+        return Effect.gen(function* () {
+          yield* buildAppUnderTest({
+            layers: {
+              providerRegistry: {
+                invalidateModelCaches: (input) =>
+                  Effect.sync(() => {
+                    calls.push("invalidate");
+                    invalidations.push(input);
+                  }),
+                refresh: () => probe("refresh"),
+                refreshInstance: () => probe("refreshInstance"),
+                refreshWorkspaceSnapshot: () => probe("refreshWorkspaceSnapshot"),
+              },
             },
-          },
-        });
-        const wsUrl = yield* getWsServerUrl("/ws");
-        yield* Effect.scoped(
-          withWsRpcClient(wsUrl, (client) =>
-            client[WS_METHODS.serverRefreshProviders]({
-              ...(targeted ? { instanceId } : {}),
-              ...(workspaceScoped ? { cwd } : {}),
-              ...(mode === "workspace-fresh" ? { fresh: true } : {}),
-              ...(mode !== "background" ? { refreshModels: true } : {}),
-            }),
-          ),
-        );
-        const probeKind = workspaceScoped
-          ? "refreshWorkspaceSnapshot"
-          : targeted
-            ? "refreshInstance"
-            : "refresh";
-        assert.deepEqual(calls, mode === "background" ? [probeKind] : ["invalidate", probeKind]);
-        assert.deepEqual(
-          invalidations,
-          mode === "background"
-            ? []
-            : [
-                {
-                  instanceId: targeted ? instanceId : undefined,
-                  cwd: workspaceScoped ? cwd : undefined,
-                  fresh: mode === "workspace-fresh" ? true : undefined,
-                },
-              ],
-        );
-      }).pipe(Effect.provide(NodeHttpServerTest));
-    });
+          });
+          const wsUrl = yield* getWsServerUrl("/ws");
+          for (const mode of [
+            "all",
+            "targeted",
+            "workspace",
+            "workspace-fresh",
+            "background",
+          ] as const) {
+            const workspaceScoped = mode === "workspace" || mode === "workspace-fresh";
+            const targeted = mode === "targeted" || workspaceScoped;
+            calls.length = 0;
+            invalidations.length = 0;
+            yield* Effect.scoped(
+              withWsRpcClient(wsUrl, (client) =>
+                client[WS_METHODS.serverRefreshProviders]({
+                  ...(targeted ? { instanceId } : {}),
+                  ...(workspaceScoped ? { cwd } : {}),
+                  ...(mode === "workspace-fresh" ? { fresh: true } : {}),
+                  ...(mode !== "background" ? { refreshModels: true } : {}),
+                }),
+              ),
+            );
+            const probeKind = workspaceScoped
+              ? "refreshWorkspaceSnapshot"
+              : targeted
+                ? "refreshInstance"
+                : "refresh";
+            assert.deepEqual(
+              calls,
+              mode === "background" ? [probeKind] : ["invalidate", probeKind],
+              mode,
+            );
+            assert.deepEqual(
+              invalidations,
+              mode === "background"
+                ? []
+                : [
+                    {
+                      instanceId: targeted ? instanceId : undefined,
+                      cwd: workspaceScoped ? cwd : undefined,
+                      fresh: mode === "workspace-fresh" ? true : undefined,
+                    },
+                  ],
+              mode,
+            );
+          }
+        }).pipe(Effect.provide(NodeHttpServerTest));
+      },
+    );
 
     it.effect("serves config on reconnect without starting provider probes", () =>
       Effect.gen(function* () {
