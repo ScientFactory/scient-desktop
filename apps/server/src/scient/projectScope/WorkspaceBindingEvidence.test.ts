@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 
@@ -271,6 +272,31 @@ describe("WorkspaceBindingEvidence", () => {
         yield* fileSystem.realPath(path.join(root, ".git")),
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps whitespace and newlines at the end of repository paths",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "scient-workspace-binding-edge-space-",
+        });
+        const evidenceService = yield* WorkspaceBindingEvidence;
+        // The newline name takes the per-path fallback; the others take the one-spawn answer.
+        for (const name of ["repo ", "repo\r", "multi\nline "]) {
+          const root = path.join(parent, name);
+          const gitDir = path.join(parent, `${name.replace("\n", "")} metadata `);
+          const workspace = path.join(root, "analysis");
+          yield* fileSystem.makeDirectory(workspace, { recursive: true });
+          yield* git(root, ["init", `--separate-git-dir=${gitDir}`]);
+
+          const evidence = yield* evidenceService.inspect(workspace);
+          expect(evidence.worktreeIdentity?.rootPath).toBe(yield* fileSystem.realPath(root));
+          expect(evidence.worktreeIdentity?.metadataPath).toBe(yield* fileSystem.realPath(gitDir));
+        }
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect.each(["added", "removed"] as const)(
