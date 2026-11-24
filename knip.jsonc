@@ -58,6 +58,7 @@
         "generate-math-symbol-glyphs.mjs",
         "setup-document-lab.mjs",
         "sync-document-lab-skills.mjs",
+        "document-lab-office.mjs",
         // Documented manual refresh of the claude.ai connectors Scient links to.
         "generate-claude-connectors.mjs",
       ],
