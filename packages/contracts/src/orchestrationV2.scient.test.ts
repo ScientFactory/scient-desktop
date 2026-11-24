@@ -15,6 +15,7 @@ import {
 import {
   OrchestrationV2Command,
   OrchestrationV2DroidHeldSteer,
+  OrchestrationV2GetThreadProjectionError,
   OrchestrationV2Notification,
   OrchestrationV2ProviderTurn,
   OrchestrationV2ProviderTurnJson,
@@ -437,5 +438,52 @@ describe("Droid held admission contract", () => {
         lease: "descriptive-lease",
       }),
     ).toThrow();
+  });
+});
+
+// The error as clients before the reason decoded it.
+class OlderThreadProjectionError extends Schema.TaggedError<OlderThreadProjectionError>()(
+  "OrchestrationV2GetThreadProjectionError",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+const encodeThreadProjectionError = Schema.encodeSync(
+  Schema.toCodecJson(OrchestrationV2GetThreadProjectionError),
+);
+const decodeThreadProjectionError = Schema.decodeSync(
+  Schema.toCodecJson(OrchestrationV2GetThreadProjectionError),
+);
+const encodeOlderThreadProjectionError = Schema.encodeSync(
+  Schema.toCodecJson(OlderThreadProjectionError),
+);
+const decodeOlderThreadProjectionError = Schema.decodeSync(
+  Schema.toCodecJson(OlderThreadProjectionError),
+);
+
+describe("thread projection error reason compatibility", () => {
+  const threadId = ThreadId.make("thread-missing");
+
+  it("lets an older client decode a missing-thread failure", () => {
+    const encoded = encodeThreadProjectionError(
+      new OrchestrationV2GetThreadProjectionError({
+        threadId,
+        message: "Failed to load orchestration V2 thread",
+        reason: "thread_not_found",
+      }),
+    );
+    expect(encoded).toMatchObject({ reason: "thread_not_found" });
+    const older = decodeOlderThreadProjectionError(encoded);
+    expect(older._tag).toBe("OrchestrationV2GetThreadProjectionError");
+    expect(older.message).toBe("Failed to load orchestration V2 thread");
+  });
+
+  it("reads an older server's failure as having no reason", () => {
+    const encoded = encodeOlderThreadProjectionError(
+      new OlderThreadProjectionError({ threadId, message: "Failed" }),
+    );
+    expect(decodeThreadProjectionError(encoded).reason).toBeUndefined();
   });
 });

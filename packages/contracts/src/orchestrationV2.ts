@@ -4788,6 +4788,8 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   {
     threadId: ThreadId,
     message: Schema.String,
+    // SCIENT-FORK: a deleted or never-created thread fails as missing, so a warm client drops its cached copy; optional so older clients still decode it.
+    reason: Schema.optional(Schema.Literal("thread_not_found")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

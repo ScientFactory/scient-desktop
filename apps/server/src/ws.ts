@@ -428,6 +428,16 @@ import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+// SCIENT-FORK:START — a missing thread snapshot (deleted or never created), as http.ts tells it apart.
+const isProjectionThreadNotFound = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "cause" in error &&
+  typeof error.cause === "object" &&
+  error.cause !== null &&
+  "_tag" in error.cause &&
+  error.cause._tag === "ProjectionStoreThreadNotFoundError";
+// SCIENT-FORK:END
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -1119,6 +1129,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             new OrchestrationV2GetThreadProjectionError({
               threadId: input.threadId,
               message: `Failed to load orchestration V2 thread ${input.threadId}`,
+              // SCIENT-FORK: a deleted thread's snapshot reads as missing; a warm client retires its cache.
+              ...(isProjectionThreadNotFound(cause) ? { reason: "thread_not_found" as const } : {}),
               cause,
             }),
         ),

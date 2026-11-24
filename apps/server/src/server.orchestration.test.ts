@@ -1438,6 +1438,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           // A deleted thread's snapshot reads as missing; the shell removes it below.
           assertTrue(result._tag === "Failure");
           assert.equal(result.failure._tag, "OrchestrationV2GetThreadProjectionError");
+          // SCIENT-FORK: the failure names the missing thread, so a warm client retires its cache.
+          assertTrue(
+            result.failure._tag === "OrchestrationV2GetThreadProjectionError" &&
+              result.failure.reason === "thread_not_found",
+          );
         } else {
           assertTrue(result._tag === "Success");
           assert.deepEqual(
